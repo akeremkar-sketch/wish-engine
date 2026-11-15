@@ -50,6 +50,8 @@ fn examples() -> Vec<(&'static str, Value)> {
         ),
         ("schema_get", json!({ "search": "light", "detail": "full" })),
         ("schema_get", json!({ "names": ["Trasform"] })),
+        ("docs_search", json!({ "query": "field of view" })),
+        ("docs_search", json!({ "query": "zzzz" })),
         ("check", json!({})),
         ("check", json!({ "paths": ["scenes/main.scene.json"] })),
         ("check", json!({ "paths": ["scenes/mian.scene.json"] })),
@@ -371,4 +373,192 @@ fn wen_new_makes_a_project_the_tools_can_use() {
     let missing = wen().args(["new", "--json"]).output().unwrap();
     assert!(!missing.status.success());
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Talks MCP to a `wen mcp` process: every message, then end of input; the
+/// answers in order.
+fn run_mcp(root: &str, messages: &[Value]) -> (Vec<Value>, bool, String) {
+    let mut child = wen()
+        .args(["mcp", "--software", "--root", root])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        let mut stdin = child.stdin.take().unwrap();
+        for message in messages {
+            stdin.write_all(message.to_string().as_bytes()).unwrap();
+            stdin.write_all(b"\n").unwrap();
+        }
+    }
+    let output = child.wait_with_output().unwrap();
+    let text = String::from_utf8(output.stdout).unwrap();
+    let answers = text
+        .lines()
+        .map(|line| {
+            serde_json::from_str(line).unwrap_or_else(|_| panic!("stdout is protocol only: {line}"))
+        })
+        .collect();
+    (
+        answers,
+        output.status.success(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn the_mcp_server_answers_with_the_same_json() {
+    let actor = parse_actor("parity");
+    let in_process_dir = project("mcp-a");
+    let mut workspace = Workspace::open(WorkspaceOptions {
+        root: in_process_dir.clone(),
+        example: None,
+    })
+    .unwrap();
+    workspace.set_software(true);
+    let expected: Vec<Value> = examples()
+        .iter()
+        .map(|(tool, args)| {
+            let mut answer = workspace.call(tool, args, &actor);
+            if let Some(image) = answer.get_mut("image").and_then(Value::as_object_mut) {
+                image.remove("data");
+            }
+            answer
+        })
+        .collect();
+    let mcp_dir = project("mcp-b");
+    let mut messages = vec![
+        json!({ "jsonrpc": "2.0", "id": 0, "method": "initialize", "params": { "protocolVersion": "2025-06-18", "clientInfo": { "name": "parity" } } }),
+        json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
+    ];
+    for (index, (tool, args)) in examples().iter().enumerate() {
+        messages.push(json!({ "jsonrpc": "2.0", "id": index + 1, "method": "tools/call", "params": { "name": tool, "arguments": args } }));
+    }
+    let (answers, success, stderr) = run_mcp(mcp_dir.to_str().unwrap(), &messages);
+    assert!(success, "{stderr}");
+    assert_eq!(
+        answers.len(),
+        expected.len() + 1,
+        "one answer per request, none for the notification"
+    );
+    for (index, (answer, expected)) in answers[1..].iter().zip(&expected).enumerate() {
+        assert_eq!(answer["id"], index + 1);
+        assert_eq!(
+            &answer["result"]["structuredContent"],
+            expected,
+            "call {index}: {:?}",
+            examples()[index]
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(in_process_dir.join("scenes/main.scene.json")).unwrap(),
+        std::fs::read_to_string(mcp_dir.join("scenes/main.scene.json")).unwrap()
+    );
+    for dir in [in_process_dir, mcp_dir] {
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}
+
+/// The M4 exit criterion, scripted: from an empty project, only through MCP,
+/// build a scene, run it, take a picture and check the result.
+#[test]
+fn an_agent_builds_runs_looks_at_and_verifies_a_scene_through_mcp_only() {
+    let dir = std::env::temp_dir().join(format!("wish-mcp-e2e-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let root = dir.to_str().unwrap().to_owned();
+    assert!(
+        wen()
+            .args(["new", &root, "--name", "E2E"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    let request = |id: u64, tool: &str, arguments: Value| json!({ "jsonrpc": "2.0", "id": id, "method": "tools/call", "params": { "name": tool, "arguments": arguments } });
+    let messages = vec![
+        json!({ "jsonrpc": "2.0", "id": 0, "method": "initialize", "params": { "protocolVersion": "2025-06-18", "clientInfo": { "name": "e2e-agent" } } }),
+        json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
+        json!({ "jsonrpc": "2.0", "id": 1, "method": "resources/read", "params": { "uri": "wish://docs/guide" } }),
+        request(2, "project_info", json!({})),
+        request(3, "schema_get", json!({ "search": "shape" })),
+        // Three platforms and a ball over the middle one.
+        request(
+            4,
+            "edit_apply",
+            json!({ "ops": [
+                { "op": "spawn", "id": "platforms" },
+                { "op": "spawn", "id": "platform_1", "parent": "platforms", "components": { "Primitive": { "shape": "Cube" }, "Transform": { "translation": [-3, 0.5, 0], "scale": [2, 0.4, 2] } } },
+                { "op": "spawn", "id": "platform_2", "parent": "platforms", "components": { "Primitive": { "shape": "Cube" }, "Transform": { "translation": [0, 1.5, -1], "scale": [2, 0.4, 2] } } },
+                { "op": "spawn", "id": "platform_3", "parent": "platforms", "components": { "Primitive": { "shape": "Cube" }, "Transform": { "translation": [3, 2.5, -2], "scale": [2, 0.4, 2] } } },
+                { "op": "spawn", "id": "ball", "components": { "Primitive": { "shape": "Sphere" }, "Material": { "base_color": [0.9, 0.2, 0.1, 1] }, "Transform": { "translation": [0, 2.2, -1], "scale": [0.6, 0.6, 0.6] } } }
+            ] }),
+        ),
+        request(5, "check", json!({})),
+        request(6, "sim_start", json!({ "seed": 1 })),
+        request(7, "sim_step", json!({ "frames": 60 })),
+        request(8, "describe_view", json!({ "session": "s1" })),
+        request(
+            9,
+            "capture_frame",
+            json!({ "session": "s1", "width": 320, "height": 180 }),
+        ),
+        request(
+            10,
+            "entity_query",
+            json!({ "session": "s1", "name": "platform_*", "where": "Transform.translation.y > 1" }),
+        ),
+    ];
+    let (answers, success, stderr) = run_mcp(&root, &messages);
+    assert!(success, "{stderr}");
+    let result = |id: u64| -> &Value {
+        let answer = answers.iter().find(|a| a["id"] == id).unwrap();
+        assert!(answer.get("error").is_none(), "{answer}");
+        &answer["result"]
+    };
+    assert!(
+        result(1)["contents"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("The loop")
+    );
+    assert_eq!(result(2)["structuredContent"]["project"]["name"], "E2E");
+    assert_eq!(result(4)["isError"], false, "{}", result(4));
+    assert_eq!(result(5)["structuredContent"]["passed"], true);
+    assert_eq!(result(7)["structuredContent"]["tick"], 60);
+    // Everything built is on screen.
+    let visible: Vec<&str> = result(8)["structuredContent"]["visible"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["entity"].as_str().unwrap())
+        .collect();
+    for id in ["platform_1", "platform_2", "platform_3", "ball"] {
+        assert!(visible.contains(&id), "{id} is not visible: {visible:?}");
+    }
+    assert_eq!(result(9)["content"][1]["type"], "image");
+    let raised: Vec<&str> = result(10)["structuredContent"]["entities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(raised, ["platform_2", "platform_3"]);
+    let scene = std::fs::read_to_string(dir.join("scenes/main.scene.json")).unwrap();
+    assert!(scene.contains("platform_3") && scene.contains("ball"));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn wen_mcp_reports_a_bad_folder_on_standard_error() {
+    let output = wen()
+        .args(["mcp", "--root", "no/such/folder"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        output.stdout.is_empty(),
+        "standard output belongs to the protocol"
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("project_not_found"));
 }

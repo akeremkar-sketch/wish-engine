@@ -50,6 +50,7 @@ USAGE:
              [--view lit|ids|depth|normals|wireframe] [--software] [--shaders <folder>] [--exit-after <frames>]
     wen shaders [--dir <folder>] [--json]
     wen new <folder> [--name <name>] [--json]
+    wen mcp [--root <folder>] [--software]
     wen call <tool> ['{json args}' | --<param> <value> ...] [--root <folder>] [--actor <name>]
     wen do [<file> | -] [--root <folder>] [--actor <name>]
     wen mv <from> <to> --example <name> [--root <folder>] [--dry-run] [--json]
@@ -94,6 +95,9 @@ COMMANDS:
                as --shaders to capture/describe to draw with them. Fails if there is any problem.
     new        Create a project folder: wish.json, a starting scene (camera, sun, ground), assets/,
                .mcp.json (connects Claude Code and other MCP clients) and a project CLAUDE.md.
+    mcp        Serve the tools over MCP (Model Context Protocol, stdio). Claude Code and other MCP
+               clients start it themselves from .mcp.json (wen new writes it); --software draws
+               with the CPU adapter. Standard output carries only the protocol.
     call       Run one control-plane tool (the same tools the MCP server offers) and print its
                JSON answer, exactly as an MCP client receives it. Arguments are one JSON object
                or --name value flags. `wen call project_info` is a good start; an unknown tool
@@ -113,6 +117,14 @@ Add --json to any command for a single machine-readable JSON document.";
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let json = arguments.iter().any(|argument| argument == "--json");
+    // The MCP server owns standard output: nothing else may be printed.
+    if let Ok(Args {
+        command: Command::Mcp(context),
+        ..
+    }) = parse(&arguments)
+    {
+        return tool_cmds::serve_mcp(&context);
+    }
     match parse(&arguments).and_then(execute_any) {
         Ok(outcome) => {
             println!("{}", outcome.text);
@@ -238,6 +250,7 @@ fn execute(args: Args) -> Result<String> {
         | Command::New { .. }
         | Command::Capture(_)
         | Command::Describe(_)
+        | Command::Mcp(_)
         | Command::Call(_)
         | Command::Do(_)
         | Command::Watch { .. } => Err(Diagnostic::error(

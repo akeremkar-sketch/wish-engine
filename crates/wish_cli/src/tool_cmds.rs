@@ -423,3 +423,26 @@ fn describe_text(answer: &Value) -> String {
     }
     text
 }
+
+/// Runs `wen mcp`: the MCP server on standard input and output, until the
+/// client closes the input. Problems before the server starts go to
+/// standard error (standard output belongs to the protocol).
+pub fn serve_mcp(context: &ToolContext) -> std::process::ExitCode {
+    let workspace = match open(context) {
+        Ok(workspace) => workspace,
+        Err(problem) => {
+            eprintln!("{problem}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+    let mut server = wish_mcp::Server::new(workspace);
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+    match wish_mcp::serve(&mut server, stdin.lock(), stdout.lock()) {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("The MCP connection failed: {error}.");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}

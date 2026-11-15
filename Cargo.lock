@@ -3020,6 +3020,7 @@ dependencies = [
  "wish_ecs",
  "wish_examples",
  "wish_import",
+ "wish_mcp",
  "wish_render",
  "wish_scene",
  "wish_schema",
@@ -3083,6 +3084,16 @@ dependencies = [
  "png",
  "serde_json",
  "wish_core",
+]
+
+[[package]]
+name = "wish_mcp"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wish_control",
+ "wish_core",
+ "wish_scene",
 ]
 
 [[package]]

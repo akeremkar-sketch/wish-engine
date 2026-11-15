@@ -381,3 +381,43 @@ fn one_paragraph(doc: &str) -> String {
         .collect::<Vec<_>>()
         .join("\n\n")
 }
+
+pub(crate) const DOCS_SEARCH: Tool = Tool {
+    name: "docs_search",
+    title: "Search the documentation",
+    description: "Searches the engine guide, the pages of every component, resource and event type, and the pages of every diagnostic code. Returns the best matches with their wish:// address and a snippet; read a whole page as an MCP resource.",
+    params: &[
+        Param::required(
+            "query",
+            Kind::String,
+            "Words to look for, such as \"camera field of view\".",
+        ),
+        Param::optional(
+            "limit",
+            Kind::Integer { min: 1, max: 20 },
+            "At most this many results.",
+        )
+        .or("5"),
+    ],
+    mutates: false,
+    run: docs_search,
+};
+
+fn docs_search(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<String, Value>> {
+    let query = args.str("query").unwrap_or_default();
+    let limit = usize::try_from(args.int("limit").unwrap_or(5)).unwrap_or(5);
+    let hits = crate::docs::search(workspace.registry(), query, limit);
+    let mut out = Map::new();
+    if hits.is_empty() {
+        out.insert(
+            "diagnostics".to_owned(),
+            json!([Diagnostic::info(
+                "nothing_found",
+                format!("Nothing in the documentation mentions all of: {query}."),
+                "Search for fewer or shorter words; wish://docs/guide is the starting page.",
+            )]),
+        );
+    }
+    out.insert("results".to_owned(), json!(hits));
+    Ok(out)
+}

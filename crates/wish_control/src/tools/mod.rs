@@ -21,6 +21,7 @@ pub(crate) const DETAIL: Param = Param::optional(
 pub(crate) const CATALOG: &[Tool] = &[
     project::PROJECT_INFO,
     project::SCHEMA_GET,
+    project::DOCS_SEARCH,
     project::CHECK,
     scene::SCENE_GET,
     scene::ENTITY_QUERY,

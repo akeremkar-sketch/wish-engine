@@ -10,7 +10,7 @@ use wish_core::{Diagnostic, Result};
 /// The commands `wen` understands.
 pub const COMMANDS: &[&str] = &[
     "run", "bench", "schema", "mv", "check", "fmt", "migrate", "watch", "capture", "describe",
-    "shaders", "view", "call", "do", "new", "examples", "help", "version",
+    "shaders", "view", "call", "do", "new", "mcp", "examples", "help", "version",
 ];
 
 /// A parsed command line.
@@ -108,6 +108,8 @@ pub enum Command {
         /// The project's name (default: the folder's name).
         name: Option<String>,
     },
+    /// Serve the tools over MCP on standard input and output.
+    Mcp(ToolContext),
     /// Run one control-plane tool.
     Call(CallArgs),
     /// Run a list of control-plane tool calls in one process.
@@ -284,7 +286,7 @@ fn parse_tool_command(command: &str, rest: &[String]) -> Result<Args> {
             "--example" if !value.is_empty() => context.example = Some(value),
             "--actor" if !value.is_empty() => context.actor = Some(value),
             "--root" | "--example" | "--actor" => return Err(missing(&name)),
-            _ if command == "do" => {
+            _ if command == "do" || command == "mcp" => {
                 let names = ["--root", "--example", "--actor", "--json"];
                 return Err(usage_error(
                     format!("'wen do' does not accept '{name}'."),
@@ -294,6 +296,18 @@ fn parse_tool_command(command: &str, rest: &[String]) -> Result<Args> {
             }
             _ => flags.push((name, value)),
         }
+    }
+    if command == "mcp" {
+        if let Some(extra) = positional.first() {
+            return Err(usage_error(
+                format!("'wen mcp' takes no argument '{extra}'."),
+                "Write it like: wen mcp [--root <folder>] [--software]. MCP clients start it themselves (see .mcp.json).".to_owned(),
+            ));
+        }
+        return Ok(Args {
+            command: Command::Mcp(context),
+            json,
+        });
     }
     let command = if command == "do" {
         if positional.len() > 1 {
@@ -467,7 +481,7 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
         .with_candidates(COMMANDS.iter().copied()));
     }
 
-    if command == "call" || command == "do" {
+    if command == "call" || command == "do" || command == "mcp" {
         return parse_tool_command(command, rest);
     }
     let accepted = flags_of(command);

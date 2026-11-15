@@ -17,6 +17,7 @@
 //!
 //! Design: `docs/design/M4-kontrol-duzlemi.md`.
 
+pub mod docs;
 mod documents;
 pub mod expr;
 pub mod ops;
