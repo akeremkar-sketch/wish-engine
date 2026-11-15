@@ -41,7 +41,9 @@ USAGE:
     wen migrate [files...] [--root <folder>] [--json]
     wen watch --example <name> --scene <file> [--root <folder>] [--seconds <n>] [--json]
     wen capture --example <name> --scene <file> --out <png> [--root <folder>] [--camera <id>]
-                [--size <w>x<h>] [--view lit] [--software] [--json]
+                [--size <w>x<h>] [--view lit|ids|depth|normals|wireframe] [--software] [--json]
+    wen describe --example <name> --scene <file> [--root <folder>] [--camera <id>]
+                 [--size <w>x<h>] [--software] [--json]
     wen mv <from> <to> --example <name> [--root <folder>] [--dry-run] [--json]
     wen schema [--example <name>] [--json]
     wen examples [--json]
@@ -67,7 +69,14 @@ COMMANDS:
     capture    Draw a scene into a PNG without a window (default 1280x720, from the first
                camera unless --camera names one). --software uses the CPU rasterizer,
                the same on every machine. Rendering never changes the simulation.
-    mv         Move an asset file or folder (paths relative to --root) and update every
+               --view picks what is drawn: lit (the picture), ids (each entity in its own
+               colour), depth (white near, black far), normals (surface direction as
+               colour), wireframe (triangle edges, hidden ones left out).
+    describe   Say what a camera sees without looking at a picture: for each visible entity
+               its pixel count, how much of it is not hidden by other things, its screen
+               box and its distance; and the entities that are drawn but not visible
+               (default size 640x360; each entity costs one extra render).
+    mv        Move an asset file or folder (paths relative to --root) and update every
                asset reference to it in scenes and prefabs, all or nothing. The example
                supplies the component types that tell where references are.
     schema     Print the JSON Schema of every registered component, resource and event.
@@ -171,6 +180,7 @@ fn execute(args: Args) -> Result<String> {
             "This is a bug in wen. Please report it.",
         )),
         Command::Capture(capture) => capture::capture(&capture, args.json),
+        Command::Describe(describe) => capture::describe(&describe, args.json),
         Command::Schema { example } => schema(example.as_deref(), args.json),
         Command::Examples => Ok(if args.json {
             json!({ "ok": true, "examples": wish_examples::NAMES }).to_string()

@@ -9,8 +9,8 @@ use wish_core::{Diagnostic, Result};
 
 /// The commands `wen` understands.
 pub const COMMANDS: &[&str] = &[
-    "run", "bench", "schema", "mv", "check", "fmt", "migrate", "watch", "capture", "examples",
-    "help", "version",
+    "run", "bench", "schema", "mv", "check", "fmt", "migrate", "watch", "capture", "describe",
+    "examples", "help", "version",
 ];
 
 /// A parsed command line.
@@ -103,6 +103,8 @@ pub enum Command {
     },
     /// Draw a scene into a PNG without a window.
     Capture(CaptureArgs),
+    /// List what a camera sees: which entities are on screen and how much.
+    Describe(DescribeArgs),
     /// Print the JSON Schemas of the registered types.
     Schema {
         /// Load the types of this example; only built-in types without it.
@@ -129,12 +131,29 @@ pub struct CaptureArgs {
     pub camera: Option<String>,
     /// Image width and height in pixels.
     pub size: (u32, u32),
-    /// What to draw: `lit` (the only view until M3 WP6).
+    /// What to draw: `lit`, `ids`, `depth`, `normals` or `wireframe`.
     pub view: String,
     /// Use the software adapter.
     pub software: bool,
     /// Where to write the PNG.
     pub out: String,
+}
+
+/// The options of `wen describe`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DescribeArgs {
+    /// The example whose component types the scene uses.
+    pub example: String,
+    /// The scene file, relative to the root.
+    pub scene: String,
+    /// The project folder (default: the current folder).
+    pub root: Option<String>,
+    /// The scene id of the camera to look from (default: the first camera).
+    pub camera: Option<String>,
+    /// The size of the picture it measures in, in pixels.
+    pub size: (u32, u32),
+    /// Use the software adapter.
+    pub software: bool,
 }
 
 fn usage_error(message: String, hint: String) -> Diagnostic {
@@ -191,6 +210,15 @@ fn flags_of(command: &str) -> &'static [(&'static str, bool)] {
             ("--view", true),
             ("--software", false),
             ("--out", true),
+            ("--json", false),
+        ],
+        "describe" => &[
+            ("--example", true),
+            ("--scene", true),
+            ("--root", true),
+            ("--camera", true),
+            ("--size", true),
+            ("--software", false),
             ("--json", false),
         ],
         _ => &[("--json", false)],
@@ -427,6 +455,27 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
                 view: value_of("--view").unwrap_or("lit").to_owned(),
                 software: values.iter().any(|(flag, _)| *flag == "--software"),
                 out: required("--out", "the PNG file to write")?,
+            })
+        }
+        "describe" => {
+            let required = |flag: &str, what: &str| {
+                value_of(flag).map(str::to_owned).ok_or_else(|| {
+                    usage_error(
+                        format!("'wen describe' needs {flag}: {what}."),
+                        format!(
+                            "Write it like: wen describe --example stress --scene scenes/main.scene.json (built-in examples: {})",
+                            wish_examples::NAMES.join(", ")
+                        ),
+                    )
+                })
+            };
+            Command::Describe(DescribeArgs {
+                example: required("--example", "the example whose component types the scene uses")?,
+                scene: required("--scene", "the scene file to look at")?,
+                root: value_of("--root").map(str::to_owned),
+                camera: value_of("--camera").map(str::to_owned),
+                size: value_of("--size").map_or(Ok((640, 360)), parse_size)?,
+                software: values.iter().any(|(flag, _)| *flag == "--software"),
             })
         }
         "examples" => Command::Examples,

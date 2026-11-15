@@ -80,6 +80,20 @@ impl From<&wish_import::Primitive> for MeshData {
     }
 }
 
+/// The distinct edges of a triangle mesh as pairs of vertex indices, in a
+/// fixed order (sorted), for drawing wireframes. Two triangles that share an
+/// edge give it once.
+pub(crate) fn edge_indices(indices: &[u32]) -> Vec<u32> {
+    let mut edges = std::collections::BTreeSet::new();
+    for triangle in indices.as_chunks::<3>().0 {
+        for (a, b) in [(0, 1), (1, 2), (2, 0)] {
+            let (low, high) = (triangle[a].min(triangle[b]), triangle[a].max(triangle[b]));
+            edges.insert((low, high));
+        }
+    }
+    edges.into_iter().flat_map(|(a, b)| [a, b]).collect()
+}
+
 /// The mesh of a built-in shape (1 m across, centred on the origin).
 pub fn primitive(shape: Shape) -> MeshData {
     match shape {
@@ -204,6 +218,18 @@ mod tests {
                 .fold(0.0f32, |m, p| m.max(p.abs().max_element()));
             assert!((extent - 0.5).abs() < 1e-6, "{shape:?} is 1 m across");
         }
+    }
+
+    #[test]
+    fn shared_edges_are_listed_once_in_a_fixed_order() {
+        // Two triangles sharing the edge 0-2 of a quad: 5 distinct edges.
+        let edges = edge_indices(&[0, 1, 2, 0, 2, 3]);
+        assert_eq!(edges, [0, 1, 0, 2, 0, 3, 1, 2, 2, 3]);
+        assert_eq!(edge_indices(&[]), Vec::<u32>::new());
+        // The cube's faces do not share vertices (each has its own normals),
+        // so each face lists its own 4 sides and its diagonal: 6 * 5.
+        let cube = primitive(Shape::Cube);
+        assert_eq!(edge_indices(&cube.indices).len() / 2, 30);
     }
 
     #[test]

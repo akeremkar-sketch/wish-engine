@@ -22,12 +22,15 @@ use wish_core::{Diagnostic, Entity, Result};
 
 use crate::capture::{CAPTURE_FORMAT, Target};
 use crate::components::{EMISSIVE_NITS, Shape};
-use crate::extract::{MaterialData, Mesh, RenderScene};
+use crate::extract::{CameraView, MaterialData, Mesh, RenderScene};
 use crate::gpu::Gpu;
 use crate::image::RgbaImage;
 use crate::mesh::{MeshData, VERTEX_STRIDE, primitive};
 use crate::shader::ShaderLibrary;
 use crate::texture;
+
+mod debug;
+pub use debug::{Description, IdBuffer, MAX_VISIBILITY_MEASUREMENTS, View, VisibleEntity};
 
 const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -90,6 +93,11 @@ const SHADERS: &[(&str, &str, &str)] = &[
         "wish_render/shaders/tonemap_pass.wgsl",
         include_str!("shaders/tonemap_pass.wgsl"),
     ),
+    (
+        "debug_pass",
+        "wish_render/shaders/debug_pass.wgsl",
+        include_str!("shaders/debug_pass.wgsl"),
+    ),
 ];
 
 /// The library of the engine's shaders.
@@ -132,6 +140,9 @@ struct GpuMesh {
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
     index_count: u32,
+    /// The mesh's distinct edges as vertex index pairs, for the wireframe view.
+    edges: wgpu::Buffer,
+    edge_index_count: u32,
 }
 
 /// A buffer filled through the queue. (wgpu's `create_buffer_init` maps the
@@ -154,10 +165,21 @@ fn buffer_with(gpu: &Gpu, label: &str, contents: &[u8], usage: wgpu::BufferUsage
 
 impl GpuMesh {
     fn new(gpu: &Gpu, mesh: &MeshData, label: &str) -> Self {
+        let edges = crate::mesh::edge_indices(&mesh.indices);
         Self {
             vertices: buffer_with(gpu, label, &mesh.vertex_bytes(), wgpu::BufferUsages::VERTEX),
             indices: buffer_with(gpu, label, &mesh.index_bytes(), wgpu::BufferUsages::INDEX),
             index_count: u32::try_from(mesh.indices.len()).unwrap_or(u32::MAX),
+            edges: buffer_with(
+                gpu,
+                label,
+                &edges
+                    .iter()
+                    .flat_map(|index| index.to_le_bytes())
+                    .collect::<Vec<u8>>(),
+                wgpu::BufferUsages::INDEX,
+            ),
+            edge_index_count: u32::try_from(edges.len()).unwrap_or(u32::MAX),
         }
     }
 }
@@ -177,7 +199,7 @@ struct LightFit {
 /// matrix and the corners of a local bounding box each), so that the shadow
 /// map covers exactly what is drawn. None when there is nothing to cover or
 /// the numbers are not finite.
-fn fit_light(direction: Vec3, casters: &[(Mat4, Vec3, Vec3)]) -> Option<LightFit> {
+fn fit_light(direction: Vec3, casters: &[(Mat4, Vec3, Vec3, u32)]) -> Option<LightFit> {
     let up = if direction.y.abs() > 0.99 {
         Vec3::X
     } else {
@@ -186,7 +208,7 @@ fn fit_light(direction: Vec3, casters: &[(Mat4, Vec3, Vec3)]) -> Option<LightFit
     let view = wish_core::math::camera::rh::view::look_to_mat4(Vec3::ZERO, direction, up);
     let mut low = Vec3::splat(f32::MAX);
     let mut high = Vec3::splat(f32::MIN);
-    for (matrix, min, max) in casters {
+    for (matrix, min, max, _) in casters {
         for corner in 0..8 {
             let point = Vec3::new(
                 if corner & 1 == 0 { min.x } else { max.x },
@@ -250,7 +272,7 @@ struct DrawList<'a> {
     draws: Vec<(Source<'a>, u64)>,
     /// For each draw: its matrix and the corners of its local bounding box,
     /// to fit the shadow map around everything that can cast a shadow.
-    casters: Vec<(Mat4, Vec3, Vec3)>,
+    casters: Vec<(Mat4, Vec3, Vec3, u32)>,
 }
 
 /// How a draw's surface is lit: the numbers the material side of the shader
@@ -262,6 +284,9 @@ struct Surface<'a> {
     occlusion_strength: f32,
     /// 0 unless alpha masks.
     alpha_cutoff: f32,
+    /// The scene draw this belongs to, plus one (0 means nothing); what the
+    /// identity view writes.
+    id: u32,
 }
 
 impl<'a> DrawList<'a> {
@@ -277,8 +302,9 @@ impl<'a> DrawList<'a> {
             normal_scale,
             occlusion_strength,
             alpha_cutoff,
+            id,
         } = surface;
-        self.casters.push((*world, bounds.0, bounds.1));
+        self.casters.push((*world, bounds.0, bounds.1, id));
         let start = self.draws.len() as u64 * DRAW_UNIFORM_STRIDE;
         self.bytes.pad_to(start);
         self.bytes.mat4(world);
@@ -288,7 +314,7 @@ impl<'a> DrawList<'a> {
             .floats(&[material.metallic, material.roughness, 0.0, 0.0]);
         self.bytes.vec4(material.emissive, 0.0);
         self.bytes
-            .floats(&[normal_scale, occlusion_strength, alpha_cutoff, 0.0]);
+            .floats(&[normal_scale, occlusion_strength, alpha_cutoff, id as f32]);
         self.draws.push((source, start));
     }
 }
@@ -330,6 +356,125 @@ pub struct Frame {
     pub warnings: Vec<Diagnostic>,
 }
 
+/// What `collect` produced: the draw calls and what could not be drawn.
+struct Collected<'a> {
+    draw_list: DrawList<'a>,
+    warnings: Vec<Diagnostic>,
+}
+
+/// The camera to draw from: the one asked for, or the scene's first.
+fn choose_camera(scene: &RenderScene, camera: Option<Entity>) -> Result<&CameraView> {
+    match camera {
+        Some(entity) => scene
+            .cameras
+            .iter()
+            .find(|view| view.entity == entity)
+            .ok_or_else(|| {
+                Diagnostic::error(
+                    "not_a_camera",
+                    format!("Entity {entity} has no Camera component."),
+                    "Pick an entity that has a Camera, or leave the camera out to use the scene's first one.",
+                )
+            }),
+        None => scene.cameras.first().ok_or_else(|| {
+            Diagnostic::error(
+                "no_camera",
+                "The scene has no camera to draw from.",
+                "Add an entity with a \"Camera\" component and a \"Transform\" that places it; it looks along its -Z axis.",
+            )
+        }),
+    }
+}
+impl Renderer {
+    /// Turns the scene's draws into draw calls. With `only`, just the draw
+    /// with that index in `scene.draws` (to measure one entity on its own).
+    fn collect<'a>(&'a self, scene: &RenderScene, only: Option<usize>) -> Collected<'a> {
+        // What one draw call draws: a built-in shape (with the entity's own
+        // `Material`), or one primitive of an uploaded model (with the
+        // material from its file).
+        let mut warnings = Vec::new();
+        let mut draw_list = DrawList::default();
+        let mut blended_models: Vec<&str> = Vec::new();
+        for (index, draw) in scene.draws.iter().enumerate() {
+            if only.is_some_and(|only| only != index) {
+                continue;
+            }
+            let id = u32::try_from(index + 1).unwrap_or(u32::MAX);
+            if draw.world.determinant().abs() < 1e-12 || !draw.world.is_finite() {
+                warnings.push(Diagnostic::warning(
+                    "degenerate_transform",
+                    format!(
+                        "Entity {} was not drawn: its scale is zero or not finite.",
+                        draw.entity
+                    ),
+                    "Give its Transform (and its parents') a non-zero, finite scale.",
+                ));
+                continue;
+            }
+            match draw.mesh {
+                Mesh::Primitive(shape) => draw_list.push(
+                    Source::Shape(shape_index(shape)),
+                    &draw.world,
+                    (Vec3::splat(-0.5), Vec3::splat(0.5)),
+                    Surface {
+                        material: &draw.material,
+                        normal_scale: 1.0,
+                        occlusion_strength: 1.0,
+                        alpha_cutoff: 0.0,
+                        id,
+                    },
+                ),
+                Mesh::Model => {
+                    let path = draw.model_path.as_deref().unwrap_or_default();
+                    // A `#sub` part names something inside the file; the
+                    // whole model is drawn for now.
+                    let file = path.split('#').next().unwrap_or(path);
+                    let Some((key, model)) = self.models.get_key_value(file) else {
+                        warnings.push(Diagnostic::warning(
+                            "model_not_loaded",
+                            format!(
+                                "Entity {} was not drawn: the model '{file}' has not been loaded.",
+                                draw.entity
+                            ),
+                            "Load the model before drawing (wen capture does it from the scene's assets); check the path in the Model component.",
+                        )
+                        .at_file(file));
+                        continue;
+                    };
+                    if model.blended > 0 && !blended_models.contains(&key.as_str()) {
+                        blended_models.push(key.as_str());
+                    }
+                    for primitive in &model.primitives {
+                        draw_list.push(
+                            Source::Primitive(primitive),
+                            &(draw.world * primitive.matrix),
+                            primitive.bounds,
+                            Surface {
+                                material: &primitive.material,
+                                normal_scale: primitive.normal_scale,
+                                occlusion_strength: primitive.occlusion_strength,
+                                alpha_cutoff: primitive.alpha_cutoff,
+                                id,
+                            },
+                        );
+                    }
+                }
+            }
+        }
+        for key in blended_models {
+            warnings.push(Diagnostic::warning(
+                "alpha_blend_not_blended",
+                format!("The model '{key}' has materials that blend alpha; they are drawn opaque."),
+                "Blended transparency arrives later (M6). Use alpha mode MASK in the material for cut-outs such as leaves.",
+            ));
+        }
+
+        Collected {
+            draw_list,
+            warnings,
+        }
+    }
+}
 /// Everything built when a renderer is created, before it is taken apart.
 struct Pipelines {
     frame_layout: wgpu::BindGroupLayout,
@@ -369,6 +514,8 @@ pub struct Renderer {
     shapes: Vec<GpuMesh>,
     /// Uploaded models, by project path.
     models: BTreeMap<String, GpuModel>,
+    /// The pipelines of the debug views.
+    debug: debug::DebugPipelines,
 }
 
 impl std::fmt::Debug for Renderer {
@@ -431,9 +578,20 @@ impl Renderer {
     pub fn new(gpu: &Gpu) -> Result<Self> {
         let library = engine_shaders();
         let mut modules = Vec::new();
-        for entry in ["sky_pass", "opaque", "tonemap_pass", "shadow_pass"] {
+        for entry in [
+            "sky_pass",
+            "opaque",
+            "tonemap_pass",
+            "shadow_pass",
+            "debug_pass",
+        ] {
             modules.push((entry, library.check(entry)?.source));
         }
+        let debug_source = modules
+            .iter()
+            .find(|(entry, _)| *entry == "debug_pass")
+            .map(|(_, source)| source.clone())
+            .unwrap_or_default();
         let pipelines = gpu.checked("build the render pipelines", |gpu| {
             let device = &gpu.device;
             let module = |name: &str| {
@@ -734,7 +892,9 @@ impl Renderer {
                 .map(|shape| GpuMesh::new(gpu, &primitive(shape), "primitive"))
                 .collect()
         })?;
+        let debug = debug::DebugPipelines::new(gpu, &debug_source, &draw_layout)?;
         Ok(Self {
+            debug,
             frame_layout,
             draw_layout,
             hdr_layout,
@@ -868,26 +1028,7 @@ impl Renderer {
         width: u32,
         height: u32,
     ) -> Result<Frame> {
-        let view = match camera {
-            Some(entity) => scene
-                .cameras
-                .iter()
-                .find(|view| view.entity == entity)
-                .ok_or_else(|| {
-                    Diagnostic::error(
-                        "not_a_camera",
-                        format!("Entity {entity} has no Camera component."),
-                        "Pick an entity that has a Camera, or leave the camera out to use the scene's first one.",
-                    )
-                })?,
-            None => scene.cameras.first().ok_or_else(|| {
-                Diagnostic::error(
-                    "no_camera",
-                    "The scene has no camera to draw from.",
-                    "Add an entity with a \"Camera\" component and a \"Transform\" that places it; it looks along its -Z axis.",
-                )
-            })?,
-        };
+        let view = choose_camera(scene, camera)?;
         let target = Target::new(gpu, width, height)?;
         let aspect = width as f32 / height as f32;
         let view_proj = view.projection(aspect) * view.view;
@@ -913,79 +1054,10 @@ impl Renderer {
         frame.vec4(scene.sky.ground, scene.sky.luminance);
         frame.vec4([exposure, EMISSIVE_NITS, 0.0], 0.0);
 
-        // What one draw call draws: a built-in shape (with the entity's own
-        // `Material`), or one primitive of an uploaded model (with the
-        // material from its file).
-        let mut warnings = Vec::new();
-        let mut draw_list = DrawList::default();
-        let mut blended_models: Vec<&str> = Vec::new();
-        for draw in &scene.draws {
-            if draw.world.determinant().abs() < 1e-12 || !draw.world.is_finite() {
-                warnings.push(Diagnostic::warning(
-                    "degenerate_transform",
-                    format!(
-                        "Entity {} was not drawn: its scale is zero or not finite.",
-                        draw.entity
-                    ),
-                    "Give its Transform (and its parents') a non-zero, finite scale.",
-                ));
-                continue;
-            }
-            match draw.mesh {
-                Mesh::Primitive(shape) => draw_list.push(
-                    Source::Shape(shape_index(shape)),
-                    &draw.world,
-                    (Vec3::splat(-0.5), Vec3::splat(0.5)),
-                    Surface {
-                        material: &draw.material,
-                        normal_scale: 1.0,
-                        occlusion_strength: 1.0,
-                        alpha_cutoff: 0.0,
-                    },
-                ),
-                Mesh::Model => {
-                    let path = draw.model_path.as_deref().unwrap_or_default();
-                    // A `#sub` part names something inside the file; the
-                    // whole model is drawn for now.
-                    let file = path.split('#').next().unwrap_or(path);
-                    let Some((key, model)) = self.models.get_key_value(file) else {
-                        warnings.push(Diagnostic::warning(
-                            "model_not_loaded",
-                            format!(
-                                "Entity {} was not drawn: the model '{file}' has not been loaded.",
-                                draw.entity
-                            ),
-                            "Load the model before drawing (wen capture does it from the scene's assets); check the path in the Model component.",
-                        )
-                        .at_file(file));
-                        continue;
-                    };
-                    if model.blended > 0 && !blended_models.contains(&key.as_str()) {
-                        blended_models.push(key.as_str());
-                    }
-                    for primitive in &model.primitives {
-                        draw_list.push(
-                            Source::Primitive(primitive),
-                            &(draw.world * primitive.matrix),
-                            primitive.bounds,
-                            Surface {
-                                material: &primitive.material,
-                                normal_scale: primitive.normal_scale,
-                                occlusion_strength: primitive.occlusion_strength,
-                                alpha_cutoff: primitive.alpha_cutoff,
-                            },
-                        );
-                    }
-                }
-            }
-        }
-        for key in blended_models {
-            warnings.push(Diagnostic::warning(
-                "alpha_blend_not_blended",
-                format!("The model '{key}' has materials that blend alpha; they are drawn opaque."),
-                "Blended transparency arrives later (M6). Use alpha mode MASK in the material for cut-outs such as leaves.",
-            ));
-        }
+        let Collected {
+            draw_list,
+            warnings,
+        } = self.collect(scene, None);
         let DrawList {
             mut bytes,
             draws,
@@ -1289,11 +1361,13 @@ mod tests {
                 Mat4::from_translation(Vec3::new(3.0, 0.5, -2.0)),
                 Vec3::splat(-0.5),
                 Vec3::splat(0.5),
+                1,
             ),
             (
                 Mat4::from_scale(Vec3::new(30.0, 1.0, 30.0)),
                 Vec3::splat(-0.5),
                 Vec3::splat(0.5),
+                1,
             ),
         ];
         for direction in [
@@ -1303,7 +1377,7 @@ mod tests {
             Vec3::NEG_Z,
         ] {
             let fit = fit_light(direction, &boxes).expect("something to cover");
-            for (matrix, low, high) in &boxes {
+            for (matrix, low, high, _) in &boxes {
                 for corner in 0..8u8 {
                     let point = Vec3::new(
                         if corner & 1 == 0 { low.x } else { high.x },
@@ -1328,6 +1402,7 @@ mod tests {
             Mat4::from_scale(Vec3::splat(f32::NAN)),
             Vec3::splat(-0.5),
             Vec3::splat(0.5),
+            1,
         )];
         assert!(fit_light(Vec3::NEG_Y, &broken).is_none());
     }

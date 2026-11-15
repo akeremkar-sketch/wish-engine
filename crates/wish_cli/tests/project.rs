@@ -272,15 +272,93 @@ fn capture_draws_a_scene_file_into_a_png() {
     let (ok, report) = with(&["--camera", "box"]);
     assert!(!ok);
     assert_eq!(report["error"]["code"], "not_a_camera");
-    let (ok, report) = with(&["--view", "ids"]);
+    let (ok, report) = with(&["--view", "idz"]);
     assert!(!ok);
-    assert_eq!(report["error"]["code"], "view_not_available");
+    assert_eq!(report["error"]["code"], "unknown_view");
+    assert_eq!(report["error"]["hint"], "Did you mean 'ids'?");
+    // Every debug view draws.
+    for view in ["ids", "depth", "normals", "wireframe"] {
+        let (ok, report) = with(&["--view", view]);
+        assert!(ok, "{view}: {report}");
+        assert_eq!(report["view"], view);
+    }
     let (ok, report) = with(&["--size", "big"]);
     assert!(!ok);
     assert_eq!(report["error"]["code"], "invalid_arguments");
     let (ok, report) = with(&["--size", "0x10"]);
     assert!(!ok);
     assert_eq!(report["error"]["code"], "invalid_capture_size");
+}
+
+#[test]
+fn describe_lists_what_a_camera_sees() {
+    let dir = Dir::new("describe");
+    dir.write(
+        "main.scene.json",
+        r#"{ "format": 1, "entities": {
+            "cam": { "components": { "Camera": {}, "Transform": { "translation": [0, 1, 8] } } },
+            "wall": { "components": { "Primitive": { "shape": "Cube" }, "Transform": { "translation": [0, 1, 0], "scale": [3, 3, 1] } } },
+            "hidden_box": { "components": { "Primitive": { "shape": "Cube" }, "Transform": { "translation": [0, 1, -3], "scale": [0.5, 0.5, 0.5] } } },
+            "far_box": { "components": { "Primitive": { "shape": "Cube" }, "Transform": { "translation": [200, 1, 0] } } }
+        } }"#,
+    );
+    let base = [
+        "describe",
+        "--example",
+        "stress",
+        "--scene",
+        "main.scene.json",
+        "--root",
+        dir.arg(),
+        "--software",
+        "--size",
+        "160x90",
+    ];
+    let mut json_args = base.to_vec();
+    json_args.push("--json");
+    let (ok, report) = wen_json(&json_args);
+    assert!(ok, "{report}");
+    assert_eq!(report["camera"], "cam");
+    let visible = report["visible"].as_array().unwrap();
+    assert_eq!(visible.len(), 1, "{report}");
+    assert_eq!(visible[0]["entity"], "wall");
+    assert_eq!(visible[0]["visible_percent"], 100.0);
+    assert!((visible[0]["distance"].as_f64().unwrap() - 8.0).abs() < 0.01);
+    let hidden: Vec<&str> = report["hidden"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|name| name.as_str())
+        .collect();
+    assert_eq!(hidden, ["far_box", "hidden_box"]);
+
+    // The text form says the same thing in words.
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_wen"))
+        .args(base)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{text}");
+    assert!(text.contains("1 visible, 2 hidden"), "{text}");
+    assert!(text.contains("wall: "), "{text}");
+    assert!(text.contains("far_box, hidden_box"), "{text}");
+
+    // Mistakes are explained.
+    let (ok, report) = wen_json(&[
+        "describe",
+        "--example",
+        "stress",
+        "--root",
+        dir.arg(),
+        "--json",
+    ]);
+    assert!(!ok);
+    assert_eq!(report["error"]["code"], "invalid_arguments");
+    let mut wrong_camera = json_args.clone();
+    wrong_camera.extend(["--camera", "cma"]);
+    let (ok, report) = wen_json(&wrong_camera);
+    assert!(!ok);
+    assert_eq!(report["error"]["hint"], "Did you mean 'cam'?");
 }
 
 /// A one-triangle GLB with a red material, built by hand.

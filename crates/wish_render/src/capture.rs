@@ -34,6 +34,17 @@ pub(crate) struct Target {
 
 impl Target {
     pub(crate) fn new(gpu: &Gpu, width: u32, height: u32) -> Result<Self> {
+        Self::with_format(gpu, width, height, CAPTURE_FORMAT)
+    }
+
+    /// A target of another 4-byte format, such as `Rgba8Unorm` (raw bytes
+    /// for the debug views) or `R32Uint` (one identity per pixel).
+    pub(crate) fn with_format(
+        gpu: &Gpu,
+        width: u32,
+        height: u32,
+        format: wgpu::TextureFormat,
+    ) -> Result<Self> {
         check_size(width, height)?;
         let padded_row = (width * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
             * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
@@ -48,7 +59,7 @@ impl Target {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: CAPTURE_FORMAT,
+                format,
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
                 view_formats: &[],
             });
