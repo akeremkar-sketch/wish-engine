@@ -211,7 +211,10 @@ fn textures_are_decoded_to_rgba_and_linked_to_materials() {
             (tangent.truncate() - Vec3::X).length() < 1e-5,
             "{tangent:?}"
         );
-        assert_eq!(tangent.w.abs(), 1.0);
+        // glTF: the normal map's green channel points up in the image,
+        // towards smaller V; here V runs down the quad, so up is +Y and
+        // cross(normal, tangent) = Z x X = +Y already: the sign is +1.
+        assert_eq!(tangent.w, 1.0, "{tangent:?}");
     }
 }
 

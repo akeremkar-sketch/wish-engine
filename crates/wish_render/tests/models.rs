@@ -271,11 +271,10 @@ fn a_normal_map_changes_the_lighting() {
     });
     tilted.materials[0].normal_texture = Some(wish_import::TextureRef { texture: 0 });
     for primitive in &mut tilted.meshes[0].primitives {
-        // The quad's U axis is +X, V is -Y: tangent +X, bitangent sign +1
-        // for a right-handed frame (T x B = N needs B = -Y... N x T = +Y;
-        // the sign accounts for V pointing down).
+        // The quad's U axis is +X and the image's up (the green channel)
+        // is +Y: tangent +X with sign +1, as the importer generates it.
         primitive.tangents =
-            vec![wish_core::math::Vec4::new(1.0, 0.0, 0.0, -1.0); primitive.positions.len()];
+            vec![wish_core::math::Vec4::new(1.0, 0.0, 0.0, 1.0); primitive.positions.len()];
     }
     let (tilted_image, _) = draw(&tilted);
     let bent = left(&tilted_image);

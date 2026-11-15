@@ -698,8 +698,9 @@ fn flat_normals(primitive: &mut Primitive) {
 
 /// Per-vertex tangents from the texture coordinates: each triangle's tangent
 /// is added to its vertices, then made perpendicular to the normal. The sign
-/// in `w` says which way the bitangent points. (Not MikkTSpace, but gives
-/// the same result for ordinary, non-mirrored UV layouts.)
+/// in `w` says which way the bitangent points: the bitangent is `cross(normal,
+/// tangent) * w`, and it must point where the normal map's green channel does,
+/// up in the image (towards smaller V). For an ordinary, non-mirrored layout`n/// `w` is +1. (Not MikkTSpace, but the same for such layouts.)
 fn generate_tangents(primitive: &Primitive) -> Vec<Vec4> {
     let count = primitive.positions.len();
     let mut tangent = vec![Vec3::ZERO; count];
@@ -716,7 +717,10 @@ fn generate_tangents(primitive: &Primitive) -> Vec<Vec4> {
         }
         let scale = 1.0 / determinant;
         let t = (edge1 * d2.y - edge2 * d1.y) * scale;
-        let bt = (edge2 * d1.x - edge1 * d2.x) * scale;
+        // The bitangent is the direction the normal map's green channel
+        // points: up in the image, which is towards *smaller* V (glTF's UV
+        // origin is the top left).
+        let bt = -(edge2 * d1.x - edge1 * d2.x) * scale;
         for vertex in [a, b, c] {
             tangent[vertex] += t;
             bitangent[vertex] += bt;
