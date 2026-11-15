@@ -1,0 +1,18 @@
+[package]
+name = "wish_scene"
+description = "Scene and prefab documents for Wish Engine: strict JSON with source positions, canonical formatting, validation and edits."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+wish_core.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

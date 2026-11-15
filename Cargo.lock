@@ -534,6 +534,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "wish_scene"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "serde_json",
+ "wish_core",
+]
+
+[[package]]
 name = "wish_schema"
 version = "0.1.0"
 dependencies = [

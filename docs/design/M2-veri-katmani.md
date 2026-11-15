@@ -148,7 +148,7 @@ Hepsi M1'deki gibi `--json` ile MCP zarfında çıktı verir.
 
 | # | İş paketi | Model · efor |
 |---|---|---|
-| WP1 | `wish_scene::json`: aralık kaydeden katı ayrıştırıcı + kanonik yazıcı | Sonnet 5.5 · high |
+| WP1 | `wish_scene::json`: aralık kaydeden katı ayrıştırıcı + kanonik yazıcı | Sonnet 5.5 · high — **tamamlandı** |
 | WP2 | `SceneDocument`: yükleme, doğrulama (şema, kimlik, parent, döngü), konumlu tanılar, 30 bozuk dosya testi | Sonnet 5.5 · high |
 | WP3 | İşlemler, revizyonlar, geri al/yinele, `actor`, fark; model tabanlı test | Opus 5.5 · high |
 | WP4 | Prefab'lar (tek düzey, yamalar, türetilmiş kimlikler) | Opus 5.5 · high |
@@ -162,3 +162,14 @@ Hepsi M1'deki gibi `--json` ile MCP zarfında çıktı verir.
 1. **`order` mı çocuk listesi mi?** `parent` + `order` seçildi (tek kaynak). Editörde sürükle-bırak ile sıralama çok sayıda `order` yeniden numaralandırması gerektirirse M8a'da yeniden değerlendirilir.
 2. **Varsayılandan farklı alanları yazma kuralı** varsayılan değiştiğinde sahnenin anlamını sessizce değiştirir. Bu bilinçli bir seçim (prefab'larda istenen davranış). İstenmezse `wen fmt --explicit` tüm alanları yazar.
 3. **Sayı biçimi:** bileşen değerleri şemaya göre biçimlenir, ama `notes` dışındaki serbest JSON yok; şemasız bir sayı ortaya çıkarsa (ör. bilinmeyen bileşen) tanı verildiği için biçim sorunu doğmaz.
+
+## 12. Uygulama notları
+
+### WP1 — `wish_scene::json`
+
+- **Ağaç:** `parse(kaynak, dosya) -> Node`. Her `Node` değerinin başladığı `Span`'ı (satır, sütun; 1'den, **karakter** olarak) taşır; nesne üyeleri ayrıca anahtarın konumunu taşır. `Node::locate(işaretçi)` bir JSON işaretçisini (M1'in şema tanıları bunu taşıyor) `Located { key, value }`'ya çevirir: bilinmeyen alan anahtara, aralık dışı sayı değere işaret edebilsin diye ikisi ayrı.
+- **Katılık:** yinelenen anahtar `json_duplicate_key`; sondaki virgül, yorum, tek tırnak, baştaki sıfır, `NaN`/`Infinity`, ham denetim karakteri, geçersiz kaçış, tek başına vekil (surrogate) yarısı ve dosya sonundaki fazlalık ayrı ayrı, konumlu ve ipucu taşıyan tanılardır. BOM okunur ama dosya kanonik sayılmaz. İç içe geçme sınırı 128 (hem okumada hem yazmada).
+- **Kanonik yazıcı:** `to_canonical(&Value) -> Result<String>`. Anahtarlar **açıkça** UTF-8 bayt sırasıyla sıralanır (`serde_json::Map` sırası bir özelliğe bağlı olduğu için ona güvenilmedi). Yalnızca sayılardan oluşan diziler tek satırda; boş `[]`/`{}`; dizelerde yalnızca `"`, `\`, denetim karakterleri kaçışlanır. Sayılar `serde_json::Number`'ın en kısa gösterimiyle (`1e2` → `100.0`, `0.10` → `0.1`). `is_canonical(kaynak)`: bayt düzeyinde eşitlik.
+- **Doğrulama:** rastgele `Value` → kanonik → oku → aynı değer ve aynı bayt (sabit nokta); her konum gerçekten o değerin ilk karakterine işaret ediyor; rastgele metinde ayrıştırıcı çökmüyor, hata her zaman konum ve ipucu taşıyor.
+- **Testin yakaladığı hata:** yüksek vekil yarısı geçersiz bir ikinci yarıyla gelince birleştirme hesabı taşıyordu (kötü niyetli girdide çökme). Hesap, aralık doğrulandıktan sonraya alındı; iki örnek test olarak eklendi.
+- **Hata ipuçları kendi başına yeterli olmalı:** testler ipucunun ilgili terimi (ör. "surrogate", "four") içermesini zorluyor; ileti ile ipucu birbirinin yerini tutmaz.
