@@ -209,6 +209,20 @@ pub fn build(config: AppConfig) -> Result<App> {
     world.register_event::<Bounced>()?;
     world.insert_resource(Stats::default())?;
     world.insert_resource(Gravity::default())?;
+    add_systems(&mut app)?;
+    Ok(app)
+}
+
+/// Adds the example's systems to an app that has its types. Resources the
+/// systems read are added with their defaults if the world has none yet.
+pub fn add_systems(app: &mut App) -> Result<()> {
+    let world = app.world_mut();
+    if world.resource::<Stats>().is_none() {
+        world.insert_resource(Stats::default())?;
+    }
+    if world.resource::<Gravity>().is_none() {
+        world.insert_resource(Gravity::default())?;
+    }
     app.add_system(System::new("spawn", spawn).before("integrate"))?;
     app.add_system(System::new("integrate", integrate))?;
     app.add_system(System::new("bounce", bounce).after("integrate"))?;
@@ -219,5 +233,5 @@ pub fn build(config: AppConfig) -> Result<App> {
             .after("count_bounces")
             .after("watch"),
     )?;
-    Ok(app)
+    Ok(())
 }

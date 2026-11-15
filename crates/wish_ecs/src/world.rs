@@ -1054,6 +1054,23 @@ impl World {
         Ok(Value::Array(events))
     }
 
+    /// How many events of the type called `name` have been sent since the
+    /// world was created (a running total: buffered ones dropped by
+    /// [`World::update_events`] still count). Taking the difference of two
+    /// readings says how many were sent in between.
+    pub fn events_sent(&self, name: &str) -> Result<u64> {
+        let id = self
+            .registry
+            .event_id(name)
+            .ok_or_else(|| self.registry.unknown_event(name))?;
+        Ok(self
+            .state
+            .events
+            .get(id.index())
+            .and_then(Option::as_ref)
+            .map_or(0, EventQueue::next_sequence))
+    }
+
     /// Ends an update for events: events sent before the previous call are
     /// dropped. Call it once per update (the scheduler does).
     pub fn update_events(&mut self) {

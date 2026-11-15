@@ -14,6 +14,7 @@ mod args;
 mod capture;
 mod project_cmds;
 mod scene;
+mod tool_cmds;
 mod types;
 mod view;
 
@@ -48,6 +49,10 @@ USAGE:
     wen view --example <name> --scene <file> [--root <folder>] [--size <w>x<h>]
              [--view lit|ids|depth|normals|wireframe] [--software] [--shaders <folder>] [--exit-after <frames>]
     wen shaders [--dir <folder>] [--json]
+    wen new <folder> [--name <name>] [--json]
+    wen mcp [--root <folder>] [--software]
+    wen call <tool> ['{json args}' | --<param> <value> ...] [--root <folder>] [--actor <name>]
+    wen do [<file> | -] [--root <folder>] [--actor <name>]
     wen mv <from> <to> --example <name> [--root <folder>] [--dry-run] [--json]
     wen schema [--example <name>] [--json]
     wen examples [--json]
@@ -88,7 +93,20 @@ COMMANDS:
     shaders    Check every shader of the engine (syntax and validation, no GPU needed); --dir checks
                a folder of <name>.wgsl files in place of the built-in ones. Pass the same folder
                as --shaders to capture/describe to draw with them. Fails if there is any problem.
-    mv        Move an asset file or folder (paths relative to --root) and update every
+    new        Create a project folder: wish.json, a starting scene (camera, sun, ground), assets/,
+               .mcp.json (connects Claude Code and other MCP clients) and a project CLAUDE.md.
+    mcp        Serve the tools over MCP (Model Context Protocol, stdio). Claude Code and other MCP
+               clients start it themselves from .mcp.json (wen new writes it); --software draws
+               with the CPU adapter. Standard output carries only the protocol.
+    call       Run one control-plane tool (the same tools the MCP server offers) and print its
+               JSON answer, exactly as an MCP client receives it. Arguments are one JSON object
+               or --name value flags. `wen call project_info` is a good start; an unknown tool
+               name lists them all.
+    do         Run a list of tool calls in one process, in order, one answer per line. The list
+               is a JSON array or one { \"tool\": ..., \"args\": { ... } } per line, from a file or
+               standard input. Simulation sessions live as long as the process, so a sequence
+               such as sim_start, sim_step, capture_frame belongs in one `wen do`.
+    mv         Move an asset file or folder (paths relative to --root) and update every
                asset reference to it in scenes and prefabs, all or nothing. The example
                supplies the component types that tell where references are.
     schema     Print the JSON Schema of every registered component, resource and event.
@@ -99,6 +117,14 @@ Add --json to any command for a single machine-readable JSON document.";
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let json = arguments.iter().any(|argument| argument == "--json");
+    // The MCP server owns standard output: nothing else may be printed.
+    if let Ok(Args {
+        command: Command::Mcp(context),
+        ..
+    }) = parse(&arguments)
+    {
+        return tool_cmds::serve_mcp(&context);
+    }
     match parse(&arguments).and_then(execute_any) {
         Ok(outcome) => {
             println!("{}", outcome.text);
@@ -129,7 +155,36 @@ fn execute_any(args: Args) -> Result<Outcome> {
             paths,
             example,
             root,
-        } => project_cmds::check(paths, example, &root_of(root), args.json),
+        } => Ok(tool_cmds::shortcut(
+            "check",
+            &serde_json::json!({ "paths": paths }),
+            &args::ToolContext {
+                root: root.clone(),
+                example: Some(example.clone()),
+                actor: None,
+                software: false,
+            },
+            args.json,
+            tool_cmds::check_text,
+        )),
+        Command::Move {
+            from,
+            to,
+            example,
+            root,
+            dry_run,
+        } => Ok(tool_cmds::shortcut(
+            "asset_move",
+            &serde_json::json!({ "from": from, "to": to, "dry_run": dry_run }),
+            &args::ToolContext {
+                root: root.clone(),
+                example: Some(example.clone()),
+                actor: None,
+                software: false,
+            },
+            args.json,
+            tool_cmds::move_text,
+        )),
         Command::Format {
             paths,
             example,
@@ -137,6 +192,16 @@ fn execute_any(args: Args) -> Result<Outcome> {
             check,
         } => project_cmds::format(paths, example, &root_of(root), *check, args.json),
         Command::Shaders { dir } => capture::shaders(dir.as_deref(), args.json),
+        Command::Capture(capture) => Ok(tool_cmds::capture(capture, args.json)),
+        Command::Describe(describe) => Ok(tool_cmds::describe(describe, args.json)),
+        Command::New { dir, name } => {
+            tool_cmds::new_project(dir, name.as_deref(), args.json).map(|text| Outcome {
+                text,
+                success: true,
+            })
+        }
+        Command::Call(call) => Ok(tool_cmds::call(call)),
+        Command::Do(calls) => Ok(tool_cmds::run_calls(calls)),
         Command::Migrate { paths, root } => project_cmds::migrate(paths, &root_of(root), args.json),
         Command::Watch {
             example,
@@ -177,24 +242,22 @@ fn execute(args: Args) -> Result<String> {
             ticks,
             seed,
         } => bench(entities, ticks, seed, args.json),
-        Command::Move {
-            from,
-            to,
-            example,
-            root,
-            dry_run,
-        } => move_asset(&from, &to, &example, root.as_deref(), dry_run, args.json),
         Command::Check { .. }
         | Command::Format { .. }
+        | Command::Move { .. }
         | Command::Migrate { .. }
         | Command::Shaders { .. }
+        | Command::New { .. }
+        | Command::Capture(_)
+        | Command::Describe(_)
+        | Command::Mcp(_)
+        | Command::Call(_)
+        | Command::Do(_)
         | Command::Watch { .. } => Err(Diagnostic::error(
             "internal_error",
             "A project command was run through the simple path.",
             "This is a bug in wen. Please report it.",
         )),
-        Command::Capture(capture) => capture::capture(&capture, args.json),
-        Command::Describe(describe) => capture::describe(&describe, args.json),
         Command::View(view) => view::view(&view, args.json),
         Command::Schema { example } => schema(example.as_deref(), args.json),
         Command::Examples => Ok(if args.json {
@@ -300,52 +363,6 @@ fn run(options: &RunOptions, as_json: bool) -> Result<String> {
     }
     for problem in warnings.iter().chain(&failures) {
         text.push_str(&format!("\n{problem}"));
-    }
-    Ok(text)
-}
-
-/// Moves an asset (or folder) and rewrites the references to it.
-fn move_asset(
-    from: &str,
-    to: &str,
-    example: &str,
-    root: Option<&str>,
-    dry_run: bool,
-    as_json: bool,
-) -> Result<String> {
-    let root = std::path::Path::new(root.unwrap_or("."));
-    let mut app = App::new(AppConfig::default());
-    types::register_scene_types(example, app.world_mut())?;
-    let plan = wish_asset::plan_move(root, from, to, app.world().registry())?;
-    if !dry_run {
-        wish_asset::apply_move(root, &plan)?;
-    }
-    let documents: Vec<Value> = plan
-        .documents
-        .iter()
-        .map(|edit| json!({ "file": edit.file, "references": edit.changes }))
-        .collect();
-    if as_json {
-        return Ok(json!({
-            "ok": true,
-            "from": plan.from,
-            "to": plan.to,
-            "dry_run": dry_run,
-            "meta": plan.meta.as_ref().map(|(old, new)| json!({ "from": old, "to": new })),
-            "documents": documents,
-        })
-        .to_string());
-    }
-    let verb = if dry_run { "Would move" } else { "Moved" };
-    let mut text = format!("{verb} {} -> {}", plan.from, plan.to);
-    if let Some((old, new)) = &plan.meta {
-        text.push_str(&format!("\n  and {old} -> {new}"));
-    }
-    for edit in &plan.documents {
-        text.push_str(&format!(
-            "\n  updated {} reference(s) in {}",
-            edit.changes, edit.file
-        ));
     }
     Ok(text)
 }

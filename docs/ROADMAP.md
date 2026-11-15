@@ -132,7 +132,9 @@ M1'in ilk iş paketinde yapılacak tek ortam işi: derleme çıktılarını OneD
 
 ## M4 — Kontrol düzlemi ve MCP
 
-**Çıktı.** `wish_control`, `wish_mcp` (stdio + HTTP), tüm araçların komut satırı eşleri, `wen new` (proje iskeleti + `.mcp.json` + proje `CLAUDE.md`), MCP belge kaynakları, dünya denetçisi, `evals/` altında ilk 10 görev.
+**Durum: tamamlandı (16 Kasım 2026).** Tasarım ve sonuç: [design/M4-kontrol-duzlemi.md](design/M4-kontrol-duzlemi.md) (§15 çıkış ölçütü kanıtları). 20 araç, MCP stdio sunucusu, komut satırı eşliği bayt bayt, ilk 10 değerlendirme görevi Sonnet 5.5 · medium ile **30/30** (iki koşu). **Plan değişikliği:** Streamable HTTP taşıması M8a'ya (editörle birlikte) kaydırıldı; gerekçe notun §1'inde.
+
+**Çıktı.** `wish_control`, `wish_mcp` (stdio; HTTP M8a'da), tüm araçların komut satırı eşleri, `wen new` (proje iskeleti + `.mcp.json` + proje `CLAUDE.md`), MCP belge kaynakları, dünya denetçisi, `evals/` altında ilk 10 görev.
 
 **Çıkış ölçütü.**
 - Claude, boş bir projeden başlayıp **yalnızca MCP ile** bir sahne kurar, çalıştırır, görüntü alır ve sonucu doğrular — insan müdahalesi olmadan.

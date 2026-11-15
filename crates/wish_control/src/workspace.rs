@@ -1,0 +1,250 @@
+//! The workspace: one project, opened by one process (the MCP server, a
+//! `wen do` run, later the editor), with everything the tools share.
+
+use std::path::{Path, PathBuf};
+
+use serde_json::{Map, Value, json};
+use wish_app::{App, AppConfig};
+use wish_core::{Diagnostic, Result};
+use wish_ecs::Registry;
+use wish_scene::Actor;
+
+use crate::project::{ProjectConfig, read_project};
+use crate::tool::{Tool, catalog};
+
+/// How to open a workspace.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WorkspaceOptions {
+    /// The project folder.
+    pub root: PathBuf,
+    /// A built-in example whose types to use, overriding `wish.json` (the
+    /// command line's `--example`, kept for projects without `wish.json`).
+    pub example: Option<String>,
+}
+
+/// One open project.
+pub struct Workspace {
+    root: PathBuf,
+    config: Option<ProjectConfig>,
+    /// Why `wish.json` could not be read, if it could not.
+    config_problem: Option<Diagnostic>,
+    /// The example whose types are registered.
+    example: Option<String>,
+    /// Holds the type registry the project's documents are checked against.
+    pub(crate) types: App,
+    /// Open scene documents.
+    pub(crate) docs: crate::documents::Documents,
+    /// Play sessions and their log.
+    pub(crate) sessions: crate::sessions::Sessions,
+    /// (scene, actor) → the revision that actor last saw.
+    pub(crate) seen: std::collections::BTreeMap<(String, String), u64>,
+    /// The renderer, opened by the first tool that draws.
+    pub(crate) renderer: Option<crate::render::Drawing>,
+    /// Use the software (CPU) adapter for drawing.
+    pub(crate) software: bool,
+    /// Raised by the MCP server when the client cancels the running call.
+    pub(crate) cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+}
+
+impl std::fmt::Debug for Workspace {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Workspace")
+            .field("root", &self.root)
+            .field("config", &self.config)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Workspace {
+    /// Opens the project in `options.root`. A missing or broken `wish.json`
+    /// does not stop it: the tools still work with the engine's types, and
+    /// `project_info` and `check` report the problem.
+    pub fn open(options: WorkspaceOptions) -> Result<Self> {
+        if !options.root.is_dir() {
+            return Err(Diagnostic::error(
+                "project_not_found",
+                format!("'{}' is not a folder.", options.root.display()),
+                "Give the project folder (--root), or create a project with `wen new <folder>`.",
+            ));
+        }
+        let (config, config_problem) = match read_project(&options.root) {
+            Ok(config) => (config, None),
+            Err(problem) => (None, Some(problem)),
+        };
+        if let Some(name) = &options.example
+            && !wish_examples::NAMES.contains(&name.as_str())
+        {
+            return Err(Diagnostic::error(
+                "unknown_example",
+                format!("There is no built-in example called '{name}'."),
+                wish_core::suggest::unknown_name_hint(name, wish_examples::NAMES),
+            )
+            .with_candidates(wish_examples::NAMES.iter().copied()));
+        }
+        let example = options
+            .example
+            .clone()
+            .or_else(|| config.as_ref().and_then(|config| config.example.clone()));
+        let mut types = App::new(AppConfig::default());
+        crate::types::register_project_types(example.as_deref(), types.world_mut())?;
+        Ok(Self {
+            root: options.root,
+            config,
+            config_problem,
+            example,
+            types,
+            docs: crate::documents::Documents::default(),
+            sessions: crate::sessions::Sessions::default(),
+            seen: std::collections::BTreeMap::new(),
+            renderer: None,
+            software: std::env::var_os("WISH_SOFTWARE").is_some(),
+            cancel: None,
+        })
+    }
+
+    /// The project folder.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// What `wish.json` says, if the project has a readable one.
+    pub fn config(&self) -> Option<&ProjectConfig> {
+        self.config.as_ref()
+    }
+
+    /// Points `wish.json`'s default scene somewhere else (after it moved),
+    /// writing the file.
+    pub(crate) fn set_default_scene(&mut self, scene: &str) -> Result<()> {
+        let Some(config) = self.config.as_mut() else {
+            return Ok(());
+        };
+        config.scene = scene.to_owned();
+        let text = config.to_canonical()?;
+        std::fs::write(self.root.join(crate::project::PROJECT_FILE), text).map_err(|error| {
+            Diagnostic::error(
+                "file_unwritable",
+                format!(
+                    "Could not update '{}': {error}.",
+                    crate::project::PROJECT_FILE
+                ),
+                "Check that the project folder can be written to.",
+            )
+        })
+    }
+
+    /// Why `wish.json` could not be read.
+    pub fn config_problem(&self) -> Option<&Diagnostic> {
+        self.config_problem.as_ref()
+    }
+
+    /// The built-in example whose types are in use.
+    pub fn example(&self) -> Option<&str> {
+        self.example.as_deref()
+    }
+
+    /// The types the project's documents use.
+    pub fn registry(&self) -> &Registry {
+        self.types.world().registry()
+    }
+
+    /// Runs one tool and returns its answer: `{ "ok": true, ... }` or
+    /// `{ "ok": false, "error": Diagnostic }`. Never fails and never panics
+    /// out: a bug inside a tool comes back as an `internal_error` answer, so
+    /// one bad call cannot take the server down.
+    pub fn call(&mut self, tool: &str, args: &Value, actor: &Actor) -> Value {
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.run(tool, args, actor)
+        }))
+        .unwrap_or_else(|_| {
+            Err(Diagnostic::error(
+                "internal_error",
+                format!("The tool '{tool}' failed unexpectedly."),
+                "This is a bug in the engine. The project is unchanged; please report the call that caused it.",
+            ))
+        });
+        envelope(outcome)
+    }
+
+    fn run(&mut self, name: &str, args: &Value, actor: &Actor) -> Result<Map<String, Value>> {
+        let tool = find_tool(name)?;
+        let args = crate::param::parse(tool.name, tool.params, args)?;
+        (tool.run)(self, &args, actor)
+    }
+}
+
+/// The tool called `name`, or an `unknown_tool` diagnostic.
+pub fn find_tool(name: &str) -> Result<&'static Tool> {
+    catalog()
+        .iter()
+        .find(|tool| tool.name == name)
+        .ok_or_else(|| {
+            let names: Vec<&str> = catalog().iter().map(|tool| tool.name).collect();
+            Diagnostic::error(
+                "unknown_tool",
+                format!("There is no tool called '{name}'."),
+                wish_core::suggest::unknown_name_hint(name, &names),
+            )
+            .with_candidates(names)
+        })
+}
+
+/// The answer form of a tool's outcome.
+pub fn envelope(outcome: Result<Map<String, Value>>) -> Value {
+    match outcome {
+        Ok(mut map) => {
+            map.insert("ok".to_owned(), Value::Bool(true));
+            Value::Object(map)
+        }
+        Err(problem) => json!({ "ok": false, "error": explained(problem) }),
+    }
+}
+
+/// An unknown name that stands for a familiar concept from other engines
+/// gets an explanation of how it is done here, before the usual hint.
+fn explained(mut problem: Diagnostic) -> Diagnostic {
+    const CODES: &[&str] = &[
+        "unknown_component",
+        "unknown_type",
+        "unknown_resource",
+        "expr_unknown_name",
+    ];
+    if CODES.contains(&problem.code.as_ref()) {
+        let explanation = crate::concepts::quoted_names(&problem.message)
+            .into_iter()
+            .find_map(crate::concepts::explain);
+        if let Some(explanation) = explanation {
+            problem.hint = format!("{explanation} ({})", problem.hint);
+        }
+    }
+    problem
+}
+
+/// Reads an actor's name: `human`, `file`, or anything else as an agent.
+pub fn parse_actor(name: &str) -> Actor {
+    match name {
+        "human" | "" => Actor::Human,
+        "file" => Actor::File,
+        other => Actor::Agent(other.strip_prefix("agent:").unwrap_or(other).to_owned()),
+    }
+}
+
+impl Workspace {
+    /// Chooses the software (CPU) adapter for tools that draw: the same
+    /// picture on every machine, and it works without a GPU. Also on when
+    /// the environment variable `WISH_SOFTWARE` is set.
+    pub fn set_software(&mut self, software: bool) {
+        if software != self.software {
+            self.software = software;
+            self.renderer = None;
+        }
+    }
+}
+
+impl Workspace {
+    /// A flag that, once raised, stops a long-running call (`sim_step`) at
+    /// the next tick boundary with `stopped_by: "cancelled"`. The MCP server
+    /// raises it when the client sends `notifications/cancelled`.
+    pub fn set_cancel_flag(&mut self, flag: std::sync::Arc<std::sync::atomic::AtomicBool>) {
+        self.cancel = Some(flag);
+    }
+}

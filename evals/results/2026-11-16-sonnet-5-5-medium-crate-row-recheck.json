@@ -1,0 +1,62 @@
+{
+  "cost_usd_equivalent": 0.276,
+  "effort": "medium",
+  "model": "sonnet",
+  "pass_rate": 0.6666666666666666,
+  "passed": 2,
+  "total": 3,
+  "tries": [
+    {
+      "agent_error": null,
+      "cache_read_tokens": 198773,
+      "cache_write_tokens": 13348,
+      "cost_usd": 0.0952313,
+      "first_call_error": false,
+      "input_tokens": 16,
+      "output_tokens": 2193,
+      "passed": false,
+      "reason": "no five instances 2 m apart in a row along x, resting on the ground: crate_1 (-6.00, 0.50, 0.00), crate_2 (-3.00, 0.50, 0.00), crate_3 (0.00, 0.50, 0.00), crate_4 (3.00, 0.50, 0.00), crate_5 (6.00, 0.50, 0.00)",
+      "seconds": 24.5,
+      "task": "05_crate_row",
+      "tool_calls": 10,
+      "tool_errors": 1,
+      "try": 1,
+      "turns": 11
+    },
+    {
+      "agent_error": null,
+      "cache_read_tokens": 198547,
+      "cache_write_tokens": 12755,
+      "cost_usd": 0.0873167,
+      "first_call_error": false,
+      "input_tokens": 16,
+      "output_tokens": 1641,
+      "passed": true,
+      "reason": "",
+      "seconds": 18.5,
+      "task": "05_crate_row",
+      "tool_calls": 10,
+      "tool_errors": 0,
+      "try": 2,
+      "turns": 11
+    },
+    {
+      "agent_error": null,
+      "cache_read_tokens": 169555,
+      "cache_write_tokens": 13925,
+      "cost_usd": 0.09322349999999999,
+      "first_call_error": false,
+      "input_tokens": 14,
+      "output_tokens": 2054,
+      "passed": true,
+      "reason": "",
+      "seconds": 19.5,
+      "task": "05_crate_row",
+      "tool_calls": 10,
+      "tool_errors": 0,
+      "try": 3,
+      "turns": 11
+    }
+  ],
+  "tries_per_task": 3
+}

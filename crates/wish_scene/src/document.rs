@@ -414,13 +414,20 @@ pub(crate) fn check_override_target(prefab: &SceneDocument, path: &str, inner: &
             .map(|(id, _)| id)
             .filter(|id| *id != PREFAB_ROOT)
             .collect();
+        let hint = if ids.is_empty() {
+            // Only a root: overrides have nothing to point at.
+            "This prefab has only its root entity. Change the instance itself instead: give it \"components\" when you instantiate it, or use set / replace on the instance's id.".to_owned()
+        } else {
+            format!(
+                "{} Overrides name one of the prefab's own entities ({}); the instance's root is changed through its own components instead.",
+                unknown_name_hint(inner, &ids),
+                ids.join(", ")
+            )
+        };
         return Err(Diagnostic::error(
             "unknown_prefab_entity",
             format!("The prefab '{path}' has no entity '{inner}'."),
-            format!(
-                "{} If the entity was renamed or removed in the prefab, rename or delete this override.",
-                unknown_name_hint(inner, &ids)
-            ),
+            hint,
         )
         .with_candidates(ids.iter().copied()));
     }

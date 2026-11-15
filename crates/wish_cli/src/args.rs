@@ -10,7 +10,7 @@ use wish_core::{Diagnostic, Result};
 /// The commands `wen` understands.
 pub const COMMANDS: &[&str] = &[
     "run", "bench", "schema", "mv", "check", "fmt", "migrate", "watch", "capture", "describe",
-    "shaders", "view", "examples", "help", "version",
+    "shaders", "view", "call", "do", "new", "mcp", "examples", "help", "version",
 ];
 
 /// A parsed command line.
@@ -101,6 +101,19 @@ pub enum Command {
         /// Stop after this many seconds (0: run until interrupted).
         seconds: u64,
     },
+    /// Create a new project folder.
+    New {
+        /// The folder to create the project in.
+        dir: String,
+        /// The project's name (default: the folder's name).
+        name: Option<String>,
+    },
+    /// Serve the tools over MCP on standard input and output.
+    Mcp(ToolContext),
+    /// Run one control-plane tool.
+    Call(CallArgs),
+    /// Run a list of control-plane tool calls in one process.
+    Do(DoArgs),
     /// Draw a scene into a PNG without a window.
     Capture(CaptureArgs),
     /// List what a camera sees: which entities are on screen and how much.
@@ -188,6 +201,159 @@ pub struct DescribeArgs {
     pub shaders: Option<String>,
 }
 
+/// Where and as whom a tool command runs.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ToolContext {
+    /// The project folder (default: the current folder).
+    pub root: Option<String>,
+    /// A built-in example whose types to use (overrides `wish.json`).
+    pub example: Option<String>,
+    /// Who makes the changes (default: `human`).
+    pub actor: Option<String>,
+    /// Draw with the software (CPU) adapter.
+    pub software: bool,
+}
+
+/// The options of `wen call`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CallArgs {
+    /// The tool's name.
+    pub tool: String,
+    /// The arguments as JSON text, if given that way.
+    pub json: Option<String>,
+    /// The arguments as `--name value` pairs (any order).
+    pub flags: Vec<(String, String)>,
+    /// Where and as whom.
+    pub context: ToolContext,
+}
+
+/// The options of `wen do`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DoArgs {
+    /// The file of calls, or `None` / `-` for standard input.
+    pub source: Option<String>,
+    /// Where and as whom.
+    pub context: ToolContext,
+}
+
+/// `wen call <tool> [json] [--param value ...]` and `wen do [file]`. A tool's
+/// own parameters are not known here (they are checked by the control plane,
+/// which gives the same errors as over MCP), so only the shared flags are.
+fn parse_tool_command(command: &str, rest: &[String]) -> Result<Args> {
+    let mut context = ToolContext::default();
+    let mut json = false;
+    let mut positional: Vec<String> = Vec::new();
+    let mut flags: Vec<(String, String)> = Vec::new();
+    let mut index = 0;
+    while let Some(argument) = rest.get(index) {
+        index += 1;
+        if !argument.starts_with("--") || argument == "-" {
+            positional.push(argument.clone());
+            continue;
+        }
+        let (name, inline) = match argument.split_once('=') {
+            Some((name, value)) => (name.to_owned(), Some(value.to_owned())),
+            None => (argument.clone(), None),
+        };
+        if name == "--software" {
+            context.software = true;
+            continue;
+        }
+        if name == "--json" {
+            json = true;
+            continue;
+        }
+        // A flag's value is the next argument unless that is another flag
+        // (so a boolean parameter can be written alone: `--dry-run`).
+        let value = match inline {
+            Some(value) => value,
+            None => match rest.get(index) {
+                Some(next) if !next.starts_with("--") => {
+                    index += 1;
+                    next.clone()
+                }
+                _ => String::new(),
+            },
+        };
+        let missing = |flag: &str| {
+            usage_error(
+                format!("{flag} needs a value."),
+                format!("Write it like {flag} <value>."),
+            )
+        };
+        match name.as_str() {
+            "--root" if !value.is_empty() => context.root = Some(value),
+            "--example" if !value.is_empty() => context.example = Some(value),
+            "--actor" if !value.is_empty() => context.actor = Some(value),
+            "--root" | "--example" | "--actor" => return Err(missing(&name)),
+            _ if command == "do" || command == "mcp" => {
+                let names = ["--root", "--example", "--actor", "--json"];
+                return Err(usage_error(
+                    format!("'wen do' does not accept '{name}'."),
+                    unknown_name_hint(&name, &names),
+                )
+                .with_candidates(names));
+            }
+            _ => flags.push((name, value)),
+        }
+    }
+    if command == "mcp" {
+        if let Some(extra) = positional.first() {
+            return Err(usage_error(
+                format!("'wen mcp' takes no argument '{extra}'."),
+                "Write it like: wen mcp [--root <folder>] [--software]. MCP clients start it themselves (see .mcp.json).".to_owned(),
+            ));
+        }
+        return Ok(Args {
+            command: Command::Mcp(context),
+            json,
+        });
+    }
+    let command = if command == "do" {
+        if positional.len() > 1 {
+            return Err(usage_error(
+                "'wen do' takes one file of calls.".to_owned(),
+                "Write it like: wen do calls.json (or pipe the calls in: ... | wen do -)."
+                    .to_owned(),
+            ));
+        }
+        Command::Do(DoArgs {
+            source: positional.pop().filter(|source| source != "-"),
+            context,
+        })
+    } else {
+        let mut positional = positional.into_iter();
+        let Some(tool) = positional.next() else {
+            let names: Vec<&str> = wish_control::catalog()
+                .iter()
+                .map(|tool| tool.name)
+                .collect();
+            return Err(usage_error(
+                "'wen call' needs the name of a tool.".to_owned(),
+                format!(
+                    "Write it like: wen call project_info. Tools: {}.",
+                    names.join(", ")
+                ),
+            )
+            .with_candidates(names));
+        };
+        let json_text = positional.next();
+        if let Some(extra) = positional.next() {
+            return Err(usage_error(
+                format!("'wen call' got an extra argument '{extra}'."),
+                "Give the arguments either as one JSON object or as --name value flags.".to_owned(),
+            ));
+        }
+        Command::Call(CallArgs {
+            tool,
+            json: json_text,
+            flags,
+            context,
+        })
+    };
+    Ok(Args { command, json })
+}
+
 fn usage_error(message: String, hint: String) -> Diagnostic {
     Diagnostic::error("invalid_arguments", message, hint)
 }
@@ -246,6 +412,7 @@ fn flags_of(command: &str) -> &'static [(&'static str, bool)] {
             ("--json", false),
         ],
         "shaders" => &[("--dir", true), ("--json", false)],
+        "new" => &[("--name", true), ("--json", false)],
         "view" => &[
             ("--example", true),
             ("--scene", true),
@@ -314,13 +481,18 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
         .with_candidates(COMMANDS.iter().copied()));
     }
 
+    if command == "call" || command == "do" || command == "mcp" {
+        return parse_tool_command(command, rest);
+    }
     let accepted = flags_of(command);
     let mut values: Vec<(&str, Option<String>)> = Vec::new();
     let mut positional: Vec<&str> = Vec::new();
     let mut index = 0;
     while let Some(argument) = rest.get(index) {
         index += 1;
-        if matches!(command, "mv" | "check" | "fmt" | "migrate") && !argument.starts_with('-') {
+        if matches!(command, "mv" | "check" | "fmt" | "migrate" | "new")
+            && !argument.starts_with('-')
+        {
             positional.push(argument);
             continue;
         }
@@ -474,6 +646,18 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
                     seconds: value_of("--seconds")
                         .map_or(Ok(0), |value| parse_number("--seconds", value))?,
                 },
+            }
+        }
+        "new" => {
+            if positional.len() != 1 {
+                return Err(usage_error(
+                    "'wen new' needs the folder to create the project in.".to_owned(),
+                    "Write it like: wen new my_game (optionally --name \"My game\").".to_owned(),
+                ));
+            }
+            Command::New {
+                dir: positional[0].to_owned(),
+                name: value_of("--name").map(str::to_owned),
             }
         }
         "migrate" => Command::Migrate {
