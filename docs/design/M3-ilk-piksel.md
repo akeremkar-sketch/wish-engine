@@ -110,6 +110,18 @@ Varlık yolu çözme `AssetRef` (M2) ile: `Model.asset = "assets/models/crate.gl
 - Yeni bir dış bağımlılığın izin listesi dışında lisansı çıkarsa: lisans listesine ekleme onayı.
 - Kapsam: bu notta "M3'te yok" denen her şey (animasyon, IBL, CSM, nokta ışık, KTX2) **1.0 kapsamı içindedir**, sonraki kilometre taşlarına yazılmıştır; kapsamı büyüten bir değişiklik olursa burada belirtilir.
 
+## 14. Uygulama notları
+
+### WP1 — kanıt işi (spike)
+
+- **Sonuç: §6 riski bu aşamada gerçekleşmedi; plan değişmeden sürüyor.** Köşe renkli üçgen (kenar kapsama + renk ara değerleme sınavı), 256×256, `Rgba8UnormSrgb`: Windows'ta WARP ("Microsoft Basic Render Driver", DX12) ve Linux CI'da lavapipe (Vulkan) arasındaki **en büyük kanal farkı 1/255**, piksellerin %5,3'ünde tek seviyelik yuvarlama; kenar piksellerinde fark yok. Eşik: bir piksel kanal farkı 2'yi aşarsa "farklı", en çok %0,5 farklı piksel. Işık/doku/gölge gelince (WP3–WP5) aynı ölçüm tekrarlanır (`measure_the_difference_between_two_captures`, el ile çalışan test).
+- **Altın görüntüler** `crates/wish_render/tests/golden/*.png` (WARP'tan üretildi), `UPDATE_GOLDEN=1` ile yenilenir. Her çalıştırma çizdiğini `target/tmp/captures/<ad>-<işletim sistemi>-<arka uç>.png` olarak bırakır; CI bunları **yapıt** olarak saklar (iki platformu karşılaştırmak ve başarısız bir altın testini incelemek için).
+- **CI:** Linux'ta `mesa-vulkan-drivers` (lavapipe) kurulur; Windows'ta WARP sistemle gelir. CI artık kilometre taşı dallarında da (`m[0-9]*`) çalışır. Windows işi `wgpu` derlemesiyle ~6 dk.
+- **Hata yönetimi:** `wgpu`'nun yakalanmamış hatada varsayılan davranışı panik; `Gpu` kendi kaydedici işleyicisini kurar ve her GPU işini doğrulama + bellek hata kapsamında çalıştırır (`gpu_error`). Bağdaştırıcı yoksa `no_gpu_adapter` (yazılım/donanım için ayrı ipucu), cihaz açılamazsa `gpu_device_failed`, geri okuma başarısızsa `gpu_readback_failed`, geçersiz boyut `invalid_capture_size`.
+- **Gölgelendirici tanıları:** `check_wgsl` (`naga` 30): sözdizimi `shader_syntax`, doğrulama `shader_validation`; konum karakter sütunu (Türkçe karakterli yorum testli), iletiye kaynak satırı eklenir. `naga` doğrulama hatasında birden çok aralık verir; en dar olanı seçilir. Bilinen sınır: `naga` bazı tür hatalarını `return` satırına değil, yanlış türdeki değerin tanımlandığı yere bağlar (test bunu belgeler).
+- **ADR-013 kararı:** WESL 0.6 denendi; ayrıntı ve karar [DECISIONS](../DECISIONS.md) ADR-013 "M3 doğrulaması". Kısaca: M3'te `naga` + kaynak haritalı küçük içe aktarma ön işlemcisi (WP3), WESL arayüzün arkasına sonra.
+- **Bağımlılıklar:** `wgpu` 30, `naga` 30, `png` 0.18, `pollster` 1, `bytemuck` 1. Lisanslar CI'daki `cargo-deny`'dan geçti (izin listesine ekleme gerekmedi).
+
 ## 13. Açık sorular
 
 1. `Transform.rotation` için `euler_deg` kısa yazımı (ajan/insan kolaylığı) M4'te sorulacak.

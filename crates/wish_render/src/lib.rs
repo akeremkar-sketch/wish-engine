@@ -16,7 +16,9 @@
 pub mod capture;
 pub mod gpu;
 pub mod image;
+pub mod shader;
 
 pub use capture::{MAX_CAPTURE_SIZE, draw_probe};
 pub use gpu::{AdapterSummary, Gpu, GpuOptions};
 pub use image::{ImageDiff, RgbaImage, Tolerance};
+pub use shader::{CheckedShader, check_wgsl};

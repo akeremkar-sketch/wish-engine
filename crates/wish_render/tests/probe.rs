@@ -12,8 +12,11 @@ use std::path::PathBuf;
 
 use wish_render::{Gpu, GpuOptions, RgbaImage, Tolerance, draw_probe};
 
-/// Measured in WP1 between WARP (Windows) and lavapipe (Linux); see the
-/// design note §6.
+/// Measured in WP1 between WARP (Windows) and lavapipe (Linux) on this
+/// probe: the largest channel difference was 1, on 5.3% of the pixels, and
+/// no edge pixel differed. A pixel counts as different above 2; at most
+/// 0.5% may differ. Re-measured when lighting arrives (WP3); see the design
+/// note §6 and §14.
 const TOLERANCE: Tolerance = Tolerance {
     channel: 2,
     fraction: 0.005,
@@ -102,6 +105,28 @@ fn impossible_sizes_are_refused() {
     for (width, height) in [(0, 10), (10, 0), (9000, 10)] {
         let problem = draw_probe(&gpu, width, height).unwrap_err();
         assert_eq!(problem.code, "invalid_capture_size");
+    }
+}
+
+/// Measures how two captures differ, for setting tolerances: run with
+/// `WISH_COMPARE_A` and `WISH_COMPARE_B` set to two PNG paths and
+/// `--ignored --nocapture`.
+#[test]
+#[ignore = "a measuring tool, run by hand"]
+fn measure_the_difference_between_two_captures() {
+    let read = |var: &str| {
+        let path = std::env::var(var).unwrap_or_else(|_| panic!("set {var}"));
+        RgbaImage::from_png(&std::fs::read(path).unwrap()).unwrap()
+    };
+    let (a, b) = (read("WISH_COMPARE_A"), read("WISH_COMPARE_B"));
+    for channel in [0, 1, 2, 4, 8] {
+        let diff = a.diff(&b, channel).expect("same size");
+        println!(
+            "channel > {channel}: {} pixels ({:.4}%), largest channel difference {}",
+            diff.differing_pixels,
+            diff.differing_fraction * 100.0,
+            diff.max_channel
+        );
     }
 }
 

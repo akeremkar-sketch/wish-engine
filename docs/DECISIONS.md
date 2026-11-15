@@ -200,6 +200,9 @@ Taslak araç listesi: [MCP_API.md](MCP_API.md).
 
 **Tetikleyici.** M3 başında WESL araçlarının olgunluğu doğrulanır; yetersizse `naga_oil` ya da kendi basit içe aktarma ön işlemcimiz.
 
+**M3 doğrulaması (15 Kasım 2026, M3 WP1).** `wesl` 0.6 ile deneme: içe aktarma çalışıyor ve çıktı `naga` için geçerli WGSL; içe aktarılan modüldeki sözdizimi hatası modül yolu + satır/sütunla geliyor. Ama (1) olmayan bir öğeyi içe aktarma hatası **konumsuz** ("in unknown module"), (2) `naga` doğrulama hataları birleştirilmiş çıktıdaki **dönüştürülmüş adlara** (`package_util_double`) işaret ediyor, (3) sürüm 1.0 öncesi (API değişiyor), (4) ağaç 83 paket. Değişmez 5 (her hata konumlu ve ipuçlu) bugün WESL ile sağlanamıyor.
+**Karar (M3 için):** WGSL, `naga` ile ayrıştırma + doğrulama (konumlu `shader_syntax`/`shader_validation` tanıları, karakter sütunu). Motorun kendi gölgelendiricileri için modül birleştirme, bir `ShaderLibrary` arayüzünün arkasında küçük, kaynak haritalı bir içe aktarma ön işlemcisiyle (WP3); `naga` hatası kaynak haritasıyla özgün dosya/satıra geri çevrilir. WESL bu arayüzün arkasına sonra konabilecek biçimde tutulur. **Yeniden değerlendirme:** WESL 1.0'a ulaştığında ya da en geç kullanıcı gölgelendiricileri (`*.mat.json`, M6) geldiğinde. `naga_oil` denenmedi: Bevy'ye bağlı sürüm döngüsü ve kendi sözdizimi, ileride WESL'e geçişi zorlaştırır.
+
 ## ADR-014 — Fizik: Rapier
 
 **Karar.** `rapier3d`, kendi bileşenlerimizin (`RigidBody`, `Collider`, …) arkasında. Sabit adımda çalışır; durumu serileştirilebilir (anlık görüntüye girer); `enhanced-determinism` açık.
