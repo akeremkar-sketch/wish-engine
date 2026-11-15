@@ -272,7 +272,7 @@ wen bench ecs --entities 100000 --ticks 600
 | WP4b | `wish_ecs`: ertelenmiş komutlar, olaylar, hiyerarşi, değişiklik izleme | Opus 5.5 · high | Tamamlandı |
 | WP5 | Zamanlayıcı, sabit adım, rastgelelik (`wish_app`) | Opus 5.5 · high | Tamamlandı |
 | WP6 | Anlık görüntü ve dünya hash'i | Opus 5.5 · high | Tamamlandı |
-| WP7 | `wish_cli`: `wen run`, `wen schema`, `wen bench` | Sonnet 5.5 · medium | |
+| WP7 | `wish_cli`: `wen run`, `wen schema`, `wen bench` | Sonnet 5.5 · medium | Tamamlandı (`wen bench` WP8'de) |
 | WP8 | Determinizm testleri, Miri, kıyaslama, M1 kapanış incelemesi | Opus 5.5 · high | |
 
 ## 11. Açık sorular (uygulama sırasında kapanacak)
@@ -343,4 +343,13 @@ Tasarımdan sonra uygulama sırasında verilen ve sonraki iş paketlerini etkile
 - **Uygulama anlık görüntüsü** sistem durumlarını **ada göre** saklar; aynı sistemleri başka sırayla ekleyen bir uygulamaya da geri yüklenebilir. Sistem kümesi (adlar + kısıtlar), tohum ya da tick hızı farklıysa reddedilir. `update` için biriken gerçek zaman geri yüklemede sıfırlanır (simülasyon durumu değildir).
 - **Kayıtlı hash değeri:** sabit bir küçük dünyanın hash'i testte kayıtlı (`06af2cce…`). Hash tanımı değişirse bu test kırılır; değişiklik bilinçli ise sürüm etiketiyle birlikte güncellenir.
 - **Örnek dünya `bounce`** (`wish_examples` crate'i): rastgele doğan, düşen, zıplayan, bazen etiketli (JSON yolundan metin) ve bazen hiyerarşide izci çocuğu olan, rastgele ölen cisimler; zıplamalar olay olarak gönderilip bir imleçle sayılıyor, değişiklik izleme her tick ölçülüyor. Hash ve anlık görüntü testleri motorun her parçasını bu iş yüküyle sınıyor.
-- **M1 çıkış ölçütleri (determinizm):** `bounce` 10.000 tick iki kez çalıştırılıyor, her 100 tick'teki uygulama hash'leri aynı. 5.000. tick'te anlık görüntü → devam, geri yükle → devam ve sıfırdan kurulmuş uygulamaya geri yükle → devam: üçü de kesintisiz çalıştırmayla aynı 10.000. tick hash'ini veriyor. (Debug derlemesinde testlerin tamamı ~1,3 sn.)
+- **M1 çıkış ölçütleri (determinizm), ayrıntı:** `bounce` 10.000 tick iki kez çalıştırılıyor, her 100 tick'teki uygulama hash'leri aynı. 5.000. tick'te anlık görüntü → devam, geri yükle → devam ve sıfırdan kurulmuş uygulamaya geri yükle → devam: üçü de kesintisiz çalıştırmayla aynı 10.000. tick hash'ini veriyor. (Debug derlemesinde testlerin tamamı ~1,3 sn.)
+
+### WP7
+
+- **`wen` komut satırı aracı** (`wish_cli` crate'i, ikili adı `wen`): `run --example <ad> [--frames N] [--seed S] [--hash-every K] [--headless] [--json]`, `schema [--example <ad>] [--json]`, `examples`, `help`, `version`.
+- **`--json` çıktısı MCP ile aynı zarftadır:** `{ "ok": true, ... }` ya da `{ "ok": false, "error": <tanı> }`. Böylece M4'te her MCP aracının komut satırı karşılığı aynı biçimi kullanacak. Metin çıktısında hatalar standart hata akışına `error[kod]: ileti` + `hint:` biçiminde yazılır.
+- **Argüman ayrıştırıcısı elle yazıldı** (clap kullanılmadı): bilinmeyen komut ve bayraklar ortak tanı biçimiyle ve "şunu mu demek istediniz" önerisiyle raporlanıyor.
+- **Duvar saati yalnızca burada** ölçülür (`elapsed_ms`); simülasyona hiç girmez.
+- **Ölçüm (sürüm derlemesi, bu makine):** `wen run --example bounce --frames 10000 --seed 7` 29 ms; 182 varlık; dünya hash'i `f1eb0801…`, uygulama hash'i `837b9d39…` (her çalıştırmada aynı).
+- Sahne dosyası (M2) gelene kadar `run` yalnızca yerleşik örnekleri çalıştırır; `--example` verilmezse hata bunu açıkça söyler.

@@ -1,0 +1,23 @@
+[package]
+name = "wish_cli"
+description = "`wen`, the Wish Engine command-line tool."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "wen"
+path = "src/main.rs"
+
+[dependencies]
+serde_json.workspace = true
+wish_app.workspace = true
+wish_core.workspace = true
+wish_ecs.workspace = true
+wish_examples.workspace = true
+wish_schema.workspace = true
+
+[lints]
+workspace = true

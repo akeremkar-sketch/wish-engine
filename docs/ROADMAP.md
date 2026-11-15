@@ -95,8 +95,8 @@ M1'in ilk iş paketinde yapılacak tek ortam işi: derleme çıktılarını OneD
 | 4b. `wish_ecs` ek | Tamamlandı (15 Kasım 2026): ertelenmiş komutlar, olaylar, hiyerarşi, değişiklik izleme. Model testi + Miri |
 | 5. Zamanlayıcı | Tamamlandı (15 Kasım 2026): `wish_app` (sabit adım, sistem sırası, sistem başına rastgelelik akışı), `wish_core::Rng`. Aynı tohumla 600 tick boyunca aynı dünya |
 | 6. Anlık görüntü / hash | Tamamlandı (15 Kasım 2026): dünya ve uygulama anlık görüntüsü, kararlı hash, `bounce` örneği. Çıkış ölçütleri: 10.000 tick × 2 aynı hash; 5.000'de anlık görüntü → geri yükle → devam = kesintisiz çalıştırma |
-| 7. `wish_cli` | **Sıradaki** — Sonnet 5.5 · medium |
-| 8. Test altyapısı, kıyaslama | Bekliyor |
+| 7. `wish_cli` | Tamamlandı (15 Kasım 2026): `wen run`, `wen schema`, `wen examples`; MCP ile aynı JSON zarfı |
+| 8. Test altyapısı, kıyaslama | **Sıradaki** — Opus 5.5 · high: `wen bench`, 100 bin varlık kıyaslaması, kapanış incelemesi |
 
 ## M2 — Veri katmanı
 

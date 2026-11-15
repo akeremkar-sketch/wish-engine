@@ -4,7 +4,7 @@
 
 Yapay zekâya tamamen entegre ama yapay zekâsız da eksiksiz kullanılabilen, açık kaynak, ücretsiz ve komisyonsuz bir 3D oyun motoru.
 
-**Durum:** geliştirmenin çok başında; henüz çalıştırılabilir bir motor yok. M0 (tasarım) tamamlandı, M1 (çekirdek) sürüyor: `wish_core`, `wish_schema` ve `wish_ecs`'in temeli hazır.
+**Durum:** geliştirmenin çok başında; henüz çalıştırılabilir bir motor yok. M0 (tasarım) tamamlandı, M1 (çekirdek) sürüyor: şema, veri deposu (ECS), zamanlayıcı, anlık görüntü/hash ve `wen` komut satırı aracı hazır; sırada kıyaslama ve kapanış incelemesi.
 
 ## Derleme
 
@@ -12,6 +12,12 @@ Rust 1.100.0 gerekir (`rust-toolchain.toml` ile sabit; `rustup` kendiliğinden k
 
 ```bash
 cargo test --workspace
+```
+
+Yerleşik örneği penceresiz çalıştırmak (aynı tohum her zaman aynı hash'i verir):
+
+```bash
+cargo run -p wish_cli --release -- run --example bounce --frames 10000 --seed 7
 ```
 
 ## Belgeler

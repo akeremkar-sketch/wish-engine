@@ -1,0 +1,183 @@
+//! `wen`, the Wish Engine command-line tool.
+//!
+//! Every command can print one JSON document (`--json`) in the same envelope
+//! the MCP tools use: `{ "ok": true, ... }` or `{ "ok": false, "error": <diagnostic> }`.
+//! Without `--json` it prints text for people.
+//!
+//! ```text
+//! wen run --example bounce --frames 10000 --seed 7 --json
+//! wen schema --example bounce --json
+//! wen examples
+//! ```
+
+mod args;
+
+use std::process::ExitCode;
+use std::time::Instant;
+
+use serde_json::{Map, Value, json};
+use wish_app::{App, AppConfig};
+use wish_core::{Diagnostic, Result};
+use wish_ecs::{Registry, TypeInfo};
+use wish_schema::json_schema;
+
+use crate::args::{Args, Command, parse};
+
+const USAGE: &str = "\
+wen - the Wish Engine command-line tool
+
+USAGE:
+    wen run --example <name> [--frames <n>] [--seed <n>] [--hash-every <n>] [--headless] [--json]
+    wen schema [--example <name>] [--json]
+    wen examples [--json]
+    wen help | version
+
+COMMANDS:
+    run        Simulate a built-in example without a window and report its final state
+               (frames default to 600, seed to 0). Runs are deterministic: the same
+               seed and frame count always give the same hashes.
+    schema     Print the JSON Schema of every registered component, resource and event.
+    examples   List the built-in examples.
+
+Add --json to any command for a single machine-readable JSON document.";
+
+fn main() -> ExitCode {
+    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    let json = arguments.iter().any(|argument| argument == "--json");
+    match parse(&arguments).and_then(execute) {
+        Ok(output) => {
+            println!("{output}");
+            ExitCode::SUCCESS
+        }
+        Err(diagnostic) => {
+            if json {
+                println!("{}", json!({ "ok": false, "error": diagnostic }));
+            } else {
+                eprintln!("{diagnostic}");
+            }
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Runs a parsed command and returns what to print.
+fn execute(args: Args) -> Result<String> {
+    match args.command {
+        Command::Run {
+            example,
+            frames,
+            seed,
+            hash_every,
+        } => run(&example, frames, seed, hash_every, args.json),
+        Command::Schema { example } => schema(example.as_deref(), args.json),
+        Command::Examples => Ok(if args.json {
+            json!({ "ok": true, "examples": wish_examples::NAMES }).to_string()
+        } else {
+            wish_examples::NAMES.join("\n")
+        }),
+        Command::Help => Ok(if args.json {
+            json!({ "ok": true, "usage": USAGE }).to_string()
+        } else {
+            USAGE.to_owned()
+        }),
+        Command::Version => Ok(if args.json {
+            json!({ "ok": true, "version": env!("CARGO_PKG_VERSION") }).to_string()
+        } else {
+            format!("wen {}", env!("CARGO_PKG_VERSION"))
+        }),
+    }
+}
+
+fn run(example: &str, frames: u64, seed: u64, hash_every: u64, as_json: bool) -> Result<String> {
+    let config = AppConfig {
+        seed,
+        ..AppConfig::default()
+    };
+    let mut app = wish_examples::build(example, config)?;
+    // Wall-clock time is measured here, outside the simulation; it never
+    // reaches the world.
+    let started = Instant::now();
+    let mut failures: Vec<Diagnostic> = Vec::new();
+    let mut checkpoints: Vec<Value> = Vec::new();
+    while app.tick() < frames {
+        failures.extend(app.step()?.failures);
+        if hash_every > 0 && app.tick().is_multiple_of(hash_every) {
+            checkpoints.push(json!({ "tick": app.tick(), "app_hash": app.hash().to_string() }));
+        }
+    }
+    let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let world = app.world();
+    if as_json {
+        let mut output = json!({
+            "ok": true,
+            "example": example,
+            "seed": seed,
+            "ticks": app.tick(),
+            "entities": world.entity_count(),
+            "world_hash": world.hash().to_string(),
+            "app_hash": app.hash().to_string(),
+            "failures": failures,
+            "elapsed_ms": (elapsed_ms * 1000.0).round() / 1000.0,
+        });
+        if hash_every > 0
+            && let Some(object) = output.as_object_mut()
+        {
+            object.insert("checkpoints".to_owned(), Value::Array(checkpoints));
+        }
+        return Ok(output.to_string());
+    }
+    let mut text = format!(
+        "{example} - seed {seed} - {} ticks in {elapsed_ms:.1} ms\nentities:   {}\nworld hash: {}\napp hash:   {}",
+        app.tick(),
+        world.entity_count(),
+        world.hash(),
+        app.hash(),
+    );
+    for checkpoint in &checkpoints {
+        text.push_str(&format!(
+            "\ntick {}: {}",
+            checkpoint["tick"],
+            checkpoint["app_hash"].as_str().unwrap_or_default()
+        ));
+    }
+    for failure in &failures {
+        text.push_str(&format!("\n{failure}"));
+    }
+    Ok(text)
+}
+
+fn schemas<'a>(types: impl Iterator<Item = &'a TypeInfo>) -> Value {
+    let map: Map<String, Value> = types
+        .map(|info| (info.name().to_owned(), json_schema(info.schema())))
+        .collect();
+    Value::Object(map)
+}
+
+fn registry_schemas(registry: &Registry) -> Value {
+    json!({
+        "components": schemas(registry.components().map(|(_, info)| info)),
+        "resources": schemas(registry.resources().map(|(_, info)| info)),
+        "events": schemas(registry.events().map(|(_, info)| info)),
+    })
+}
+
+fn schema(example: Option<&str>, as_json: bool) -> Result<String> {
+    let app = match example {
+        Some(name) => wish_examples::build(name, AppConfig::default())?,
+        None => App::new(AppConfig::default()),
+    };
+    let mut document = registry_schemas(app.world().registry());
+    if as_json {
+        if let Some(object) = document.as_object_mut() {
+            object.insert("ok".to_owned(), Value::Bool(true));
+        }
+        return Ok(document.to_string());
+    }
+    serde_json::to_string_pretty(&document).map_err(|error| {
+        Diagnostic::error(
+            "internal_error",
+            format!("Could not format the schemas: {error}"),
+            "This is a bug in wen. Please report it.",
+        )
+    })
+}
