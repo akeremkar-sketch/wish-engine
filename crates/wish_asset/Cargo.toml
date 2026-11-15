@@ -1,0 +1,21 @@
+[package]
+name = "wish_asset"
+description = "Asset files for Wish Engine: discovery, meta files, reference checking and moving files without breaking scenes."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+wish_core.workspace = true
+wish_ecs.workspace = true
+wish_scene.workspace = true
+wish_schema.workspace = true
+
+[dev-dependencies]
+wish_examples.workspace = true
+
+[lints]
+workspace = true

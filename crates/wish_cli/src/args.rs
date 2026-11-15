@@ -8,7 +8,9 @@ use wish_core::suggest::unknown_name_hint;
 use wish_core::{Diagnostic, Result};
 
 /// The commands `wen` understands.
-pub const COMMANDS: &[&str] = &["run", "bench", "schema", "examples", "help", "version"];
+pub const COMMANDS: &[&str] = &[
+    "run", "bench", "schema", "mv", "examples", "help", "version",
+];
 
 /// A parsed command line.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -47,6 +49,19 @@ pub enum Command {
         /// The random seed.
         seed: u64,
     },
+    /// Move an asset file or folder and update the scenes that refer to it.
+    Move {
+        /// The current project-relative path.
+        from: String,
+        /// The new project-relative path.
+        to: String,
+        /// The example whose component types find the references.
+        example: String,
+        /// The project folder (default: the current folder).
+        root: Option<String>,
+        /// Report what would change without changing anything.
+        dry_run: bool,
+    },
     /// Print the JSON Schemas of the registered types.
     Schema {
         /// Load the types of this example; only built-in types without it.
@@ -84,6 +99,12 @@ fn flags_of(command: &str) -> &'static [(&'static str, bool)] {
             ("--json", false),
         ],
         "schema" => &[("--example", true), ("--json", false)],
+        "mv" => &[
+            ("--example", true),
+            ("--root", true),
+            ("--dry-run", false),
+            ("--json", false),
+        ],
         _ => &[("--json", false)],
     }
 }
@@ -120,9 +141,14 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
 
     let accepted = flags_of(command);
     let mut values: Vec<(&str, Option<String>)> = Vec::new();
+    let mut positional: Vec<&str> = Vec::new();
     let mut index = 0;
     while let Some(argument) = rest.get(index) {
         index += 1;
+        if command == "mv" && !argument.starts_with('-') {
+            positional.push(argument);
+            continue;
+        }
         let (name, inline_value) = match argument.split_once('=') {
             Some((name, value)) => (name, Some(value.to_owned())),
             None => (argument.as_str(), None),
@@ -207,6 +233,36 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
         "schema" => Command::Schema {
             example: value_of("--example").map(str::to_owned),
         },
+        "mv" => {
+            let [from, to] = positional.as_slice() else {
+                return Err(usage_error(
+                    format!(
+                        "'wen mv' needs exactly two paths (the current and the new one), but got {}.",
+                        positional.len()
+                    ),
+                    "Write it like: wen mv assets/old.png assets/textures/new.png --example <name>"
+                        .to_owned(),
+                ));
+            };
+            Command::Move {
+                from: (*from).to_owned(),
+                to: (*to).to_owned(),
+                example: value_of("--example")
+                    .ok_or_else(|| {
+                        usage_error(
+                            "'wen mv' needs --example to know the component types that hold asset references."
+                                .to_owned(),
+                            format!(
+                                "Add --example <name>. Built-in examples: {}.",
+                                wish_examples::NAMES.join(", ")
+                            ),
+                        )
+                    })?
+                    .to_owned(),
+                root: value_of("--root").map(str::to_owned),
+                dry_run: values.iter().any(|(flag, _)| *flag == "--dry-run"),
+            }
+        }
         "examples" => Command::Examples,
         "version" => Command::Version,
         _ => Command::Help,

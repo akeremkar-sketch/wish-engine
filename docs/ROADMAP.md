@@ -102,7 +102,7 @@ M1'in ilk iş paketinde yapılacak tek ortam işi: derleme çıktılarını OneD
 
 ## M2 — Veri katmanı
 
-**Durum:** tasarım notu yazıldı (15 Kasım 2026): [design/M2-veri-katmani.md](design/M2-veri-katmani.md). Uygulama `m2-data` dalında: WP1–WP5 bitti (katı JSON + kanonik yazıcı, belge ve doğrulama, işlemler + geri al, prefab'lar, belge → dünya + `wen run --scene`); sıradaki WP6 (`wish_asset`).
+**Durum:** tasarım notu yazıldı (15 Kasım 2026): [design/M2-veri-katmani.md](design/M2-veri-katmani.md). Uygulama `m2-data` dalında: WP1–WP6 bitti (katı JSON + kanonik yazıcı, belge ve doğrulama, işlemler + geri al, prefab'lar, belge → dünya + `wen run --scene`, `AssetRef` + `wish_asset` + `wen mv`); sıradaki WP7 (`wen check/fmt/migrate`, sıcak yükleme).
 
 **Çıktı.** `wish_scene` (sahne/prefab belge modeli, kanonik biçimlendirici, kimlik adresli yamalar, atomik işlemler, geri al/yinele, revizyonlar), `wish_asset` (varlık sunucusu, dosya izleme, önbellek, `*.meta.json`), `wen check`, `wen fmt`, `wen mv`, `wen migrate`.
 

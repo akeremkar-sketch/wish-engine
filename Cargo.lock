@@ -491,11 +491,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "wish_asset"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wish_core",
+ "wish_ecs",
+ "wish_examples",
+ "wish_scene",
+ "wish_schema",
+]
+
+[[package]]
 name = "wish_cli"
 version = "0.1.0"
 dependencies = [
  "serde_json",
  "wish_app",
+ "wish_asset",
  "wish_core",
  "wish_ecs",
  "wish_examples",

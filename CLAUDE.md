@@ -5,14 +5,15 @@ Wish Engine: yapay zekâya tamamen entegre ama yapay zekâsız da eksiksiz kulla
 ## Şu anki durum
 
 - **Tamamlanan:** M0 (tasarım), **M1 (çekirdek)** — 15 Kasım 2026. Çıkış ölçütlerinin hepsi karşılandı (CI dahil: depo GitHub'a gönderildikten sonra Windows ve Linux'ta yeşil). Ayrıntı, kapanış incelemesi bulguları ve M2'ye devredilenler: [docs/design/M1-cekirdek.md](docs/design/M1-cekirdek.md) §12 "WP8 ve M1 kapanışı".
-  - Crate'ler: `wish_core` (kimlikler, tanı, kararlı hash, `Rng`, öneriler), `wish_schema` + `wish_schema_macros` (şema, `Plain`, JSON ⇄ bayt, JSON Schema), `wish_ecs` (dünya, sorgular, komutlar, olaylar, hiyerarşi, değişiklik izleme, anlık görüntü, hash), `wish_app` (sabit adım, zamanlayıcı), `wish_examples` (`bounce`, `stress`), `wish_cli` (`wen`).
+  - Crate'ler: `wish_core` (kimlikler, tanı, kararlı hash, `Rng`, öneriler), `wish_schema` + `wish_schema_macros` (şema, `Plain`, JSON ⇄ bayt, JSON Schema), `wish_ecs` (dünya, sorgular, komutlar, olaylar, hiyerarşi, değişiklik izleme, anlık görüntü, hash), `wish_app` (sabit adım, zamanlayıcı), `wish_examples` (`bounce`, `stress`), `wish_cli` (`wen`). M2'de eklenenler: `wish_scene` (belge, işlemler, prefab'lar, dünyaya aktarım), `wish_asset` (varlık dizini, meta, başvurular, `wen mv`).
 - **Süren: M2 (veri katmanı)**, `m2-data` dalında. Tasarım notu yazıldı: [docs/design/M2-veri-katmani.md](docs/design/M2-veri-katmani.md) — M2'de kod yazmadan önce oku.
   - M2 WP1 (`wish_scene::json`: aralık kaydeden katı JSON ayrıştırıcı + kanonik yazıcı) bitti.
   - M2 WP2 (`SceneDocument`, `load`, doğrulama, 35 bozuk dosya testi) bitti.
   - M2 WP3 (işlemler, revizyonlar, geri al/yinele, etkinlik günlüğü ve `actor`) bitti; "100 işlem + 100 geri al = başlangıç dosyası" ölçütü model testiyle karşılandı.
   - M2 WP4 (prefab'lar: `PrefabLibrary`, `load_prefab`, örnek + `overrides`, `expand()` ile türetilmiş kimlikler `örnek/prefab_varlığı`, `Instantiate`/`SetOverride`/`ReplaceOverride`/`RemoveOverride`) bitti.
   - M2 WP5 (`SceneDocument::instantiate`, `SceneId`, `wen run --example <ad> --scene <dosya> [--root <klasör>]`) bitti; sahne dosyasında `SceneId` yazılamaz.
-  - **Sıradaki: M2 WP6 (`wish_asset`: `AssetRef` şema türü, varlık keşfi, `*.meta.json`, izleme, `wen mv`).** Önerilen model · efor: Sonnet 5.5 · high. İş paketleri ve modelleri tasarım notunun §10'unda; WP1–WP5 notları §12'de.
+  - M2 WP6 (`AssetRef` şema türü, `wish_asset`: dizin, `*.meta.json`, şemaya göre başvuru denetimi, `wen mv`) bitti. Dosya izleme bilerek WP7'ye bırakıldı (`notify` bağımlılığı orada eklenecek, lisansı denetlenecek).
+  - **Sıradaki: M2 WP7 (`wen check / fmt / migrate`, dosya izleyici ile sıcak yükleme).** Önerilen model · efor: Sonnet 5.5 · medium. İş paketleri ve modelleri tasarım notunun §10'unda; WP1–WP6 notları §12'de.
   - M3 (ilk piksel) M2 ile paralel yürüyebilir.
 - **`wen`'i çalıştırmak:** `cargo run -p wish_cli --release -- run --example bounce --frames 10000 --seed 7 --json`. Derlenmiş ikili `C:\wish-build\target\release\wen.exe` altında.
 - **Hash'leri değiştirme konusunda dikkat:** `wish_ecs/tests/snapshot.rs` ve `wish_core` testlerinde kayıtlı hash/rastgelelik değerleri var. Bunlar kırılırsa önce bilinçli bir format değişikliği olup olmadığını düşün; bilinçliyse sürüm etiketini (`wish-world-hash-v1` vb.) artır.

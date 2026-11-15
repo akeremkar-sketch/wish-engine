@@ -40,6 +40,7 @@ pub fn register_types(name: &str, world: &mut World) -> Result<()> {
             world.register_component::<stress::Position>()?;
             world.register_component::<stress::Velocity>()?;
             world.register_component::<stress::Spin>()?;
+            world.register_component::<stress::Model>()?;
             Ok(())
         }
         _ => Err(unknown_example(name)),

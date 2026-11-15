@@ -39,6 +39,7 @@ fn kind_tag(kind: &TypeKind) -> u8 {
         TypeKind::Enum(_) => 20,
         TypeKind::Array { .. } => 21,
         TypeKind::Struct(_) => 22,
+        TypeKind::AssetRef => 23,
     }
 }
 

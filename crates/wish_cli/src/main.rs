@@ -32,6 +32,7 @@ USAGE:
     wen run --example <name> [--scene <file> [--root <folder>]] [--frames <n>] [--seed <n>]
             [--hash-every <n>] [--headless] [--json]
     wen bench [--entities <n>] [--ticks <n>] [--seed <n>] [--json]
+    wen mv <from> <to> --example <name> [--root <folder>] [--dry-run] [--json]
     wen schema [--example <name>] [--json]
     wen examples [--json]
     wen help | version
@@ -45,6 +46,9 @@ COMMANDS:
                example only supplies the component types. Prefabs are found in --root.
     bench      Time the core on many moving entities (defaults: 100000 entities, 600 ticks).
                Build with --release for meaningful numbers.
+    mv         Move an asset file or folder (paths relative to --root) and update every
+               asset reference to it in scenes and prefabs, all or nothing. The example
+               supplies the component types that tell where references are.
     schema     Print the JSON Schema of every registered component, resource and event.
     examples   List the built-in examples.
 
@@ -95,6 +99,13 @@ fn execute(args: Args) -> Result<String> {
             ticks,
             seed,
         } => bench(entities, ticks, seed, args.json),
+        Command::Move {
+            from,
+            to,
+            example,
+            root,
+            dry_run,
+        } => move_asset(&from, &to, &example, root.as_deref(), dry_run, args.json),
         Command::Schema { example } => schema(example.as_deref(), args.json),
         Command::Examples => Ok(if args.json {
             json!({ "ok": true, "examples": wish_examples::NAMES }).to_string()
@@ -199,6 +210,52 @@ fn run(options: &RunOptions, as_json: bool) -> Result<String> {
     }
     for problem in warnings.iter().chain(&failures) {
         text.push_str(&format!("\n{problem}"));
+    }
+    Ok(text)
+}
+
+/// Moves an asset (or folder) and rewrites the references to it.
+fn move_asset(
+    from: &str,
+    to: &str,
+    example: &str,
+    root: Option<&str>,
+    dry_run: bool,
+    as_json: bool,
+) -> Result<String> {
+    let root = std::path::Path::new(root.unwrap_or("."));
+    let mut app = App::new(AppConfig::default());
+    wish_examples::register_types(example, app.world_mut())?;
+    let plan = wish_asset::plan_move(root, from, to, app.world().registry())?;
+    if !dry_run {
+        wish_asset::apply_move(root, &plan)?;
+    }
+    let documents: Vec<Value> = plan
+        .documents
+        .iter()
+        .map(|edit| json!({ "file": edit.file, "references": edit.changes }))
+        .collect();
+    if as_json {
+        return Ok(json!({
+            "ok": true,
+            "from": plan.from,
+            "to": plan.to,
+            "dry_run": dry_run,
+            "meta": plan.meta.as_ref().map(|(old, new)| json!({ "from": old, "to": new })),
+            "documents": documents,
+        })
+        .to_string());
+    }
+    let verb = if dry_run { "Would move" } else { "Moved" };
+    let mut text = format!("{verb} {} -> {}", plan.from, plan.to);
+    if let Some((old, new)) = &plan.meta {
+        text.push_str(&format!("\n  and {old} -> {new}"));
+    }
+    for edit in &plan.documents {
+        text.push_str(&format!(
+            "\n  updated {} reference(s) in {}",
+            edit.changes, edit.file
+        ));
     }
     Ok(text)
 }
