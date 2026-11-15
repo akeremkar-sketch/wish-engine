@@ -54,6 +54,22 @@ wgpu = "30"
 softbuffer = "0.4"
 winit = "0.30"
 
+# Game logic (wish_script only, ADR-011). Only what running core modules
+# needs: no WASI, no component model, no async, no on-disk cache. Fuel makes
+# runaway guests stop deterministically; `backtrace` + `addr2line` turn a trap
+# into the guest's own function name, file and line.
+wasmtime = { version = "=50.0.1", default-features = false, features = [
+    "runtime",
+    "cranelift",
+    "std",
+    "backtrace",
+    "addr2line",
+    "demangle",
+    "pooling-allocator",
+] }
+# WebAssembly text format, for hand-written hostile guests in tests.
+wat = "1"
+
 # Procedural macros. syn 3, the same major version serde_derive uses, so the
 # build compiles one syn.
 proc-macro2 = "1"

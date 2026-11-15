@@ -401,6 +401,50 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "No scene file has that path. To create a new scene, use edit_apply with create: true.",
     ),
     (
+        "script_abi_mismatch",
+        "The game module was built for a different game ABI version than this engine speaks. Rebuild it with this engine's SDK (script_build).",
+    ),
+    (
+        "script_call_failed",
+        "Calling into the game module failed for a reason that is not a trap (for example an export with the wrong type). Rebuild with this engine's SDK.",
+    ),
+    (
+        "script_engine_failed",
+        "The WebAssembly engine could not start on this machine. This is not caused by the game code.",
+    ),
+    (
+        "script_forbidden_import",
+        "The game module imports something the engine does not provide (files, clock, network, WASI). Game code may only use the engine's API; remove the dependency that needs the operating system.",
+    ),
+    (
+        "script_invalid_module",
+        "The file is not a valid WebAssembly module. Build game code with script_build instead of editing the .wasm file.",
+    ),
+    (
+        "script_missing_export",
+        "The module lacks an export every game module has (memory, wish_abi_version, wish_alloc, wish_run). Build it with the SDK, which adds them (wish_sdk::export!).",
+    ),
+    (
+        "script_out_of_fuel",
+        "A system did too much work in one call, most likely an endless loop. It is turned off; the world keeps running. Fuel is counted in instructions, so the same input stops at the same place every time.",
+    ),
+    (
+        "script_out_of_memory",
+        "A system asked for more memory than the module may have. Look for a collection that grows every tick; game state belongs in components.",
+    ),
+    (
+        "script_panicked",
+        "Game code panicked; the message and location name the cause. The system is turned off until the code is rebuilt.",
+    ),
+    (
+        "script_stack_overflow",
+        "Game code overflowed its stack, usually through recursion without a base case.",
+    ),
+    (
+        "script_trap",
+        "Game code stopped with a WebAssembly trap (index out of range, division by zero, unreachable). The location points to the line.",
+    ),
+    (
         "session_required",
         "Several sessions are open, so the call must say which one.",
     ),

@@ -1,0 +1,26 @@
+# A hand-written game module for M5 WP1 (proof work): the ABI without the
+# SDK, used to measure call cost and to check that traps point at the right
+# source line. Built for wasm32-unknown-unknown by the tests; not a member of
+# the engine's workspace.
+[package]
+name = "spike_guest"
+version = "0.0.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[profile.release]
+# Line tables let the engine turn a trap into file:line.
+debug = "line-tables-only"
+panic = "abort"
+codegen-units = 1
+
+[profile.dev]
+panic = "abort"
+
+# Its own workspace: the engine's workspace is for the host.
+[workspace]

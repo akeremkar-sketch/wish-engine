@@ -217,6 +217,18 @@ scripts/src/*.rs değişti (dosya izleyici ya da script_build)
 
 ## 16. Açık sorular
 
-1. Örnek başına çağrı mı, tick başına örnek mi? → WP1 ölçümü (§6).
+1. ~~Örnek başına çağrı mı, tick başına örnek mi?~~ → WP1: tick başına (ADR-025).
 2. Oyun kodunda üçüncü taraf crate'ler: seçenek C'de yok. İhtiyaç değerlendirmelerde görülürse cargo yolu (B) yan yol olarak eklenir; M10 listesine not.
 3. `ActionState` yuva sayısı (öneri 64) ve eylem adı uzunluğu.
+
+## 17. Uygulama notları
+
+### WP1 — kanıt işi: ev sahibi, örnekleme maliyeti, derleme yolu (ADR-025)
+
+- **Karar: ADR-025** ([DECISIONS.md](../DECISIONS.md)): derleme yolu **C** (cargo'suz tek `rustc` çağrısı, önceden derlenmiş SDK, ev sahibi bağlayıcısı yok) ve **modül başına tick başına taze örnek** (başarısız çağrıdan sonra yenisi). §5.2'deki hipotez ölçümle doğrulandı; §6'daki "çağrı başına mı, tick başına mı" sorusu (açık soru 1) kapandı.
+- **`wish_script` (ilk hali):** `ScriptEngine` (yakıt açık, NaN kanonikleştirme, rahat SIMD kapalı / belirlenimci, memory64 ve çoklu bellek kapalı, 512 KiB Wasm yığını, havuz ayırıcı 64 yuva; wasmtime `default-features = false`, iş parçacığı ve bileşen modeli derlenmedi), `ScriptModule::load` (derle, yalnızca `wish.log/panic/rng_next` içe aktarmaları, gerekli dışa aktarmalar, ABI sürümü), `ScriptModule::run(system, frame, rng)` (taze örnek, çerçeveyi kopyala → `wish_run` → geri kopyala; sistemin rastgele akışı ilerler). Şimdilik çağrı başına örnek; tick başına örnek WP2'de `wish_app` bağlantısıyla gelir.
+- **Hata eşleme:** `script_out_of_fuel`, `script_out_of_memory` (kendi `ResourceLimiter`'ımız isteği kaydeder, konuk -1 görür ve Rust'ın ayırıcısı tuzak atar), `script_stack_overflow`, `script_trap`, `script_panicked`, `script_call_failed`, yükleme hataları (`script_invalid_module`, `script_forbidden_import`, `script_missing_export`, `script_abi_mismatch`). **Konum:** panikte SDK kancasının gönderdiği `dosya:satır:sütun` (ABI: `panic(ileti, dosya, satır, sütun)`); tuzakta Wasm izinin DWARF satır tablolarından **ilk oyun kodu çerçevesi** (std/registry çerçeveleri atlanır) ve işlev adı (`trap_here`). Günlük çağrı başına 100 iletiyle, ileti 2000 baytla sınırlı; saçma işaretçiler boş metin olur, ev sahibini düşüremez.
+- **Testler:** `tests/hostile.rs` (el yazımı `.wat`: sonsuz döngü, `unreachable`, sonsuz özyineleme, 4 GiB bellek isteği, sıfıra bölme, panik, 1000 günlük, sınır dışı yazma, saçma işaretçi; WASI/saat içe aktarması, dışa aktarması olmayan modül, eski ABI, yanlış imza, bozuk baytlar) — her hata ipuçlu, **aynı girdide aynı tanı**, ardından modül yine çalışıyor; global sayaç her çağrıda 1 (taze örnek kanıtı); yakıt kullanımı çağrılar arasında aynı. `tests/rust_guest.rs`: gerçek Rust konuğu (test sırasında wasm32 için derlenir): çerçeve gidiş-dönüşü, `index out of bounds` ve `unwrap` panikleri doğru satırla, `unreachable` tuzağı doğru satır ve işlev adıyla.
+- **Ölçümler** (release, yeniden üretmek için `--ignored --nocapture`): `rust_guest.rs::measure_call_cost`, `module.rs::profile` (adım dökümü), `build_paths.rs` (A/C yolları, boş ortamda kopyalanmış araç zinciriyle derleme, boyut). Sayılar ADR-025'te. Konuk yığınını 1 MiB'tan 64 KiB'a indirmek ve başlangıç belleğini küçültmek ölçülebilir bir fark yaratmadı (gürültü içinde); örnekleme maliyeti bellek boyutundan değil wasmtime'ın örnek kurulum/bırakma işinden.
+- **Ortam:** `wasm32-unknown-unknown` hedefi kullanıcı onayıyla kuruldu (16 Kasım 2026) ve `rust-toolchain.toml`'a eklendi (CI ve yeni makineler kendiliğinden kurar).
+- **Not:** ölçüm konukları `crates/wish_script/guests/` altında, çalışma alanının dışında (her biri kendi `[workspace]`'i ile); `spike` el yazımı ABI'dir, WP2'de SDK'nın ürettiğiyle değiştirilecek.

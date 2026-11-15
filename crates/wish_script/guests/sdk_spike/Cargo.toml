@@ -1,0 +1,12 @@
+# M5 WP1: a stand-in for wish_sdk (an ordinary library, built for wasm32).
+[package]
+name = "sdk_spike"
+version = "0.0.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[workspace]

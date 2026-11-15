@@ -1,0 +1,24 @@
+# M5 WP1: game code as a user writes it, using the SDK and its macros.
+[package]
+name = "game_spike"
+version = "0.0.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+sdk_spike = { path = "../sdk_spike" }
+macros_spike = { path = "../macros_spike" }
+
+[profile.release]
+debug = "line-tables-only"
+panic = "abort"
+
+[profile.dev]
+panic = "abort"
+
+[workspace]
