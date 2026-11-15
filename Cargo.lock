@@ -3071,7 +3071,6 @@ dependencies = [
 name = "wish_render"
 version = "0.1.0"
 dependencies = [
- "bytemuck",
  "naga",
  "png",
  "pollster",

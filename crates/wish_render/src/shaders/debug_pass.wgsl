@@ -2,6 +2,9 @@
 
 // The debug views: what the scene looks like to a program rather than to a
 // person. Each view is one fragment entry point over the same vertex shader.
+// Like the lit pass they cull back faces of single-sided materials (in the
+// pipeline) and cut out alpha-masked pixels, so that what they say is hidden
+// is hidden in the picture too.
 
 struct Debug {
     view_proj: mat4x4<f32>,
@@ -12,26 +15,44 @@ struct Debug {
 };
 
 @group(0) @binding(0) var<uniform> debug: Debug;
+@group(2) @binding(0) var base_color_texture: texture_2d<f32>;
+@group(2) @binding(5) var material_sampler: sampler;
 
 struct VertexOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) world_position: vec3<f32>,
     @location(1) normal: vec3<f32>,
+    @location(2) uv: vec2<f32>,
 };
 
 @vertex
-fn vs_main(@location(0) position: vec3<f32>, @location(1) normal: vec3<f32>) -> VertexOut {
+fn vs_main(
+    @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) uv: vec2<f32>,
+) -> VertexOut {
     let world = draw.model * vec4<f32>(position, 1.0);
     var out: VertexOut;
     out.clip = debug.view_proj * world;
     out.world_position = world.xyz;
     out.normal = (draw.normal_matrix * vec4<f32>(normal, 0.0)).xyz;
+    out.uv = uv;
     return out;
+}
+
+// Pixels below the material's alpha cutoff are not drawn (alpha mode MASK),
+// the same test as in the lit pass.
+fn cut_out(uv: vec2<f32>) {
+    let alpha = textureSample(base_color_texture, material_sampler, uv).a * draw.base_color.a;
+    if (draw.params2.z > 0.0 && alpha < draw.params2.z) {
+        discard;
+    }
 }
 
 // The identity view: the scene draw's index plus one (0 is "nothing").
 @fragment
 fn fs_ids(in: VertexOut) -> @location(0) u32 {
+    cut_out(in.uv);
     return u32(draw.params2.w + 0.5);
 }
 
@@ -39,6 +60,7 @@ fn fs_ids(in: VertexOut) -> @location(0) u32 {
 // logarithmic scale so that both nearby and distant surfaces are readable.
 @fragment
 fn fs_depth(in: VertexOut) -> @location(0) vec4<f32> {
+    cut_out(in.uv);
     let near = max(debug.params.x, 1e-4);
     let far = max(debug.params.y, near * 1.001);
     let distance = max(length(in.world_position - debug.camera.xyz), near);
@@ -51,6 +73,7 @@ fn fs_depth(in: VertexOut) -> @location(0) vec4<f32> {
 // from [-1, 1] to [0, 1] (so +Y, up, is a light green).
 @fragment
 fn fs_normals(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    cut_out(in.uv);
     var n = normalize(in.normal);
     if (!front) {
         n = -n;
@@ -62,6 +85,7 @@ fn fs_normals(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0)
 // edges on top.
 @fragment
 fn fs_fill(in: VertexOut) -> @location(0) vec4<f32> {
+    cut_out(in.uv);
     return vec4<f32>(0.05, 0.06, 0.08, 1.0);
 }
 

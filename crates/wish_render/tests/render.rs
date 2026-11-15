@@ -86,7 +86,7 @@ fn prepare(source: &str) -> (RenderScene, wish_scene::SceneEntities) {
     assert!(!result.has_errors(), "{:?}", result.diagnostics);
     let entities = result.document.unwrap().instantiate(&mut world).unwrap();
     update_global_transforms(&mut world).unwrap();
-    (extract(&mut world).unwrap(), entities)
+    (extract(&world).unwrap(), entities)
 }
 
 fn gpu() -> Gpu {

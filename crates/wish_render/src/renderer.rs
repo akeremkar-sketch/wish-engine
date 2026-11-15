@@ -938,7 +938,7 @@ impl Renderer {
                 .map(|shape| GpuMesh::new(gpu, &primitive(shape), "primitive"))
                 .collect()
         })?;
-        let debug = debug::DebugPipelines::new(gpu, &debug_source, &draw_layout)?;
+        let debug = debug::DebugPipelines::new(gpu, &debug_source, &draw_layout, &material_layout)?;
         Ok(Self {
             debug,
             frame_layout,
@@ -983,6 +983,38 @@ impl Renderer {
         path: &str,
         model: &wish_import::Model,
     ) -> Result<()> {
+        // The device's limits, checked here so that a big model is refused
+        // with its real cause instead of as a driver validation error.
+        let limits = gpu.device.limits();
+        for texture in &model.textures {
+            if texture.width.max(texture.height) > limits.max_texture_dimension_2d {
+                return Err(Diagnostic::error(
+                    "texture_too_large_for_gpu",
+                    format!(
+                        "A texture in '{path}' is {}x{} pixels; this GPU takes at most {} per side.",
+                        texture.width, texture.height, limits.max_texture_dimension_2d
+                    ),
+                    "Scale the texture down in the modelling tool (4096x4096 is plenty for most surfaces).",
+                )
+                .at_file(path));
+            }
+        }
+        for mesh in &model.meshes {
+            for primitive in &mesh.primitives {
+                let bytes = primitive.positions.len() as u64 * VERTEX_STRIDE;
+                if bytes > limits.max_buffer_size {
+                    return Err(Diagnostic::error(
+                        "mesh_too_large_for_gpu",
+                        format!(
+                            "A mesh in '{path}' needs {bytes} bytes of vertices; this GPU allows buffers of at most {}.",
+                            limits.max_buffer_size
+                        ),
+                        "Split the mesh into several parts in the modelling tool, or reduce its detail.",
+                    )
+                    .at_file(path));
+                }
+            }
+        }
         let uploaded = gpu.checked("upload a model", |gpu| {
             // Each texture is uploaded once per way it is used (colour or
             // data), because that decides how the GPU decodes it.

@@ -112,7 +112,7 @@ fn scene_with_model() -> RenderScene {
     assert!(!result.has_errors(), "{:?}", result.diagnostics);
     result.document.unwrap().instantiate(&mut world).unwrap();
     update_global_transforms(&mut world).unwrap();
-    extract(&mut world).unwrap()
+    extract(&world).unwrap()
 }
 
 fn draw(model: &wish_import::Model) -> (RgbaImage, Vec<String>) {
@@ -219,7 +219,7 @@ fn double_sided_materials_show_their_back() {
     let result = load(source, "s.scene.json", world.registry());
     result.document.unwrap().instantiate(&mut world).unwrap();
     update_global_transforms(&mut world).unwrap();
-    let scene = extract(&mut world).unwrap();
+    let scene = extract(&world).unwrap();
     let gpu = Gpu::shared(GpuOptions { software: true }).unwrap();
     let mut renderer = Renderer::new(&gpu).unwrap();
     let factors = |double: bool| {
@@ -345,4 +345,56 @@ fn shaders_can_be_reloaded_from_files_and_a_mistake_changes_nothing() {
     let still = renderer.render(&gpu, &scene, None, 160, 120).unwrap().image;
     assert_eq!(sky(&still), new);
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn the_debug_views_cut_out_masked_pixels_like_the_lit_picture() {
+    let gpu = Gpu::shared(GpuOptions { software: true }).unwrap();
+    let texture = Some([[200, 200, 200, 255], [200, 200, 200, 0]]);
+    let masked = quad_model(
+        json!({ "alphaMode": "MASK", "alphaCutoff": 0.5, "pbrMetallicRoughness": { "baseColorTexture": { "index": 0 }, "metallicFactor": 0.0 } }),
+        texture,
+    );
+    let mut renderer = Renderer::new(&gpu).unwrap();
+    renderer
+        .upload_model(&gpu, "assets/quad.glb", &masked)
+        .unwrap();
+    let scene = scene_with_model();
+    let ids = renderer.id_buffer(&gpu, &scene, None, 160, 120).unwrap();
+    // The opaque half is the quad, the cut-out half is nothing.
+    assert!(ids.entity_at(60, 60).is_some(), "the opaque half is there");
+    assert_eq!(ids.entity_at(100, 60), None, "the hole is not the quad");
+    let description = renderer.describe(&gpu, &scene, None, 160, 120).unwrap();
+    assert_eq!(description.visible.len(), 1);
+    let [left, _, right, _] = description.visible[0].bounding_box;
+    assert!(right < 90, "its pixels stop at the hole: {left}..{right}");
+    for view in [wish_render::View::Depth, wish_render::View::Normals] {
+        let frame = renderer
+            .render_view(&gpu, &scene, None, 160, 120, view)
+            .unwrap();
+        // The hole shows the clear colour, the same as beside the quad.
+        assert_eq!(right_of(&frame.image), frame.image.pixel(150, 60).unwrap());
+    }
+}
+
+fn right_of(image: &RgbaImage) -> [u8; 4] {
+    right(image)
+}
+
+#[test]
+fn a_texture_the_gpu_cannot_take_is_refused_with_its_real_cause() {
+    let gpu = Gpu::shared(GpuOptions { software: true }).unwrap();
+    let mut renderer = Renderer::new(&gpu).unwrap();
+    let mut model = wish_import::Model::default();
+    model.textures.push(wish_import::Texture {
+        width: 1 << 20,
+        height: 1,
+        rgba: vec![255; 4],
+    });
+    let problem = renderer
+        .upload_model(&gpu, "assets/huge.glb", &model)
+        .unwrap_err();
+    assert_eq!(problem.code, "texture_too_large_for_gpu");
+    assert_eq!(problem.location.file.as_deref(), Some("assets/huge.glb"));
+    assert!(!problem.hint.is_empty());
 }

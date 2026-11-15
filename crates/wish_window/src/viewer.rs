@@ -156,6 +156,7 @@ pub fn run(options: ViewerOptions, content: &mut dyn Content) -> Result<Report> 
         cursor: (0.0, 0.0),
         press_at: None,
         dirty: true,
+        redraws: 0,
         last_frame: Instant::now(),
         last_poll: Instant::now(),
         content_stamp,
@@ -166,6 +167,7 @@ pub fn run(options: ViewerOptions, content: &mut dyn Content) -> Result<Report> 
         error: None,
     };
     app.view = app.options.view;
+    app.base_camera = app.scene.cameras.first().copied();
     app.reset_camera();
     for warning in &loaded.warnings {
         app.say(&format!("{warning}"));
@@ -204,6 +206,9 @@ struct App<'a> {
     cursor: (f64, f64),
     press_at: Option<(f64, f64)>,
     dirty: bool,
+    /// Redraws attempted, drawn or not (a scene with no camera draws nothing
+    /// but still counts, so `exit_after_frames` always ends).
+    redraws: u64,
     last_frame: Instant,
     last_poll: Instant,
     content_stamp: u64,
@@ -220,9 +225,10 @@ impl App<'_> {
         self.status = message.lines().next().unwrap_or_default().to_owned();
     }
 
-    /// Goes back to the scene's own camera.
+    /// Goes back to the scene's own camera (kept untouched in
+    /// `base_camera`; the scene's first camera is overwritten by the fly
+    /// camera on every redraw).
     fn reset_camera(&mut self) {
-        self.base_camera = self.scene.cameras.first().copied();
         self.eye = self.base_camera.as_ref().map(FlyCamera::from_view);
         self.dirty = true;
     }
@@ -304,6 +310,7 @@ impl App<'_> {
 
     /// Draws a picture and puts it on the window.
     fn redraw(&mut self) {
+        self.redraws += 1;
         let (width, height) = self.size();
         if let (Some(base), Some(eye)) = (self.base_camera, self.eye)
             && let Some(first) = self.scene.cameras.first_mut()
@@ -433,7 +440,7 @@ impl ApplicationHandler for App<'_> {
             WindowEvent::RedrawRequested => {
                 self.redraw();
                 if let Some(limit) = self.options.exit_after_frames
-                    && self.report.frames >= limit
+                    && self.redraws >= limit
                 {
                     event_loop.exit();
                 }

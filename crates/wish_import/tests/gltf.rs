@@ -465,7 +465,31 @@ fn a_gltf_file_needs_its_buffers_next_to_it() {
 }
 
 #[test]
-fn a_cyclic_node_tree_cannot_loop_forever() {
+fn a_shared_node_is_refused_instead_of_being_walked_once_per_path() {
+    // Every node lists the next one twice: 2^40 paths to the last node.
+    let (binary, views, accessors) = quad();
+    let primitives =
+        json!([{ "attributes": { "POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2 }, "indices": 3 }]);
+    let mut nodes: Vec<Value> = (0..40)
+        .map(|i| json!({ "children": [i + 1, i + 1] }))
+        .collect();
+    nodes.push(json!({ "mesh": 0 }));
+    let bytes = document(
+        &binary,
+        views,
+        accessors,
+        primitives,
+        json!({ "nodes": nodes, "scenes": [{ "nodes": [0] }] }),
+    );
+    let started = std::time::Instant::now();
+    let problem = load_model_bytes(&bytes, "bomb.glb").unwrap_err();
+    assert!(started.elapsed().as_secs() < 5);
+    assert_eq!(problem.code, "gltf_invalid");
+    assert!(!problem.hint.is_empty());
+}
+
+#[test]
+fn a_cyclic_node_tree_is_refused() {
     let (binary, views, accessors) = quad();
     let primitives =
         json!([{ "attributes": { "POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2 }, "indices": 3 }]);
@@ -479,9 +503,59 @@ fn a_cyclic_node_tree_cannot_loop_forever() {
             "scenes": [{ "nodes": [0] }]
         }),
     );
-    // The glTF validator may refuse this file, or it may load; either way
-    // walking it ends.
-    if let Ok(model) = load_model_bytes(&bytes, "cycle.glb") {
-        assert!(model.placed().len() <= 2 * (wish_import::MAX_NODE_DEPTH + 2));
+    let problem = load_model_bytes(&bytes, "cycle.glb").unwrap_err();
+    assert_eq!(problem.code, "gltf_invalid");
+}
+
+/// Files the glTF reader lets through and then panics on must come back as a
+/// diagnostic, never take the process down.
+#[test]
+fn accessors_the_reader_chokes_on_become_diagnostics() {
+    let primitives =
+        json!([{ "attributes": { "POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2 }, "indices": 3 }]);
+    // A stride smaller than the element it holds.
+    let (binary, mut views, accessors) = quad();
+    views[0]["byteStride"] = json!(4);
+    let bytes = document(&binary, views, accessors, primitives.clone(), json!({}));
+    if let Err(problem) = load_model_bytes(&bytes, "stride.glb") {
+        assert_eq!(problem.code, "gltf_invalid");
+        assert!(!problem.hint.is_empty());
+    }
+    // An accessor with no elements.
+    let (binary, views, mut accessors) = quad();
+    accessors[0]["count"] = json!(0);
+    let bytes = document(&binary, views, accessors, primitives.clone(), json!({}));
+    if let Err(problem) = load_model_bytes(&bytes, "empty.glb") {
+        assert_eq!(problem.code, "gltf_invalid");
+    }
+    // A sparse accessor with nothing to substitute.
+    let (binary, views, mut accessors) = quad();
+    accessors[0]["sparse"] = json!({
+        "count": 1,
+        "indices": { "bufferView": 3, "componentType": 5123 },
+        "values": { "bufferView": 0 }
+    });
+    let bytes = document(&binary, views, accessors, primitives, json!({}));
+    if let Err(problem) = load_model_bytes(&bytes, "sparse.glb") {
+        assert!(!problem.hint.is_empty());
+    }
+}
+
+#[test]
+fn normals_from_a_file_are_made_unit_length_and_never_zero() {
+    let (mut binary, views, accessors) = quad();
+    // Overwrite the four normals: zero, long, short, unit.
+    let normals = floats(&[0.0, 0.0, 0.0, 0.0, 0.0, 5.0, 0.0, 0.0, 0.01, 0.0, 0.0, 1.0]);
+    let start = views[1]["byteOffset"].as_u64().unwrap() as usize;
+    binary[start..start + normals.len()].copy_from_slice(&normals);
+    let primitives =
+        json!([{ "attributes": { "POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2 }, "indices": 3 }]);
+    let model = load_model_bytes(
+        &document(&binary, views, accessors, primitives, json!({})),
+        "normals.glb",
+    )
+    .unwrap();
+    for normal in &model.meshes[0].primitives[0].normals {
+        assert!((normal.length() - 1.0).abs() < 1e-5, "{normal:?}");
     }
 }

@@ -157,7 +157,7 @@ fn bad_camera(entity: Entity, message: String, hint: &str) -> Diagnostic {
 /// are current. Entities with a `Primitive` or `Model` but no
 /// `GlobalTransform` are drawn at the origin. A camera with `far <= near`, or
 /// whose placement is not finite, is an `invalid_camera` error.
-pub fn extract(world: &mut World) -> Result<RenderScene> {
+pub fn extract(world: &World) -> Result<RenderScene> {
     let mut scene = RenderScene {
         cameras: Vec::new(),
         lights: Vec::new(),
@@ -213,9 +213,17 @@ pub fn extract(world: &mut World) -> Result<RenderScene> {
                     "Check the camera's Transform (and its parents') for NaN or infinite values.",
                 ));
             }
+            let view = placement.inverse();
+            if !finite_matrix(&view) {
+                return Err(bad_camera(
+                    entity,
+                    "its placement cannot be inverted (a scale of zero?).".to_owned(),
+                    "Give the camera's Transform (and its parents') a non-zero scale.",
+                ));
+            }
             scene.cameras.push(CameraView {
                 entity,
-                view: placement.inverse(),
+                view,
                 position: placement.w_axis.truncate(),
                 fov_y: camera.fov_y_deg.to_radians(),
                 near: camera.near,

@@ -202,6 +202,40 @@ Varlık yolu çözme `AssetRef` (M2) ile: `Model.asset = "assets/models/crate.gl
 - **Gözlem:** pencere resminin *içeriğine* gözle bakılmadı (pencere hızla kapanıyor, ekran görüntüsü alınmadı); içerik `wen capture` ile aynı `render_view` çağrısından geliyor, tek ek adım RGBA → 0x00RRGGBB dönüşümü. M3 kapanış incelemesinde ya da ilk elle kullanımda gözle doğrulanmalı.
 - **CI'da test edilemeyen kısım (bilinçli):** pencere döngüsü masaüstü oturumu ister; CI'da yalnızca saf kısımlar (kamera, parmak izi, argüman denetimi — pencere açılmadan `unknown_view`) test edilir. Pencere yolunu yerelde `wen view ... --exit-after 3` ile sürmek elle kontrol adımıdır.
 
+### M3 kapanışı — bağımsız inceleme ve çıkış ölçütleri (15 Kasım 2026)
+
+**İnceleme.** WP8 sonunda ayrı bir Opus 5.5 ajanı (yalnızca okuma, repo dışı sonda crate'iyle yeniden üretim) `m3-render`i incelendi. 4'ü doğrulanmış hata olmak üzere bulgular ve ne yapıldığı:
+
+| # | Bulgu | Durum |
+|---|---|---|
+| 1 (yüksek) | Hostile glTF süreci çökertiyor: `convert` ve erişimci okuyucuları `guarded` dışındaydı (`byteStride` < eleman boyutu, `count: 0`, boş sparse) | **Düzeltildi.** `convert` de `guarded` içinde; regresyon testi üç dosyayı da dener (paniklerin yakalandığı `--nocapture` ile görüldü). Konum + ipucu: `gltf_invalid` |
+| 2 (yüksek) | Hostile glTF süreci donduruyor: `"children":[1,1]` zinciri 2^40 ziyaret | **Düzeltildi.** `check_node_forest`: bir düğümün birden çok ebeveyni (ya da kökün iki kez listelenmesi) `gltf_invalid`; `placed()` ayrıca 2^20 ziyaret bütçesiyle sınırlı. Eski "döngü" testi yanlış nedenle geçiyordu (`if let Ok`); artık reddi doğrular |
+| 3 (orta) | `ids`/`describe`/`depth`/`normals`, lit geçişin aksine arka yüz ayıklamıyor ve alfa MASK'i kesmiyor | **Düzeltildi.** Hata ayıklama boru hatları çift (ayıklayan / ayıklamayan) ve çizim başına seçilir; `debug_pass.wgsl` taban renk dokusuyla `cut_out` yapar. Testler: aşağıdan bakılan tek yüzlü düzlem (tüm görünümlerde yok, `describe`'da `hidden`), maskeli model (delik "hiçbir şey") |
+| 4 (orta) | Görüntüleyicide F tuşu hareketten sonra çalışmıyor (kamera üzerine yazılıyor) | **Düzeltildi:** `base_camera` yalnızca yüklemede atanır, F ondan döner |
+| 5 | `--exit-after` her çizim başarısızsa hiç çıkmıyor | **Düzeltildi:** çizim *denemeleri* sayılır |
+| 6 | Doku/arabellek sınırları yüklemeden önce denetlenmiyor | **Düzeltildi (kısmen):** `texture_too_large_for_gpu`, `mesh_too_large_for_gpu` gerçek nedenle. Açık: `image` kütüphanesinin 512 MiB ayırma sınırı `gltf_image` "PNG/JPEG olmalı" ipucuyla yanlış anlatılıyor; görsel sayısı sınırsız |
+| 7 | Her *yerleşim* kendi GPU kopyasını alıyor (örneklenmiş ağlar bellek katlıyor) | **Açık → M6** (performans/örnekleme işi); #2'nin düzeltmesi ve ziyaret bütçesi patlamayı sınırlıyor |
+| 8 | Dosyadan gelen sıfır normal NaN üretir; sıfır ölçekli kamera NaN görünüm | **Düzeltildi:** normaller içe aktarmada birim yapılır (sıfır → +Y), sonlu olmayan konumlu primitif atlanır, ters çevrilemeyen kamera `invalid_camera` |
+| 9 | `extract(&mut World)` yalnızca `&World` ister | **Düzeltildi:** imza `&World`; çizimin ECS'e yazmadığı artık türle güvence altında |
+| 10 | `Gpu::shared` süreç boyu önbelleklenir (sürücü sıfırlamasından kurtarma yok); kapsam dışı hatalar sonraki `checked` adıyla bildirilir | **Açık → M5** (oyun çalıştırıcısı aygıt kaybı kurtarmasını kuracak) |
+| 11 | Doc yorumunda PowerShell kaçışı; kullanılmayan `bytemuck` | **Düzeltildi:** kaçış temizlendi, kullanılmayan `bytemuck` bağımlılığı kaldırıldı |
+
+**Çıkış ölçütleri ve kanıtları.**
+
+| Ölçüt | Kanıt |
+|---|---|
+| Standart glTF modelleri doğru görünür | Beş Khronos modeli gözle (`khronos.rs`, `#[ignore]`, depoda yok); bitanjant hatasını buldu ve düzeltildi. **CI'da otomatik karşılığı yok** (lisanslar nedeniyle modeller depoda değil) — dürüstçe "gözle doğrulandı" |
+| `wen capture` penceresiz; altın görüntü CI'da (WARP + lavapipe) | `render.rs`, `debug_views.rs` altınları; CI Windows + Linux yeşil; RTX ↔ WARP ↔ lavapipe ≤ 1/255 |
+| Kimlik tamponundan "bu pikselde hangi varlık" | `debug_views.rs`: bilinen piksel → varlık, gökyüzü/görüntü dışı `None`, örtülme, kısmi görünürlük, arka yüz, maskeli delik; `describe` piksel toplamı kimlik tamponuna eşit |
+| Gölgelendirici hatası dosya/satır/ipucu ile | `shader.rs`: sözdizimi, doğrulama, UTF-8, **eksik/döngüsel/bozuk `#import`** (kapanışta eklendi); `wen shaders`, `reload_shaders` hatası konumlu |
+| Render ECS'e yazmaz, hash'i değiştirmez | Hash testi + `extract(&World)` imzası |
+| GPU yokken çökme yok | `project.rs`: `WGPU_BACKEND=metal` ile (Windows/Linux'ta var olmayan backend) `no_gpu_adapter`, çıkış kodu ≠ 0, dosya yazılmaz (macOS geliştirme makinesinde bu test başarısız olur: orada metal var) |
+| (ek) Pencere | `wen view` gerçek pencerede açılıp kapandı ve sıcak yükleme canlı denendi; **pencere resminin içeriğine gözle bakılmadı**, döngü CI'da çalışmıyor |
+
+**Sapmalar.** Pencere sunumu GPU yüzeyi yerine ekran dışı çizim + `softbuffer` (WP8, gerekçeli). WESL yerine kendi `#import` ön işlemcimiz (ADR-013, WP1). Ağ `tangent` üretimi MikkTSpace değil (WP4).
+
+**M4'e devredilenler.** `wen watch` boş/yarım dosyayı bildirmeden önce kısa bir kararlılık beklesin; `double_sided_materials_show_their_back` eşiği sınırda (`c[0] > 2*c[1]`): CI'da kırılırsa parlak renk/ışık; `wish_control` `capture`/`describe`/`shaders`/`view` komutlarını sarmalı (aynı `Diagnostic`ler).
+
 ## 13. Açık sorular
 
 1. `Transform.rotation` için `euler_deg` kısa yazımı (ajan/insan kolaylığı) M4'te sorulacak.

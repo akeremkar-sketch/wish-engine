@@ -632,3 +632,42 @@ fn view_checks_its_arguments_before_opening_a_window() {
     assert_eq!(report["error"]["code"], "unknown_view");
     assert_eq!(report["error"]["hint"], "Did you mean 'ids'?");
 }
+
+#[test]
+fn without_a_usable_graphics_adapter_capture_explains_instead_of_crashing() {
+    let dir = Dir::new("no-gpu");
+    dir.write(
+        "main.scene.json",
+        r#"{ "format": 1, "entities": { "cam": { "components": { "Camera": {} } } } }"#,
+    );
+    let out = dir.0.join("never.png");
+    // Asking for a backend this platform does not have leaves no adapter.
+    let output = Command::new(env!("CARGO_BIN_EXE_wen"))
+        .env("WGPU_BACKEND", "metal")
+        .args([
+            "capture",
+            "--example",
+            "stress",
+            "--scene",
+            "main.scene.json",
+            "--root",
+            dir.arg(),
+            "--size",
+            "32x24",
+            "--out",
+            out.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["error"]["code"], "no_gpu_adapter");
+    assert!(
+        report["error"]["hint"]
+            .as_str()
+            .unwrap()
+            .contains("--software")
+    );
+    assert!(!out.exists());
+}

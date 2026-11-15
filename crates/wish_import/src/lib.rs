@@ -26,6 +26,10 @@ use wish_core::{Diagnostic, Result};
 /// The most nodes one model may nest (hostile files could nest forever).
 pub const MAX_NODE_DEPTH: usize = 256;
 
+/// The most node visits [`Model::placed`] makes (a tree cannot have more
+/// visits than nodes, so only a malformed file gets near this).
+pub const MAX_PLACEMENT_VISITS: usize = 1 << 20;
+
 /// The most pixels one decoded texture may have (16384 × 16384).
 pub const MAX_TEXTURE_PIXELS: u64 = 1 << 28;
 
@@ -200,7 +204,12 @@ impl Model {
             .rev()
             .map(|node| (*node, Mat4::IDENTITY, 0))
             .collect();
+        let mut visits = 0usize;
         while let Some((index, parent, depth)) = stack.pop() {
+            visits += 1;
+            if visits > MAX_PLACEMENT_VISITS || out.len() > MAX_PLACEMENT_VISITS {
+                break;
+            }
             let Some(node) = self.nodes.get(index) else {
                 continue;
             };
@@ -294,14 +303,14 @@ fn import_failure(file: &str, error: &gltf::Error) -> Diagnostic {
 pub fn load_model_file(path: &Path, name: &str) -> Result<Model> {
     let imported = guarded(name, || gltf::import(path))?;
     let (document, buffers, images) = imported.map_err(|error| import_failure(name, &error))?;
-    convert(name, &document, &buffers, &images)
+    guarded(name, || convert(name, &document, &buffers, &images))?
 }
 
 /// Reads a self-contained GLB (or a `.gltf` with embedded data) from memory.
 pub fn load_model_bytes(bytes: &[u8], name: &str) -> Result<Model> {
     let imported = guarded(name, || gltf::import_slice(bytes))?;
     let (document, buffers, images) = imported.map_err(|error| import_failure(name, &error))?;
-    convert(name, &document, &buffers, &images)
+    guarded(name, || convert(name, &document, &buffers, &images))?
 }
 
 /// Runs a call into the gltf crate so that a panic inside it becomes a
@@ -387,7 +396,34 @@ fn convert(
     if let Some(scene) = scene {
         model.roots = scene.nodes().map(|node| node.index()).collect();
     }
+    check_node_forest(file, &model)?;
     Ok(model)
+}
+
+/// glTF nodes form a forest: every node has at most one parent, and a scene's
+/// root nodes have none. A file that shares a node between parents (or lists
+/// a root twice) would make the walk visit it once per path, which is
+/// exponential in the worst case.
+fn check_node_forest(file: &str, model: &Model) -> Result<()> {
+    let mut parents = vec![0u32; model.nodes.len()];
+    let referenced = model
+        .roots
+        .iter()
+        .chain(model.nodes.iter().flat_map(|node| node.children.iter()));
+    for index in referenced {
+        if let Some(count) = parents.get_mut(*index) {
+            *count += 1;
+        }
+    }
+    if let Some(shared) = parents.iter().position(|count| *count > 1) {
+        return Err(Diagnostic::error(
+            "gltf_invalid",
+            format!("Node {shared} has more than one parent (or is listed twice); glTF nodes form a tree."),
+            "Give every node a single parent: a shared node must be duplicated. Re-export the model or check it in a glTF validator.",
+        )
+        .at_file(file));
+    }
+    Ok(())
 }
 
 fn decode_texture(file: &str, image: &gltf::image::Data) -> Result<Texture> {
@@ -609,6 +645,18 @@ fn convert_primitive(
         return None;
     };
     let positions: Vec<Vec3> = positions.map(Vec3::from).collect();
+    if positions.iter().any(|position| !position.is_finite()) {
+        warn(
+            model,
+            file,
+            "primitive_inconsistent",
+            format!(
+                "A primitive of '{label}' has positions that are not finite numbers and was skipped."
+            ),
+            "The file is damaged; re-export the model.",
+        );
+        return None;
+    }
     let indices: Vec<u32> = match reader.read_indices() {
         Some(indices) => indices.into_u32().collect(),
         None => (0..u32::try_from(positions.len()).unwrap_or(u32::MAX)).collect(),
@@ -626,7 +674,12 @@ fn convert_primitive(
         );
         return None;
     };
-    let normals: Option<Vec<Vec3>> = reader.read_normals().map(|n| n.map(Vec3::from).collect());
+    // Normals from a file are not trusted to be unit length: a zero normal
+    // would turn into NaN in the shader.
+    let normals: Option<Vec<Vec3>> = reader.read_normals().map(|n| {
+        n.map(|normal| Vec3::from(normal).try_normalize().unwrap_or(Vec3::Y))
+            .collect()
+    });
     let uvs: Vec<Vec2> = reader
         .read_tex_coords(0)
         .map(|coords| coords.into_f32().map(Vec2::from).collect())
@@ -700,7 +753,8 @@ fn flat_normals(primitive: &mut Primitive) {
 /// is added to its vertices, then made perpendicular to the normal. The sign
 /// in `w` says which way the bitangent points: the bitangent is `cross(normal,
 /// tangent) * w`, and it must point where the normal map's green channel does,
-/// up in the image (towards smaller V). For an ordinary, non-mirrored layout`n/// `w` is +1. (Not MikkTSpace, but the same for such layouts.)
+/// up in the image (towards smaller V). For an ordinary, non-mirrored layout
+/// `w` is +1. (Not MikkTSpace, but the same for such layouts.)
 fn generate_tangents(primitive: &Primitive) -> Vec<Vec4> {
     let count = primitive.positions.len();
     let mut tangent = vec![Vec3::ZERO; count];

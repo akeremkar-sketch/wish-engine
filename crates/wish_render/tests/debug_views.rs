@@ -110,7 +110,7 @@ fn prepare(source: &str) -> (RenderScene, wish_scene::SceneEntities) {
     assert!(!result.has_errors(), "{:?}", result.diagnostics);
     let entities = result.document.unwrap().instantiate(&mut world).unwrap();
     update_global_transforms(&mut world).unwrap();
-    (extract(&mut world).unwrap(), entities)
+    (extract(&world).unwrap(), entities)
 }
 
 fn gpu() -> Gpu {
@@ -368,4 +368,47 @@ fn the_lit_view_is_the_normal_render() {
         .unwrap();
     let plain = renderer.render(&gpu, &scene, None, 96, 72).unwrap();
     assert_eq!(lit.image, plain.image);
+}
+
+#[test]
+fn a_one_sided_surface_seen_from_behind_is_not_there_in_any_view() {
+    let gpu = gpu();
+    let renderer = Renderer::new(&gpu).unwrap();
+    // A plane overhead, the camera under it looking up.
+    let (scene, entities) = prepare(
+        r#"{ "format": 1, "entities": {
+            "camera": { "components": { "Camera": { "fov_y_deg": 60 },
+                "Transform": { "translation": [0, 0, 0], "rotation": [0.7071068, 0, 0, 0.7071068] } } },
+            "roof": { "components": { "Primitive": { "shape": "Plane" },
+                "Transform": { "translation": [0, 5, 0], "scale": [10, 1, 10] } } }
+        } }"#,
+    );
+    let ids = renderer
+        .id_buffer(&gpu, &scene, None, WIDTH, HEIGHT)
+        .unwrap();
+    assert!(
+        ids.raw().iter().all(|id| *id == 0),
+        "the back of the plane is culled, as in the lit picture"
+    );
+    let description = renderer
+        .describe(&gpu, &scene, None, WIDTH, HEIGHT)
+        .unwrap();
+    assert!(description.visible.is_empty());
+    assert_eq!(description.hidden, [entities["roof"]]);
+    // The same plane from above is there.
+    let (above, entities) = prepare(
+        r#"{ "format": 1, "entities": {
+            "camera": { "components": { "Camera": { "fov_y_deg": 60 },
+                "Transform": { "translation": [0, 5, 0], "rotation": [-0.7071068, 0, 0, 0.7071068] } } },
+            "floor": { "components": { "Primitive": { "shape": "Plane" },
+                "Transform": { "scale": [10, 1, 10] } } }
+        } }"#,
+    );
+    let ids = renderer
+        .id_buffer(&gpu, &above, None, WIDTH, HEIGHT)
+        .unwrap();
+    assert_eq!(
+        ids.entity_at(WIDTH / 2, HEIGHT / 2),
+        Some(entities["floor"])
+    );
 }

@@ -28,7 +28,7 @@ fn extracted(source: &str) -> (World, RenderScene, wish_scene::SceneEntities) {
     let mut world = world();
     let entities = scene(source, &world).instantiate(&mut world).unwrap();
     update_global_transforms(&mut world).unwrap();
-    let scene = extract(&mut world).unwrap();
+    let scene = extract(&world).unwrap();
     (world, scene, entities)
 }
 
@@ -157,16 +157,16 @@ fn extraction_is_read_only_and_repeatable() {
     scene(SCENE, &world).instantiate(&mut world).unwrap();
     update_global_transforms(&mut world).unwrap();
     let before = world.hash();
-    let first = extract(&mut world).unwrap();
-    let second = extract(&mut world).unwrap();
+    let first = extract(&world).unwrap();
+    let second = extract(&world).unwrap();
     assert_eq!(first, second);
     assert_eq!(world.hash(), before, "drawing never changes the simulation");
 }
 
 #[test]
 fn an_empty_world_gives_an_empty_scene_with_the_default_sky_and_exposure() {
-    let mut world = world();
-    let scene = extract(&mut world).unwrap();
+    let world = world();
+    let scene = extract(&world).unwrap();
     assert!(scene.cameras.is_empty() && scene.lights.is_empty() && scene.draws.is_empty());
     assert_eq!(scene.ev100, 14.0);
     assert!((scene.ambient[0] - 0.5 * 20000.0).abs() < 1e-2);
@@ -186,7 +186,7 @@ fn bad_cameras_are_explained() {
     let source = r#"{ "format": 1, "entities": { "c": { "components": { "Camera": { "near": 5, "far": 2 } } } } }"#;
     scene(source, &world).instantiate(&mut world).unwrap();
     update_global_transforms(&mut world).unwrap();
-    let problem = extract(&mut world).unwrap_err();
+    let problem = extract(&world).unwrap_err();
     assert_eq!(problem.code, "invalid_camera");
     assert!(problem.message.contains("far"), "{}", problem.message);
     assert!(problem.hint.contains("near"), "{}", problem.hint);
@@ -238,4 +238,16 @@ fn component_values_are_checked_when_the_scene_loads() {
         assert!(text.contains(word), "{components}: {text}");
         assert!(problem.location.line.is_some(), "{components}");
     }
+}
+
+#[test]
+fn a_camera_that_cannot_be_inverted_is_explained() {
+    let mut world = world();
+    let source = r#"{ "format": 1, "entities": { "c": { "components": { "Camera": {},
+        "Transform": { "scale": [0, 1, 1] } } } } }"#;
+    scene(source, &world).instantiate(&mut world).unwrap();
+    update_global_transforms(&mut world).unwrap();
+    let problem = extract(&world).unwrap_err();
+    assert_eq!(problem.code, "invalid_camera");
+    assert!(problem.hint.contains("scale"), "{}", problem.hint);
 }

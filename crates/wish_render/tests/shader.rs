@@ -73,3 +73,36 @@ fn mistakes_name_the_file_line_and_column() {
         assert!(!problem.hint.is_empty(), "{name}");
     }
 }
+
+#[test]
+fn import_mistakes_name_the_file_line_and_a_hint() {
+    use wish_render::ShaderLibrary;
+    let mut library = ShaderLibrary::new();
+    library.add("a", "shaders/a.wgsl", "#import b\nfn a() {}\n");
+    library.add("b", "shaders/b.wgsl", "// b\n#import a\nfn b() {}\n");
+    library.add("c", "shaders/c.wgsl", "\n  #import brfd\nfn c() {}\n");
+    library.add("brdf", "shaders/brdf.wgsl", "fn f() {}\n");
+    library.add("d", "shaders/d.wgsl", "#import two words\n");
+
+    let cycle = library.check("a").unwrap_err();
+    assert_eq!(cycle.code, "shader_import_cycle");
+    assert!(cycle.message.contains("a -> b -> a"), "{}", cycle.message);
+    assert!(!cycle.hint.is_empty());
+
+    let unknown = library.check("c").unwrap_err();
+    assert_eq!(unknown.code, "shader_import_unknown");
+    assert_eq!(unknown.location.file.as_deref(), Some("shaders/c.wgsl"));
+    assert_eq!(unknown.location.line, Some(2));
+    assert_eq!(unknown.hint, "Did you mean 'brdf'?");
+
+    let syntax = library.check("d").unwrap_err();
+    assert_eq!(syntax.code, "shader_import_syntax");
+    assert_eq!(syntax.location.line, Some(1));
+    assert!(syntax.hint.contains("#import"));
+
+    // An entry that does not exist at all.
+    assert_eq!(
+        library.check("zzz").unwrap_err().code,
+        "shader_import_unknown"
+    );
+}

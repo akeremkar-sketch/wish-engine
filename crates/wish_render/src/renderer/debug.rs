@@ -89,10 +89,11 @@ impl View {
 /// The pipelines of the debug views.
 pub(super) struct DebugPipelines {
     layout: wgpu::BindGroupLayout,
-    ids: wgpu::RenderPipeline,
-    depth: wgpu::RenderPipeline,
-    normals: wgpu::RenderPipeline,
-    fill: wgpu::RenderPipeline,
+    /// Index 0 culls back faces (single-sided materials), 1 does not.
+    ids: [wgpu::RenderPipeline; 2],
+    depth: [wgpu::RenderPipeline; 2],
+    normals: [wgpu::RenderPipeline; 2],
+    fill: [wgpu::RenderPipeline; 2],
     lines: wgpu::RenderPipeline,
 }
 
@@ -101,6 +102,7 @@ impl DebugPipelines {
         gpu: &Gpu,
         source: &str,
         draw_layout: &wgpu::BindGroupLayout,
+        material_layout: &wgpu::BindGroupLayout,
     ) -> Result<Self> {
         gpu.checked("build the debug pipelines", |gpu| {
             let device = &gpu.device;
@@ -119,7 +121,7 @@ impl DebugPipelines {
             });
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("debug"),
-                bind_group_layouts: &[Some(&layout), Some(draw_layout)],
+                bind_group_layouts: &[Some(&layout), Some(draw_layout), Some(material_layout)],
                 immediate_size: 0,
             });
             let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -137,13 +139,19 @@ impl DebugPipelines {
                     offset: 12,
                     shader_location: 1,
                 },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x2,
+                    offset: 24,
+                    shader_location: 2,
+                },
             ];
             let pipeline = |name: &str,
                             fragment: &str,
                             format: wgpu::TextureFormat,
                             topology: wgpu::PrimitiveTopology,
                             compare: wgpu::CompareFunction,
-                            bias: wgpu::DepthBiasState| {
+                            bias: wgpu::DepthBiasState,
+                            cull_mode: Option<wgpu::Face>| {
                 device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                     label: Some(name),
                     layout: Some(&pipeline_layout),
@@ -159,6 +167,7 @@ impl DebugPipelines {
                     },
                     primitive: wgpu::PrimitiveState {
                         topology,
+                        cull_mode,
                         ..wgpu::PrimitiveState::default()
                     },
                     depth_stencil: Some(wgpu::DepthStencilState {
@@ -194,39 +203,38 @@ impl DebugPipelines {
                 slope_scale: 2.0,
                 clamp: 0.0,
             };
+            let back = Some(wgpu::Face::Back);
+            // One pipeline per culling mode, picked per draw like the lit pass.
+            let both = |name: &str,
+                        fragment: &str,
+                        format: wgpu::TextureFormat,
+                        bias: wgpu::DepthBiasState| {
+                [
+                    pipeline(
+                        name,
+                        fragment,
+                        format,
+                        triangles,
+                        wgpu::CompareFunction::Less,
+                        bias,
+                        back,
+                    ),
+                    pipeline(
+                        name,
+                        fragment,
+                        format,
+                        triangles,
+                        wgpu::CompareFunction::Less,
+                        bias,
+                        None,
+                    ),
+                ]
+            };
             Self {
-                ids: pipeline(
-                    "ids",
-                    "fs_ids",
-                    ID_FORMAT,
-                    triangles,
-                    wgpu::CompareFunction::Less,
-                    none,
-                ),
-                depth: pipeline(
-                    "depth",
-                    "fs_depth",
-                    COLOUR_FORMAT,
-                    triangles,
-                    wgpu::CompareFunction::Less,
-                    none,
-                ),
-                normals: pipeline(
-                    "normals",
-                    "fs_normals",
-                    COLOUR_FORMAT,
-                    triangles,
-                    wgpu::CompareFunction::Less,
-                    none,
-                ),
-                fill: pipeline(
-                    "wire fill",
-                    "fs_fill",
-                    COLOUR_FORMAT,
-                    triangles,
-                    wgpu::CompareFunction::Less,
-                    pushed_back,
-                ),
+                ids: both("ids", "fs_ids", ID_FORMAT, none),
+                depth: both("depth", "fs_depth", COLOUR_FORMAT, none),
+                normals: both("normals", "fs_normals", COLOUR_FORMAT, none),
+                fill: both("wire fill", "fs_fill", COLOUR_FORMAT, pushed_back),
                 lines: pipeline(
                     "wire lines",
                     "fs_line",
@@ -234,6 +242,7 @@ impl DebugPipelines {
                     wgpu::PrimitiveTopology::LineList,
                     wgpu::CompareFunction::LessEqual,
                     none,
+                    None,
                 ),
                 layout,
             }
@@ -638,28 +647,38 @@ impl Renderer {
                     multiview_mask: None,
                 });
                 pass.set_bind_group(0, &debug_group, &[]);
-                let mesh_of = |source: &Source<'a>| -> Option<&'a GpuMesh> {
-                    match source {
-                        Source::Shape(shape) => self.shapes.get(*shape),
-                        Source::Primitive(primitive) => Some(&primitive.mesh),
-                    }
-                };
+                // What a draw needs: its mesh, its material's textures (for
+                // the alpha cut-out) and whether it is culled, exactly as in
+                // the lit pass.
+                let parts =
+                    |source: &Source<'a>| -> Option<(&'a GpuMesh, &'a wgpu::BindGroup, bool)> {
+                        match source {
+                            Source::Shape(shape) => self
+                                .shapes
+                                .get(*shape)
+                                .map(|mesh| (mesh, &self.default_textures, false)),
+                            Source::Primitive(primitive) => {
+                                Some((&primitive.mesh, &primitive.textures, primitive.double_sided))
+                            }
+                        }
+                    };
                 let triangles = match view {
                     View::Ids => &self.debug.ids,
                     View::Depth => &self.debug.depth,
                     View::Normals => &self.debug.normals,
                     _ => &self.debug.fill,
                 };
-                pass.set_pipeline(triangles);
                 for (source, offset) in draws {
-                    let Some(mesh) = mesh_of(source) else {
+                    let Some((mesh, textures, double_sided)) = parts(source) else {
                         continue;
                     };
+                    pass.set_pipeline(&triangles[usize::from(double_sided)]);
                     pass.set_bind_group(
                         1,
                         &draw_group,
                         &[u32::try_from(*offset).unwrap_or(u32::MAX)],
                     );
+                    pass.set_bind_group(2, textures, &[]);
                     pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                     pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..mesh.index_count, 0, 0..1);
@@ -667,7 +686,7 @@ impl Renderer {
                 if view == View::Wireframe {
                     pass.set_pipeline(&self.debug.lines);
                     for (source, offset) in draws {
-                        let Some(mesh) = mesh_of(source) else {
+                        let Some((mesh, textures, _)) = parts(source) else {
                             continue;
                         };
                         pass.set_bind_group(
@@ -675,6 +694,7 @@ impl Renderer {
                             &draw_group,
                             &[u32::try_from(*offset).unwrap_or(u32::MAX)],
                         );
+                        pass.set_bind_group(2, textures, &[]);
                         pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                         pass.set_index_buffer(mesh.edges.slice(..), wgpu::IndexFormat::Uint32);
                         pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);

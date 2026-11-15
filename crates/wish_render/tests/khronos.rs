@@ -104,7 +104,7 @@ fn draw_the_khronos_samples() {
         assert!(!loaded.has_errors(), "{name}: {:?}", loaded.diagnostics);
         loaded.document.unwrap().instantiate(&mut world).unwrap();
         update_global_transforms(&mut world).unwrap();
-        let scene = extract(&mut world).unwrap();
+        let scene = extract(&world).unwrap();
 
         let mut renderer = Renderer::new(&gpu).unwrap();
         renderer

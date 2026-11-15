@@ -39,7 +39,6 @@ xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
 # Rendering (wish_render only, ADR-012). `wgpu` is the only graphics API the
 # engine talks to; `naga` turns shader errors into positioned diagnostics.
-bytemuck = { version = "1", features = ["derive"] }
 # glTF reading (wish_import only). Supported extensions are the features
 # named here; any other extension a file requires is reported as a warning.
 gltf = { version = "1.4", features = ["KHR_materials_emissive_strength"] }
