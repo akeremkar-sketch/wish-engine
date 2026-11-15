@@ -9,7 +9,6 @@ Wish Engine: yapay zekâya tamamen entegre ama yapay zekâsız da eksiksiz kulla
 - **Süren: M2 (veri katmanı)**, `m2-data` dalında. Tasarım notu yazıldı: [docs/design/M2-veri-katmani.md](docs/design/M2-veri-katmani.md) — M2'de kod yazmadan önce oku.
   - **Sıradaki: M2 WP1 (`wish_scene::json`: kaynak aralığı kaydeden katı JSON ayrıştırıcı + kanonik yazıcı).** Önerilen model · efor: Sonnet 5.5 · high. İş paketleri ve her birinin modeli tasarım notunun §10'unda.
   - M3 (ilk piksel) M2 ile paralel yürüyebilir.
-  - M2 sonunda kullanıcıya sorulacak: CI için uzak depo (GitHub hesabı, depo adı, herkese açık/özel).
 - **`wen`'i çalıştırmak:** `cargo run -p wish_cli --release -- run --example bounce --frames 10000 --seed 7 --json`. Derlenmiş ikili `C:\wish-build\target\release\wen.exe` altında.
 - **Hash'leri değiştirme konusunda dikkat:** `wish_ecs/tests/snapshot.rs` ve `wish_core` testlerinde kayıtlı hash/rastgelelik değerleri var. Bunlar kırılırsa önce bilinçli bir format değişikliği olup olmadığını düşün; bilinçliyse sürüm etiketini (`wish-world-hash-v1` vb.) artır.
 - **Git:** M1, `m1-core` dalında geliştirildi ve `main`'e birleştirildi. Her kilometre taşı kendi dalında (`m2-...`) yürür, bitince `main`'e birleştirilir. Commit kimliği depoya özel proje kimliğidir (kullanıcı kararı); kişisel e-posta kullanma.

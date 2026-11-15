@@ -132,7 +132,7 @@ Hepsi M1'deki gibi `--json` ile MCP zarfında çıktı verir.
 
 - Derleme hatası testleri (`trybuild`) ve makronun düz veri olmayan alan için yinelenen hata iletileri.
 - `syn` 3'e geçiş (makro).
-- CI'ın ilk gerçek çalıştırması — uzak depo gerektirir; kullanıcı kararı (GitHub hesabı, depo adı, herkese açık/özel). **M2 sonunda kullanıcıya sorulacak.**
+- ~~CI'ın ilk gerçek çalıştırması~~ — 15 Kasım 2026'da yapıldı: özel GitHub deposu açıldı, CI Windows ve Linux'ta yeşil.
 
 ## 9. Test planı (çıkış ölçütleriyle)
 
