@@ -6,8 +6,8 @@ Wish Engine: yapay zekâya tamamen entegre ama yapay zekâsız da eksiksiz kulla
 
 - **Tamamlanan:** M0 (tasarım).
 - **Süren:** M1 (çekirdek). Tasarım notu: [docs/design/M1-cekirdek.md](docs/design/M1-cekirdek.md) — M1'de kod yazmadan önce oku.
-  - Biten: WP1 (çalışma alanı, lint'ler, lisanslar, CI dosyası, git), WP2 (`wish_core`: `Entity`, `Diagnostic`, kararlı hash, öneri yardımcıları; 26 test).
-  - **Sıradaki: WP3 (`wish_schema` + makro).** Önerilen model · efor: Opus 5.5 · high.
+  - Biten: WP1 (çalışma alanı, lint'ler, lisanslar, CI dosyası, git), WP2 (`wish_core`: `Entity`, `Text`, `Color`, matematik türleri, `Diagnostic`, kararlı hash, öneri yardımcıları), WP3 (`wish_schema` + `wish_schema_macros`: şema modeli, `Plain` sözleşmesi, `#[component]`/`#[resource]`/`#[event]`/`#[schema]`, JSON ⇄ bayt, JSON Schema, parmak izi). Toplam 60 test.
+  - **Sıradaki: WP4 (`wish_ecs`).** Önerilen model · efor: Opus 5.5 · high. Başlamadan önce tasarım notunun 4. bölümünü ve 12. bölümündeki uygulama notlarını oku. `unsafe` ilk kez burada yazılacak: Miri için nightly araç zinciri kurulması gerekir (indirme; kullanıcıya haber ver).
 - **Git:** `main` yalnızca M0 belgelerini taşır; M1 çalışması `m1-core` dalındadır. Uzak depo (remote) yok. Commit kimliği depoya özel proje kimliğidir (kullanıcı kararı); kişisel e-posta kullanma.
 - **Ortam (15 Kasım 2026'da doğrulandı):** Rust 1.100.0 (`rust-toolchain.toml` ile sabit) ve Visual Studio 2022 Build Tools 17.14.45 kurulu. Bu oturumun kabuğunda `cargo` PATH'te olmayabilir; her komuttan önce `$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"` çalıştır.
 - **Proje klasörü OneDrive altında** (`Masaüstü\wish-engine`). Derleme çıktıları git'e girmeyen yerel `.cargo/config.toml` ile `C:/wish-build/target` klasörüne yönlendirildi. Bu dosyayı silme; `target/` klasörünü asla proje klasörünün içinde bırakma.
@@ -63,6 +63,9 @@ Bir değişiklik bunlardan birini bozuyorsa değişiklik yanlıştır. Gerekçel
 - Kütüphane kodunda `unwrap`/`expect`/`panic!` yok (testler hariç); hatalar `Diagnostic` olarak döner. Bunu clippy zorlar (`Cargo.toml` içindeki `[workspace.lints]`).
 - Simülasyon kodunda `HashMap`/`HashSet` üzerinde gezinme yasak (clippy `iter_over_hash_type`); sıralı gezinme gerekiyorsa `BTreeMap` ya da `Vec` kullan.
 - Kararlı hash gereken her yerde (dünya hash'i, parmak izi, diske yazılan her şey) `wish_core::StableHasher` kullan; standart kitaplığın hash'leyicilerini asla.
+- Dünyaya giren türler yalnızca `#[component]`, `#[resource]`, `#[event]`, `#[schema]` ile tanımlanır; `Plain` elle uygulanmaz. Bu makrolar `Clone`, `Copy`, `Debug`, `PartialEq`, `Default` ve `repr`'ı kendileri ekler (bunları ayrıca yazmak derleme hatasıdır).
+- Hata döndüren işlevlerde `wish_core::Result<T>` kullan. `Diagnostic` tek işaretçi genişliğindedir; onu büyütecek bir değişiklik yapma (bir test bunu denetler).
+- Bütünleşme testi dosyalarının (`tests/*.rs`) başına `#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]` koy: clippy yalnızca `#[test]` işlevlerini test sayar, ortak yardımcıları saymaz.
 - Herkese açık her öge belge yorumu taşır (bunlar şemaya ve MCP belgelerine akar).
 - Koordinat sistemi: sağ el, +Y yukarı, kamera −Z'ye bakar. Birimler: metre, saniye, kilogram; API'de radyan.
 - Bağımlılık eklemeden önce lisansını denetle (yalnızca MIT/Apache-2.0/BSD benzeri serbest lisanslar).

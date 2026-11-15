@@ -7,6 +7,7 @@
 
 use std::borrow::Cow;
 use std::fmt;
+use std::ops::{Deref, DerefMut};
 
 use serde::{Deserialize, Serialize};
 
@@ -105,8 +106,20 @@ impl fmt::Display for Location {
 /// ```
 ///
 /// `location` and `candidates` are omitted when empty.
+///
+/// # Size
+///
+/// A `Diagnostic` is one pointer wide; its content ([`DiagnosticData`]) lives
+/// on the heap. Errors are the rare path, and this keeps `Result<T, Diagnostic>`
+/// small on the common one. The fields are still reached directly, as in
+/// `diagnostic.code` or `diagnostic.hint`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Diagnostic {
+#[serde(transparent)]
+pub struct Diagnostic(Box<DiagnosticData>);
+
+/// The content of a [`Diagnostic`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiagnosticData {
     /// How serious the diagnostic is.
     pub severity: Severity,
     /// Stable, documented, machine-readable identifier in `snake_case`.
@@ -125,6 +138,20 @@ pub struct Diagnostic {
     pub docs: String,
 }
 
+impl Deref for Diagnostic {
+    type Target = DiagnosticData;
+
+    fn deref(&self) -> &DiagnosticData {
+        &self.0
+    }
+}
+
+impl DerefMut for Diagnostic {
+    fn deref_mut(&mut self) -> &mut DiagnosticData {
+        &mut self.0
+    }
+}
+
 impl Diagnostic {
     /// Creates a diagnostic. The documentation address is derived from `code`.
     pub fn new(
@@ -135,7 +162,7 @@ impl Diagnostic {
     ) -> Self {
         let code = code.into();
         let docs = format!("wish://docs/diagnostics/{code}");
-        Self {
+        Self(Box::new(DiagnosticData {
             severity,
             code,
             message: message.into(),
@@ -143,7 +170,7 @@ impl Diagnostic {
             hint: hint.into(),
             candidates: Vec::new(),
             docs,
-        }
+        }))
     }
 
     /// Creates an error: the operation failed.
@@ -247,6 +274,15 @@ impl std::error::Error for Diagnostic {}
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+
+    /// Results are returned from hot paths; a large error type would make
+    /// every one of them large, even when nothing goes wrong.
+    #[test]
+    fn a_diagnostic_is_one_pointer_wide() {
+        assert_eq!(size_of::<Diagnostic>(), size_of::<usize>());
+        assert_eq!(size_of::<Result<()>>(), size_of::<usize>());
+        assert_eq!(size_of::<Result<u32>>(), 2 * size_of::<usize>());
+    }
 
     use super::*;
 

@@ -1,0 +1,19 @@
+[package]
+name = "wish_schema"
+description = "Runtime type schemas for Wish Engine: one definition drives storage layout, JSON, JSON Schema and editor inspectors."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+wish_core.workspace = true
+wish_schema_macros.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

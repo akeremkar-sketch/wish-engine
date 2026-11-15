@@ -113,6 +113,9 @@ pub struct FieldSchema {
 /// Tür `repr(C)`, `Copy`, işaretçisiz olmalı ve `schema()` gerçek yerleşimi anlatmalıdır.
 pub unsafe trait Plain: Copy + 'static {
     fn schema() -> TypeSchema;
+    fn default_value() -> Self;              // varsayılanın tek kaynağı
+    fn encode(&self, out: &mut [u8]);        // güvenli; dolguyu sıfır yazar
+    fn decode(bytes: &[u8]) -> Option<Self>; // güvenli; geçersiz bool/enum → None
 }
 pub trait Component: Plain { const NAME: &'static str; }
 pub trait Resource: Plain { const NAME: &'static str; }
@@ -123,9 +126,14 @@ pub trait Event: Plain { const NAME: &'static str; }
 
 - `#[repr(C)]` + `Clone, Copy` (enum'da `repr(u8)`)
 - `unsafe impl Plain` — ofsetler `core::mem::offset_of!`, boyut/hizalama `size_of`/`align_of` ile; elle yazılan sayı yok
-- `impl Default` — `#[schema(default = …)]` değerlerinden (tek doğruluk kaynağı)
+- `Debug`, `PartialEq` (enum'da ayrıca `Eq`) ve `impl Default`. Varsayılan, `#[schema(default = …)]` ifadelerinden gelir; **herhangi bir Rust ifadesi** olabilir (`default = Vec3::ONE`). Şemadaki JSON varsayılanı elle yazılmaz: Rust değeri `encode` edilip şemayla JSON'a çevrilerek hesaplanır — tek doğruluk kaynağı.
 - Derleme zamanı denetimleri: her alan türü `Plain`; hizalama ≤ 8
-- `///` yorumları → `doc`; `#[schema(unit = …, range = …)]` → şema
+- `///` yorumları → `doc`; `#[schema(unit = …, range = …, alias = …)]` → şema
+- `alias`: insanların/ajanların gerçek ad yerine deneyeceği ad (`translation` için `position`). Girdi olarak **kabul edilmez**; yalnızca "şunu mu demek istediniz" ipucunu kesinleştirir (tek doğru yol ilkesi)
+- Alansız yapılar (`struct Player;`) geçerlidir: sıfır boyutlu "etiket" bileşenleri
+- Enum'un varsayılanı ilk varyantıdır
+
+**Neden `encode`/`decode`?** Güvenli, alan alan çalışan bu iki yöntem sayesinde: varsayılanlar tek kaynaktan türer; bileşen ekleme/okuma `unsafe` gerektirmez (`unsafe` yalnızca sıfır kopya `&T` görünümlerine kalır); güvenilmeyen baytlar `decode` ile tür güvenli doğrulanır. Sıcak yol (sorgu gezinmesi) bunları kullanmaz.
 
 Makro ayrı bir crate'tir (`wish_schema_macros`), çünkü Rust'ta işlemsel makrolar ayrı crate olmak zorundadır.
 
@@ -257,9 +265,9 @@ wen bench ecs --entities 100000 --ticks 600
 
 | # | İş paketi | Model · efor | Durum |
 |---|---|---|---|
-| WP1 | Çalışma alanı, lint'ler, lisanslar, CI, git | Sonnet 5.5 · medium | Bu oturumda |
-| WP2 | `wish_core`: `Entity`, `Diagnostic`, kararlı hash, öneri yardımcıları | Sonnet 5.5 · medium | Bu oturumda |
-| WP3 | `wish_schema` + makro: şema modeli, JSON ⇄ bayt, JSON Schema, parmak izi | Opus 5.5 · high | |
+| WP1 | Çalışma alanı, lint'ler, lisanslar, CI, git | Sonnet 5.5 · medium | Tamamlandı |
+| WP2 | `wish_core`: `Entity`, `Diagnostic`, kararlı hash, öneri yardımcıları | Sonnet 5.5 · medium | Tamamlandı |
+| WP3 | `wish_schema` + makro: şema modeli, JSON ⇄ bayt, JSON Schema, parmak izi | Opus 5.5 · high | Tamamlandı |
 | WP4 | `wish_ecs`: depolama, sorgular, komutlar, kaynaklar, olaylar, metinler, hiyerarşi | Opus 5.5 · high | |
 | WP5 | Zamanlayıcı, sabit adım, rastgelelik (`wish_app`) | Opus 5.5 · high | |
 | WP6 | Anlık görüntü ve dünya hash'i | Opus 5.5 · high | |
@@ -268,7 +276,23 @@ wen bench ecs --entities 100000 --ticks 600
 
 ## 11. Açık sorular (uygulama sırasında kapanacak)
 
-1. **`f32` JSON gidiş-dönüşü.** En kısa gösterim → `f64` olarak ayrıştır → `f32`'ye çevir yolu teoride çift yuvarlama yapabilir. M2'nin "bayt düzeyinde gidiş-dönüş" değişmezi için `f32` alanları doğrudan `f32` olarak ayrıştırılmalı. WP3'te özellik testiyle ölçülür, M2'de kesinleşir.
+1. ~~**`f32` JSON gidiş-dönüşü.**~~ **WP3'te kapandı.** Yazarken `f32`'nin en kısa ondalık gösterimi kullanılır (JSON'da `0.1` görünür, `0.10000000149011612` değil); okurken sayının ondalık metni doğrudan `f32` olarak ayrıştırılır (çift yuvarlama yok). Ayrıca `serde_json`'ın `float_roundtrip` özelliği açıldı: varsayılan ayrıştırıcı `f64`'te son basamakta sapabiliyordu. Özellik testleri her sonlu `f32` ve `f64` için bayt → JSON → metin → JSON → bayt yolunun bit düzeyinde aynı sonucu verdiğini doğruluyor.
 2. **Devre dışı kalan sistem bayrakları** durumun parçası mı? M1'de zamanlayıcıdadır (anlık görüntü dışı). M5'te Wasm tuzaklarıyla birlikte yeniden değerlendirilir.
 3. **Metin tablosunun büyümesi.** Yalnızca eklenen tablo uzun oturumlarda şişebilir; sıkıştırma (anlık görüntü sırasında) gerekirse M5'te.
 4. **`scalar-math` performansı.** WP8 kıyaslaması yetersiz çıkarsa: depolamada düz `f32` yapıları, hesaplamada SIMD türlerine dönüştürme.
+5. **Makronun yinelenen hataları.** Düz veri olmayan bir alan (`String` gibi) doğru yerde, doğru iletiyle raporlanıyor; ama aynı hata üretilen kodun başka üç yerinden de yineleniyor (bir hata için beş ileti). İlk ileti yeterince açık; yinelemeleri azaltmak ve derleme hatası testleri (`trybuild`) eklemek WP8'e bırakıldı.
+6. **`syn` sürümü.** Makro `syn` 2 ile yazıldı; `serde_derive` ise `syn` 3 getiriyor. İki sürüm de derleniyor (ilk derlemede birkaç saniye). Makro ileride `syn` 3'e taşınabilir.
+
+## 12. Uygulama notları
+
+Tasarımdan sonra uygulama sırasında verilen ve sonraki iş paketlerini etkileyen kararlar.
+
+### WP2–WP3
+
+- **`Diagnostic` tek işaretçi genişliğindedir.** İçeriği (`DiagnosticData`) yığında (heap) durur; alanlara `Deref` ile doğrudan erişilir (`diagnostic.code`). Neden: ilk hâli 200 bayttı ve her `Result<T>`'yi, hata olmasa bile, o kadar büyütüyordu. Şimdi `Result<()>` 8 bayt. Bunu bir test sabitliyor.
+- **Sonlu olmayan sayılar.** Okumada reddedilir. Yazmada `"NaN"`, `"Infinity"`, `"-Infinity"` metinleri üretilir; böylece bozulmuş bir dünya (örneğin NaN'a dönmüş bir konum) yine de incelenebilir.
+- **`apply_json` bir yamadır.** Nesnede adı geçen alanlar yazılır, diğerleri olduğu gibi kalır. Yeni değer kurmak için `from_json` (varsayılanlardan başlar). MCP'nin `set` işlemi doğrudan bunun üstüne kurulacak.
+- **Hata konumu ve adı.** JSON dönüşüm hataları hem JSON işaretçisi (`/waypoints/1/1`) hem okunur ad (`Mover.waypoints[1][1]`) taşır. Çağıran, değerin belge içindeki yerini `JsonContext::at_path` ile verir.
+- **Şema doğrulaması** (`TypeSchema::validate`) makronun ürettiği şemalar için hep geçer; asıl amacı M5'te Wasm modülünden gelecek şemaları güven sınırında denetlemektir.
+- **Tür düzeyi varsayılanlar** iki yerde tanımlı ve bir testle eşitlenmiş durumda: Rust tarafında `Plain::default_value()`, şema tarafında `default_bytes` (dördey = birim, matris = birim, renk = opak beyaz, varlık = `null`, enum = ilk varyant, diğerleri sıfır).
+- **Parmak izi yalnızca yerleşimi kapsar** (ad, boyut, hizalama, ofset, enum değerleri). Belge, birim, aralık, varsayılan ve takma ad değişince parmak izi değişmez; çünkü saklı baytların anlamı değişmez.

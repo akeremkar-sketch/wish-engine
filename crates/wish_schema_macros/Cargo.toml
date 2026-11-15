@@ -1,0 +1,19 @@
+[package]
+name = "wish_schema_macros"
+description = "Attribute macros that declare plain-data types for Wish Engine. Use them through wish_schema."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2.workspace = true
+quote.workspace = true
+syn.workspace = true
+
+[lints]
+workspace = true

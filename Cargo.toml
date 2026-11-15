@@ -10,11 +10,31 @@ license = "MIT OR Apache-2.0"
 publish = false
 
 [workspace.dependencies]
+# Workspace crates. A crate is listed once another crate depends on it.
+wish_core = { path = "crates/wish_core" }
+wish_schema_macros = { path = "crates/wish_schema_macros" }
+
 # External crates. Check the license before adding one (see deny.toml).
-# Workspace crates are added here as soon as another crate depends on them.
+#
+# glam: `scalar-math` turns SIMD off so that Quat, Vec4 and Mat4 are plain f32
+# structs with alignment 4 (SIMD variants are 16-aligned and would put padding
+# into components). `libm` takes trigonometry from pure Rust instead of the
+# platform's C library, for cross-platform determinism (ADR-005).
+glam = { version = "0.34", features = ["scalar-math", "libm"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# `float_roundtrip`: parse floats exactly. The default parser can be one unit
+# in the last place off, which would break bit-exact save/load of f64 fields.
+serde_json = { version = "1", features = ["float_roundtrip"] }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
+
+# Procedural macros. serde_derive already brings syn 3; wish_schema_macros is
+# written against the syn 2 API and can be moved over later to drop the duplicate.
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }
+
+# Tests only.
+proptest = "1"
 
 [workspace.lints.rust]
 # `unsafe` is allowed only in the crates listed in CLAUDE.md, which opt in locally.
@@ -32,3 +52,5 @@ unimplemented = "deny"
 dbg_macro = "deny"
 # Determinism: iterating a hash map or hash set has no stable order.
 iter_over_hash_type = "deny"
+# Every unsafe block and unsafe impl says why it is sound.
+undocumented_unsafe_blocks = "deny"
