@@ -1,0 +1,768 @@
+//! Scene tools: `scene_get`, `entity_query`, `entity_get`, `edit_apply`,
+//! `edit_history`.
+
+use serde_json::{Map, Value, json};
+use wish_core::{Diagnostic, Entity, Result};
+use wish_scene::{Action, Actor, SceneDocument, Transaction};
+
+use super::DETAIL;
+use crate::documents::{WorldView, touched};
+use crate::expr::{Expr, Subject};
+use crate::param::{Args, Kind, Param};
+use crate::tool::Tool;
+use crate::workspace::Workspace;
+
+const SCENE: Param = Param::optional(
+    "scene",
+    Kind::String,
+    "The scene file, project-relative (default: the project's scene from wish.json).",
+);
+
+/// Components the engine keeps for itself and does not show by default.
+const INTERNAL: &[&str] = &["SceneId", "Hierarchy", "GlobalTransform"];
+
+pub(crate) const SCENE_GET: Tool = Tool {
+    name: "scene_get",
+    title: "Scene outline",
+    description: "The scene's hierarchy: entity ids, their component names and children, and the scene's resources. summary lists names only; normal adds the component values as written in the file; full adds notes, sibling order and prefab overrides. Use root and depth to look at part of a big scene.",
+    params: &[
+        SCENE,
+        Param::optional(
+            "root",
+            Kind::String,
+            "Only this entity and what is below it.",
+        ),
+        Param::optional(
+            "depth",
+            Kind::Integer { min: 1, max: 64 },
+            "How many levels below the top (or root) to show.",
+        )
+        .or("64"),
+        DETAIL,
+    ],
+    mutates: false,
+    run: scene_get,
+};
+
+pub(crate) const ENTITY_QUERY: Tool = Tool {
+    name: "entity_query",
+    title: "Find entities",
+    description: "Finds entities by component (with), by a condition (where, e.g. \"Transform.translation.y < 0 && has(Camera)\"), by id pattern (name, e.g. \"crate_*\") or by distance (near: { \"point\": [x, y, z], \"radius\": r }, world positions). Values are the effective ones: prefab parts expanded, defaults filled in. Returns ids in order, and with components their values.",
+    params: &[
+        SCENE,
+        Param::optional(
+            "with",
+            Kind::StringList,
+            "Component names every result must have.",
+        ),
+        Param::optional(
+            "where",
+            Kind::String,
+            "A condition: paths like Transform.translation.y, == != < <= > >=, && || !, has(Name), distance(a, b), matches(id, \"a*\").",
+        ),
+        Param::optional(
+            "name",
+            Kind::String,
+            "An id pattern: * matches any run of characters, ? one.",
+        ),
+        Param::optional(
+            "near",
+            Kind::Object,
+            "{ \"point\": [x, y, z], \"radius\": meters }: only entities whose world position is that close; results are nearest first.",
+        ),
+        Param::optional(
+            "components",
+            Kind::StringList,
+            "Include these components' values in the results.",
+        ),
+        Param::optional(
+            "limit",
+            Kind::Integer { min: 1, max: 1000 },
+            "At most this many results.",
+        )
+        .or("50"),
+        Param::optional(
+            "cursor",
+            Kind::String,
+            "Continue after a previous answer's next_cursor.",
+        ),
+    ],
+    mutates: false,
+    run: entity_query,
+};
+
+pub(crate) const ENTITY_GET: Tool = Tool {
+    name: "entity_get",
+    title: "Entity values",
+    description: "The component values of entities, by id: the effective values (prefab parts expanded, defaults filled in), plus parent, prefab and notes. Engine-internal components (SceneId, Hierarchy, GlobalTransform) are left out unless named.",
+    params: &[
+        SCENE,
+        Param::required(
+            "ids",
+            Kind::StringList,
+            "Entity ids, such as [\"player\", \"camera\"].",
+        ),
+        Param::optional("components", Kind::StringList, "Only these components."),
+    ],
+    mutates: false,
+    run: entity_get,
+};
+
+pub(crate) const EDIT_APPLY: Tool = Tool {
+    name: "edit_apply",
+    title: "Change the scene",
+    description: "Applies a list of operations to a scene, all or nothing, and writes the file. Operations: spawn {id, parent?, order?, components?, notes?}, instantiate {id, prefab, ...}, despawn {id}, set {id, component, value} (merges fields), replace {id, component, value}, remove {id, component}, reparent {id, parent, order?}, rename {id, to}, set_notes {id, notes}, set_resource / replace_resource {name, value}, remove_resource {name}, set_override / replace_override / remove_override {id, entity, component, value?}. In Transform values, \"euler_deg\": [x, y, z] may stand for rotation. A failed operation changes nothing and says which one (location.op). Answers the new revision, what changed, and what others changed since you last looked.",
+    params: &[
+        SCENE,
+        Param::required(
+            "ops",
+            Kind::Array,
+            "The operations, each like { \"op\": \"spawn\", \"id\": \"crate\", \"components\": { ... } }.",
+        ),
+        Param::optional(
+            "base_revision",
+            Kind::Integer {
+                min: 0,
+                max: i64::MAX,
+            },
+            "Refuse if the scene has changed since this revision (from an earlier answer).",
+        ),
+        Param::optional(
+            "dry_run",
+            Kind::Boolean,
+            "Check and report what would change, without changing anything.",
+        ),
+        Param::optional(
+            "create",
+            Kind::Boolean,
+            "Create the scene file if it does not exist.",
+        ),
+    ],
+    mutates: true,
+    run: edit_apply,
+};
+
+pub(crate) const EDIT_HISTORY: Tool = Tool {
+    name: "edit_history",
+    title: "History, undo and redo",
+    description: "The scene's change history (who changed which entities, newest first) and undo / redo. Changes made by people, agents and by editing the file directly are all in one history.",
+    params: &[
+        SCENE,
+        Param::optional(
+            "action",
+            Kind::Choice(&["list", "undo", "redo"]),
+            "list the history, or undo / redo the latest changes.",
+        )
+        .or("\"list\""),
+        Param::optional(
+            "steps",
+            Kind::Integer { min: 1, max: 100 },
+            "How many changes to undo or redo.",
+        )
+        .or("1"),
+        Param::optional(
+            "limit",
+            Kind::Integer { min: 1, max: 100 },
+            "How many history entries to list.",
+        )
+        .or("20"),
+        Param::optional(
+            "dry_run",
+            Kind::Boolean,
+            "Report what undo / redo would change without changing anything.",
+        ),
+    ],
+    mutates: true,
+    run: edit_history,
+};
+
+// --------------------------------------------------------------------------
+
+struct ViewEntity<'a> {
+    view: &'a WorldView,
+    id: &'a str,
+    entity: Entity,
+}
+
+impl Subject for ViewEntity<'_> {
+    fn id(&self) -> &str {
+        self.id
+    }
+    fn component(&self, name: &str) -> Option<Value> {
+        self.view.world.get_json(self.entity, name).ok()
+    }
+}
+
+/// An entity's world position, from its `GlobalTransform`.
+fn world_position(view: &WorldView, entity: Entity) -> Option<[f64; 3]> {
+    let matrix = view.world.get_json(entity, "GlobalTransform").ok()?;
+    let values = matrix.get("matrix")?.as_array()?;
+    let at = |i: usize| values.get(i).and_then(Value::as_f64);
+    Some([at(12)?, at(13)?, at(14)?])
+}
+
+fn check_component_names(workspace: &Workspace, names: &[String], param: &str) -> Result<()> {
+    let known: Vec<&str> = workspace
+        .registry()
+        .components()
+        .map(|(_, info)| info.name())
+        .collect();
+    for name in names {
+        if !known.contains(&name.as_str()) {
+            return Err(Diagnostic::error(
+                "unknown_component",
+                format!("There is no component called '{name}'."),
+                wish_core::suggest::unknown_name_hint(name, &known),
+            )
+            .at_path(format!("/{param}"))
+            .with_candidates(known.iter().copied()));
+        }
+    }
+    Ok(())
+}
+
+fn unknown_entity(id: &str, ids: &[&str], pointer: &str) -> Diagnostic {
+    let mut candidates: Vec<&str> = ids.to_vec();
+    candidates.truncate(20);
+    Diagnostic::error(
+        "unknown_entity",
+        format!("The scene has no entity '{id}'."),
+        match wish_core::suggest::closest_match(id, ids.iter().copied()) {
+            Some(closest) => format!("Did you mean '{closest}'?"),
+            None => "Use entity_query or scene_get to see the ids.".to_owned(),
+        },
+    )
+    .at_path(pointer.to_owned())
+    .with_candidates(candidates)
+}
+
+/// Opens the scene a tool names, returning its path and notes.
+fn open(workspace: &mut Workspace, args: &Args, create: bool) -> Result<(String, Vec<Diagnostic>)> {
+    let path = workspace.scene_path(args.str("scene"))?;
+    let notes = workspace.open_document(&path, create)?;
+    Ok((path, notes))
+}
+
+fn finish(
+    out: &mut Map<String, Value>,
+    mut notes: Vec<Diagnostic>,
+    workspace: &Workspace,
+    path: &str,
+) {
+    if let Ok(open) = workspace.document(path)
+        && let Some(problem) = &open.disk_problem
+        && !notes.iter().any(|n| n.code == problem.code)
+    {
+        notes.push(problem.clone());
+    }
+    if !notes.is_empty() {
+        out.insert("diagnostics".to_owned(), json!(notes));
+    }
+}
+
+// --------------------------------------------------------------------------
+
+fn outline(doc: &SceneDocument, id: &str, depth: i64, detail: &str, budget: &mut usize) -> Value {
+    let mut node = Map::new();
+    node.insert("id".to_owned(), json!(id));
+    let Some(entity) = doc.entity(id) else {
+        return Value::Object(node);
+    };
+    if let Some(prefab) = entity.prefab() {
+        node.insert("prefab".to_owned(), json!(prefab));
+    }
+    match detail {
+        "summary" => {
+            let names: Vec<&String> = entity.components().keys().collect();
+            node.insert("components".to_owned(), json!(names));
+        }
+        _ => {
+            node.insert("components".to_owned(), json!(entity.components()));
+        }
+    }
+    if detail == "full" {
+        node.insert("order".to_owned(), json!(entity.order()));
+        if let Some(notes) = entity.notes() {
+            node.insert("notes".to_owned(), json!(notes));
+        }
+        if !entity.overrides().is_empty() {
+            node.insert("overrides".to_owned(), json!(entity.overrides()));
+        }
+    }
+    let children = doc.children(id);
+    if !children.is_empty() {
+        if depth <= 1 {
+            node.insert("children_hidden".to_owned(), json!(children.len()));
+        } else {
+            let mut shown = Vec::new();
+            for child in &children {
+                if *budget == 0 {
+                    break;
+                }
+                *budget -= 1;
+                shown.push(outline(doc, child, depth - 1, detail, budget));
+            }
+            node.insert("children".to_owned(), json!(shown));
+        }
+    }
+    Value::Object(node)
+}
+
+const OUTLINE_BUDGET: usize = 500;
+
+fn scene_get(workspace: &mut Workspace, args: &Args, actor: &Actor) -> Result<Map<String, Value>> {
+    let (path, notes) = open(workspace, args, false)?;
+    let others = workspace.changes_by_others(&path, actor);
+    let doc = &workspace.document(&path)?.doc;
+    let detail = args.str("detail").unwrap_or("summary");
+    let depth = args.int("depth").unwrap_or(64);
+    let roots: Vec<String> = match args.str("root") {
+        Some(root) => {
+            if doc.entity(root).is_none() {
+                let ids: Vec<&str> = doc.entities().map(|(id, _)| id).collect();
+                return Err(unknown_entity(root, &ids, "/root"));
+            }
+            vec![root.to_owned()]
+        }
+        None => doc.roots().into_iter().map(str::to_owned).collect(),
+    };
+    let mut budget = OUTLINE_BUDGET;
+    let mut tree = Vec::new();
+    for root in &roots {
+        if budget == 0 {
+            break;
+        }
+        budget -= 1;
+        tree.push(outline(doc, root, depth, detail, &mut budget));
+    }
+    let mut out = Map::new();
+    out.insert("scene".to_owned(), json!(path));
+    out.insert("revision".to_owned(), json!(doc.revision()));
+    out.insert("entities".to_owned(), json!(doc.entities().count()));
+    out.insert("tree".to_owned(), json!(tree));
+    let resources: Value = if detail == "summary" {
+        json!(doc.resources().keys().collect::<Vec<_>>())
+    } else {
+        json!(doc.resources())
+    };
+    out.insert("resources".to_owned(), resources);
+    if budget == 0 {
+        out.insert("truncated".to_owned(), json!(true));
+        out.insert(
+            "truncated_hint".to_owned(),
+            json!("The outline stops at 500 entities. Pass root (an entity id) and depth to look at part of the scene."),
+        );
+    }
+    if let Some(others) = others {
+        out.insert("changed_by_others".to_owned(), others);
+    }
+    finish(&mut out, notes, workspace, &path);
+    Ok(out)
+}
+
+fn entity_query(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<String, Value>> {
+    let (path, notes) = open(workspace, args, false)?;
+    let with = args.strings("with");
+    check_component_names(workspace, &with, "with")?;
+    let include = args.strings("components");
+    check_component_names(workspace, &include, "components")?;
+    let condition = match args.str("where") {
+        Some(text) => Some(
+            Expr::compile(text, workspace.registry()).map_err(|problem| {
+                let column = problem.location.column;
+                let mut problem = problem.at_path("/where");
+                problem.location.line = None;
+                problem.location.column = column;
+                problem
+            })?,
+        ),
+        None => None,
+    };
+    let near = match args.value("near") {
+        None => None,
+        Some(value) => {
+            let point: Option<Vec<f64>> = value
+                .get("point")
+                .and_then(Value::as_array)
+                .filter(|items| items.len() == 3)
+                .and_then(|items| items.iter().map(Value::as_f64).collect());
+            let radius = value.get("radius").and_then(Value::as_f64);
+            match (point, radius) {
+                (Some(point), Some(radius)) if radius >= 0.0 && radius.is_finite() => {
+                    Some(([point[0], point[1], point[2]], radius))
+                }
+                _ => {
+                    return Err(Diagnostic::error(
+                        "invalid_parameter",
+                        "'near' must be { \"point\": [x, y, z], \"radius\": meters }.",
+                        "Write it like \"near\": { \"point\": [0, 0, 0], \"radius\": 5 }.",
+                    )
+                    .at_path("/near"));
+                }
+            }
+        }
+    };
+    let pattern = args.str("name").map(str::to_owned);
+    let limit = usize::try_from(args.int("limit").unwrap_or(50)).unwrap_or(50);
+    let cursor = args.str("cursor").map(str::to_owned);
+    let revision = workspace.document(&path)?.doc.revision();
+    let view = workspace.view(&path)?;
+
+    let mut matched: Vec<(String, Entity, Option<f64>)> = Vec::new();
+    for (id, &entity) in &view.ids {
+        if let Some(pattern) = &pattern
+            && !crate::expr::glob(pattern, id)
+        {
+            continue;
+        }
+        if !with
+            .iter()
+            .all(|name| view.world.get_json(entity, name).is_ok())
+        {
+            continue;
+        }
+        let distance = match near {
+            Some((point, radius)) => {
+                let Some(at) = world_position(view, entity) else {
+                    continue;
+                };
+                let d = ((at[0] - point[0]).powi(2)
+                    + (at[1] - point[1]).powi(2)
+                    + (at[2] - point[2]).powi(2))
+                .sqrt();
+                if d > radius {
+                    continue;
+                }
+                Some(d)
+            }
+            None => None,
+        };
+        if let Some(condition) = &condition
+            && !condition.matches(&ViewEntity { view, id, entity })
+        {
+            continue;
+        }
+        matched.push((id.clone(), entity, distance));
+    }
+    if near.is_some() {
+        matched.sort_by(|a, b| {
+            a.2.unwrap_or(f64::MAX)
+                .total_cmp(&b.2.unwrap_or(f64::MAX))
+                .then_with(|| a.0.cmp(&b.0))
+        });
+    }
+    let total = matched.len();
+    let start = match &cursor {
+        Some(cursor) => {
+            let after = cursor.strip_prefix("after:").unwrap_or(cursor);
+            match matched.iter().position(|(id, _, _)| id == after) {
+                Some(index) => index + 1,
+                None => {
+                    return Err(Diagnostic::error(
+                        "invalid_cursor",
+                        format!("The cursor '{cursor}' does not belong to this query's results."),
+                        "Pass the next_cursor of the previous answer unchanged, with the same other parameters; or leave cursor out to start again.",
+                    )
+                    .at_path("/cursor"));
+                }
+            }
+        }
+        None => 0,
+    };
+    let page: Vec<&(String, Entity, Option<f64>)> =
+        matched.iter().skip(start).take(limit).collect();
+    let mut entities = Vec::new();
+    for (id, entity, distance) in &page {
+        let mut item = Map::new();
+        item.insert("id".to_owned(), json!(id));
+        if let Some(distance) = distance {
+            item.insert(
+                "distance".to_owned(),
+                json!((distance * 1000.0).round() / 1000.0),
+            );
+        }
+        if !include.is_empty() {
+            let mut values = Map::new();
+            for name in &include {
+                if let Ok(value) = view.world.get_json(*entity, name) {
+                    values.insert(name.clone(), value);
+                }
+            }
+            item.insert("components".to_owned(), Value::Object(values));
+        }
+        entities.push(Value::Object(item));
+    }
+    let mut out = Map::new();
+    out.insert("scene".to_owned(), json!(path));
+    out.insert("revision".to_owned(), json!(revision));
+    out.insert("matched".to_owned(), json!(total));
+    if start + page.len() < total
+        && let Some((last, _, _)) = page.last()
+    {
+        out.insert("next_cursor".to_owned(), json!(format!("after:{last}")));
+    }
+    out.insert("entities".to_owned(), json!(entities));
+    finish(&mut out, notes, workspace, &path);
+    Ok(out)
+}
+
+fn entity_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<String, Value>> {
+    let (path, notes) = open(workspace, args, false)?;
+    let ids = args.strings("ids");
+    if ids.is_empty() || ids.len() > 100 {
+        return Err(Diagnostic::error(
+            "invalid_parameter",
+            format!(
+                "'ids' must list 1 to 100 entity ids, but has {}.",
+                ids.len()
+            ),
+            "Ask for fewer entities at a time, or use entity_query with components to read many.",
+        )
+        .at_path("/ids"));
+    }
+    let only = args.strings("components");
+    check_component_names(workspace, &only, "components")?;
+    let revision = workspace.document(&path)?.doc.revision();
+    let doc = workspace.document(&path)?.doc.clone();
+    let view = workspace.view(&path)?;
+    let known: Vec<&str> = view.ids.keys().map(String::as_str).collect();
+    let mut entities = Vec::new();
+    for (index, id) in ids.iter().enumerate() {
+        let Some(&entity) = view.ids.get(id) else {
+            return Err(unknown_entity(id, &known, &format!("/ids/{index}")));
+        };
+        let mut item = Map::new();
+        item.insert("id".to_owned(), json!(id));
+        if let Some(described) = doc.entity(id) {
+            if let Some(parent) = described.parent() {
+                item.insert("parent".to_owned(), json!(parent));
+            }
+            if let Some(prefab) = described.prefab() {
+                item.insert("prefab".to_owned(), json!(prefab));
+            }
+            if let Some(notes) = described.notes() {
+                item.insert("notes".to_owned(), json!(notes));
+            }
+        } else {
+            item.insert("from_prefab".to_owned(), json!(true));
+        }
+        let mut components = Map::new();
+        if let Value::Object(all) = view.world.entity_json(entity)? {
+            for (name, value) in all {
+                let wanted = if only.is_empty() {
+                    !INTERNAL.contains(&name.as_str())
+                } else {
+                    only.contains(&name)
+                };
+                if wanted {
+                    components.insert(name, value);
+                }
+            }
+        }
+        item.insert("components".to_owned(), Value::Object(components));
+        entities.push(Value::Object(item));
+    }
+    let mut out = Map::new();
+    out.insert("scene".to_owned(), json!(path));
+    out.insert("revision".to_owned(), json!(revision));
+    out.insert("entities".to_owned(), json!(entities));
+    finish(&mut out, notes, workspace, &path);
+    Ok(out)
+}
+
+const MAX_CHANGES_SHOWN: usize = 50;
+
+fn changes_json(changes: &[String]) -> Value {
+    let entities: Vec<String> = touched(changes).into_iter().collect();
+    let mut out = json!({
+        "count": changes.len(),
+        "entities": entities,
+        "paths": changes.iter().take(MAX_CHANGES_SHOWN).collect::<Vec<_>>(),
+    });
+    if changes.len() > MAX_CHANGES_SHOWN {
+        out["paths_hidden"] = json!(changes.len() - MAX_CHANGES_SHOWN);
+    }
+    out
+}
+
+fn refuse_if_file_invalid(workspace: &Workspace, path: &str) -> Result<()> {
+    if let Some(problem) = &workspace.document(path)?.disk_problem {
+        let mut refusal = problem.clone();
+        refusal.severity = wish_core::Severity::Error;
+        refusal.code = "scene_file_invalid".into();
+        refusal.docs = "wish://docs/diagnostics/scene_file_invalid".to_owned();
+        return Err(refusal);
+    }
+    Ok(())
+}
+
+fn edit_apply(workspace: &mut Workspace, args: &Args, actor: &Actor) -> Result<Map<String, Value>> {
+    let create = args.flag("create");
+    let (path, notes) = open(workspace, args, create)?;
+    refuse_if_file_invalid(workspace, &path)?;
+    let ops = crate::ops::parse_ops(args.value("ops").unwrap_or(&Value::Null))?;
+    let transaction = Transaction {
+        actor: actor.clone(),
+        base_revision: args
+            .int("base_revision")
+            .and_then(|r| u64::try_from(r).ok()),
+        ops,
+    };
+    let others = workspace.changes_by_others(&path, actor);
+    let registry = workspace.registry().clone();
+    let dry_run = args.flag("dry_run");
+    let applied = {
+        let open = workspace.document_mut(&path)?;
+        if dry_run {
+            if let Some(base) = transaction.base_revision
+                && base != open.doc.revision()
+            {
+                // Same refusal as a real apply.
+                let mut copy = open.doc.clone();
+                copy.apply(&transaction, &registry)?;
+            }
+            open.doc.preview(&transaction, &registry)?
+        } else {
+            open.doc.apply(&transaction, &registry)?
+        }
+    };
+    if !dry_run {
+        workspace.save_document(&path)?;
+        workspace
+            .seen
+            .insert((path.clone(), actor.label()), applied.revision);
+    }
+    let mut out = Map::new();
+    out.insert("scene".to_owned(), json!(path));
+    out.insert("revision".to_owned(), json!(applied.revision));
+    out.insert("changes".to_owned(), changes_json(&applied.changes));
+    if dry_run {
+        out.insert("dry_run".to_owned(), json!(true));
+    }
+    if let Some(others) = others {
+        out.insert("changed_by_others".to_owned(), others);
+    }
+    finish(&mut out, notes, workspace, &path);
+    Ok(out)
+}
+
+fn edit_history(
+    workspace: &mut Workspace,
+    args: &Args,
+    actor: &Actor,
+) -> Result<Map<String, Value>> {
+    let (path, notes) = open(workspace, args, false)?;
+    let action = args.str("action").unwrap_or("list");
+    let mut out = Map::new();
+    out.insert("scene".to_owned(), json!(path));
+    if action == "list" {
+        let limit = usize::try_from(args.int("limit").unwrap_or(20)).unwrap_or(20);
+        let doc = &workspace.document(&path)?.doc;
+        let entries: Vec<Value> = doc
+            .log()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .take(limit)
+            .map(|entry| {
+                json!({
+                    "revision": entry.revision,
+                    "actor": entry.actor.label(),
+                    "action": match entry.action {
+                        Action::Edit => "edit",
+                        Action::Undo => "undo",
+                        Action::Redo => "redo",
+                    },
+                    "entities": touched(&entry.changes),
+                    "changes": entry.changes.len(),
+                })
+            })
+            .collect();
+        out.insert("revision".to_owned(), json!(doc.revision()));
+        out.insert("can_undo".to_owned(), json!(doc.can_undo()));
+        out.insert("can_redo".to_owned(), json!(doc.can_redo()));
+        if let Some(next) = doc.next_undo_actor() {
+            out.insert("next_undo_by".to_owned(), json!(next.label()));
+        }
+        out.insert("entries".to_owned(), json!(entries));
+        finish(&mut out, notes, workspace, &path);
+        return Ok(out);
+    }
+    refuse_if_file_invalid(workspace, &path)?;
+    let steps = args.int("steps").unwrap_or(1);
+    let dry_run = args.flag("dry_run");
+    let registry = workspace.registry().clone();
+    let others = workspace.changes_by_others(&path, actor);
+    let mut changes: Vec<String> = Vec::new();
+    let mut done = 0;
+    {
+        let open = workspace.document_mut(&path)?;
+        let mut working = if dry_run {
+            open.doc.clone()
+        } else {
+            std::mem::take(&mut open.doc)
+        };
+        let mut failure = None;
+        for _ in 0..steps {
+            let step = if action == "undo" {
+                working.undo(actor.clone(), &registry)
+            } else {
+                working.redo(actor.clone(), &registry)
+            };
+            match step {
+                Ok(Some(applied)) => {
+                    changes.extend(applied.changes);
+                    done += 1;
+                }
+                Ok(None) => break,
+                Err(problem) => {
+                    failure = Some(problem);
+                    break;
+                }
+            }
+        }
+        if dry_run {
+            out.insert("revision".to_owned(), json!(open.doc.revision() + done));
+        } else {
+            out.insert("revision".to_owned(), json!(working.revision()));
+            open.doc = working;
+        }
+        if let Some(problem) = failure
+            && done == 0
+        {
+            return Err(problem);
+        }
+    }
+    if done > 0 && !dry_run {
+        workspace.save_document(&path)?;
+        let revision = workspace.document(&path)?.doc.revision();
+        workspace
+            .seen
+            .insert((path.clone(), actor.label()), revision);
+    }
+    changes.sort();
+    changes.dedup();
+    out.insert("action".to_owned(), json!(action));
+    out.insert("steps_done".to_owned(), json!(done));
+    if done == 0 {
+        out.insert(
+            "diagnostics".to_owned(),
+            json!([Diagnostic::info(
+                "nothing_to_do",
+                format!("There is nothing to {action}."),
+                "Use action \"list\" to see the history.",
+            )]),
+        );
+    }
+    out.insert("changes".to_owned(), changes_json(&changes));
+    if dry_run {
+        out.insert("dry_run".to_owned(), json!(true));
+    }
+    if let Some(others) = others {
+        out.insert("changed_by_others".to_owned(), others);
+    }
+    if done > 0 {
+        finish(&mut out, notes, workspace, &path);
+    }
+    Ok(out)
+}

@@ -35,7 +35,8 @@ fn project(name: &str) -> PathBuf {
 }
 
 /// One example call per tool, plus a few failing ones (errors must match
-/// too). Every catalogue tool must appear.
+/// too). Every catalogue tool must appear. They run in this order, as one
+/// session: later calls see what earlier ones changed.
 fn examples() -> Vec<(&'static str, Value)> {
     vec![
         ("project_info", json!({})),
@@ -50,6 +51,38 @@ fn examples() -> Vec<(&'static str, Value)> {
         ("check", json!({ "paths": ["scenes/main.scene.json"] })),
         ("check", json!({ "paths": ["scenes/mian.scene.json"] })),
         ("check", json!({ "pahts": [] })),
+        ("scene_get", json!({ "detail": "full" })),
+        ("entity_get", json!({ "ids": ["box", "cam"] })),
+        ("entity_get", json!({ "ids": ["bx"] })),
+        (
+            "entity_query",
+            json!({ "with": ["Primitive"], "components": ["Primitive"] }),
+        ),
+        (
+            "entity_query",
+            json!({ "where": "Transform.translation.z >" }),
+        ),
+        (
+            "edit_apply",
+            json!({ "ops": [{ "op": "spawn", "id": "crate", "components": {
+                "Primitive": { "shape": "Cube" }, "Transform": { "translation": [0, 2, 0], "euler_deg": [0, 30, 0] } } }] }),
+        ),
+        (
+            "edit_apply",
+            json!({ "dry_run": true, "ops": [{ "op": "despawn", "id": "box" }] }),
+        ),
+        (
+            "edit_apply",
+            json!({ "ops": [{ "op": "spwan", "id": "x" }] }),
+        ),
+        (
+            "entity_query",
+            json!({ "where": "Transform.translation.y > 1" }),
+        ),
+        ("edit_history", json!({})),
+        ("edit_history", json!({ "action": "undo" })),
+        ("edit_history", json!({ "action": "redo", "dry_run": true })),
+        ("scene_get", json!({})),
     ]
 }
 
@@ -70,40 +103,13 @@ fn every_tool_has_an_example() {
     }
 }
 
-#[test]
-fn in_process_call_and_do_give_the_same_bytes() {
-    let dir = project("all");
-    let root = dir.to_str().unwrap().to_owned();
-    let mut workspace = Workspace::open(WorkspaceOptions {
-        root: dir.clone(),
-        example: None,
-    })
-    .unwrap();
-    let actor = parse_actor("human");
-    let expected: Vec<String> = examples()
-        .iter()
-        .map(|(tool, args)| workspace.call(tool, args, &actor).to_string())
-        .collect();
-
-    // `wen call`, one process per call.
-    for ((tool, args), expected) in examples().iter().zip(&expected) {
-        let output = wen()
-            .args(["call", tool, &args.to_string(), "--root", &root])
-            .output()
-            .unwrap();
-        let text = String::from_utf8(output.stdout).unwrap();
-        assert_eq!(text.trim_end(), expected, "wen call {tool} {args}");
-        let ok = serde_json::from_str::<Value>(expected).unwrap()["ok"] == json!(true);
-        assert_eq!(output.status.success(), ok, "exit status of {tool}");
-    }
-
-    // `wen do`, all calls in one process.
-    let calls: Vec<Value> = examples()
+fn run_do(root: &str, calls: &[(&str, Value)]) -> (Vec<String>, bool) {
+    let calls: Vec<Value> = calls
         .iter()
         .map(|(tool, args)| json!({ "tool": tool, "args": args }))
         .collect();
     let mut child = wen()
-        .args(["do", "-", "--root", &root])
+        .args(["do", "-", "--root", root])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
@@ -116,16 +122,69 @@ fn in_process_call_and_do_give_the_same_bytes() {
         .unwrap();
     let output = child.wait_with_output().unwrap();
     let text = String::from_utf8(output.stdout).unwrap();
-    let lines: Vec<&str> = text.lines().collect();
-    assert_eq!(
-        lines,
-        expected.iter().map(String::as_str).collect::<Vec<_>>()
-    );
-    assert!(
-        !output.status.success(),
-        "some example calls fail on purpose"
-    );
-    std::fs::remove_dir_all(&dir).unwrap();
+    (
+        text.lines().map(str::to_owned).collect(),
+        output.status.success(),
+    )
+}
+
+#[test]
+fn in_process_call_and_do_give_the_same_bytes() {
+    let actor = parse_actor("human");
+    // The whole list as one session: in process, and through `wen do`, each
+    // on its own copy of the project.
+    let in_process_dir = project("session-a");
+    let mut workspace = Workspace::open(WorkspaceOptions {
+        root: in_process_dir.clone(),
+        example: None,
+    })
+    .unwrap();
+    let expected: Vec<String> = examples()
+        .iter()
+        .map(|(tool, args)| workspace.call(tool, args, &actor).to_string())
+        .collect();
+    let do_dir = project("session-b");
+    let (lines, success) = run_do(do_dir.to_str().unwrap(), &examples());
+    for (index, (line, expected)) in lines.iter().zip(&expected).enumerate() {
+        assert_eq!(line, expected, "call {index}: {:?}", examples()[index]);
+    }
+    assert_eq!(lines.len(), expected.len());
+    assert!(!success, "some example calls fail on purpose");
+    // Both sessions left the same files.
+    {
+        let file = "scenes/main.scene.json";
+        assert_eq!(
+            std::fs::read_to_string(in_process_dir.join(file)).unwrap(),
+            std::fs::read_to_string(do_dir.join(file)).unwrap()
+        );
+    }
+
+    // `wen call`, one process per call, for every call that changes
+    // nothing: against a fresh workspace on an untouched project.
+    let single = project("single");
+    let root = single.to_str().unwrap().to_owned();
+    for (tool, args) in examples() {
+        if wish_control::find_tool(tool).is_ok_and(|t| t.mutates) {
+            continue;
+        }
+        let mut fresh = Workspace::open(WorkspaceOptions {
+            root: single.clone(),
+            example: None,
+        })
+        .unwrap();
+        let expected = fresh.call(tool, &args, &actor).to_string();
+        let output = wen()
+            .args(["call", tool, &args.to_string(), "--root", &root])
+            .output()
+            .unwrap();
+        let text = String::from_utf8(output.stdout).unwrap();
+        assert_eq!(text.trim_end(), expected, "wen call {tool} {args}");
+        let ok = serde_json::from_str::<Value>(&expected).unwrap()["ok"] == json!(true);
+        assert_eq!(output.status.success(), ok, "exit status of {tool}");
+    }
+    for dir in [in_process_dir, do_dir, single] {
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }
 
 #[test]

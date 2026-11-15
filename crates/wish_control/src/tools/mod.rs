@@ -4,6 +4,7 @@ use crate::param::{Kind, Param};
 use crate::tool::Tool;
 
 mod project;
+mod scene;
 
 /// How much a tool tells: `summary` (the default, cheapest), `normal`, `full`.
 pub(crate) const DETAIL: Param = Param::optional(
@@ -14,4 +15,13 @@ pub(crate) const DETAIL: Param = Param::optional(
 .or("\"summary\"");
 
 /// Every tool, in catalogue order.
-pub(crate) const CATALOG: &[Tool] = &[project::PROJECT_INFO, project::SCHEMA_GET, project::CHECK];
+pub(crate) const CATALOG: &[Tool] = &[
+    project::PROJECT_INFO,
+    project::SCHEMA_GET,
+    project::CHECK,
+    scene::SCENE_GET,
+    scene::ENTITY_QUERY,
+    scene::ENTITY_GET,
+    scene::EDIT_APPLY,
+    scene::EDIT_HISTORY,
+];

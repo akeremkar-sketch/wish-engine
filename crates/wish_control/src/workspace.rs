@@ -31,7 +31,11 @@ pub struct Workspace {
     /// The example whose types are registered.
     example: Option<String>,
     /// Holds the type registry the project's documents are checked against.
-    types: App,
+    pub(crate) types: App,
+    /// Open scene documents.
+    pub(crate) docs: crate::documents::Documents,
+    /// (scene, actor) → the revision that actor last saw.
+    pub(crate) seen: std::collections::BTreeMap<(String, String), u64>,
 }
 
 impl std::fmt::Debug for Workspace {
@@ -81,6 +85,8 @@ impl Workspace {
             config_problem,
             example,
             types,
+            docs: crate::documents::Documents::default(),
+            seen: std::collections::BTreeMap::new(),
         })
     }
 
@@ -166,6 +172,6 @@ pub fn parse_actor(name: &str) -> Actor {
     match name {
         "human" | "" => Actor::Human,
         "file" => Actor::File,
-        other => Actor::Agent(other.to_owned()),
+        other => Actor::Agent(other.strip_prefix("agent:").unwrap_or(other).to_owned()),
     }
 }
