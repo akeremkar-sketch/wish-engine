@@ -3,6 +3,7 @@
 use crate::param::{Kind, Param};
 use crate::tool::Tool;
 
+mod asset;
 mod project;
 mod scene;
 
@@ -24,4 +25,7 @@ pub(crate) const CATALOG: &[Tool] = &[
     scene::ENTITY_GET,
     scene::EDIT_APPLY,
     scene::EDIT_HISTORY,
+    asset::ASSET_LIST,
+    asset::ASSET_INFO,
+    asset::ASSET_MOVE,
 ];

@@ -10,7 +10,7 @@ use wish_core::{Diagnostic, Result};
 /// The commands `wen` understands.
 pub const COMMANDS: &[&str] = &[
     "run", "bench", "schema", "mv", "check", "fmt", "migrate", "watch", "capture", "describe",
-    "shaders", "view", "call", "do", "examples", "help", "version",
+    "shaders", "view", "call", "do", "new", "examples", "help", "version",
 ];
 
 /// A parsed command line.
@@ -100,6 +100,13 @@ pub enum Command {
         root: Option<String>,
         /// Stop after this many seconds (0: run until interrupted).
         seconds: u64,
+    },
+    /// Create a new project folder.
+    New {
+        /// The folder to create the project in.
+        dir: String,
+        /// The project's name (default: the folder's name).
+        name: Option<String>,
     },
     /// Run one control-plane tool.
     Call(CallArgs),
@@ -385,6 +392,7 @@ fn flags_of(command: &str) -> &'static [(&'static str, bool)] {
             ("--json", false),
         ],
         "shaders" => &[("--dir", true), ("--json", false)],
+        "new" => &[("--name", true), ("--json", false)],
         "view" => &[
             ("--example", true),
             ("--scene", true),
@@ -462,7 +470,9 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
     let mut index = 0;
     while let Some(argument) = rest.get(index) {
         index += 1;
-        if matches!(command, "mv" | "check" | "fmt" | "migrate") && !argument.starts_with('-') {
+        if matches!(command, "mv" | "check" | "fmt" | "migrate" | "new")
+            && !argument.starts_with('-')
+        {
             positional.push(argument);
             continue;
         }
@@ -616,6 +626,18 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
                     seconds: value_of("--seconds")
                         .map_or(Ok(0), |value| parse_number("--seconds", value))?,
                 },
+            }
+        }
+        "new" => {
+            if positional.len() != 1 {
+                return Err(usage_error(
+                    "'wen new' needs the folder to create the project in.".to_owned(),
+                    "Write it like: wen new my_game (optionally --name \"My game\").".to_owned(),
+                ));
+            }
+            Command::New {
+                dir: positional[0].to_owned(),
+                name: value_of("--name").map(str::to_owned),
             }
         }
         "migrate" => Command::Migrate {

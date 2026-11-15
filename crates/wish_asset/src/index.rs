@@ -16,6 +16,14 @@ pub fn is_document(name: &str) -> bool {
         .any(|suffix| name.ends_with(suffix))
 }
 
+/// Whether a file name is a temporary file of an editor or of the engine's
+/// own atomic writes: never an asset, and not a change worth reacting to.
+pub(crate) fn is_temporary(name: &str) -> bool {
+    const SUFFIXES: &[&str] = &[".part", ".tmp", ".swp", ".swx", ".wish-tmp", "~", ".bak"];
+    SUFFIXES.iter().any(|suffix| name.ends_with(suffix))
+        || (name.starts_with('#') && name.ends_with('#'))
+}
+
 /// Every file below `root` that is not inside a hidden folder (one whose name
 /// starts with `.`), as project-relative `/` paths with their real paths, in
 /// path order so that everything built from it is deterministic. Names that
@@ -48,7 +56,7 @@ pub(crate) fn walk_files(root: &Path) -> Result<Vec<(String, PathBuf)>> {
             let Ok(kind) = entry.file_type() else {
                 continue;
             };
-            if name.starts_with('.') || kind.is_symlink() {
+            if name.starts_with('.') || kind.is_symlink() || is_temporary(name) {
                 continue;
             }
             if kind.is_dir() {

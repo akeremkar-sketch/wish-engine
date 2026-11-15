@@ -27,10 +27,13 @@ fn project(name: &str) -> PathBuf {
         dir.join("scenes/main.scene.json"),
         r#"{ "format": 1, "entities": {
             "cam": { "components": { "Camera": {}, "Transform": { "translation": [0, 1, 5] } } },
-            "box": { "components": { "Primitive": { "shape": "Cube" } } }
+            "box": { "components": { "Primitive": { "shape": "Cube" } } },
+            "tri": { "components": { "Model": { "asset": "assets/tri.glb" } } }
         } }"#,
     )
     .unwrap();
+    std::fs::create_dir_all(dir.join("assets")).unwrap();
+    std::fs::write(dir.join("assets/tri.glb"), triangle_glb()).unwrap();
     dir
 }
 
@@ -83,6 +86,25 @@ fn examples() -> Vec<(&'static str, Value)> {
         ("edit_history", json!({ "action": "undo" })),
         ("edit_history", json!({ "action": "redo", "dry_run": true })),
         ("scene_get", json!({})),
+        ("asset_list", json!({})),
+        ("asset_list", json!({ "kind": "model", "search": "TRI" })),
+        ("asset_list", json!({ "kind": "modle" })),
+        ("asset_info", json!({ "path": "assets/tri.glb" })),
+        ("asset_info", json!({ "path": "assets/tr.glb" })),
+        (
+            "asset_move",
+            json!({ "from": "assets/tri.glb", "to": "assets/models/tri.glb", "dry_run": true }),
+        ),
+        (
+            "asset_move",
+            json!({ "from": "assets/tri.glb", "to": "assets/models/tri.glb" }),
+        ),
+        (
+            "asset_move",
+            json!({ "from": "assets/gone.glb", "to": "assets/x.glb" }),
+        ),
+        ("scene_get", json!({ "detail": "normal" })),
+        ("asset_info", json!({ "path": "assets/models/tri.glb" })),
     ]
 }
 
@@ -242,5 +264,74 @@ fn a_broken_list_of_calls_is_explained() {
     let answer: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(answer["error"]["code"], "invalid_arguments");
     assert_eq!(answer["error"]["location"]["line"], 3);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+/// A one-triangle GLB with a red material, built by hand.
+fn triangle_glb() -> Vec<u8> {
+    let positions: Vec<u8> = [-1.0f32, -1.0, 0.0, 1.0, -1.0, 0.0, 0.0, 1.5, 0.0]
+        .iter()
+        .flat_map(|v| v.to_le_bytes())
+        .collect();
+    let json = serde_json::json!({
+        "asset": { "version": "2.0" },
+        "buffers": [{ "byteLength": 36 }],
+        "bufferViews": [{ "buffer": 0, "byteLength": 36 }],
+        "accessors": [{ "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [-1, -1, 0], "max": [1, 1.5, 0] }],
+        "meshes": [{ "primitives": [{ "attributes": { "POSITION": 0 }, "material": 0 }] }],
+        "materials": [{ "doubleSided": true, "pbrMetallicRoughness": { "baseColorFactor": [0.9, 0.1, 0.1, 1.0], "metallicFactor": 0.0 } }],
+        "nodes": [{ "mesh": 0 }],
+        "scenes": [{ "nodes": [0] }]
+    });
+    let mut text = serde_json::to_vec(&json).unwrap();
+    while !text.len().is_multiple_of(4) {
+        text.push(b' ');
+    }
+    let total = 12 + 8 + text.len() + 8 + positions.len();
+    let mut out = b"glTF".to_vec();
+    out.extend_from_slice(&2u32.to_le_bytes());
+    out.extend_from_slice(&(total as u32).to_le_bytes());
+    out.extend_from_slice(&(text.len() as u32).to_le_bytes());
+    out.extend_from_slice(b"JSON");
+    out.extend_from_slice(&text);
+    out.extend_from_slice(&(positions.len() as u32).to_le_bytes());
+    out.extend_from_slice(b"BIN\0");
+    out.extend_from_slice(&positions);
+    out
+}
+
+#[test]
+fn wen_new_makes_a_project_the_tools_can_use() {
+    let dir = std::env::temp_dir().join(format!("wish-new-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let root = dir.to_str().unwrap();
+    let output = wen()
+        .args(["new", root, "--name", "Fresh", "--json"])
+        .output()
+        .unwrap();
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["ok"], true, "{report}");
+    assert_eq!(report["name"], "Fresh");
+    // The MCP configuration names this very program, by full path.
+    let mcp: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join(".mcp.json")).unwrap()).unwrap();
+    let same = |a: &str, b: &str| a.replace('\\', "/") == b.replace('\\', "/");
+    assert!(same(
+        mcp["mcpServers"]["wish"]["command"].as_str().unwrap(),
+        env!("CARGO_BIN_EXE_wen")
+    ));
+    // And the shortcut commands work in it, answering as the tools do.
+    let check = wen()
+        .args(["check", "--example", "stress", "--root", root, "--json"])
+        .output()
+        .unwrap();
+    assert!(check.status.success());
+    let answer: Value = serde_json::from_slice(&check.stdout).unwrap();
+    assert_eq!(answer["passed"], true);
+    let again = wen().args(["new", root, "--json"]).output().unwrap();
+    assert!(!again.status.success());
+    let problem: Value = serde_json::from_slice(&again.stdout).unwrap();
+    assert_eq!(problem["error"]["code"], "project_exists");
+    let missing = wen().args(["new", "--json"]).output().unwrap();
+    assert!(!missing.status.success());
     std::fs::remove_dir_all(&dir).unwrap();
 }

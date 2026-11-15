@@ -166,3 +166,104 @@ pub fn run_calls(args: &DoArgs) -> Outcome {
         success,
     }
 }
+
+/// Runs `wen new`: writes a project folder (the scaffold lives in the
+/// control plane; this only chooses how MCP clients will start `wen`).
+pub fn new_project(dir: &str, name: Option<&str>, as_json: bool) -> Result<String> {
+    let path = std::path::Path::new(dir);
+    let name = name.map_or_else(|| wish_control::scaffold::name_for(path), str::to_owned);
+    // The full path of this program, so that `.mcp.json` works even when
+    // `wen` is not on the PATH of the program that starts it.
+    let command = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.to_str().map(str::to_owned))
+        .unwrap_or_else(|| "wen".to_owned());
+    let written = wish_control::scaffold::create_project(path, &name, &command)?;
+    Ok(if as_json {
+        json!({ "ok": true, "root": dir, "name": name, "files": written, "mcp_command": command })
+            .to_string()
+    } else {
+        format!(
+            "Created project '{name}' in {dir}:\n  {}\nOpen it with Claude Code from that folder (the MCP server `wish` is configured in .mcp.json), or try: wen call project_info --root {dir}",
+            written.join("\n  ")
+        )
+    })
+}
+
+/// Runs a control-plane tool for a shortcut command (`wen check`, `wen mv`):
+/// the JSON answer is the tool's own (what MCP returns); without `--json`
+/// `human` turns a successful answer into text and a failure prints as the
+/// diagnostic it is.
+pub fn shortcut(
+    tool: &str,
+    args: &Value,
+    context: &ToolContext,
+    as_json: bool,
+    human: fn(&Value) -> String,
+) -> Outcome {
+    let value = match open(context) {
+        Ok(mut workspace) => workspace.call(
+            tool,
+            args,
+            &parse_actor(context.actor.as_deref().unwrap_or("human")),
+        ),
+        Err(problem) => envelope(Err(problem)),
+    };
+    let success = value.get("ok") == Some(&Value::Bool(true))
+        && value.get("passed") != Some(&Value::Bool(false));
+    let text = if as_json {
+        value.to_string()
+    } else if value.get("ok") == Some(&Value::Bool(true)) {
+        human(&value)
+    } else {
+        match serde_json::from_value::<Diagnostic>(value["error"].clone()) {
+            Ok(problem) => problem.to_string(),
+            Err(_) => value.to_string(),
+        }
+    };
+    Outcome { text, success }
+}
+
+/// Text for a `check` answer.
+pub fn check_text(answer: &Value) -> String {
+    let mut text = String::new();
+    for entry in answer["diagnostics"].as_array().into_iter().flatten() {
+        if let Ok(problem) = serde_json::from_value::<Diagnostic>(entry.clone()) {
+            text.push_str(&format!("{problem}\n"));
+        }
+    }
+    text.push_str(&format!(
+        "{} file(s) checked: {} error(s), {} warning(s).",
+        answer["files"], answer["errors"], answer["warnings"]
+    ));
+    text
+}
+
+/// Text for an `asset_move` answer.
+pub fn move_text(answer: &Value) -> String {
+    let verb = if answer["dry_run"] == true {
+        "Would move"
+    } else {
+        "Moved"
+    };
+    let mut text = format!(
+        "{verb} {} -> {}",
+        answer["from"].as_str().unwrap_or_default(),
+        answer["to"].as_str().unwrap_or_default()
+    );
+    if let Some(meta) = answer["meta"].as_object() {
+        text.push_str(&format!(
+            "\n  and {} -> {}",
+            meta["from"].as_str().unwrap_or_default(),
+            meta["to"].as_str().unwrap_or_default()
+        ));
+    }
+    for edit in answer["documents"].as_array().into_iter().flatten() {
+        text.push_str(&format!(
+            "\n  updated {} reference(s) in {}",
+            edit["references"],
+            edit["file"].as_str().unwrap_or_default()
+        ));
+    }
+    text
+}

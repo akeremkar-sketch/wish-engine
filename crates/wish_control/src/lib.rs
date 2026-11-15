@@ -22,6 +22,7 @@ pub mod expr;
 pub mod ops;
 pub mod param;
 pub mod project;
+pub mod scaffold;
 pub mod tool;
 mod tools;
 pub mod types;

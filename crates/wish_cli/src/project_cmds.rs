@@ -71,51 +71,6 @@ fn render(diagnostics: &[Diagnostic]) -> String {
         .collect()
 }
 
-/// `wen check`: every document of the project, all problems at once.
-pub fn check(paths: &[String], example: &str, root: &Path, as_json: bool) -> Result<Outcome> {
-    let paths = &resolve(paths, root)?;
-    let app = registry_app(example)?;
-    let project = load_project(root, app.world().registry())?;
-    let diagnostics: Vec<&Diagnostic> = project
-        .diagnostics
-        .iter()
-        .filter(|d| {
-            d.location
-                .file
-                .as_deref()
-                .is_none_or(|f| selected(paths, f))
-        })
-        .collect();
-    let errors = diagnostics.iter().filter(|d| d.is_error()).count();
-    let warnings = diagnostics.len() - errors;
-    let files = project
-        .files
-        .iter()
-        .filter(|file| selected(paths, &file.path))
-        .count();
-    let success = errors == 0;
-    let text = if as_json {
-        json!({
-            "ok": success,
-            "files": files,
-            "errors": errors,
-            "warnings": warnings,
-            "diagnostics": diagnostics,
-        })
-        .to_string()
-    } else {
-        let mut text = diagnostics
-            .iter()
-            .map(|diagnostic| format!("{diagnostic}\n"))
-            .collect::<String>();
-        text.push_str(&format!(
-            "{files} file(s) checked: {errors} error(s), {warnings} warning(s)."
-        ));
-        text
-    };
-    Ok(Outcome { text, success })
-}
-
 /// `wen fmt`: rewrites documents in canonical form (or, with `check_only`,
 /// lists the ones that are not).
 pub fn format(

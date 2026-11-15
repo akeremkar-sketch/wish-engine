@@ -93,7 +93,7 @@ fn check_reports_every_problem_and_fails_only_on_errors() {
     dir.write("typo.scene.json", &GOOD.replace("MeshRef", "MeshRf"));
     let (ok, report) = wen_json(&args);
     assert!(!ok);
-    assert_eq!(report["ok"], false);
+    assert_eq!(report["passed"], false);
     assert_eq!(report["errors"], 2);
     let codes: Vec<&str> = report["diagnostics"]
         .as_array()
