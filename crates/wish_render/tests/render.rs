@@ -18,9 +18,10 @@ use wish_render::{
 use wish_scene::load;
 use wish_transform::update_global_transforms;
 
-/// Measured between WARP and lavapipe (design note §14, WP3).
+/// Measured on this scene (design note §14, WP3): WARP, lavapipe and an RTX
+/// 3060 Ti differ by at most 1/255. A pixel counts as different above 2.
 const TOLERANCE: Tolerance = Tolerance {
-    channel: 3,
+    channel: 2,
     fraction: 0.005,
 };
 
