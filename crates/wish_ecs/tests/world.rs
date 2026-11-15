@@ -168,7 +168,7 @@ fn queries_visit_matching_entities_in_a_stable_order() {
         spawned.push(entity);
     }
 
-    for (position, velocity) in world.query::<(&mut Position, &Velocity)>().unwrap() {
+    for (mut position, velocity) in world.query::<(&mut Position, &Velocity)>().unwrap() {
         position.value += velocity.value;
     }
     let moved: Vec<(Entity, Vec3)> = world
@@ -207,7 +207,7 @@ fn queries_visit_matching_entities_in_a_stable_order() {
     still_sorted.sort();
     assert_eq!(still_sorted, [spawned[1], spawned[3], spawned[5]]);
 
-    assert_eq!(world.query::<&Position>().unwrap().len(), 6);
+    assert_eq!(world.query::<&Position>().unwrap().count(), 6);
     assert_eq!(world.query::<&Player>().unwrap().count(), 2);
 }
 
@@ -276,7 +276,7 @@ fn padded_components_round_trip_through_every_path() {
         team: Team::Red,
         points: 7.0,
     };
-    for health in world.query::<&mut Health>().unwrap() {
+    for mut health in world.query::<&mut Health>().unwrap() {
         *health = Health {
             points: health.points + 1.0,
             ..*health

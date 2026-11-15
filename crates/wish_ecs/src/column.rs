@@ -11,7 +11,8 @@ use wish_core::Result;
 
 use crate::internal_error;
 
-/// Values of one type, one per row, stored back to back.
+/// Values of one type, one per row, stored back to back, with the change
+/// ticks of each row.
 ///
 /// The buffer is made of `u64` words, so its start is aligned to 8, the
 /// largest alignment a stored type may have; every slot `row * item_size` is
@@ -23,12 +24,17 @@ use crate::internal_error;
 /// Field bytes are always initialised, and only field bytes are ever read as
 /// bytes ([`Column::read_into`]); whole slots are only copied raw.
 ///
-/// Invariant: every slot below `len` holds a valid value of the column's type.
+/// Invariants: every slot below `len` holds a valid value of the column's
+/// type; `added` and `changed` both have exactly `len` entries.
 #[derive(Clone, Debug)]
 pub(crate) struct Column {
     words: Vec<MaybeUninit<u64>>,
     item_size: usize,
     len: usize,
+    /// The change tick at which each row's value was added.
+    added: Vec<u64>,
+    /// The change tick at which each row's value was last written.
+    changed: Vec<u64>,
 }
 
 impl Column {
@@ -37,10 +43,11 @@ impl Column {
             words: Vec::new(),
             item_size,
             len: 0,
+            added: Vec::new(),
+            changed: Vec::new(),
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.len
     }
@@ -57,13 +64,28 @@ impl Column {
         Ok(())
     }
 
-    /// The start of the buffer. Valid until the column is next resized.
+    /// The start of the value buffer. Valid until the column is next resized.
     pub(crate) fn as_mut_ptr(&mut self) -> *mut u8 {
         self.words.as_mut_ptr().cast()
     }
 
     fn as_ptr(&self) -> *const u8 {
         self.words.as_ptr().cast()
+    }
+
+    /// The start of the "last written" ticks. Valid until the column is next resized.
+    pub(crate) fn changed_ptr(&mut self) -> *mut u64 {
+        self.changed.as_mut_ptr()
+    }
+
+    /// The start of the "added" ticks. Valid until the column is next resized.
+    pub(crate) fn added_ptr(&mut self) -> *mut u64 {
+        self.added.as_mut_ptr()
+    }
+
+    /// `(added, changed)` ticks of a row.
+    pub(crate) fn ticks(&self, row: usize) -> Option<(u64, u64)> {
+        Some((*self.added.get(row)?, *self.changed.get(row)?))
     }
 
     fn check_row(&self, row: usize) -> Result<()> {
@@ -88,8 +110,9 @@ impl Column {
         }
     }
 
-    /// Appends a value. `bytes` must be a valid value of the column's type.
-    pub(crate) fn push_bytes(&mut self, bytes: &[u8]) -> Result<()> {
+    /// Appends a value added at `tick`. `bytes` must be a valid value of the
+    /// column's type.
+    pub(crate) fn push_bytes(&mut self, bytes: &[u8], tick: u64) -> Result<()> {
         self.check_size(bytes.len())?;
         self.ensure_rows(self.len + 1)?;
         let offset = self.len * self.item_size;
@@ -104,11 +127,14 @@ impl Column {
             );
         }
         self.len += 1;
+        self.added.push(tick);
+        self.changed.push(tick);
         Ok(())
     }
 
-    /// Overwrites a value. `bytes` must be a valid value of the column's type.
-    pub(crate) fn write_bytes(&mut self, row: usize, bytes: &[u8]) -> Result<()> {
+    /// Overwrites a value at `tick`. `bytes` must be a valid value of the
+    /// column's type.
+    pub(crate) fn write_bytes(&mut self, row: usize, bytes: &[u8], tick: u64) -> Result<()> {
         self.check_row(row)?;
         self.check_size(bytes.len())?;
         let offset = row * self.item_size;
@@ -120,6 +146,9 @@ impl Column {
                 self.as_mut_ptr().add(offset),
                 self.item_size,
             );
+        }
+        if let Some(changed) = self.changed.get_mut(row) {
+            *changed = tick;
         }
         Ok(())
     }
@@ -159,10 +188,13 @@ impl Column {
         Ok(())
     }
 
-    /// Appends a copy of `source`'s value at `row`.
+    /// Appends a copy of `source`'s value at `row`, ticks included.
     pub(crate) fn push_from(&mut self, source: &Column, row: usize) -> Result<()> {
         self.check_size(source.item_size)?;
         source.check_row(row)?;
+        let (added, changed) = source
+            .ticks(row)
+            .ok_or_else(|| internal_error("a row has no change ticks"))?;
         self.ensure_rows(self.len + 1)?;
         let size = self.item_size;
         // SAFETY: the source slot is in bounds (`row < source.len`) and the
@@ -179,6 +211,8 @@ impl Column {
             );
         }
         self.len += 1;
+        self.added.push(added);
+        self.changed.push(changed);
         Ok(())
     }
 
@@ -196,7 +230,13 @@ impl Column {
             }
         }
         self.len = last;
-        Ok(())
+        if row < self.added.len() && row < self.changed.len() {
+            self.added.swap_remove(row);
+            self.changed.swap_remove(row);
+            Ok(())
+        } else {
+            Err(internal_error("change ticks are out of step with values"))
+        }
     }
 
     /// Views a value as `&T`.
@@ -214,19 +254,28 @@ impl Column {
         unsafe { &*self.as_ptr().add(row * self.item_size).cast::<T>() }
     }
 
-    /// Views a value as `&mut T`.
+    /// Views a value as `&mut T`, together with its "last written" tick.
     ///
     /// # Safety
     ///
     /// The same as [`Column::get`].
-    pub(crate) unsafe fn get_mut<T>(&mut self, row: usize) -> &mut T {
+    pub(crate) unsafe fn get_mut<T>(&mut self, row: usize) -> (&mut T, &mut u64) {
         debug_assert_eq!(self.item_size, size_of::<T>());
         debug_assert!(row < self.len);
         let size = self.item_size;
-        // SAFETY: as in `get`; the reference borrows `self` mutably, so it is
-        // the only reference into the buffer while it lives. Writes through it
-        // store a valid `T`, which keeps the column's invariant.
-        unsafe { &mut *self.as_mut_ptr().add(row * size).cast::<T>() }
+        let value = self.as_mut_ptr();
+        let Self { changed, .. } = self;
+        // SAFETY: as in `get`. The value lives in `words` and the tick in
+        // `changed`, separate allocations, so the two references do not
+        // alias; both borrow `self` mutably, so nothing else can reach the
+        // column while they live. Writes through the value store a valid `T`,
+        // which keeps the column's invariant. `row < len == changed.len()`.
+        unsafe {
+            (
+                &mut *value.add(row * size).cast::<T>(),
+                &mut *changed.as_mut_ptr().add(row),
+            )
+        }
     }
 }
 
@@ -244,26 +293,29 @@ mod tests {
     #[test]
     fn push_write_read_and_swap_remove() {
         let mut column = Column::new(3);
-        for value in [[1, 2, 3], [4, 5, 6], [7, 8, 9]] {
-            column.push_bytes(&value).unwrap();
+        for (tick, value) in [[1, 2, 3], [4, 5, 6], [7, 8, 9]].iter().enumerate() {
+            column.push_bytes(value, tick as u64 + 1).unwrap();
         }
         assert_eq!(column.len(), 3);
         assert_eq!(read(&column, 1), [4, 5, 6]);
-        column.write_bytes(1, &[40, 50, 60]).unwrap();
+        column.write_bytes(1, &[40, 50, 60], 9).unwrap();
         assert_eq!(read(&column, 1), [40, 50, 60]);
+        assert_eq!(column.ticks(1), Some((2, 9)));
         column.swap_remove(0).unwrap();
         assert_eq!(column.len(), 2);
         assert_eq!(read(&column, 0), [7, 8, 9]);
+        assert_eq!(column.ticks(0), Some((3, 3)), "ticks move with their value");
         assert_eq!(read(&column, 1), [40, 50, 60]);
         column.swap_remove(1).unwrap();
         assert_eq!(column.len(), 1);
         assert_eq!(read(&column, 0), [7, 8, 9]);
+        assert_eq!(column.ticks(1), None);
     }
 
     #[test]
     fn padding_reads_as_zero() {
         let mut column = Column::new(4);
-        column.push_bytes(&[1, 2, 3, 4]).unwrap();
+        column.push_bytes(&[1, 2, 3, 4], 1).unwrap();
         let mut out = [0xFF; 4];
         column.read_into(0, &[(1, 2)], &mut out).unwrap();
         assert_eq!(out, [0, 2, 3, 0]);
@@ -272,43 +324,48 @@ mod tests {
     #[test]
     fn copies_between_columns() {
         let mut source = Column::new(8);
-        source.push_bytes(&7u64.to_le_bytes()).unwrap();
-        source.push_bytes(&9u64.to_le_bytes()).unwrap();
+        source.push_bytes(&7u64.to_le_bytes(), 1).unwrap();
+        source.push_bytes(&9u64.to_le_bytes(), 2).unwrap();
         let mut destination = Column::new(8);
         destination.push_from(&source, 1).unwrap();
         assert_eq!(read(&destination, 0), 9u64.to_le_bytes());
+        assert_eq!(destination.ticks(0), Some((2, 2)));
         // SAFETY: the column stores `u64` values and row 0 exists.
         assert_eq!(unsafe { *destination.get::<u64>(0) }, 9);
         // SAFETY: as above.
-        unsafe { *destination.get_mut::<u64>(0) += 1 };
+        let (value, changed) = unsafe { destination.get_mut::<u64>(0) };
+        *value += 1;
+        *changed = 5;
         assert_eq!(read(&destination, 0), 10u64.to_le_bytes());
+        assert_eq!(destination.ticks(0), Some((2, 5)));
     }
 
     #[test]
     fn zero_sized_values_only_count_rows() {
         let mut column = Column::new(0);
-        column.push_bytes(&[]).unwrap();
-        column.push_bytes(&[]).unwrap();
+        column.push_bytes(&[], 1).unwrap();
+        column.push_bytes(&[], 2).unwrap();
         assert_eq!(column.len(), 2);
         // SAFETY: the column stores `()` values and row 1 exists.
         assert_eq!(unsafe { *column.get::<()>(1) }, ());
         column.swap_remove(0).unwrap();
         assert_eq!(column.len(), 1);
+        assert_eq!(column.ticks(0), Some((2, 2)));
     }
 
     #[test]
     fn misuse_is_an_internal_error_not_a_crash() {
         let mut column = Column::new(4);
         assert_eq!(
-            column.push_bytes(&[1, 2]).unwrap_err().code,
+            column.push_bytes(&[1, 2], 1).unwrap_err().code,
             "internal_error"
         );
         assert_eq!(
-            column.write_bytes(0, &[1, 2, 3, 4]).unwrap_err().code,
+            column.write_bytes(0, &[1, 2, 3, 4], 1).unwrap_err().code,
             "internal_error"
         );
         assert_eq!(column.swap_remove(0).unwrap_err().code, "internal_error");
-        column.push_bytes(&[1, 2, 3, 4]).unwrap();
+        column.push_bytes(&[1, 2, 3, 4], 1).unwrap();
         let mut out = [0; 4];
         assert_eq!(
             column.read_into(0, &[(2, 4)], &mut out).unwrap_err().code,

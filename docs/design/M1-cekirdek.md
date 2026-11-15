@@ -269,7 +269,7 @@ wen bench ecs --entities 100000 --ticks 600
 | WP2 | `wish_core`: `Entity`, `Diagnostic`, kararlı hash, öneri yardımcıları | Sonnet 5.5 · medium | Tamamlandı |
 | WP3 | `wish_schema` + makro: şema modeli, JSON ⇄ bayt, JSON Schema, parmak izi | Opus 5.5 · high | Tamamlandı |
 | WP4 | `wish_ecs`: depolama, türlü ve dinamik erişim, sorgular, kaynaklar, metin tablosu | Opus 5.5 · high | Tamamlandı |
-| WP4b | `wish_ecs`: ertelenmiş komutlar, olaylar, hiyerarşi, değişiklik izleme | Opus 5.5 · high | |
+| WP4b | `wish_ecs`: ertelenmiş komutlar, olaylar, hiyerarşi, değişiklik izleme | Opus 5.5 · high | Tamamlandı |
 | WP5 | Zamanlayıcı, sabit adım, rastgelelik (`wish_app`) | Opus 5.5 · high | |
 | WP6 | Anlık görüntü ve dünya hash'i | Opus 5.5 · high | |
 | WP7 | `wish_cli`: `wen run`, `wen schema`, `wen bench` | Sonnet 5.5 · medium | |
@@ -312,3 +312,14 @@ Tasarımdan sonra uygulama sırasında verilen ve sonraki iş paketlerini etkile
 - **Kaynaklar** tek satırlık sütunlardır; aynı türlü, JSON ve bayt yolları kullanılır.
 - **WP4b'ye ertelenenler:** ertelenmiş komut tamponu (`Commands`), olaylar, hiyerarşi bileşeni, değişiklik izleme (`changed_tick` ve `Mut<T>` sarmalayıcısı). Bunlar zamanlayıcıyla (WP5) birlikte anlam kazanıyor; ayrı ve küçük bir iş paketi olarak daha güvenli.
 - **Toplu ekleme yok.** Bir varlığa birden çok bileşen eklemek her ekleme için bir arketip taşıması yapar. 100 bin varlıklı kıyaslama (WP8) yetersiz gösterirse demet tabanlı `spawn_with` eklenecek.
+
+### WP4b
+
+- **Değişiklik işaretleri `u64`.** Her sütun satır başına iki işaret tutar: eklendiği ve son yazıldığı "değişiklik tick'i". `u32` 60 Hz'de sistem başına artışla birkaç haftada taşardı; `u64` taşmaz ve karşılaştırmalar basit kalır. Dünya tick'i 1'den başlar; 0 her şeyden öncedir.
+- **Değişiklik tick'i ile simülasyon tick'i ayrı kavramlardır.** Değişiklik tick'i yalnızca "şundan sonra mı yazıldı?" sorusu içindir; zamanlayıcı (WP5) onu her sistemden sonra ilerletecek.
+- **`&mut T` artık `Mut<T>` verir.** Okumak işaret koymaz; yazmak (`DerefMut`) koyar. Bu yüzden döngüde `for mut position in world.query::<&mut Position>()?` yazılır. `Changed<T>` ve `Added<T>` satır düzeyinde süzgeçlerdir; satırın işaretini öğesi oluşturulmadan önce okur. Karşılaştırılacak tick `query_since` ile verilir; `query_filtered` 0'ı kullanır.
+- **Olaylar** tür başına çift tamponludur: bir güncellemede gönderilen olay o güncellemede ve sonrakinde okunur; `update_events` eski yarıyı atar. Her olayın tür içinde sıra numarası vardır; `EventCursor` ile okuyan her olayı bir kez görür, geç kalan okuyucu atılanları atlar.
+- **Komutlar** (`Commands`) sırayla uygulanır; başarısız olan komut, buffer içindeki sırası (`location.op`) ile raporlanır ve diğerleri yine çalışır. Aynı buffer'da oluşturulacak bir varlığa `Target::Spawned(n)` ile başvurulur. Türlü ekleme, türü bilen bir işlev işaretçisi saklar; böylece komut kaydedilirken dünyaya erişim gerekmez.
+- **Hiyerarşi**, tek bir bileşende (`Hierarchy`: ebeveyn, ilk/son çocuk, önceki/sonraki kardeş) çift bağlı liste olarak durur; liste türü gerekmez, düz veri kalır. Bileşen **motor tarafından yönetilir**: okunabilir (JSON dahil), ama doğrudan yazma, ekleme, silme, `get_mut` ve `&mut` sorgusu `managed_component` tanısıyla reddedilir; değişiklik yalnızca `set_parent` / `remove_parent` ile yapılır. Döngü oluşturma `hierarchy_cycle` ile reddedilir. Bağlantıları izleyen her yürüyüş varlık sayısıyla sınırlıdır; bozuk bağlantılar motoru kilitleyemez.
+- **`despawn` alt ağacı da siler.** Model tabanlı test rastgele `set_parent` / `remove_parent` / `despawn` dizileriyle bunu ve kardeş sırasını doğruluyor.
+- **Öneri algoritması iyileştirildi** (`wish_core::suggest`): iki komşu harfin yer değiştirmesi artık tek hata sayılıyor (`Hti` → `Hit`). Bunu yeni olay testi yakaladı.

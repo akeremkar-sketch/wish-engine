@@ -58,6 +58,8 @@ enum Op {
     RemoveNamed(usize),
     PatchWeight(usize, i16),
     ScalePos(i8),
+    SetParent(usize, usize),
+    RemoveParent(usize),
 }
 
 fn op() -> impl Strategy<Value = Op> {
@@ -75,6 +77,8 @@ fn op() -> impl Strategy<Value = Op> {
         1 => any::<usize>().prop_map(Op::RemoveNamed),
         1 => (any::<usize>(), any::<i16>()).prop_map(|(e, w)| Op::PatchWeight(e, w)),
         1 => (-2i8..=2).prop_map(Op::ScalePos),
+        3 => (any::<usize>(), any::<usize>()).prop_map(|(c, p)| Op::SetParent(c, p)),
+        1 => any::<usize>().prop_map(Op::RemoveParent),
     ]
 }
 
@@ -84,6 +88,8 @@ struct Model {
     flags: Option<Flags>,
     tag: bool,
     named: Option<(&'static str, u32)>,
+    parent: Option<Entity>,
+    children: Vec<Entity>,
 }
 
 /// A world that knows every component up front, as a game's world does:
@@ -109,14 +115,62 @@ fn pick(model: &BTreeMap<Entity, Model>, index: usize) -> Option<Entity> {
     }
 }
 
+/// Everything below `entity` in the model, depth first, siblings in order.
+fn model_descendants(model: &BTreeMap<Entity, Model>, entity: Entity) -> Vec<Entity> {
+    let mut out = Vec::new();
+    let mut stack: Vec<Entity> = model[&entity].children.iter().rev().copied().collect();
+    while let Some(next) = stack.pop() {
+        out.push(next);
+        stack.extend(model[&next].children.iter().rev().copied());
+    }
+    out
+}
+
+fn model_detach(model: &mut BTreeMap<Entity, Model>, child: Entity) {
+    if let Some(parent) = model.get_mut(&child).unwrap().parent.take() {
+        model
+            .get_mut(&parent)
+            .unwrap()
+            .children
+            .retain(|c| *c != child);
+    }
+}
+
 fn apply(world: &mut World, model: &mut BTreeMap<Entity, Model>, dead: &mut Vec<Entity>, op: &Op) {
     match *op {
+        Op::SetParent(c, p) => {
+            let (Some(child), Some(parent)) = (pick(model, c), pick(model, p)) else {
+                return;
+            };
+            let mut ancestors = vec![parent];
+            while let Some(above) = model[ancestors.last().unwrap()].parent {
+                ancestors.push(above);
+            }
+            let result = world.set_parent(child, parent);
+            if ancestors.contains(&child) {
+                assert_eq!(result.unwrap_err().code, "hierarchy_cycle");
+            } else {
+                result.unwrap();
+                if model[&child].parent != Some(parent) {
+                    model_detach(model, child);
+                    model.get_mut(&child).unwrap().parent = Some(parent);
+                    model.get_mut(&parent).unwrap().children.push(child);
+                }
+            }
+        }
+        Op::RemoveParent(c) => {
+            let Some(child) = pick(model, c) else {
+                return;
+            };
+            world.remove_parent(child).unwrap();
+            model_detach(model, child);
+        }
         Op::Spawn => {
             let entity = world.spawn().unwrap();
             assert!(model.insert(entity, Model::default()).is_none());
         }
         Op::ScalePos(factor) => {
-            for pos in world.query::<&mut Pos>().unwrap() {
+            for mut pos in world.query::<&mut Pos>().unwrap() {
                 pos.value *= f32::from(factor);
             }
             for entry in model.values_mut() {
@@ -137,7 +191,9 @@ fn apply(world: &mut World, model: &mut BTreeMap<Entity, Model>, dead: &mut Vec<
                 | Op::RemoveTag(i)
                 | Op::RemoveNamed(i)
                 | Op::PatchWeight(i, _) => i,
-                Op::Spawn | Op::ScalePos(_) => unreachable!(),
+                Op::Spawn | Op::ScalePos(_) | Op::SetParent(..) | Op::RemoveParent(_) => {
+                    unreachable!()
+                }
             };
             let Some(entity) = pick(model, index) else {
                 return;
@@ -146,8 +202,12 @@ fn apply(world: &mut World, model: &mut BTreeMap<Entity, Model>, dead: &mut Vec<
             match *op {
                 Op::Despawn(_) => {
                     world.despawn(entity).unwrap();
-                    model.remove(&entity);
-                    dead.push(entity);
+                    let subtree = model_descendants(model, entity);
+                    model_detach(model, entity);
+                    for gone in std::iter::once(entity).chain(subtree) {
+                        model.remove(&gone);
+                        dead.push(gone);
+                    }
                 }
                 Op::InsertPos(_, v) => {
                     let value = Vec3::new(f32::from(v), -f32::from(v), f32::from(v) * 0.5);
@@ -198,7 +258,9 @@ fn apply(world: &mut World, model: &mut BTreeMap<Entity, Model>, dead: &mut Vec<
                     let flags = entry.flags.get_or_insert(Flags::default());
                     flags.weight = weight;
                 }
-                Op::Spawn | Op::ScalePos(_) => unreachable!(),
+                Op::Spawn | Op::ScalePos(_) | Op::SetParent(..) | Op::RemoveParent(_) => {
+                    unreachable!()
+                }
             }
         }
     }
@@ -226,6 +288,8 @@ fn check(world: &mut World, model: &BTreeMap<Entity, Model>, dead: &[Entity]) {
             "{entity} Flags"
         );
         assert_eq!(world.has::<Tag>(*entity), entry.tag, "{entity} Tag");
+        assert_eq!(world.parent(*entity), entry.parent, "{entity} parent");
+        assert_eq!(world.children(*entity), entry.children, "{entity} children");
         let named = world
             .get::<Named>(*entity)
             .map(|named| (world.text(named.label).unwrap().to_owned(), named.id));

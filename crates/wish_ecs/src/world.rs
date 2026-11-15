@@ -1,4 +1,4 @@
-//! The world: entities, their components, resources and text.
+//! The world: entities, their components, resources, events and text.
 
 // Typed accessors view column bytes as component values.
 #![allow(unsafe_code)]
@@ -9,15 +9,16 @@ use std::collections::BTreeMap;
 use serde_json::{Map, Value};
 use wish_core::{Diagnostic, Entity, Result, Text};
 use wish_schema::{
-    Component, JsonContext, Resource, TypeSchema, apply_json, to_json, validate_bytes,
+    Component, Event, JsonContext, Resource, TypeSchema, apply_json, to_json, validate_bytes,
 };
 
 use crate::archetype::Archetype;
 use crate::column::Column;
 use crate::entities::{Entities, EntityLocation};
+use crate::events::{EventCursor, EventQueue};
 use crate::internal_error;
-use crate::query::{Access, QueryData, QueryFilter, QueryIter};
-use crate::registry::{ComponentId, Registry, ResourceId, TypeInfo};
+use crate::query::{Access, ChangeTick, Mut, QueryData, QueryFilter, QueryIter};
+use crate::registry::{ComponentId, EventId, Registry, ResourceId, TypeInfo};
 use crate::text::TextTable;
 
 /// The archetype of entities with no components. Always present.
@@ -33,16 +34,20 @@ struct WorldState {
     archetype_ids: BTreeMap<Vec<ComponentId>, usize>,
     /// Indexed by resource id; a present resource is a one-row column.
     resources: Vec<Option<Column>>,
+    /// Indexed by event id; created on the first event of a type.
+    events: Vec<Option<EventQueue>>,
     texts: TextTable,
+    /// Recorded on every write; starts at 1 so that tick 0 precedes everything.
+    change_tick: u64,
 }
 
-/// Entities, their components, resources and text.
+/// Entities, their components, resources, events and text.
 ///
 /// Typed access (`insert`, `get`, `query`) works with Rust types declared
-/// with `#[component]` and `#[resource]`; they are registered on first use.
-/// Dynamic access (`set_json`, `get_json`, `insert_bytes`) works with any
-/// registered type by name, which is how AI agents, the editor and script
-/// modules reach the world.
+/// with `#[component]`, `#[resource]` and `#[event]`; they are registered on
+/// first use. Dynamic access (`set_json`, `get_json`, `insert_bytes`) works
+/// with any registered type by name, which is how AI agents, the editor and
+/// script modules reach the world.
 #[derive(Clone)]
 pub struct World {
     registry: Registry,
@@ -62,15 +67,25 @@ impl fmt::Debug for World {
             .field("archetypes", &self.state.archetypes.len())
             .field("components", &self.registry.components().len())
             .field("resources", &self.registry.resources().len())
+            .field("events", &self.registry.events().len())
+            .field("change_tick", &self.state.change_tick)
             .finish_non_exhaustive()
     }
 }
 
-fn entity_not_found(entity: Entity) -> Diagnostic {
+pub(crate) fn entity_not_found(entity: Entity) -> Diagnostic {
     Diagnostic::error(
         "entity_not_found",
         format!("Entity {entity} does not exist."),
         "It was despawned, or it was never spawned in this world. List the entities that exist now and use one of those.",
+    )
+}
+
+pub(crate) fn managed_component(name: &str) -> Diagnostic {
+    Diagnostic::error(
+        "managed_component",
+        format!("'{name}' is kept consistent by the engine and cannot be changed directly."),
+        "Change the hierarchy with set_parent and remove_parent; they keep parent and sibling links in step.",
     )
 }
 
@@ -115,23 +130,34 @@ fn pair_mut(
 }
 
 impl World {
-    /// An empty world.
+    /// An empty world. The hierarchy component is registered first.
     pub fn new() -> Self {
-        Self {
+        let mut world = Self {
             registry: Registry::default(),
             state: WorldState {
                 entities: Entities::default(),
                 archetypes: vec![Archetype::empty()],
                 archetype_ids: BTreeMap::from([(Vec::new(), EMPTY_ARCHETYPE)]),
                 resources: Vec::new(),
+                events: Vec::new(),
                 texts: TextTable::default(),
+                change_tick: 1,
             },
-        }
+        };
+        // Registering a built-in, macro-generated type cannot fail; if it ever
+        // did, hierarchy operations would report the problem when used.
+        let registered = world.hierarchy_id().is_ok();
+        debug_assert!(registered, "the hierarchy component failed to register");
+        world
     }
 
-    /// The registered component and resource types.
+    /// The registered component, resource and event types.
     pub fn registry(&self) -> &Registry {
         &self.registry
+    }
+
+    pub(crate) fn registry_mut(&mut self) -> &mut Registry {
+        &mut self.registry
     }
 
     /// The archetypes, in creation order.
@@ -140,11 +166,45 @@ impl World {
     }
 
     // -----------------------------------------------------------------------
+    // Change ticks
+    // -----------------------------------------------------------------------
+
+    /// The tick recorded by writes made now.
+    pub fn change_tick(&self) -> ChangeTick {
+        ChangeTick(self.state.change_tick)
+    }
+
+    /// Moves to the next change tick and returns it. Writes made before this
+    /// call are "before" writes made after it.
+    pub fn advance_change_tick(&mut self) -> ChangeTick {
+        self.state.change_tick += 1;
+        self.change_tick()
+    }
+
+    /// The ticks at which an entity's component was added and last written.
+    /// `Ok(None)` when the entity exists but does not have it.
+    pub fn component_ticks(
+        &self,
+        entity: Entity,
+        id: ComponentId,
+    ) -> Result<Option<(ChangeTick, ChangeTick)>> {
+        let location = self.location(entity)?;
+        let Some(column) = self.archetype(location.archetype)?.column(id) else {
+            return Ok(None);
+        };
+        let (added, changed) = column
+            .ticks(location.row)
+            .ok_or_else(|| internal_error("a row has no change ticks"))?;
+        Ok(Some((ChangeTick(added), ChangeTick(changed))))
+    }
+
+    // -----------------------------------------------------------------------
     // Registration
     // -----------------------------------------------------------------------
 
     /// Registers a component type. Inserting a value registers its type too,
-    /// so this is only needed to fix the order of component ids.
+    /// so this is only needed to fix the order of component ids, or to make
+    /// the type known by name before any value exists.
     pub fn register_component<T: Component>(&mut self) -> Result<ComponentId> {
         self.registry.register_component::<T>()
     }
@@ -163,6 +223,16 @@ impl World {
     /// Registers a resource known only by its schema.
     pub fn register_resource_schema(&mut self, schema: TypeSchema) -> Result<ResourceId> {
         self.registry.register_resource_schema(schema)
+    }
+
+    /// Registers an event type.
+    pub fn register_event<T: Event>(&mut self) -> Result<EventId> {
+        self.registry.register_event::<T>()
+    }
+
+    /// Registers an event type known only by its schema.
+    pub fn register_event_schema(&mut self, schema: TypeSchema) -> Result<EventId> {
+        self.registry.register_event_schema(schema)
     }
 
     // -----------------------------------------------------------------------
@@ -201,8 +271,21 @@ impl World {
         Ok(entity)
     }
 
-    /// Removes an entity and all its components.
+    /// Removes an entity, all its components and all its descendants in the
+    /// hierarchy.
     pub fn despawn(&mut self, entity: Entity) -> Result<()> {
+        self.location(entity)?;
+        let descendants = self.descendants(entity);
+        self.detach(entity)?;
+        self.despawn_one(entity)?;
+        for descendant in descendants {
+            self.despawn_one(descendant)?;
+        }
+        Ok(())
+    }
+
+    /// Removes one entity's row, ignoring the hierarchy.
+    fn despawn_one(&mut self, entity: Entity) -> Result<()> {
         let location = self
             .state
             .entities
@@ -262,6 +345,7 @@ impl World {
         target: usize,
         added: Option<(ComponentId, &[u8])>,
     ) -> Result<()> {
+        let tick = self.state.change_tick;
         let (source, destination) = pair_mut(&mut self.state.archetypes, from.archetype, target)?;
         let new_row = destination.len();
         for (id, column) in destination
@@ -271,7 +355,7 @@ impl World {
             .zip(&mut destination.columns)
         {
             match added {
-                Some((added_id, bytes)) if added_id == id => column.push_bytes(bytes)?,
+                Some((added_id, bytes)) if added_id == id => column.push_bytes(bytes, tick)?,
                 _ => {
                     let old = source
                         .column(id)
@@ -295,14 +379,21 @@ impl World {
         Ok(())
     }
 
-    /// Adds or overwrites a component. `bytes` must be a valid value.
-    fn put_component(&mut self, entity: Entity, id: ComponentId, bytes: &[u8]) -> Result<()> {
+    /// Adds or overwrites a component. `bytes` must be a valid value. Does
+    /// not check whether the component is managed.
+    pub(crate) fn put_component(
+        &mut self,
+        entity: Entity,
+        id: ComponentId,
+        bytes: &[u8],
+    ) -> Result<()> {
+        let tick = self.state.change_tick;
         let location = self.location(entity)?;
         let Some(archetype) = self.state.archetypes.get_mut(location.archetype) else {
             return Err(internal_error("an entity points at a missing archetype"));
         };
         if let Some(column) = archetype.column_mut(id) {
-            return column.write_bytes(location.row, bytes);
+            return column.write_bytes(location.row, bytes, tick);
         }
         let mut components = archetype.components().to_vec();
         if let Err(position) = components.binary_search(&id) {
@@ -312,8 +403,7 @@ impl World {
         self.move_entity(entity, location, target, Some((id, bytes)))
     }
 
-    /// Removes a component by id. Returns whether the entity had it.
-    pub fn remove_by_id(&mut self, entity: Entity, id: ComponentId) -> Result<bool> {
+    fn remove_component(&mut self, entity: Entity, id: ComponentId) -> Result<bool> {
         let location = self.location(entity)?;
         let archetype = self.archetype(location.archetype)?;
         if !archetype.contains(id) {
@@ -330,6 +420,22 @@ impl World {
         Ok(true)
     }
 
+    /// Fails if the component is managed by the world.
+    fn check_writable(&self, id: ComponentId) -> Result<()> {
+        let info = self.component_info(id)?;
+        if info.is_managed() {
+            Err(managed_component(info.name()))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Removes a component by id. Returns whether the entity had it.
+    pub fn remove_by_id(&mut self, entity: Entity, id: ComponentId) -> Result<bool> {
+        self.check_writable(id)?;
+        self.remove_component(entity, id)
+    }
+
     // -----------------------------------------------------------------------
     // Typed component access
     // -----------------------------------------------------------------------
@@ -337,6 +443,7 @@ impl World {
     /// Adds a component to an entity, or replaces the one it has.
     pub fn insert<T: Component>(&mut self, entity: Entity, value: T) -> Result<()> {
         let id = self.registry.register_component::<T>()?;
+        self.check_writable(id)?;
         let mut bytes = vec![0u8; size_of::<T>()];
         value.encode(&mut bytes);
         self.put_component(entity, id, &bytes)
@@ -349,10 +456,11 @@ impl World {
             self.location(entity)?;
             return Ok(None);
         };
+        self.check_writable(id)?;
         let Some(bytes) = self.component_bytes(entity, id)? else {
             return Ok(None);
         };
-        self.remove_by_id(entity, id)?;
+        self.remove_component(entity, id)?;
         T::decode(&bytes)
             .map(Some)
             .ok_or_else(|| internal_error("a stored component did not decode"))
@@ -375,44 +483,69 @@ impl World {
         Some(unsafe { column.get::<T>(location.row) })
     }
 
-    /// The entity's component, mutably.
-    pub fn get_mut<T: Component>(&mut self, entity: Entity) -> Option<&mut T> {
+    /// The entity's component, mutably. Writing through the result records
+    /// the component as changed.
+    ///
+    /// `None` also for components managed by the world (such as the
+    /// hierarchy), which can only be read.
+    pub fn get_mut<T: Component>(&mut self, entity: Entity) -> Option<Mut<'_, T>> {
         let id = self.registry.component_id_of::<T>()?;
+        if self.registry.component(id)?.is_managed() {
+            return None;
+        }
+        let tick = self.state.change_tick;
         let location = self.state.entities.location(entity)?;
         let column = self
             .state
             .archetypes
             .get_mut(location.archetype)?
             .column_mut(id)?;
-        // SAFETY: as in `get`. The reference borrows the world mutably, so
-        // nothing else can reach the column while it lives.
-        Some(unsafe { column.get_mut::<T>(location.row) })
+        // SAFETY: as in `get`. The references borrow the world mutably, so
+        // nothing else can reach the column while they live.
+        let (value, changed) = unsafe { column.get_mut::<T>(location.row) };
+        Some(Mut::new(value, changed, tick))
     }
 
     /// Runs a query over every entity that has the requested components.
     ///
     /// Fails if the query asks for a component mutably and also asks for it
-    /// again. Components that were never registered simply match nothing.
+    /// again, or asks for a managed component mutably. Components that were
+    /// never registered simply match nothing.
     pub fn query<Q: QueryData>(&mut self) -> Result<QueryIter<'_, Q>> {
-        self.query_filtered::<Q, ()>()
+        self.query_since::<Q, ()>(ChangeTick::ZERO)
     }
 
     /// Runs a query narrowed by a filter, such as `With<Player>` or
-    /// `(With<Player>, Without<Frozen>)`.
-    pub fn query_filtered<Q: QueryData, F: QueryFilter>(&mut self) -> Result<QueryIter<'_, Q>> {
+    /// `(With<Player>, Without<Frozen>)`. `Changed` and `Added` filters
+    /// compare against tick 0 here, so they pass anything ever written or
+    /// added; use [`World::query_since`] to look for recent changes.
+    pub fn query_filtered<Q: QueryData, F: QueryFilter>(&mut self) -> Result<QueryIter<'_, Q, F>> {
+        self.query_since::<Q, F>(ChangeTick::ZERO)
+    }
+
+    /// Runs a filtered query whose `Changed` and `Added` filters pass only
+    /// components written or added after `since`.
+    pub fn query_since<Q: QueryData, F: QueryFilter>(
+        &mut self,
+        since: ChangeTick,
+    ) -> Result<QueryIter<'_, Q, F>> {
         let mut access = Access::default();
         Q::access(&mut access);
-        access.check()?;
+        access.check(&self.registry)?;
         let Some(ids) = Q::ids(&self.registry) else {
             return Ok(QueryIter::new(Vec::new()));
         };
+        let tick = self.state.change_tick;
         let mut tables = Vec::new();
         for archetype in &mut self.state.archetypes {
-            if archetype.is_empty() || !F::matches(&self.registry, archetype) {
+            if archetype.is_empty() {
                 continue;
             }
-            if let Some(fetch) = Q::fetch(ids, archetype) {
-                tables.push((fetch, archetype.len()));
+            let Some(filter) = F::fetch(&self.registry, archetype, since.0) else {
+                continue;
+            };
+            if let Some(fetch) = Q::fetch(ids, archetype, tick) {
+                tables.push((fetch, filter, archetype.len()));
             }
         }
         Ok(QueryIter::new(tables))
@@ -457,6 +590,7 @@ impl World {
     /// native code (script modules). The bytes are checked first: a value
     /// whose `bool` or enum fields hold invalid bytes is rejected.
     pub fn insert_bytes(&mut self, entity: Entity, id: ComponentId, bytes: &[u8]) -> Result<()> {
+        self.check_writable(id)?;
         validate_bytes(self.component_info(id)?.schema(), bytes)?;
         self.put_component(entity, id, bytes)
     }
@@ -478,6 +612,7 @@ impl World {
     /// changes when `value` is rejected.
     pub fn set_json(&mut self, entity: Entity, name: &str, value: &Value) -> Result<()> {
         let id = self.component_id(name)?;
+        self.check_writable(id)?;
         let current = self.component_bytes(entity, id)?;
         let Self { registry, state } = self;
         let info = registry
@@ -520,15 +655,16 @@ impl World {
     // -----------------------------------------------------------------------
 
     fn put_resource(&mut self, id: ResourceId, bytes: &[u8]) -> Result<()> {
+        let tick = self.state.change_tick;
         let index = id.index();
         if self.state.resources.len() <= index {
             self.state.resources.resize_with(index + 1, || None);
         }
         match self.state.resources.get_mut(index) {
-            Some(Some(column)) => column.write_bytes(0, bytes),
+            Some(Some(column)) => column.write_bytes(0, bytes, tick),
             Some(slot @ None) => {
                 let mut column = Column::new(bytes.len());
-                column.push_bytes(bytes)?;
+                column.push_bytes(bytes, tick)?;
                 *slot = Some(column);
                 Ok(())
             }
@@ -558,12 +694,14 @@ impl World {
         Some(unsafe { column.get::<T>(0) })
     }
 
-    /// The resource's value, mutably.
-    pub fn resource_mut<T: Resource>(&mut self) -> Option<&mut T> {
+    /// The resource's value, mutably. Writing records it as changed.
+    pub fn resource_mut<T: Resource>(&mut self) -> Option<Mut<'_, T>> {
         let id = self.registry.resource_id_of::<T>()?;
+        let tick = self.state.change_tick;
         let column = self.state.resources.get_mut(id.index())?.as_mut()?;
-        // SAFETY: as in `resource`; the reference borrows the world mutably.
-        Some(unsafe { column.get_mut::<T>(0) })
+        // SAFETY: as in `resource`; the references borrow the world mutably.
+        let (value, changed) = unsafe { column.get_mut::<T>(0) };
+        Some(Mut::new(value, changed, tick))
     }
 
     /// Removes the resource's value and returns it.
@@ -620,6 +758,130 @@ impl World {
             &mut JsonContext::new(&mut state.texts),
         )?;
         self.put_resource(id, &bytes)
+    }
+
+    // -----------------------------------------------------------------------
+    // Events
+    // -----------------------------------------------------------------------
+
+    fn push_event(&mut self, id: EventId, bytes: &[u8]) -> Result<()> {
+        let tick = self.state.change_tick;
+        let index = id.index();
+        if self.state.events.len() <= index {
+            self.state.events.resize_with(index + 1, || None);
+        }
+        let Some(slot) = self.state.events.get_mut(index) else {
+            return Err(internal_error("event table did not grow"));
+        };
+        slot.get_or_insert_with(|| EventQueue::new(bytes.len()))
+            .push(bytes, tick)
+    }
+
+    /// Sends an event. It can be read during this update and the next (see
+    /// [`World::update_events`]).
+    pub fn send<E: Event>(&mut self, event: E) -> Result<()> {
+        let id = self.registry.register_event::<E>()?;
+        let mut bytes = vec![0u8; size_of::<E>()];
+        event.encode(&mut bytes);
+        self.push_event(id, &bytes)
+    }
+
+    /// Sends an event from JSON, by type name; fields left out take their
+    /// default values.
+    pub fn send_json(&mut self, name: &str, value: &Value) -> Result<()> {
+        let id = self
+            .registry
+            .event_id(name)
+            .ok_or_else(|| self.registry.unknown_event(name))?;
+        let Self { registry, state } = self;
+        let info = registry
+            .event(id)
+            .ok_or_else(|| internal_error("an event id has no type information"))?;
+        let mut bytes = info.default_bytes().to_vec();
+        apply_json(
+            info.schema(),
+            value,
+            &mut bytes,
+            &mut JsonContext::new(&mut state.texts),
+        )?;
+        self.push_event(id, &bytes)
+    }
+
+    /// The buffered events of one type with a sequence number of at least
+    /// `from`, as bytes, oldest first.
+    fn event_bytes(&self, id: EventId, from: u64) -> Result<Vec<Vec<u8>>> {
+        let Some(queue) = self.state.events.get(id.index()).and_then(Option::as_ref) else {
+            return Ok(Vec::new());
+        };
+        let info = self
+            .registry
+            .event(id)
+            .ok_or_else(|| internal_error("an event id has no type information"))?;
+        queue
+            .rows_from(from)
+            .map(|(column, row)| {
+                let mut bytes = vec![0u8; info.size()];
+                column.read_into(row, info.spans(), &mut bytes)?;
+                Ok(bytes)
+            })
+            .collect()
+    }
+
+    fn decode_events<E: Event>(byte_lists: Vec<Vec<u8>>) -> Result<Vec<E>> {
+        byte_lists
+            .iter()
+            .map(|bytes| {
+                E::decode(bytes).ok_or_else(|| internal_error("a stored event did not decode"))
+            })
+            .collect()
+    }
+
+    /// Every buffered event of type `E`, oldest first.
+    pub fn events<E: Event>(&self) -> Result<Vec<E>> {
+        let Some(id) = self.registry.event_id_of::<E>() else {
+            return Ok(Vec::new());
+        };
+        Self::decode_events(self.event_bytes(id, 0)?)
+    }
+
+    /// The events of type `E` the cursor has not seen yet, oldest first; the
+    /// cursor moves past them. Events dropped by [`World::update_events`]
+    /// before the cursor read them are skipped.
+    pub fn read_events<E: Event>(&self, cursor: &mut EventCursor<E>) -> Result<Vec<E>> {
+        let Some(id) = self.registry.event_id_of::<E>() else {
+            return Ok(Vec::new());
+        };
+        let events = Self::decode_events(self.event_bytes(id, cursor.next)?)?;
+        if let Some(queue) = self.state.events.get(id.index()).and_then(Option::as_ref) {
+            *cursor = EventCursor::at(queue.next_sequence());
+        }
+        Ok(events)
+    }
+
+    /// Every buffered event of a type, by name, as a JSON array, oldest first.
+    pub fn events_json(&self, name: &str) -> Result<Value> {
+        let id = self
+            .registry
+            .event_id(name)
+            .ok_or_else(|| self.registry.unknown_event(name))?;
+        let info = self
+            .registry
+            .event(id)
+            .ok_or_else(|| internal_error("an event id has no type information"))?;
+        let events = self
+            .event_bytes(id, 0)?
+            .iter()
+            .map(|bytes| to_json(info.schema(), bytes, &self.state.texts))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Value::Array(events))
+    }
+
+    /// Ends an update for events: events sent before the previous call are
+    /// dropped. Call it once per update (the scheduler does).
+    pub fn update_events(&mut self) {
+        for queue in self.state.events.iter_mut().flatten() {
+            queue.update();
+        }
     }
 
     // -----------------------------------------------------------------------

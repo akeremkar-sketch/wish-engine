@@ -4,22 +4,36 @@
 //! diagnostic should say which valid name was probably meant. These helpers
 //! rank candidates deterministically: by similarity, then alphabetically.
 
-/// The Levenshtein edit distance between two strings, counted in `char`s.
+/// The edit distance between two strings, counted in `char`s: the fewest
+/// insertions, deletions, substitutions and swaps of two neighbouring
+/// characters that turn one into the other (optimal string alignment).
+///
+/// Swaps count as one edit because they are among the most common typos:
+/// `"Hti"` is one edit from `"Hit"`, not two.
 pub fn edit_distance(a: &str, b: &str) -> usize {
-    let b_chars: Vec<char> = b.chars().collect();
-    let mut previous: Vec<usize> = (0..=b_chars.len()).collect();
-    let mut current: Vec<usize> = vec![0; b_chars.len() + 1];
-    for (i, a_char) in a.chars().enumerate() {
-        current[0] = i + 1;
-        for (j, b_char) in b_chars.iter().enumerate() {
-            let substitution = previous[j] + usize::from(a_char != *b_char);
-            let deletion = previous[j + 1] + 1;
-            let insertion = current[j] + 1;
-            current[j + 1] = substitution.min(deletion).min(insertion);
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let width = b.len() + 1;
+    // Rows i-2, i-1 and i of the distance table.
+    let mut before: Vec<usize> = vec![0; width];
+    let mut previous: Vec<usize> = (0..width).collect();
+    let mut current: Vec<usize> = vec![0; width];
+    for i in 1..=a.len() {
+        current[0] = i;
+        for j in 1..width {
+            let cost = usize::from(a[i - 1] != b[j - 1]);
+            let mut best = (previous[j - 1] + cost)
+                .min(previous[j] + 1)
+                .min(current[j - 1] + 1);
+            if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
+                best = best.min(before[j - 2] + 1);
+            }
+            current[j] = best;
         }
+        core::mem::swap(&mut before, &mut previous);
         core::mem::swap(&mut previous, &mut current);
     }
-    previous[b_chars.len()]
+    previous[b.len()]
 }
 
 /// How far a candidate may be from the input and still be suggested.
@@ -116,6 +130,15 @@ mod tests {
         assert_eq!(edit_distance("translation", "translation"), 0);
         assert_eq!(edit_distance("translaton", "translation"), 1);
         assert_eq!(edit_distance("çay", "cay"), 1);
+        assert_eq!(edit_distance("Hti", "Hit"), 1, "a swap is one edit");
+        assert_eq!(edit_distance("ab", "ba"), 1);
+        assert_eq!(edit_distance("ca", "abc"), 3);
+    }
+
+    #[test]
+    fn swapped_letters_are_matched() {
+        assert_eq!(closest_match("Hti", ["Hit", "Health"]), Some("Hit"));
+        assert_eq!(closest_match("Trasnform", ["Transform"]), Some("Transform"));
     }
 
     #[test]

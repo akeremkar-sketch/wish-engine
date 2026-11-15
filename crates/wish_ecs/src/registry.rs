@@ -5,7 +5,9 @@ use std::collections::BTreeMap;
 
 use wish_core::suggest::unknown_name_hint;
 use wish_core::{Diagnostic, Hash128, Result};
-use wish_schema::{Component, Plain, Resource, TypeKind, TypeSchema, default_bytes, fingerprint};
+use wish_schema::{
+    Component, Event, Plain, Resource, TypeKind, TypeSchema, default_bytes, fingerprint,
+};
 
 use crate::internal_error;
 
@@ -33,6 +35,18 @@ impl ResourceId {
     }
 }
 
+/// Identifies an event type within one world. Ids are handed out in
+/// registration order, starting at 0.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct EventId(u32);
+
+impl EventId {
+    /// The id's position in registration order.
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
 /// Everything the world knows about one registered type.
 #[derive(Clone, Debug)]
 pub struct TypeInfo {
@@ -44,6 +58,9 @@ pub struct TypeInfo {
     spans: Vec<(usize, usize)>,
     default: Vec<u8>,
     type_id: Option<TypeId>,
+    /// Kept consistent by the world itself (like the hierarchy links), so it
+    /// cannot be written, added or removed directly.
+    managed: bool,
 }
 
 impl TypeInfo {
@@ -58,7 +75,14 @@ impl TypeInfo {
             schema,
             default,
             type_id,
+            managed: false,
         })
+    }
+
+    /// Whether the world keeps this component consistent itself, so that it
+    /// can only be read (for example the hierarchy links).
+    pub fn is_managed(&self) -> bool {
+        self.managed
     }
 
     /// The type's name.
@@ -249,6 +273,7 @@ impl Table {
 pub struct Registry {
     components: Table,
     resources: Table,
+    events: Table,
 }
 
 impl Default for Registry {
@@ -256,6 +281,7 @@ impl Default for Registry {
         Self {
             components: Table::new("component", "unknown_component"),
             resources: Table::new("resource", "unknown_resource"),
+            events: Table::new("event", "unknown_event"),
         }
     }
 }
@@ -333,6 +359,58 @@ impl Registry {
 
     pub(crate) fn unknown_resource(&self, name: &str) -> Diagnostic {
         self.resources.unknown(name)
+    }
+
+    /// Information about a registered event type.
+    pub fn event(&self, id: EventId) -> Option<&TypeInfo> {
+        self.events.get(id.0)
+    }
+
+    /// The id of the event type registered under `name`.
+    pub fn event_id(&self, name: &str) -> Option<EventId> {
+        self.events.by_name(name).map(EventId)
+    }
+
+    /// The id of the event type `T`, if it has been registered.
+    pub fn event_id_of<T: 'static>(&self) -> Option<EventId> {
+        self.events.by_type(TypeId::of::<T>()).map(EventId)
+    }
+
+    /// Every registered event type, in registration order.
+    pub fn events(&self) -> impl ExactSizeIterator<Item = (EventId, &TypeInfo)> {
+        // Registration keeps the count within u32 (see `Table::push`).
+        self.events
+            .infos
+            .iter()
+            .enumerate()
+            .map(|(index, info)| (EventId(index as u32), info))
+    }
+
+    pub(crate) fn register_event<T: Event>(&mut self) -> Result<EventId> {
+        self.events.register_typed::<T>().map(EventId)
+    }
+
+    pub(crate) fn register_event_schema(&mut self, schema: TypeSchema) -> Result<EventId> {
+        self.events.register_schema(schema).map(EventId)
+    }
+
+    pub(crate) fn unknown_event(&self, name: &str) -> Diagnostic {
+        self.events.unknown(name)
+    }
+
+    /// Marks a component as kept consistent by the world itself.
+    pub(crate) fn mark_managed(&mut self, id: ComponentId) {
+        if let Some(info) = self.components.infos.get_mut(id.index()) {
+            info.managed = true;
+        }
+    }
+
+    /// Whether the component type `T` is registered and managed.
+    pub(crate) fn is_managed_type(&self, type_id: TypeId) -> bool {
+        self.components
+            .by_type(type_id)
+            .and_then(|index| self.components.get(index))
+            .is_some_and(TypeInfo::is_managed)
     }
 }
 
