@@ -45,35 +45,14 @@ fn first_error(mut diagnostics: Vec<Diagnostic>) -> Diagnostic {
     first
 }
 
-/// Every `*.prefab.json` below `root`, as project-relative `/` paths, in a
-/// fixed order so that loading is deterministic.
-fn prefab_files(root: &Path) -> Vec<(String, PathBuf)> {
-    let mut found = Vec::new();
-    let mut folders = vec![root.to_path_buf()];
-    while let Some(folder) = folders.pop() {
-        let Ok(entries) = fs::read_dir(&folder) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                folders.push(path);
-            } else if path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.ends_with(".prefab.json"))
-                && let Ok(relative) = path.strip_prefix(root)
-            {
-                let parts: Vec<String> = relative
-                    .components()
-                    .map(|part| part.as_os_str().to_string_lossy().into_owned())
-                    .collect();
-                found.push((parts.join("/"), path));
-            }
-        }
-    }
-    found.sort();
-    found
+/// Every `*.prefab.json` of the project, as project-relative `/` paths, in
+/// path order. The same walk as `wen check`: hidden folders and links are
+/// skipped.
+fn prefab_files(root: &Path) -> Result<Vec<(String, PathBuf)>> {
+    Ok(wish_asset::index::documents(root)?
+        .into_iter()
+        .filter(|(name, _)| name.ends_with(".prefab.json"))
+        .collect())
 }
 
 /// Builds an app with the types of `example`, loads `scene` (a path relative
@@ -90,7 +69,7 @@ pub fn load_scene_app(
 
     let mut warnings = Vec::new();
     let mut library = PrefabLibrary::new();
-    for (name, path) in prefab_files(root) {
+    for (name, path) in prefab_files(root)? {
         let source = fs::read_to_string(&path).map_err(|error| unreadable(&path, &error))?;
         let result = load_prefab(&source, &name, app.world().registry());
         match result.document {

@@ -9,7 +9,7 @@ Boyutlar görecelidir (S < M < L < XL); takvim sözü değildir.
 |---|---|---|---|---|
 | M0 | Tasarım | Vizyon, kararlar, mimari, MCP taslağı | S | Fable 5.2 · xhigh — **tamamlandı** |
 | M1 | Çekirdek | Şema, ECS, sabit adım, determinizm, anlık görüntü | L | İlk oturum Fable 5.2 · high → sonra Opus 5.5 · high — **tamamlandı** |
-| M2 | Veri katmanı | Sahne formatı, biçimlendirici, doğrulama, varlık sunucusu, işlem/geri al | M | Sonnet 5.5 · high |
+| M2 | Veri katmanı | Sahne formatı, biçimlendirici, doğrulama, varlık sunucusu, işlem/geri al | M | Sonnet 5.5 · high (tasarım ağırlıklı iş paketleri Opus 5.5 · high) — **tamamlandı** |
 | M3 | İlk piksel | wgpu render temeli, glTF, başsız yakalama | L | Opus 5.5 · high (çekirdek) → Sonnet 5.5 · medium (içe aktarıcılar) |
 | M4 | Kontrol düzlemi + MCP | Tek API, MCP sunucusu, komut satırı eşliği, ilk ajan değerlendirmeleri | M | İlk oturum Opus 5.5 · high (araç tasarımı) → Sonnet 5.5 · medium |
 | M5 | Oyun mantığı | Wasm ev sahibi + SDK, sıcak yükleme, girdi, senaryo testleri, gömülü araç zinciri denemesi | L | Opus 5.5 · high (ABI, ev sahibi) → Sonnet 5.5 · medium |
@@ -102,7 +102,9 @@ M1'in ilk iş paketinde yapılacak tek ortam işi: derleme çıktılarını OneD
 
 ## M2 — Veri katmanı
 
-**Durum:** tasarım notu yazıldı (15 Kasım 2026): [design/M2-veri-katmani.md](design/M2-veri-katmani.md). Uygulama `m2-data` dalında: WP1–WP7 bitti (katı JSON + kanonik yazıcı, belge ve doğrulama, işlemler + geri al, prefab'lar, belge → dünya + `wen run --scene`, `AssetRef` + `wish_asset` + `wen mv`, `wen check/fmt/migrate/watch` + sıcak yükleme); sıradaki WP8 (M1 devirleri + kapanış incelemesi).
+**Durum: tamamlandı (15 Kasım 2026).** Tasarım ve uygulama notları: [design/M2-veri-katmani.md](design/M2-veri-katmani.md). WP1–WP8: katı JSON + kanonik yazıcı, belge ve doğrulama, işlemler + geri al, prefab'lar, belge → dünya + `wen run --scene`, `AssetRef` + `wish_asset` + `wen mv`, `wen check/fmt/migrate/watch` + sıcak yükleme, M1 devirleri (`trybuild`, tek hata iletisi, `syn` 3) ve bağımsız kapanış incelemesi (9 bulgu, hepsi düzeltildi ve testlendi).
+
+**M2 sonucu:** çıkış ölçütlerinin hepsi karşılandı; kanıt tablosu tasarım notunun §12 "M2 çıkış ölçütleri" bölümünde. Planlanandan sapmalar (gerekçeleri notta): dosya izleme `notify` yerine yoklamayla; `SceneId` yönetilen değil ayrılmış bileşen; içe aktarıcılar ve önbellek M3'e kaldı (planda da öyleydi).
 
 **Çıktı.** `wish_scene` (sahne/prefab belge modeli, kanonik biçimlendirici, kimlik adresli yamalar, atomik işlemler, geri al/yinele, revizyonlar), `wish_asset` (varlık sunucusu, dosya izleme, önbellek, `*.meta.json`), `wen check`, `wen fmt`, `wen mv`, `wen migrate`.
 

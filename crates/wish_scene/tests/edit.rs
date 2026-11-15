@@ -107,6 +107,34 @@ fn text(document: &SceneDocument) -> String {
 }
 
 #[test]
+fn reparent_reports_the_parent_and_order_it_changed() {
+    let world = world();
+    let mut document = sample(&world);
+    let reparent = |parent: Option<&str>, order: Option<i64>| {
+        tx(vec![EditOp::Reparent {
+            id: "sword".into(),
+            parent: parent.map(str::to_owned),
+            order,
+        }])
+    };
+    let only_order = document
+        .apply(&reparent(Some("camera"), Some(4)), world.registry())
+        .unwrap();
+    assert_eq!(only_order.changes, ["/entities/sword/order"]);
+    let both = document
+        .apply(&reparent(Some("player"), Some(1)), world.registry())
+        .unwrap();
+    assert_eq!(
+        both.changes,
+        ["/entities/sword/order", "/entities/sword/parent"]
+    );
+    let only_parent = document
+        .apply(&reparent(None, None), world.registry())
+        .unwrap();
+    assert_eq!(only_parent.changes, ["/entities/sword/parent"]);
+}
+
+#[test]
 fn a_transaction_applies_in_order_and_reports_what_changed() {
     let world = world();
     let document = sample(&world);

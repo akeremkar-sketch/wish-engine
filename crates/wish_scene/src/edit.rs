@@ -910,13 +910,23 @@ impl SceneDocument {
                         entity.order = *order;
                     }
                 }
+                // Report what actually changed; a move to the same place
+                // still names the parent link it addressed.
+                let order_changed = order.is_some_and(|order| order != old_order);
+                let mut changes = Vec::new();
+                if *parent != old_parent || !order_changed {
+                    changes.push(format!("{}/parent", entity_pointer(id)));
+                }
+                if order_changed {
+                    changes.push(format!("{}/order", entity_pointer(id)));
+                }
                 Ok(OpOutcome {
                     inverse: vec![EditOp::Reparent {
                         id: id.clone(),
                         parent: old_parent,
                         order: Some(old_order),
                     }],
-                    changes: vec![format!("{}/parent", entity_pointer(id))],
+                    changes,
                 })
             }
             EditOp::Rename { id, to } => {

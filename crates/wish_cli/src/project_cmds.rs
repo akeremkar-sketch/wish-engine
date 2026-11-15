@@ -28,6 +28,43 @@ fn selected(paths: &[String], file: &str) -> bool {
     paths.is_empty() || paths.iter().any(|path| path == file)
 }
 
+/// Turns file arguments into project-relative document paths (`\` becomes
+/// `/`, a leading `./` goes) and refuses any that names no document: a typo
+/// must never make a check pass by checking nothing.
+fn resolve(paths: &[String], root: &Path) -> Result<Vec<String>> {
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    let documents: Vec<String> = wish_asset::index::documents(root)?
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    paths
+        .iter()
+        .map(|path| {
+            let mut path = path.replace('\\', "/");
+            while let Some(rest) = path.strip_prefix("./") {
+                path = rest.to_owned();
+            }
+            if documents.contains(&path) {
+                return Ok(path);
+            }
+            let hint = match wish_core::suggest::closest_match(
+                &path,
+                documents.iter().map(String::as_str),
+            ) {
+                Some(closest) => format!("Did you mean '{closest}'?"),
+                None => "Give a scene, prefab or meta file path relative to the project folder (--root).".to_owned(),
+            };
+            Err(Diagnostic::error(
+                "file_not_found",
+                format!("'{path}' is not a scene, prefab or meta file of the project."),
+                hint,
+            ))
+        })
+        .collect()
+}
+
 fn render(diagnostics: &[Diagnostic]) -> String {
     diagnostics
         .iter()
@@ -37,6 +74,7 @@ fn render(diagnostics: &[Diagnostic]) -> String {
 
 /// `wen check`: every document of the project, all problems at once.
 pub fn check(paths: &[String], example: &str, root: &Path, as_json: bool) -> Result<Outcome> {
+    let paths = &resolve(paths, root)?;
     let app = registry_app(example)?;
     let project = load_project(root, app.world().registry())?;
     let diagnostics: Vec<&Diagnostic> = project
@@ -88,6 +126,7 @@ pub fn format(
     check_only: bool,
     as_json: bool,
 ) -> Result<Outcome> {
+    let paths = &resolve(paths, root)?;
     let app = registry_app(example)?;
     let project = load_project(root, app.world().registry())?;
     let mut changed: Vec<&str> = Vec::new();
@@ -114,6 +153,16 @@ pub fn format(
             None => skipped.push(&file.path),
         }
     }
+    // Files that could not even be read are skipped too, never passed over.
+    for diagnostic in &project.diagnostics {
+        if diagnostic.code == "file_unreadable"
+            && let Some(file) = diagnostic.location.file.as_deref()
+            && selected(paths, file)
+        {
+            skipped.push(file);
+        }
+    }
+    skipped.sort_unstable();
     let problems: Vec<&Diagnostic> = project
         .diagnostics
         .iter()
@@ -167,6 +216,7 @@ pub fn format(
 /// what it cannot upgrade; the migration steps will be added here when a
 /// format 2 exists.
 pub fn migrate(paths: &[String], root: &Path, as_json: bool) -> Result<Outcome> {
+    let paths = &resolve(paths, root)?;
     let current = u64::from(wish_scene::FORMAT);
     debug_assert_eq!(current, u64::from(META_FORMAT));
     let mut up_to_date = 0;
@@ -175,13 +225,20 @@ pub fn migrate(paths: &[String], root: &Path, as_json: bool) -> Result<Outcome> 
         if !selected(paths, &name) {
             continue;
         }
-        let source = fs::read_to_string(&path).map_err(|error| {
-            Diagnostic::error(
-                "file_unreadable",
-                format!("Could not read '{name}': {error}."),
-                "Check that the file can be read and is UTF-8 text.",
-            )
-        })?;
+        let source = match fs::read_to_string(&path) {
+            Ok(source) => source,
+            Err(error) => {
+                diagnostics.push(
+                    Diagnostic::error(
+                        "file_unreadable",
+                        format!("Could not read '{name}': {error}."),
+                        "Check that the file can be read and is UTF-8 text.",
+                    )
+                    .at_file(name),
+                );
+                continue;
+            }
+        };
         let document = match wish_scene::json::parse(&source, &name) {
             Ok(node) => node.to_value(),
             Err(diagnostic) => {
@@ -273,8 +330,21 @@ pub fn watch(
     let mut rejected = 0u64;
     while seconds == 0 || started.elapsed() < Duration::from_secs(seconds) {
         std::thread::sleep(Duration::from_millis(100));
-        let Some(reload) = hot.poll(app.world_mut())? else {
-            continue;
+        // A failure here (such as the project folder being unreadable for a
+        // moment) is reported, and watching goes on.
+        let reload = match hot.poll(app.world_mut()) {
+            Ok(Some(reload)) => reload,
+            Ok(None) => continue,
+            Err(problem) => {
+                rejected += 1;
+                event(
+                    as_json,
+                    "error",
+                    json!({ "diagnostics": [problem] }),
+                    &format!("Could not reload.\n{problem}"),
+                );
+                continue;
+            }
         };
         if reload.applied {
             reloads += 1;

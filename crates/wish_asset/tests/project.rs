@@ -23,10 +23,17 @@ pub struct Transform {
     pub translation: Vec3,
 }
 
+#[wish_schema::resource]
+pub struct Gravity {
+    pub value: Vec3,
+    pub scale: f32,
+}
+
 fn world() -> World {
     let mut world = World::new();
     world.register_component::<Model>().unwrap();
     world.register_component::<Transform>().unwrap();
+    world.register_resource::<Gravity>().unwrap();
     wish_scene::instantiate::register(&mut world).unwrap();
     world
 }
@@ -236,6 +243,80 @@ fn hot_reload_swaps_the_scene_and_keeps_the_last_good_one_when_a_change_is_inval
     assert_eq!(
         world.get_json(model, "Model").unwrap(),
         json!({ "mesh": "assets/m.glb" })
+    );
+}
+
+#[test]
+fn hot_reload_resets_resources_the_file_no_longer_sets() {
+    let dir = project("resources");
+    let with = |resources: &str| {
+        format!("{{\n  \"entities\": {{\n    \"a\": {{}}\n  }},\n  \"format\": 1{resources}\n}}\n")
+    };
+    dir.write(
+        "main.scene.json",
+        &with(",\n  \"resources\": { \"Gravity\": { \"scale\": 2, \"value\": [0, -1, 0] } }"),
+    );
+    let mut world = world();
+    world
+        .insert_resource(Gravity {
+            value: Vec3::ZERO,
+            scale: 1.0,
+        })
+        .unwrap();
+    let (mut hot, _) = HotScene::start(&dir.0, "main.scene.json", &mut world).unwrap();
+    assert_eq!(
+        world.resource_json("Gravity").unwrap(),
+        json!({ "scale": 2.0, "value": [0.0, -1.0, 0.0] })
+    );
+
+    // Dropping one field brings that field back to its value from before
+    // the scene, not to what the old scene set.
+    dir.write(
+        "main.scene.json",
+        &with(",\n  \"resources\": { \"Gravity\": { \"scale\": 3 } }"),
+    );
+    assert!(hot.poll(&mut world).unwrap().unwrap().applied);
+    assert_eq!(
+        world.resource_json("Gravity").unwrap(),
+        json!({ "scale": 3.0, "value": [0.0, 0.0, 0.0] })
+    );
+
+    // Dropping the resource restores the app's own value.
+    dir.write("main.scene.json", &with(""));
+    assert!(hot.poll(&mut world).unwrap().unwrap().applied);
+    assert_eq!(
+        world.resource_json("Gravity").unwrap(),
+        json!({ "scale": 1.0, "value": [0.0, 0.0, 0.0] })
+    );
+
+    // A resource the world did not have before is removed again.
+    let mut bare = self::world();
+    dir.write(
+        "main.scene.json",
+        &with(",\n  \"resources\": { \"Gravity\": { \"scale\": 5 } }"),
+    );
+    let (mut hot, _) = HotScene::start(&dir.0, "main.scene.json", &mut bare).unwrap();
+    assert!(bare.resource_json("Gravity").is_ok());
+    dir.write("main.scene.json", &with(""));
+    assert!(hot.poll(&mut bare).unwrap().unwrap().applied);
+    assert!(bare.resource_json("Gravity").is_err());
+}
+
+#[test]
+fn an_unreadable_file_is_one_problem_among_the_others() {
+    let dir = project("unreadable");
+    fs::write(dir.0.join("bad.prefab.json"), [0xff, 0xfe, 0x00]).unwrap();
+    let world = world();
+    let project = load_project(&dir.0, world.registry()).unwrap();
+    let bad = project
+        .diagnostics
+        .iter()
+        .find(|d| d.code == "file_unreadable")
+        .expect("the bad file is reported");
+    assert_eq!(bad.location.file.as_deref(), Some("bad.prefab.json"));
+    assert!(
+        project.scenes.contains_key("main.scene.json"),
+        "the rest still loads"
     );
 }
 

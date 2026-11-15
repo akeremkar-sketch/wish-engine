@@ -363,6 +363,128 @@ fn moving_a_file_updates_every_reference_and_the_meta_file() {
 }
 
 #[test]
+fn moving_a_prefab_updates_the_scenes_that_place_it() {
+    let project = Project::new("move-prefab");
+    let world = world();
+    let plan = plan_move(
+        &project.0,
+        "prefabs/enemy.prefab.json",
+        "prefabs/foes/enemy.prefab.json",
+        world.registry(),
+    )
+    .unwrap();
+    assert_eq!(plan.documents.len(), 1);
+    apply_move(&project.0, &plan).unwrap();
+    let scene = project.read("scenes/main.scene.json");
+    assert!(
+        scene.contains("\"prefab\": \"prefabs/foes/enemy.prefab.json\""),
+        "{scene}"
+    );
+    assert!(project.exists("prefabs/foes/enemy.prefab.json"));
+
+    // Moving the whole folder of prefabs works the same way.
+    let plan = plan_move(&project.0, "prefabs", "content/prefabs", world.registry()).unwrap();
+    apply_move(&project.0, &plan).unwrap();
+    assert!(
+        project
+            .read("scenes/main.scene.json")
+            .contains("\"content/prefabs/foes/enemy.prefab.json\"")
+    );
+}
+
+#[test]
+fn moving_a_folder_that_holds_documents_rewrites_them_in_their_new_place() {
+    let project = Project::new("move-docs");
+    let world = world();
+    // The prefab refers to textures; move the prefab's folder and the
+    // textures' folder in turn.
+    let plan = plan_move(
+        &project.0,
+        "prefabs",
+        "levels/one/prefabs",
+        world.registry(),
+    )
+    .unwrap();
+    assert_eq!(plan.documents.len(), 1, "the scene places the prefab");
+    apply_move(&project.0, &plan).unwrap();
+    Project::write_at(
+        &project.0,
+        "levels/one/prefabs/local.prefab.json",
+        "{ \"format\": 1, \"entities\": { \"root\": { \"components\": { \"Model\": { \"mesh\": \"levels/one/prefabs/mesh.glb\" } } } } }",
+    );
+    Project::write_at(&project.0, "levels/one/prefabs/mesh.glb", "data");
+    let plan = plan_move(&project.0, "levels/one", "levels/first", world.registry()).unwrap();
+    let targets: Vec<&str> = plan.documents.iter().map(|d| d.target.as_str()).collect();
+    assert_eq!(
+        targets,
+        [
+            "levels/first/prefabs/local.prefab.json",
+            "scenes/main.scene.json"
+        ]
+    );
+    apply_move(&project.0, &plan).unwrap();
+    assert!(
+        project
+            .read("levels/first/prefabs/local.prefab.json")
+            .contains("\"levels/first/prefabs/mesh.glb\"")
+    );
+    assert!(!project.exists("levels/one"));
+}
+
+#[test]
+fn a_path_that_differs_only_in_case_is_not_the_same_file() {
+    let project = Project::new("move-case");
+    let world = world();
+    let problem = plan_move(
+        &project.0,
+        "assets/MODELS/crate.glb",
+        "assets/x.glb",
+        world.registry(),
+    )
+    .unwrap_err();
+    assert_eq!(problem.code, "asset_not_found");
+    assert!(
+        problem.hint.contains("'assets/models/crate.glb'"),
+        "{}",
+        problem.hint
+    );
+    assert!(project.exists("assets/models/crate.glb"));
+
+    for (to, code) in [
+        ("assets/.trash/crate.glb", "hidden_destination"),
+        ("assets/crate.scene.json", "kind_change"),
+    ] {
+        let problem =
+            plan_move(&project.0, "assets/models/crate.glb", to, world.registry()).unwrap_err();
+        assert_eq!(problem.code, code, "{to}");
+    }
+}
+
+#[test]
+fn a_failed_move_also_removes_the_folders_it_created() {
+    let project = Project::new("move-folders");
+    let world = world();
+    let plan = plan_move(
+        &project.0,
+        "assets/textures/wood.png",
+        "new/deep/oak.png",
+        world.registry(),
+    )
+    .unwrap();
+    let scene_path = project.0.join("scenes/main.scene.json");
+    let mut permissions = fs::metadata(&scene_path).unwrap().permissions();
+    permissions.set_readonly(true);
+    fs::set_permissions(&scene_path, permissions).unwrap();
+    assert!(apply_move(&project.0, &plan).is_err());
+    let mut permissions = fs::metadata(&scene_path).unwrap().permissions();
+    #[allow(clippy::permissions_set_readonly_false)]
+    permissions.set_readonly(false);
+    fs::set_permissions(&scene_path, permissions).unwrap();
+    assert!(!project.exists("new"), "the folders the move made are gone");
+    assert!(project.exists("assets/textures/wood.png"));
+}
+
+#[test]
 fn a_failed_move_puts_everything_back() {
     let project = Project::new("move-rollback");
     let world = world();
@@ -456,11 +578,11 @@ fn bad_moves_are_refused_without_changing_anything() {
         assert_eq!(problem.code, code, "{from} -> {to}");
         assert!(!problem.hint.is_empty(), "{from} -> {to}");
     }
-    assert_eq!(
+    assert!(
         plan_move(&project.0, "assets/models/crat.glb", "x.glb", registry)
             .unwrap_err()
-            .hint,
-        "Did you mean 'assets/models/crate.glb'?"
+            .hint
+            .starts_with("Did you mean 'assets/models/crate.glb'?")
     );
     assert_eq!(project.read("scenes/main.scene.json"), SCENE);
 

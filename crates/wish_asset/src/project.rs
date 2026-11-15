@@ -62,14 +62,24 @@ impl Project {
     }
 }
 
-fn read(path: &Path, name: &str) -> Result<String> {
-    fs::read_to_string(path).map_err(|error| {
-        Diagnostic::error(
-            "file_unreadable",
-            format!("Could not read '{name}': {error}."),
-            "Check that the file can be read and is UTF-8 text.",
-        )
-    })
+/// Reads a document. An unreadable one (locked, not UTF-8, deleted during
+/// the scan) becomes a diagnostic on that file, and the rest of the project
+/// is still checked.
+fn read(path: &Path, name: &str, diagnostics: &mut Vec<Diagnostic>) -> Option<String> {
+    match fs::read_to_string(path) {
+        Ok(source) => Some(source),
+        Err(error) => {
+            diagnostics.push(
+                Diagnostic::error(
+                    "file_unreadable",
+                    format!("Could not read '{name}': {error}."),
+                    "Check that the file can be read and is UTF-8 text.",
+                )
+                .at_file(name),
+            );
+            None
+        }
+    }
 }
 
 /// Loads and checks every prefab, scene and meta file below `root`:
@@ -84,7 +94,9 @@ pub fn load_project(root: &Path, registry: &Registry) -> Result<Project> {
     let mut library = PrefabLibrary::new();
 
     for (name, path) in listing.iter().filter(|(n, _)| n.ends_with(".prefab.json")) {
-        let source = read(path, name)?;
+        let Some(source) = read(path, name, &mut diagnostics) else {
+            continue;
+        };
         let result = load_prefab(&source, name, registry);
         let canonical = result.document.as_ref().map(SceneDocument::to_canonical);
         if let Some(document) = result.document {
@@ -107,7 +119,9 @@ pub fn load_project(root: &Path, registry: &Registry) -> Result<Project> {
     let library = Arc::new(library);
     let mut scenes = BTreeMap::new();
     for (name, path) in listing.iter().filter(|(n, _)| n.ends_with(".scene.json")) {
-        let source = read(path, name)?;
+        let Some(source) = read(path, name, &mut diagnostics) else {
+            continue;
+        };
         let result = load_with_prefabs(&source, name, registry, Arc::clone(&library));
         let canonical = result.document.as_ref().map(SceneDocument::to_canonical);
         if let Some(document) = result.document {
@@ -128,7 +142,9 @@ pub fn load_project(root: &Path, registry: &Registry) -> Result<Project> {
     }
 
     for (name, path) in listing.iter().filter(|(n, _)| n.ends_with(".meta.json")) {
-        let source = read(path, name)?;
+        let Some(source) = read(path, name, &mut diagnostics) else {
+            continue;
+        };
         let canonical = match parse_meta(&source, name) {
             Ok(meta) => Some(meta.to_canonical()?),
             Err(diagnostic) => {

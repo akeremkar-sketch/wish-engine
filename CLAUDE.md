@@ -6,19 +6,13 @@ Wish Engine: yapay zekâya tamamen entegre ama yapay zekâsız da eksiksiz kulla
 
 - **Tamamlanan:** M0 (tasarım), **M1 (çekirdek)** — 15 Kasım 2026. Çıkış ölçütlerinin hepsi karşılandı (CI dahil: depo GitHub'a gönderildikten sonra Windows ve Linux'ta yeşil). Ayrıntı, kapanış incelemesi bulguları ve M2'ye devredilenler: [docs/design/M1-cekirdek.md](docs/design/M1-cekirdek.md) §12 "WP8 ve M1 kapanışı".
   - Crate'ler: `wish_core` (kimlikler, tanı, kararlı hash, `Rng`, öneriler), `wish_schema` + `wish_schema_macros` (şema, `Plain`, JSON ⇄ bayt, JSON Schema), `wish_ecs` (dünya, sorgular, komutlar, olaylar, hiyerarşi, değişiklik izleme, anlık görüntü, hash), `wish_app` (sabit adım, zamanlayıcı), `wish_examples` (`bounce`, `stress`), `wish_cli` (`wen`). M2'de eklenenler: `wish_scene` (belge, işlemler, prefab'lar, dünyaya aktarım), `wish_asset` (varlık dizini, meta, başvurular, `wen mv`).
-- **Süren: M2 (veri katmanı)**, `m2-data` dalında. Tasarım notu yazıldı: [docs/design/M2-veri-katmani.md](docs/design/M2-veri-katmani.md) — M2'de kod yazmadan önce oku.
-  - M2 WP1 (`wish_scene::json`: aralık kaydeden katı JSON ayrıştırıcı + kanonik yazıcı) bitti.
-  - M2 WP2 (`SceneDocument`, `load`, doğrulama, 35 bozuk dosya testi) bitti.
-  - M2 WP3 (işlemler, revizyonlar, geri al/yinele, etkinlik günlüğü ve `actor`) bitti; "100 işlem + 100 geri al = başlangıç dosyası" ölçütü model testiyle karşılandı.
-  - M2 WP4 (prefab'lar: `PrefabLibrary`, `load_prefab`, örnek + `overrides`, `expand()` ile türetilmiş kimlikler `örnek/prefab_varlığı`, `Instantiate`/`SetOverride`/`ReplaceOverride`/`RemoveOverride`) bitti.
-  - M2 WP5 (`SceneDocument::instantiate`, `SceneId`, `wen run --example <ad> --scene <dosya> [--root <klasör>]`) bitti; sahne dosyasında `SceneId` yazılamaz.
-  - M2 WP6 (`AssetRef` şema türü, `wish_asset`: dizin, `*.meta.json`, şemaya göre başvuru denetimi, `wen mv`) bitti. Dosya izleme bilerek WP7'ye bırakıldı (`notify` bağımlılığı orada eklenecek, lisansı denetlenecek).
-  - M2 WP7 (`load_project`, `wen check / fmt / migrate / watch`, yoklamalı `Watcher`, `HotScene` ile sıcak yükleme: geçersiz değişiklik son iyi sahneyi bozmaz) bitti; izleyici `notify` kullanmaz (karar §12 WP7).
-  - **Sıradaki: M2 WP8 (M1'den devralınanlar: `trybuild` derleme-hatası testleri, makronun yinelenen hata iletileri, `syn` 3; kapanış incelemesi), sonra M2'yi `main`'e birleştir.** Önerilen model · efor: Opus 5.5 · high. İş paketleri ve modelleri tasarım notunun §10'unda; WP1–WP7 notları §12'de.
-  - M3 (ilk piksel) M2 ile paralel yürüyebilir.
+- **Tamamlanan: M2 (veri katmanı)** — 15 Kasım 2026, `m2-data` dalından `main`'e birleştirildi. Çıkış ölçütleri ve kanıtları, kapanış incelemesi (9 bulgu, hepsi düzeltildi): [docs/design/M2-veri-katmani.md](docs/design/M2-veri-katmani.md) §12 "WP8" ve "M2 çıkış ölçütleri". Sahne/prefab/meta dosyalarına ya da `wish_scene`/`wish_asset`'e dokunmadan önce o notun §12'sini oku.
+  - Komutlar: `wen run --example <ad> [--scene <dosya> --root <klasör>]`, `wen check`, `wen fmt [--check]`, `wen migrate`, `wen watch`, `wen mv`. Proje komutları bileşen türlerini `--example`'dan alır (oyun modülleri M5'te).
+  - Makro hata iletileri `trybuild` ile sabitlendi (`wish_schema/tests/ui/*.stderr`). Yeni bir `Plain` türü eklemek ya da makronun iletisini değiştirmek bu dosyaları değiştirir: `$env:TRYBUILD = "overwrite"; cargo test -p wish_schema --test compile_fail`, sonra farkı incele.
+- **Sıradaki: M3 (ilk piksel: wgpu render temeli, glTF, başsız yakalama), `m3-render` dalında.** Önce tasarım notu (`docs/design/M3-ilk-piksel.md`). Önerilen model · efor: **Opus 5.5 · high** (render çekirdeği ve tasarım notu) → içe aktarıcılarda Sonnet 5.5 · medium.
 - **`wen`'i çalıştırmak:** `cargo run -p wish_cli --release -- run --example bounce --frames 10000 --seed 7 --json`. Derlenmiş ikili `C:\wish-build\target\release\wen.exe` altında.
 - **Hash'leri değiştirme konusunda dikkat:** `wish_ecs/tests/snapshot.rs` ve `wish_core` testlerinde kayıtlı hash/rastgelelik değerleri var. Bunlar kırılırsa önce bilinçli bir format değişikliği olup olmadığını düşün; bilinçliyse sürüm etiketini (`wish-world-hash-v1` vb.) artır.
-- **Git:** M1, `m1-core` dalında geliştirildi ve `main`'e birleştirildi. Her kilometre taşı kendi dalında (`m2-...`) yürür, bitince `main`'e birleştirilir. Commit kimliği depoya özel proje kimliğidir (kullanıcı kararı); kişisel e-posta kullanma.
+- **Git:** M1 (`m1-core`) ve M2 (`m2-data`) kendi dallarında geliştirilip `main`'e birleştirildi. Her kilometre taşı kendi dalında (`m2-...`) yürür, bitince `main`'e birleştirilir. Commit kimliği depoya özel proje kimliğidir (kullanıcı kararı); kişisel e-posta kullanma.
 - **Ortam (15 Kasım 2026'da doğrulandı):** Rust 1.100.0 (`rust-toolchain.toml` ile sabit) ve Visual Studio 2022 Build Tools 17.14.45 kurulu. Bu oturumun kabuğunda `cargo` PATH'te olmayabilir; her komuttan önce `$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"` çalıştır.
 - **Proje klasörü OneDrive altında** (`Masaüstü\wish-engine`). Derleme çıktıları git'e girmeyen yerel `.cargo/config.toml` ile `C:/wish-build/target` klasörüne yönlendirildi. Bu dosyayı silme; `target/` klasörünü asla proje klasörünün içinde bırakma.
 - **Uzak depo ve CI:** özel GitHub deposu `akeremkar-sketch/wish-engine` (kullanıcının hesabı, kullanıcı kararı 15 Kasım 2026; `origin`). CI `main`'e gönderimde ve PR'larda çalışır (Windows + Linux: fmt, clippy, test; cargo-deny lisans). İlk çalıştırma yeşil; kayıtlı hash ve rastgelelik değerleri Linux'ta da tuttu. Dalları gönderirken `git push`; `main`'e yalnızca kilometre taşı bitince birleştir.
@@ -105,4 +99,4 @@ $env:MIRIFLAGS = '-Zmiri-strict-provenance'
 cargo +nightly miri test -p wish_ecs
 ```
 
-Henüz yok, ilgili iş paketinde eklenecek: determinizm testi (WP8), kıyaslama (WP8).
+Determinizm testi ve kıyaslama (`wen bench`) M1'de eklendi; `cargo test --workspace` derleme hatası testlerini (`trybuild`) de çalıştırır.

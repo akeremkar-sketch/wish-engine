@@ -103,6 +103,32 @@ fn check_reports_every_problem_and_fails_only_on_errors() {
     );
     assert!(report["diagnostics"][0]["location"]["line"].is_number());
 
+    // A file argument that names no document fails instead of checking
+    // nothing; Windows-style and ./ paths are understood.
+    let (ok, report) = wen_json(&[
+        "check",
+        "typo.scene.jsn",
+        "--example",
+        "stress",
+        "--root",
+        dir.arg(),
+        "--json",
+    ]);
+    assert!(!ok);
+    assert_eq!(report["error"]["code"], "file_not_found");
+    assert_eq!(report["error"]["hint"], "Did you mean 'typo.scene.json'?");
+    let (ok, report) = wen_json(&[
+        "check",
+        ".\\typo.scene.json",
+        "--example",
+        "stress",
+        "--root",
+        dir.arg(),
+        "--json",
+    ]);
+    assert!(!ok);
+    assert_eq!(report["errors"], 1, "{report}");
+
     // Naming files limits what is reported.
     let (ok, report) = wen_json(&[
         "check",

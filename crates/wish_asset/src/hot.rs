@@ -94,6 +94,42 @@ pub struct HotScene {
     watcher: Watcher,
     entities: SceneEntities,
     document: SceneDocument,
+    /// The value each resource the scene has ever set had before the scene
+    /// touched it (`None`: it had none). A reload restores these before the
+    /// new scene patches them, so removing a resource or one of its fields
+    /// from the file takes effect, as it would in a fresh load.
+    baseline: BTreeMap<String, Option<serde_json::Value>>,
+}
+
+/// Records, for each resource the document sets and that has no baseline
+/// yet, its current value.
+fn capture(
+    baseline: &mut BTreeMap<String, Option<serde_json::Value>>,
+    document: &SceneDocument,
+    world: &World,
+) {
+    for name in document.resources().keys() {
+        if !baseline.contains_key(name) {
+            baseline.insert(name.clone(), world.resource_json(name).ok());
+        }
+    }
+}
+
+/// Puts every recorded resource back to its value from before the scene.
+fn restore(
+    baseline: &BTreeMap<String, Option<serde_json::Value>>,
+    world: &mut World,
+) -> Result<()> {
+    for (name, value) in baseline {
+        match value {
+            // A complete value written as a patch replaces every field.
+            Some(value) => world.set_resource_json(name, value)?,
+            None => {
+                world.remove_resource_json(name)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 impl HotScene {
@@ -114,6 +150,8 @@ impl HotScene {
                 wish_core::suggest::unknown_name_hint(scene, &names),
             )
         })?;
+        let mut baseline = BTreeMap::new();
+        capture(&mut baseline, &document, world);
         let entities = document.instantiate(world)?;
         Ok((
             Self {
@@ -122,6 +160,7 @@ impl HotScene {
                 watcher,
                 entities,
                 document,
+                baseline,
             },
             project.diagnostics,
         ))
@@ -143,7 +182,9 @@ impl HotScene {
     ///
     /// The scene is replaced as a whole: entities the scene created are
     /// despawned and created again, so state they gained while running is
-    /// lost. Entities the scene did not create are left alone.
+    /// lost. Entities the scene did not create are left alone. Resources the
+    /// scene sets go back to their value from before the scene first touched
+    /// them, then the new scene's values apply.
     pub fn poll(&mut self, world: &mut World) -> Result<Option<Reload>> {
         let changed = self.watcher.poll()?;
         if changed.is_empty() {
@@ -176,6 +217,8 @@ impl HotScene {
             // Despawning a parent removes its children; they may be gone.
             let _ = world.despawn(*entity);
         }
+        capture(&mut self.baseline, &document, world);
+        restore(&self.baseline, world)?;
         self.entities = document.instantiate(world)?;
         self.document = document;
         Ok(Some(Reload {

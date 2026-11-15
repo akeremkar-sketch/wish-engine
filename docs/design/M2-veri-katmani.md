@@ -155,7 +155,7 @@ Hepsi M1'deki gibi `--json` ile MCP zarfında çıktı verir.
 | WP5 | `SceneId`, belge → dünya aktarımı, `wen run <sahne>` | Sonnet 5.5 · medium — **tamamlandı** |
 | WP6 | `wish_asset`: `AssetRef` şema türü, keşif, `*.meta.json`, `wen mv` (izleme WP7'ye) | Sonnet 5.5 · high — **tamamlandı** |
 | WP7 | `wen check / fmt / migrate`, dosya izleyici ile sıcak yükleme | Sonnet 5.5 · medium — **tamamlandı** |
-| WP8 | M1 devirleri (`trybuild`, `syn` 3), kapanış incelemesi | Opus 5.5 · high |
+| WP8 | M1 devirleri (`trybuild`, `syn` 3), kapanış incelemesi | Opus 5.5 · high — **tamamlandı** |
 
 ## 11. Açık sorular
 
@@ -226,7 +226,7 @@ Hepsi M1'deki gibi `--json` ile MCP zarfında çıktı verir.
   - `AssetIndex::scan(kök)`: gizli klasörler (`.` ile başlayan) ve motor belgeleri (`*.scene.json`, `*.prefab.json`, `*.meta.json`) dışındaki tüm dosyalar, sıralı. `check(başvuru)`: biçim → `invalid_asset_ref`, dosya yok → `asset_not_found` ("şunu mu demek istediniz" ya da boş-proje ipucu). `#alt_nesne` denetlenmez: içeriği ancak içe aktarmadan (M3) sonra bilinir.
   - `*.meta.json`: `{ "format": 1, "import": { … } }`, konumlu ve ipuçlu ayrıştırma (`parse_meta`), kanonik yazma, `read_meta`/`write_meta`. `import` içeriğini içe aktarıcılar tanımlayacak (M3); şimdilik olduğu gibi tutulur. Meta dosyası olmayan varlık varsayılan ayarları kullanır.
   - Başvuru bulma **şemayla** yapılır, dize benzerliğiyle değil: sahne/prefab JSON'unda varlık bileşenleri, örneklerin `overrides` bileşenleri ve `resources` bileşen şemasına göre gezilir (yapı alanları, diziler). `check_source` her kötü başvuruyu dosya/satır/sütun ve JSON işaretçisiyle verir; sözdizimi hatası tek tanı olarak döner.
-  - **`wen mv <eski> <yeni> --example <ad> [--root] [--dry-run]`:** dosya ya da klasör taşır; tüm sahne/prefab belgelerindeki başvuruları (`#alt_nesne` korunur, klasör önekleri eşlenir, benzer önekli klasör etkilenmez) aynı işlemde günceller; dosyanın `.meta.json`'u onunla gider. Reddedilenler: olmayan kaynak (`asset_not_found`, öneriyle), var olan hedef (`asset_exists`, hiçbir şey ezilmez), klasörü kendi içine taşıma, aynı yol, geçersiz yol, sözdizimi hatalı bir belge (plan aşamasında durur, hiçbir şey taşınmaz). **Hep ya da hiç:** önce plan (diske dokunmaz), sonra uygulama; bir adım başarısız olursa yapılanlar geri alınır (salt okunur sahneyle test edildi). Değişen belgeler kanonik biçimde yeniden yazılır (anlam değişmez; gevşek biçimli dosya da düzelir).
+  - **`wen mv <eski> <yeni> --example <ad> [--root] [--dry-run]`:** dosya ya da klasör taşır; tüm sahne/prefab belgelerindeki başvuruları (`#alt_nesne` korunur, klasör önekleri eşlenir, benzer önekli klasör etkilenmez) aynı işlemde günceller; dosyanın `.meta.json`'u onunla gider. Reddedilenler: olmayan kaynak (`asset_not_found`, öneriyle), var olan hedef (`asset_exists`, hiçbir şey ezilmez), klasörü kendi içine taşıma, aynı yol, geçersiz yol, sözdizimi hatalı bir belge (plan aşamasında durur, hiçbir şey taşınmaz). **Hep ya da hiç:** önce plan (diske dokunmaz), sonra uygulama; bir adım başarısız olursa yapılanlar geri alınır (salt okunur sahneyle test edildi). Değişen belgeler kanonik JSON olarak yeniden yazılır (anahtar sırası ve yerleşim; anlam değişmez). `"order": 0` atmak gibi belge düzeyi düzenleme `wen fmt`'nin işidir. (WP8 incelemesinden sonra prefab başvuruları, belge içeren klasörler ve büyük/küçük harf de kapsandı; bkz. WP8.)
   - `--example` gerekli çünkü bileşen türleri (hangi alanın `AssetRef` olduğu) oradan gelir; oyun modülleri (M5) gelince proje kendi türlerini getirecek. `stress` örneğine yalnızca sahne için kayıtlı `Model { mesh, textures }` bileşeni eklendi (kıyaslama dünyasına/hash'lerine girmez).
 - **Miri:** WP6'da `wish_ecs`/`Plain` bildirimine dokunuldu; `cargo +nightly miri test -p wish_ecs` temiz.
 - **Hibrit eşlik:** `wen mv` dosya düzeyinde bir insan işlemidir (sahne belgesi açık değilken); açık belgelerin işlem geçmişine (`actor`) bağlanması düzenleyiciyle (M8a) ve sıcak yüklemeyle (WP7) gelir.
@@ -244,3 +244,35 @@ Hepsi M1'deki gibi `--json` ile MCP zarfında çıktı verir.
 - **`wen watch --example <ad> --scene <dosya> [--root] [--seconds n] [--json]`:** sahneyi yükler ve 100 ms'de bir yoklar; `--json` ile her olay bir JSON satırıdır (`loaded`, `reloaded`, `rejected`, sonunda `{ok, reloads, rejected}`). Bu, sıcak yüklemenin kontrol düzleminden gözlemlenebilir yüzeyidir (MCP'de olay akışı M4'te). Güncelleme gecikmesi en çok bir yoklama aralığıdır (çıkış ölçütü: < 1 sn).
 - **Çıkış durumu:** `check`/`fmt`/`migrate` sorun bulunca kendi çıktılarını (`ok: false` + `diagnostics`) basar ve başarısız çıkar; diğer komutlar tek `{ok:false,error}` tanısı verir.
 - **Test:** `wish_asset/tests/project.rs` (4): çok dosyalı çok hatalı proje, izleyici, hot reload (geçerli → uygulanır, hatalı → reddedilir ve hash aynı, eksik varlık, düzeltince içerik taze yüklemeyle eşit), başlangıç hataları. `wish_cli/tests/project.rs` (4): `check`, `fmt` (+ `--check`), `migrate`, `watch` (ilk `loaded` satırı beklenip düzenlenir: `loaded → reloaded → rejected`).
+
+### WP8 — M1 devirleri ve M2 kapanışı
+
+- **Makronun yinelenen hataları:** düz veri olmayan bir alan için hata 5'ten 2'ye indi. Makronun ürettiği her `impl` (`Plain`, `Default`, işaret özelliği) `where AlanTürü: Plain` yan tümcesini alan türünün konumuyla taşır; gövdeler bağı varsayar, hata yalnızca o konumda bir kez çıkar (rustc aynı konumdaki aynı iletiyi birleştirir). Kalan ikinci ileti rustc'nin kendi "bu alan `Copy` değil" notudur; aynı alanı gösterir. Boş enum hatası artık özellik satırını değil enum'un adını gösterir.
+- **`trybuild` derleme hatası testleri** (`wish_schema/tests/compile_fail.rs`, 13 durum): düz veri olmayan alan, demet yapı, genel tür, union, `derive`/`repr`/`Default` çakışması, yarı açık aralık, bilinmeyen seçenek, verili varyant, boş enum, argüman, yanlış türde varsayılan. Beklenen çıktılar `tests/ui/*.stderr` olarak depoda; bilinçli bir değişiklikten sonra `TRYBUILD=overwrite` ile yeniden üretilip fark incelenir. (`Plain` uygulayan türler listesi rustc'nin yardım notunda göründüğü için yeni bir `Plain` türü eklemek bu dosyayı değiştirir.)
+- **`syn` 3:** makro crate'i `syn` 3'e geçti, API değişikliği gerekmedi; `serde_derive` zaten 3 kullandığından `syn` 2 bağımlılık ağacından çıktı. `trybuild` (yalnızca test) eklendi; ağacındaki lisanslar izin listesinde.
+- **Kapanış incelemesi:** M2 kodu, kararlarıma bağlı olmayan bağımsız bir okumayla (ayrı ajan, yalnızca kod ve tasarım notu verildi) gözden geçirildi. Bulguların hepsi düzeltildi ve her biri için gerileme testi eklendi:
+
+| # | Bulgu | Düzeltme |
+|---|---|---|
+| 1 | `wen mv` prefab başvurularını (`"prefab": …`) güncellemiyordu; prefab taşıyınca sahneler kırılıyordu | Taşıma planı varlıkların `prefab` anahtarlarını da eşler; prefab dosyası ve prefab klasörü taşıma testleri |
+| 2 | İçinde başvuru taşıyan belge olan bir klasörü taşımak hep başarısızdı (belge eski yoluna yazılıyordu) | Her belge taşımadan sonraki yerine (`target`) yazılır; geri almada taşımanın oluşturduğu boş klasörler de silinir |
+| 3 | Büyük/küçük harf duyarsız dosya sisteminde (Windows) `LEVEL1/TEX.png` dosyayı taşıyıp başvuruları güncellemeden "başarılı" diyordu | Kaynak, proje listesinde **bayt bayt** var olmalı (dosya ya da klasör öneki); ipucu büyük/küçük harfi de söyler |
+| 4 | Sıcak yükleme kaynakları sıfırlamıyordu: dosyadan çıkarılan kaynak ya da alan eski değerinde kalıyordu | `HotScene` sahnenin dokunduğu her kaynağın sahne öncesi değerini saklar; yeniden yüklemede önce onu geri koyar (yoksa kaldırır), sonra yeni yamayı uygular. Bunun için `World::remove_resource_json` eklendi |
+| 5 | `wen check/fmt/migrate`'e verilen eşleşmeyen dosya adı (yazım hatası, `.\`, ters eğik çizgi) sessizce yok sayılıyor, "0 hata" ile geçiyordu | Argümanlar normalleştirilir (`\` → `/`, baştaki `./`); hiçbir belgeye denk gelmeyen ad `file_not_found` + öneriyle başarısız olur |
+| 6 | Okunamayan tek bir belge (UTF-8 değil, kilitli) ya da tarama sırasında silinen bir klasör tüm `check`'i ve `watch`'ı durduruyordu | Okunamayan belge, o dosyaya bağlı bir tanı olur, gerisi denetlenir; `fmt` onu atlananlara koyar; silinen alt klasör atlanır; `watch` hatayı `error` olayı olarak bildirip izlemeye devam eder |
+| 7 | Klasör gezgini sembolik bağlantı/junction izliyordu (döngüde sonsuz); `wen run --scene` gizli klasörlerdeki prefab'ları da yüklüyordu | Bağlantılar izlenmez; `wen run --scene` de `wen check` ile aynı gezgini kullanır |
+| 8 | `wen mv` gizli klasöre ya da tür değiştiren uzantıya (`a.png` → `a.scene.json`) taşımayı kabul ediyordu | `hidden_destination` ve `kind_change` ile reddedilir; "kanonik yeniden yazma" iddiası belgede düzeltildi (yalnızca JSON düzeyinde) |
+| 9 | `Reparent` yalnızca sıra değişse de `/parent` bildiriyordu | Değişen neyse (`/parent`, `/order` ya da ikisi) o bildirilir |
+
+- **İncelemenin sağlam bulduğu yerler:** JSON ayrıştırıcının katılığı ve derinlik sınırı, kanonik metnin sabit nokta olması, geri al/yinele terslerinin (alt ağaç, yeniden adlandırma, örnek ve override dahil) doğruluğu, döngü denetimi, `validate_asset_ref`'in proje kökünden kaçışı engellemesi, `expand`/`instantiate` sırasının determinizmi, makronun `where` değişikliğinin uyarı üretmemesi.
+- **Miri:** makro değişikliğinden ve `remove_resource_json`'dan sonra `wish_ecs` için temiz.
+
+### M2 çıkış ölçütleri
+
+| Ölçüt | Kanıt |
+|---|---|
+| Yükle → kaydet bayt düzeyinde aynı | `wish_scene/tests/json.rs` özellik testleri (rastgele değer → kanonik → oku → aynı bayt), `tests/document.rs` ve `tests/prefabs.rs` gidiş-dönüş; `wen check` kanonik dosyada sıfır tanı |
+| 30 bozuk dosyanın her biri konumlu, ipuçlu tanı | `tests/document.rs`: 35 bozuk sahne (kod, satır, sütun, ipucundaki anahtar kelime); ek olarak 5 prefab kuralı + 8 örnek hatası, meta ve varlık başvurusu hataları |
+| Dosya değişince dünya < 1 sn güncellenir; geçersiz dosya son geçerli durumu bozmaz | `wish_asset/tests/project.rs` (geçersizde dünya hash'i aynı kalır) ve `wen watch` testi (100 ms yoklama; `loaded → reloaded → rejected`) |
+| 100 rastgele işlem + 100 geri al = başlangıç dosyası | `tests/edit.rs` model testi (128 senaryo, 100'e kadar işlem) ve `tests/prefabs.rs` prefab işlemleriyle (96 senaryo) |
+| Aynı belge → aynı dünya hash'i | `tests/instantiate.rs`, `wen run --scene` iki çalıştırma testi |

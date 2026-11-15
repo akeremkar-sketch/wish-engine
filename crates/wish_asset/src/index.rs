@@ -20,26 +20,38 @@ pub fn is_document(name: &str) -> bool {
 /// starts with `.`), as project-relative `/` paths with their real paths, in
 /// path order so that everything built from it is deterministic. Names that
 /// are not valid UTF-8 are skipped: a JSON file cannot refer to them.
+///
+/// Symbolic links and junctions are not followed (a link back up the tree
+/// would never end), and a sub-folder that cannot be read, for example
+/// because it was deleted during the walk, is skipped. Only an unreadable
+/// project folder is an error.
 pub(crate) fn walk_files(root: &Path) -> Result<Vec<(String, PathBuf)>> {
     let mut found = Vec::new();
     let mut folders = vec![root.to_path_buf()];
     while let Some(folder) = folders.pop() {
-        let entries = fs::read_dir(&folder).map_err(|error| {
-            Diagnostic::error(
-                "file_unreadable",
-                format!("Could not read the folder '{}': {error}.", folder.display()),
-                "Check that the project folder exists and can be read.",
-            )
-        })?;
+        let entries = match fs::read_dir(&folder) {
+            Ok(entries) => entries,
+            Err(_) if folder != root => continue,
+            Err(error) => {
+                return Err(Diagnostic::error(
+                    "file_unreadable",
+                    format!("Could not read the folder '{}': {error}.", folder.display()),
+                    "Check that the project folder exists and can be read.",
+                ));
+            }
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
                 continue;
             };
-            if name.starts_with('.') {
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if name.starts_with('.') || kind.is_symlink() {
                 continue;
             }
-            if path.is_dir() {
+            if kind.is_dir() {
                 folders.push(path);
             } else if let Ok(relative) = path.strip_prefix(root) {
                 let parts: Option<Vec<&str>> = relative
