@@ -169,7 +169,8 @@ fn an_empty_world_gives_an_empty_scene_with_the_default_sky_and_exposure() {
     let scene = extract(&mut world).unwrap();
     assert!(scene.cameras.is_empty() && scene.lights.is_empty() && scene.draws.is_empty());
     assert_eq!(scene.ev100, 14.0);
-    assert!((scene.ambient[0] - 0.5 * 0.3).abs() < 1e-6);
+    assert!((scene.ambient[0] - 0.5 * 20000.0).abs() < 1e-2);
+    assert_eq!(scene.sky.luminance, 20000.0);
 }
 
 #[test]

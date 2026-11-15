@@ -9,8 +9,8 @@ use wish_core::{Diagnostic, Result};
 
 /// The commands `wen` understands.
 pub const COMMANDS: &[&str] = &[
-    "run", "bench", "schema", "mv", "check", "fmt", "migrate", "watch", "examples", "help",
-    "version",
+    "run", "bench", "schema", "mv", "check", "fmt", "migrate", "watch", "capture", "examples",
+    "help", "version",
 ];
 
 /// A parsed command line.
@@ -101,6 +101,8 @@ pub enum Command {
         /// Stop after this many seconds (0: run until interrupted).
         seconds: u64,
     },
+    /// Draw a scene into a PNG without a window.
+    Capture(CaptureArgs),
     /// Print the JSON Schemas of the registered types.
     Schema {
         /// Load the types of this example; only built-in types without it.
@@ -112,6 +114,27 @@ pub enum Command {
     Help,
     /// Print the version.
     Version,
+}
+
+/// The options of `wen capture`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CaptureArgs {
+    /// The example whose component types the scene uses.
+    pub example: String,
+    /// The scene file, relative to the root.
+    pub scene: String,
+    /// The project folder (default: the current folder).
+    pub root: Option<String>,
+    /// The scene id of the camera to draw from (default: the first camera).
+    pub camera: Option<String>,
+    /// Image width and height in pixels.
+    pub size: (u32, u32),
+    /// What to draw: `lit` (the only view until M3 WP6).
+    pub view: String,
+    /// Use the software adapter.
+    pub software: bool,
+    /// Where to write the PNG.
+    pub out: String,
 }
 
 fn usage_error(message: String, hint: String) -> Diagnostic {
@@ -159,8 +182,32 @@ fn flags_of(command: &str) -> &'static [(&'static str, bool)] {
             ("--seconds", true),
             ("--json", false),
         ],
+        "capture" => &[
+            ("--example", true),
+            ("--scene", true),
+            ("--root", true),
+            ("--camera", true),
+            ("--size", true),
+            ("--view", true),
+            ("--software", false),
+            ("--out", true),
+            ("--json", false),
+        ],
         _ => &[("--json", false)],
     }
+}
+
+/// Parses `WIDTHxHEIGHT`, such as `1280x720`.
+fn parse_size(value: &str) -> Result<(u32, u32)> {
+    let parsed = value
+        .split_once(['x', 'X'])
+        .and_then(|(w, h)| Some((w.trim().parse().ok()?, h.trim().parse().ok()?)));
+    parsed.ok_or_else(|| {
+        usage_error(
+            format!("--size expects WIDTHxHEIGHT, but got '{value}'."),
+            "Write it like --size 1280x720.".to_owned(),
+        )
+    })
 }
 
 fn parse_number(flag: &str, value: &str) -> Result<u64> {
@@ -359,6 +406,29 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
             paths: positional.iter().map(|path| (*path).to_owned()).collect(),
             root: value_of("--root").map(str::to_owned),
         },
+        "capture" => {
+            let required = |flag: &str, what: &str| {
+                value_of(flag).map(str::to_owned).ok_or_else(|| {
+                    usage_error(
+                        format!("'wen capture' needs {flag}: {what}."),
+                        format!(
+                            "Write it like: wen capture --example stress --scene scenes/main.scene.json --out shot.png (built-in examples: {})",
+                            wish_examples::NAMES.join(", ")
+                        ),
+                    )
+                })
+            };
+            Command::Capture(CaptureArgs {
+                example: required("--example", "the example whose component types the scene uses")?,
+                scene: required("--scene", "the scene file to draw")?,
+                root: value_of("--root").map(str::to_owned),
+                camera: value_of("--camera").map(str::to_owned),
+                size: value_of("--size").map_or(Ok((1280, 720)), parse_size)?,
+                view: value_of("--view").unwrap_or("lit").to_owned(),
+                software: values.iter().any(|(flag, _)| *flag == "--software"),
+                out: required("--out", "the PNG file to write")?,
+            })
+        }
         "examples" => Command::Examples,
         "version" => Command::Version,
         _ => Command::Help,

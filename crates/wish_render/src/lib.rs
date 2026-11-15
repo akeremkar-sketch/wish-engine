@@ -23,6 +23,8 @@ pub mod components;
 pub mod extract;
 pub mod gpu;
 pub mod image;
+pub mod mesh;
+pub mod renderer;
 pub mod shader;
 
 pub use capture::{MAX_CAPTURE_SIZE, draw_probe};
@@ -32,4 +34,5 @@ pub use components::{
 pub use extract::{CameraView, Draw, LightView, MaterialData, Mesh, RenderScene, SkyData, extract};
 pub use gpu::{AdapterSummary, Gpu, GpuOptions};
 pub use image::{ImageDiff, RgbaImage, Tolerance};
-pub use shader::{CheckedShader, check_wgsl};
+pub use renderer::{Frame, Renderer, engine_shaders, exposure_multiplier, project_to_pixel};
+pub use shader::{CheckedShader, ComposedShader, ShaderLibrary, SourceLine, check_wgsl};

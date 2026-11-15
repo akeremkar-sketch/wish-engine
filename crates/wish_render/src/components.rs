@@ -9,6 +9,9 @@ use wish_core::{AssetRef, Color, Result};
 use wish_ecs::World;
 use wish_schema::{component, resource, schema};
 
+/// The luminance of an emissive value of 1, in cd/m².
+pub const EMISSIVE_NITS: f32 = 30000.0;
+
 /// A camera: looks along its entity's -Z axis, +Y up. The aspect ratio comes
 /// from the image being drawn.
 #[component]
@@ -72,7 +75,9 @@ pub struct Material {
     /// 0 is a mirror, 1 is completely rough.
     #[schema(range = 0.0..=1.0, default = 0.5)]
     pub roughness: f32,
-    /// Light the surface gives off by itself, linear RGB.
+    /// Light the surface gives off by itself, linear RGB. 1 is about as
+    /// bright as a white surface in full default sunlight
+    /// ([`EMISSIVE_NITS`] cd/m²).
     pub emissive: Vec3,
 }
 
@@ -97,6 +102,10 @@ pub struct Sky {
     /// The colour straight down.
     #[schema(default = Color::rgb(0.25, 0.22, 0.20))]
     pub ground: Color,
+    /// How bright a sky colour of 1 is. A clear daytime sky near the
+    /// horizon is around 20000 cd/m².
+    #[schema(unit = "cd/m2", range = 0.0..=100000.0, default = 20000.0)]
+    pub luminance: f32,
 }
 
 /// Light that comes from everywhere, so that shadows are not pitch black.
@@ -105,8 +114,9 @@ pub struct Ambient {
     /// The light's colour.
     #[schema(default = Color::rgb(0.5, 0.6, 0.8))]
     pub color: Color,
-    /// How strong it is, as a fraction of 1.
-    #[schema(range = 0.0..=10.0, default = 0.3)]
+    /// How much light it adds to every surface. Open shade on a sunny day
+    /// gets around 20000 lux.
+    #[schema(unit = "lux", range = 0.0..=200000.0, default = 20000.0)]
     pub intensity: f32,
 }
 

@@ -97,17 +97,28 @@ impl Target {
 
     /// Reads the copied pixels back, removing the row padding.
     pub(crate) fn read(&self, gpu: &Gpu) -> Result<RgbaImage> {
+        let _only_one = crate::gpu::gpu_lock();
         let slice = self.readback.slice(..);
         let (sender, receiver) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = sender.send(result);
         });
         gpu.wait()?;
-        let mapped = receiver.recv().ok().and_then(Result::ok);
-        if mapped.is_none() {
+        let failure = match receiver.try_recv() {
+            Ok(Ok(())) => None,
+            Ok(Err(error)) => Some(format!("mapping failed: {error}")),
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                Some("the GPU had not finished when waiting returned".to_owned())
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                Some("the mapping was dropped without an answer".to_owned())
+            }
+        };
+        if let Some(failure) = failure {
+            gpu.check_lost("read the image back")?;
             return Err(Diagnostic::error(
                 "gpu_readback_failed",
-                "The captured image could not be read back from the GPU.",
+                format!("The captured image could not be read back from the GPU: {failure}."),
                 "The device may have been lost. Restart the run; if it repeats, use --software.",
             ));
         }

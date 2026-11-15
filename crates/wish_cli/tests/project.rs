@@ -220,6 +220,70 @@ fn render_scenes_are_checked_and_run_like_any_other() {
 }
 
 #[test]
+fn capture_draws_a_scene_file_into_a_png() {
+    let dir = Dir::new("capture");
+    dir.write(
+        "main.scene.json",
+        r#"{ "format": 1, "entities": {
+            "cam": { "components": { "Camera": {}, "Transform": { "translation": [0, 1, 5] } } },
+            "box": { "components": { "Primitive": { "shape": "Cube" }, "Material": { "base_color": [0.9, 0.1, 0.1, 1] } } },
+            "sun": { "components": { "DirectionalLight": {}, "Transform": { "rotation": [-0.38, 0, 0, 0.92] } } }
+        } }"#,
+    );
+    let out = dir.0.join("shot.png");
+    let out_arg = out.to_str().unwrap();
+    let base = [
+        "capture",
+        "--example",
+        "stress",
+        "--scene",
+        "main.scene.json",
+        "--root",
+        dir.arg(),
+        "--software",
+        "--size",
+        "160x120",
+        "--out",
+        out_arg,
+        "--json",
+    ];
+    let (ok, report) = wen_json(&base);
+    assert!(ok, "{report}");
+    assert_eq!(report["camera"], "cam");
+    assert_eq!(report["drawn"], 1);
+    assert_eq!(
+        (report["width"].as_u64(), report["height"].as_u64()),
+        (Some(160), Some(120))
+    );
+    assert_eq!(report["adapter"]["software"], true);
+    let png = std::fs::read(&out).unwrap();
+    assert_eq!(&png[1..4], b"PNG");
+
+    // Mistakes are explained.
+    let with = |extra: &[&str]| {
+        let mut arguments = base.to_vec();
+        arguments.extend_from_slice(extra);
+        wen_json(&arguments)
+    };
+    let (ok, report) = with(&["--camera", "cma"]);
+    assert!(!ok);
+    assert_eq!(report["error"]["code"], "unknown_entity");
+    assert_eq!(report["error"]["hint"], "Did you mean 'cam'?");
+    let (ok, report) = with(&["--camera", "box"]);
+    assert!(!ok);
+    assert_eq!(report["error"]["code"], "not_a_camera");
+    let (ok, report) = with(&["--view", "ids"]);
+    assert!(!ok);
+    assert_eq!(report["error"]["code"], "view_not_available");
+    let (ok, report) = with(&["--size", "big"]);
+    assert!(!ok);
+    assert_eq!(report["error"]["code"], "invalid_arguments");
+    let (ok, report) = with(&["--size", "0x10"]);
+    assert!(!ok);
+    assert_eq!(report["error"]["code"], "invalid_capture_size");
+}
+
+#[test]
 fn fmt_rewrites_to_canonical_form_and_check_mode_only_reports() {
     let dir = Dir::new("fmt");
     dir.write("loose.scene.json", LOOSE);

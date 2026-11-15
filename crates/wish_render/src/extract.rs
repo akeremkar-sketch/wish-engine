@@ -113,6 +113,8 @@ pub struct SkyData {
     pub horizon: [f32; 3],
     /// Straight down.
     pub ground: [f32; 3],
+    /// cd/m² of a colour of 1.
+    pub luminance: f32,
 }
 
 /// Everything drawn in one frame, copied out of the world.
@@ -126,7 +128,7 @@ pub struct RenderScene {
     pub draws: Vec<Draw>,
     /// The sky.
     pub sky: SkyData,
-    /// Ambient light: linear RGB already multiplied by its intensity.
+    /// Ambient light: linear RGB multiplied by its illuminance (lux).
     pub ambient: [f32; 3],
     /// Exposure value at ISO 100.
     pub ev100: f32,
@@ -166,6 +168,7 @@ pub fn extract(world: &mut World) -> Result<RenderScene> {
                 zenith: rgb(sky.zenith),
                 horizon: rgb(sky.horizon),
                 ground: rgb(sky.ground),
+                luminance: sky.luminance,
             }
         },
         ambient: {

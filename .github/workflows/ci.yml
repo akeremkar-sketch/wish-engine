@@ -30,6 +30,11 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
+      # Release builds turn wgpu's debug layer off, which changes how drivers
+      # behave (M3 WP3: a tone-mapping shader lost the WARP device only in
+      # release). Rendering is tested both ways.
+      - name: Rendering tests in release
+        run: cargo test --release --locked -p wish_render
       # What the rendering tests drew, for comparing platforms and for
       # inspecting a failed golden-image test.
       - name: Keep rendered images

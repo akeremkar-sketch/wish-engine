@@ -11,6 +11,7 @@
 //! ```
 
 mod args;
+mod capture;
 mod project_cmds;
 mod scene;
 mod types;
@@ -39,6 +40,8 @@ USAGE:
     wen fmt [files...] --example <name> [--root <folder>] [--check] [--json]
     wen migrate [files...] [--root <folder>] [--json]
     wen watch --example <name> --scene <file> [--root <folder>] [--seconds <n>] [--json]
+    wen capture --example <name> --scene <file> --out <png> [--root <folder>] [--camera <id>]
+                [--size <w>x<h>] [--view lit] [--software] [--json]
     wen mv <from> <to> --example <name> [--root <folder>] [--dry-run] [--json]
     wen schema [--example <name>] [--json]
     wen examples [--json]
@@ -61,6 +64,9 @@ COMMANDS:
     migrate    Upgrade documents of older format versions (format 1 is the only one so far).
     watch      Load a scene and reload it when files change; an invalid change is reported
                and the last good scene stays. With --json, one JSON line per event.
+    capture    Draw a scene into a PNG without a window (default 1280x720, from the first
+               camera unless --camera names one). --software uses the CPU rasterizer,
+               the same on every machine. Rendering never changes the simulation.
     mv         Move an asset file or folder (paths relative to --root) and update every
                asset reference to it in scenes and prefabs, all or nothing. The example
                supplies the component types that tell where references are.
@@ -164,6 +170,7 @@ fn execute(args: Args) -> Result<String> {
             "A project command was run through the simple path.",
             "This is a bug in wen. Please report it.",
         )),
+        Command::Capture(capture) => capture::capture(&capture, args.json),
         Command::Schema { example } => schema(example.as_deref(), args.json),
         Command::Examples => Ok(if args.json {
             json!({ "ok": true, "examples": wish_examples::NAMES }).to_string()
