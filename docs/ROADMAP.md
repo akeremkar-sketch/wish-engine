@@ -8,7 +8,7 @@ Boyutlar görecelidir (S < M < L < XL); takvim sözü değildir.
 | # | Kilometre taşı | Öz | Boyut | Model · efor |
 |---|---|---|---|---|
 | M0 | Tasarım | Vizyon, kararlar, mimari, MCP taslağı | S | Fable 5.2 · xhigh — **tamamlandı** |
-| M1 | Çekirdek | Şema, ECS, sabit adım, determinizm, anlık görüntü | L | İlk oturum Fable 5.2 · high → sonra Opus 5.5 · high — **tamamlandı** (CI hariç, uzak depo yok) |
+| M1 | Çekirdek | Şema, ECS, sabit adım, determinizm, anlık görüntü | L | İlk oturum Fable 5.2 · high → sonra Opus 5.5 · high — **tamamlandı** |
 | M2 | Veri katmanı | Sahne formatı, biçimlendirici, doğrulama, varlık sunucusu, işlem/geri al | M | Sonnet 5.5 · high |
 | M3 | İlk piksel | wgpu render temeli, glTF, başsız yakalama | L | Opus 5.5 · high (çekirdek) → Sonnet 5.5 · medium (içe aktarıcılar) |
 | M4 | Kontrol düzlemi + MCP | Tek API, MCP sunucusu, komut satırı eşliği, ilk ajan değerlendirmeleri | M | İlk oturum Opus 5.5 · high (araç tasarımı) → Sonnet 5.5 · medium |
@@ -98,7 +98,7 @@ M1'in ilk iş paketinde yapılacak tek ortam işi: derleme çıktılarını OneD
 | 7. `wish_cli` | Tamamlandı (15 Kasım 2026): `wen run`, `wen schema`, `wen examples`; MCP ile aynı JSON zarfı |
 | 8. Test altyapısı, kıyaslama | Tamamlandı (15 Kasım 2026): `wen bench` (100 bin varlıkta 0,50 ms/tick), bağımsız kapanış incelemesi ve bulgularının düzeltilmesi |
 
-**M1 sonucu:** çıkış ölçütlerinin hepsi karşılandı; tek istisna "CI yeşil" — uzak depo olmadığı için CI hiç çalışmadı. Ayrıntı ve inceleme bulguları: [design/M1-cekirdek.md](design/M1-cekirdek.md) §12, "WP8 ve M1 kapanışı".
+**M1 sonucu:** çıkış ölçütlerinin hepsi karşılandı. CI, depo özel GitHub deposuna gönderildikten sonra Windows ve Linux'ta yeşil. Ayrıntı ve inceleme bulguları: [design/M1-cekirdek.md](design/M1-cekirdek.md) §12, "WP8 ve M1 kapanışı".
 
 ## M2 — Veri katmanı
 

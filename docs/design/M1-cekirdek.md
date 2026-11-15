@@ -382,7 +382,7 @@ Tasarımdan sonra uygulama sırasında verilen ve sonraki iş paketlerini etkile
 | 5.000'de anlık görüntü → geri yükle → devam = kesintisiz | Karşılandı (aynı uygulamada ve sıfırdan kurulmuş uygulamada) |
 | Her bileşenin JSON Schema'sı; JSON gidiş-dönüşü kayıpsız | Karşılandı (her sonlu `f32`/`f64` için özellik testi) |
 | Miri temiz | Karşılandı (`wish_ecs`, katı işaretçi kökeni) |
-| CI yeşil | **Doğrulanmadı:** uzak depo yok; `ci.yml` ve `deny.toml` hiç çalışmadı |
+| CI yeşil | Karşılandı (15 Kasım 2026, depo GitHub'a gönderildikten sonra): Windows ve Linux'ta fmt, clippy, test; cargo-deny lisans denetimi. Kayıtlı dünya hash'i ve `Rng` dizileri Linux'ta da aynı çıktı (platformlar arası determinizm D2 için ilk kanıt) |
 | 100 bin varlık kıyaslaması kaydedildi | Karşılandı (yukarıda) |
 
-**M1'den M2'ye devredilenler:** derleme hatası testleri (`trybuild`) ve makronun düz veri olmayan alan için yinelenen hata iletileri; `syn` 3'e geçiş; CI'ın ilk gerçek çalıştırması (depo GitHub'a gönderildiğinde).
+**M1'den M2'ye devredilenler:** derleme hatası testleri (`trybuild`) ve makronun düz veri olmayan alan için yinelenen hata iletileri; `syn` 3'e geçiş.

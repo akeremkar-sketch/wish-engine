@@ -4,15 +4,15 @@ Wish Engine: yapay zekâya tamamen entegre ama yapay zekâsız da eksiksiz kulla
 
 ## Şu anki durum
 
-- **Tamamlanan:** M0 (tasarım), **M1 (çekirdek)** — 15 Kasım 2026. Çıkış ölçütlerinin hepsi karşılandı; yalnızca "CI yeşil" doğrulanamadı (uzak depo yok). Ayrıntı, kapanış incelemesi bulguları ve M2'ye devredilenler: [docs/design/M1-cekirdek.md](docs/design/M1-cekirdek.md) §12 "WP8 ve M1 kapanışı".
+- **Tamamlanan:** M0 (tasarım), **M1 (çekirdek)** — 15 Kasım 2026. Çıkış ölçütlerinin hepsi karşılandı (CI dahil: depo GitHub'a gönderildikten sonra Windows ve Linux'ta yeşil). Ayrıntı, kapanış incelemesi bulguları ve M2'ye devredilenler: [docs/design/M1-cekirdek.md](docs/design/M1-cekirdek.md) §12 "WP8 ve M1 kapanışı".
   - Crate'ler: `wish_core` (kimlikler, tanı, kararlı hash, `Rng`, öneriler), `wish_schema` + `wish_schema_macros` (şema, `Plain`, JSON ⇄ bayt, JSON Schema), `wish_ecs` (dünya, sorgular, komutlar, olaylar, hiyerarşi, değişiklik izleme, anlık görüntü, hash), `wish_app` (sabit adım, zamanlayıcı), `wish_examples` (`bounce`, `stress`), `wish_cli` (`wen`).
 - **Sıradaki: M2 (veri katmanı: sahne/prefab dosya formatı, kanonik biçimlendirici, işlem/geri al, varlık sunucusu).** Önerilen model · efor: Sonnet 5.5 · high (kalıcı dosya formatı kararlarını içeren ilk tasarım oturumu için Opus 5.5 · high). M3 (ilk piksel) M2 ile paralel yürüyebilir. M2'ye başlamadan önce kısa bir tasarım notu yaz (`docs/design/M2-veri-katmani.md`); M1 notunun §12'sindeki "M2'ye devredilenler" maddelerini de kapsasın.
 - **`wen`'i çalıştırmak:** `cargo run -p wish_cli --release -- run --example bounce --frames 10000 --seed 7 --json`. Derlenmiş ikili `C:\wish-build\target\release\wen.exe` altında.
 - **Hash'leri değiştirme konusunda dikkat:** `wish_ecs/tests/snapshot.rs` ve `wish_core` testlerinde kayıtlı hash/rastgelelik değerleri var. Bunlar kırılırsa önce bilinçli bir format değişikliği olup olmadığını düşün; bilinçliyse sürüm etiketini (`wish-world-hash-v1` vb.) artır.
-- **Git:** M1, `m1-core` dalında geliştirildi ve `main`'e birleştirildi. Her kilometre taşı kendi dalında (`m2-...`) yürür, bitince `main`'e birleştirilir. Uzak depo (remote) yok. Commit kimliği depoya özel proje kimliğidir (kullanıcı kararı); kişisel e-posta kullanma.
+- **Git:** M1, `m1-core` dalında geliştirildi ve `main`'e birleştirildi. Her kilometre taşı kendi dalında (`m2-...`) yürür, bitince `main`'e birleştirilir. Commit kimliği depoya özel proje kimliğidir (kullanıcı kararı); kişisel e-posta kullanma.
 - **Ortam (15 Kasım 2026'da doğrulandı):** Rust 1.100.0 (`rust-toolchain.toml` ile sabit) ve Visual Studio 2022 Build Tools 17.14.45 kurulu. Bu oturumun kabuğunda `cargo` PATH'te olmayabilir; her komuttan önce `$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"` çalıştır.
 - **Proje klasörü OneDrive altında** (`Masaüstü\wish-engine`). Derleme çıktıları git'e girmeyen yerel `.cargo/config.toml` ile `C:/wish-build/target` klasörüne yönlendirildi. Bu dosyayı silme; `target/` klasörünü asla proje klasörünün içinde bırakma.
-- **CI henüz çalıştırılmadı:** `.github/workflows/ci.yml` ve `deny.toml` yazıldı ama uzak depo olmadığı için sınanmadı. Depo GitHub'a ilk gönderildiğinde doğrula.
+- **Uzak depo ve CI:** özel GitHub deposu `akeremkar-sketch/wish-engine` (kullanıcının hesabı, kullanıcı kararı 15 Kasım 2026; `origin`). CI `main`'e gönderimde ve PR'larda çalışır (Windows + Linux: fmt, clippy, test; cargo-deny lisans). İlk çalıştırma yeşil; kayıtlı hash ve rastgelelik değerleri Linux'ta da tuttu. Dalları gönderirken `git push`; `main`'e yalnızca kilometre taşı bitince birleştir.
 
 ## Önce oku
 
