@@ -38,6 +38,10 @@ pub struct Workspace {
     pub(crate) sessions: crate::sessions::Sessions,
     /// (scene, actor) → the revision that actor last saw.
     pub(crate) seen: std::collections::BTreeMap<(String, String), u64>,
+    /// The renderer, opened by the first tool that draws.
+    pub(crate) renderer: Option<crate::render::Drawing>,
+    /// Use the software (CPU) adapter for drawing.
+    pub(crate) software: bool,
 }
 
 impl std::fmt::Debug for Workspace {
@@ -90,6 +94,8 @@ impl Workspace {
             docs: crate::documents::Documents::default(),
             sessions: crate::sessions::Sessions::default(),
             seen: std::collections::BTreeMap::new(),
+            renderer: None,
+            software: std::env::var_os("WISH_SOFTWARE").is_some(),
         })
     }
 
@@ -176,5 +182,17 @@ pub fn parse_actor(name: &str) -> Actor {
         "human" | "" => Actor::Human,
         "file" => Actor::File,
         other => Actor::Agent(other.strip_prefix("agent:").unwrap_or(other).to_owned()),
+    }
+}
+
+impl Workspace {
+    /// Chooses the software (CPU) adapter for tools that draw: the same
+    /// picture on every machine, and it works without a GPU. Also on when
+    /// the environment variable `WISH_SOFTWARE` is set.
+    pub fn set_software(&mut self, software: bool) {
+        if software != self.software {
+            self.software = software;
+            self.renderer = None;
+        }
     }
 }

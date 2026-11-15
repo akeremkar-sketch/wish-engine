@@ -122,6 +122,14 @@ fn examples() -> Vec<(&'static str, Value)> {
         ("sim_restore", json!({ "snapshot": "a", "fork": true })),
         ("sim_step", json!({ "session": "s2", "frames": 5 })),
         ("sim_restore", json!({ "session": "s1", "snapshot": "b" })),
+        ("capture_frame", json!({ "width": 64, "height": 36 })),
+        (
+            "capture_frame",
+            json!({ "width": 64, "height": 36, "view": "ids", "out": "captures/ids.png" }),
+        ),
+        ("capture_frame", json!({ "camera": "box" })),
+        ("capture_frame", json!({ "out": "scenes/main.scene.json" })),
+        ("describe_view", json!({ "width": 64, "height": 36 })),
         ("logs_get", json!({})),
         ("sim_stop", json!({ "session": "s2" })),
         ("sim_stop", json!({ "session": "s1" })),
@@ -151,7 +159,7 @@ fn run_do(root: &str, calls: &[(&str, Value)]) -> (Vec<String>, bool) {
         .map(|(tool, args)| json!({ "tool": tool, "args": args }))
         .collect();
     let mut child = wen()
-        .args(["do", "-", "--root", root])
+        .args(["do", "-", "--software", "--root", root])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
@@ -181,6 +189,7 @@ fn in_process_call_and_do_give_the_same_bytes() {
         example: None,
     })
     .unwrap();
+    workspace.set_software(true);
     let expected: Vec<String> = examples()
         .iter()
         .map(|(tool, args)| workspace.call(tool, args, &actor).to_string())
@@ -214,9 +223,17 @@ fn in_process_call_and_do_give_the_same_bytes() {
             example: None,
         })
         .unwrap();
+        fresh.set_software(true);
         let expected = fresh.call(tool, &args, &actor).to_string();
         let output = wen()
-            .args(["call", tool, &args.to_string(), "--root", &root])
+            .args([
+                "call",
+                tool,
+                &args.to_string(),
+                "--software",
+                "--root",
+                &root,
+            ])
             .output()
             .unwrap();
         let text = String::from_utf8(output.stdout).unwrap();
@@ -269,7 +286,7 @@ fn a_broken_list_of_calls_is_explained() {
     let dir = project("broken");
     let root = dir.to_str().unwrap();
     let mut child = wen()
-        .args(["do", "-", "--root", root])
+        .args(["do", "-", "--software", "--root", root])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()

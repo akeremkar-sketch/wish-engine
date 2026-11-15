@@ -256,9 +256,13 @@ fn capture_draws_a_scene_file_into_a_png() {
     assert_eq!(report["camera"], "cam");
     assert_eq!(report["drawn"], 1);
     assert_eq!(
-        (report["width"].as_u64(), report["height"].as_u64()),
+        (
+            report["image"]["width"].as_u64(),
+            report["image"]["height"].as_u64()
+        ),
         (Some(160), Some(120))
     );
+    assert_eq!(report["image"]["path"], out_arg);
     assert_eq!(report["adapter"]["software"], true);
     let png = std::fs::read(&out).unwrap();
     assert_eq!(&png[1..4], b"PNG");
@@ -278,8 +282,13 @@ fn capture_draws_a_scene_file_into_a_png() {
     assert_eq!(report["error"]["code"], "not_a_camera");
     let (ok, report) = with(&["--view", "idz"]);
     assert!(!ok);
-    assert_eq!(report["error"]["code"], "unknown_view");
-    assert_eq!(report["error"]["hint"], "Did you mean 'ids'?");
+    assert_eq!(report["error"]["code"], "invalid_parameter");
+    assert!(
+        report["error"]["hint"]
+            .as_str()
+            .unwrap()
+            .starts_with("Did you mean 'ids'?")
+    );
     // Every debug view draws.
     for view in ["ids", "depth", "normals", "wireframe"] {
         let (ok, report) = with(&["--view", view]);
@@ -291,7 +300,7 @@ fn capture_draws_a_scene_file_into_a_png() {
     assert_eq!(report["error"]["code"], "invalid_arguments");
     let (ok, report) = with(&["--size", "0x10"]);
     assert!(!ok);
-    assert_eq!(report["error"]["code"], "invalid_capture_size");
+    assert_eq!(report["error"]["code"], "invalid_parameter");
 }
 
 #[test]
@@ -430,7 +439,7 @@ fn capture_draws_models_from_the_projects_assets_and_reports_the_ones_it_cannot(
     ]);
     assert!(ok, "{report}");
     assert_eq!(report["drawn"], 1, "the good model is drawn: {report}");
-    let warnings: Vec<&serde_json::Value> = report["warnings"]
+    let warnings: Vec<&serde_json::Value> = report["diagnostics"]
         .as_array()
         .unwrap()
         .iter()

@@ -208,6 +208,8 @@ pub struct ToolContext {
     pub example: Option<String>,
     /// Who makes the changes (default: `human`).
     pub actor: Option<String>,
+    /// Draw with the software (CPU) adapter.
+    pub software: bool,
 }
 
 /// The options of `wen call`.
@@ -251,6 +253,10 @@ fn parse_tool_command(command: &str, rest: &[String]) -> Result<Args> {
             Some((name, value)) => (name.to_owned(), Some(value.to_owned())),
             None => (argument.clone(), None),
         };
+        if name == "--software" {
+            context.software = true;
+            continue;
+        }
         if name == "--json" {
             json = true;
             continue;

@@ -150,6 +150,7 @@ fn execute_any(args: Args) -> Result<Outcome> {
                 root: root.clone(),
                 example: Some(example.clone()),
                 actor: None,
+                software: false,
             },
             args.json,
             tool_cmds::check_text,
@@ -167,6 +168,7 @@ fn execute_any(args: Args) -> Result<Outcome> {
                 root: root.clone(),
                 example: Some(example.clone()),
                 actor: None,
+                software: false,
             },
             args.json,
             tool_cmds::move_text,
@@ -178,6 +180,8 @@ fn execute_any(args: Args) -> Result<Outcome> {
             check,
         } => project_cmds::format(paths, example, &root_of(root), *check, args.json),
         Command::Shaders { dir } => capture::shaders(dir.as_deref(), args.json),
+        Command::Capture(capture) => Ok(tool_cmds::capture(capture, args.json)),
+        Command::Describe(describe) => Ok(tool_cmds::describe(describe, args.json)),
         Command::New { dir, name } => {
             tool_cmds::new_project(dir, name.as_deref(), args.json).map(|text| Outcome {
                 text,
@@ -232,6 +236,8 @@ fn execute(args: Args) -> Result<String> {
         | Command::Migrate { .. }
         | Command::Shaders { .. }
         | Command::New { .. }
+        | Command::Capture(_)
+        | Command::Describe(_)
         | Command::Call(_)
         | Command::Do(_)
         | Command::Watch { .. } => Err(Diagnostic::error(
@@ -239,8 +245,6 @@ fn execute(args: Args) -> Result<String> {
             "A project command was run through the simple path.",
             "This is a bug in wen. Please report it.",
         )),
-        Command::Capture(capture) => capture::capture(&capture, args.json),
-        Command::Describe(describe) => capture::describe(&describe, args.json),
         Command::View(view) => view::view(&view, args.json),
         Command::Schema { example } => schema(example.as_deref(), args.json),
         Command::Examples => Ok(if args.json {

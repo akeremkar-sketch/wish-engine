@@ -15,10 +15,14 @@ use crate::args::{CallArgs, DoArgs, ToolContext};
 use crate::project_cmds::Outcome;
 
 fn open(context: &ToolContext) -> Result<Workspace> {
-    Workspace::open(WorkspaceOptions {
+    let mut workspace = Workspace::open(WorkspaceOptions {
         root: PathBuf::from(context.root.as_deref().unwrap_or(".")),
         example: context.example.clone(),
-    })
+    })?;
+    if context.software {
+        workspace.set_software(true);
+    }
+    Ok(workspace)
 }
 
 fn answer(value: &Value) -> Outcome {
@@ -264,6 +268,158 @@ pub fn move_text(answer: &Value) -> String {
             edit["references"],
             edit["file"].as_str().unwrap_or_default()
         ));
+    }
+    text
+}
+
+fn context_of(root: &Option<String>, example: &str, software: bool) -> ToolContext {
+    ToolContext {
+        root: root.clone(),
+        example: Some(example.to_owned()),
+        actor: None,
+        software,
+    }
+}
+
+/// Runs `wen capture`: the `capture_frame` tool, and the picture written to
+/// the file `--out` names (anywhere the person likes; the tool itself only
+/// writes inside the project).
+pub fn capture(args: &crate::args::CaptureArgs, as_json: bool) -> Outcome {
+    let context = context_of(&args.root, &args.example, args.software);
+    let (width, height) = args.size;
+    let mut tool_args = serde_json::json!({
+        "scene": args.scene,
+        "width": width,
+        "height": height,
+        "view": args.view,
+    });
+    if let Some(camera) = &args.camera {
+        tool_args["camera"] = Value::String(camera.clone());
+    }
+    if let Some(shaders) = &args.shaders {
+        tool_args["shaders"] = Value::String(shaders.clone());
+    }
+    let mut value = match open(&context) {
+        Ok(mut workspace) => workspace.call("capture_frame", &tool_args, &parse_actor("human")),
+        Err(problem) => envelope(Err(problem)),
+    };
+    if value.get("ok") == Some(&Value::Bool(true)) {
+        let written = value["image"]["data"]
+            .as_str()
+            .and_then(wish_control::base64_decode)
+            .ok_or_else(|| {
+                Diagnostic::error(
+                    "internal_error",
+                    "The picture did not come back as base64.",
+                    "This is a bug in wen. Please report it.",
+                )
+            })
+            .and_then(|png| {
+                std::fs::write(&args.out, png).map_err(|error| {
+                    Diagnostic::error(
+                        "file_unwritable",
+                        format!("Could not write '{}': {error}.", args.out),
+                        "Check that the folder exists and can be written to.",
+                    )
+                })
+            });
+        match written {
+            Ok(()) => {
+                if let Some(image) = value["image"].as_object_mut() {
+                    image.remove("data");
+                    image.insert("path".to_owned(), Value::String(args.out.clone()));
+                }
+            }
+            Err(problem) => value = envelope(Err(problem)),
+        }
+    }
+    let success = value.get("ok") == Some(&Value::Bool(true));
+    let text = if as_json {
+        value.to_string()
+    } else if success {
+        let mut text = format!(
+            "Wrote {} ({width}x{height}, {} view) from camera '{}': {} draw(s), on {} ({}).",
+            args.out,
+            value["view"].as_str().unwrap_or_default(),
+            value["camera"].as_str().unwrap_or_default(),
+            value["drawn"],
+            value["adapter"]["name"].as_str().unwrap_or_default(),
+            value["adapter"]["backend"].as_str().unwrap_or_default(),
+        );
+        for entry in value["diagnostics"].as_array().into_iter().flatten() {
+            if let Ok(problem) = serde_json::from_value::<Diagnostic>(entry.clone()) {
+                text.push_str(&format!("\n{problem}"));
+            }
+        }
+        text
+    } else {
+        match serde_json::from_value::<Diagnostic>(value["error"].clone()) {
+            Ok(problem) => problem.to_string(),
+            Err(_) => value.to_string(),
+        }
+    };
+    Outcome { text, success }
+}
+
+/// Runs `wen describe`: the `describe_view` tool.
+pub fn describe(args: &crate::args::DescribeArgs, as_json: bool) -> Outcome {
+    let context = context_of(&args.root, &args.example, args.software);
+    let (width, height) = args.size;
+    let mut tool_args =
+        serde_json::json!({ "scene": args.scene, "width": width, "height": height });
+    if let Some(camera) = &args.camera {
+        tool_args["camera"] = Value::String(camera.clone());
+    }
+    if let Some(shaders) = &args.shaders {
+        tool_args["shaders"] = Value::String(shaders.clone());
+    }
+    shortcut(
+        "describe_view",
+        &tool_args,
+        &context,
+        as_json,
+        describe_text,
+    )
+}
+
+fn describe_text(answer: &Value) -> String {
+    let hidden: Vec<&str> = answer["hidden"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    let mut text = format!(
+        "From camera '{}' ({}x{}): {} visible, {} hidden.",
+        answer["camera"].as_str().unwrap_or_default(),
+        answer["width"],
+        answer["height"],
+        answer["visible_count"],
+        hidden.len()
+    );
+    for entry in answer["visible"].as_array().into_iter().flatten() {
+        let shown = entry["visible_percent"]
+            .as_f64()
+            .map_or_else(|| "not measured".to_owned(), |p| format!("{p}% visible"));
+        let [left, top, right, bottom] = ["0", "1", "2", "3"]
+            .map(|i| entry["bounding_box"][i.parse::<usize>().unwrap_or(0)].to_string());
+        text.push_str(&format!(
+            "\n  {}: {} px, {shown}, box ({left},{top})-({right},{bottom}), {:.2} m away",
+            entry["entity"].as_str().unwrap_or_default(),
+            entry["pixels"],
+            entry["distance"].as_f64().unwrap_or(0.0)
+        ));
+    }
+    if !hidden.is_empty() {
+        text.push_str(&format!(
+            "\n  not visible (hidden or outside the picture): {}",
+            hidden.join(", ")
+        ));
+    }
+    for entry in answer["diagnostics"].as_array().into_iter().flatten() {
+        if let Ok(problem) = serde_json::from_value::<Diagnostic>(entry.clone()) {
+            text.push_str(&format!("\n{problem}"));
+        }
     }
     text
 }

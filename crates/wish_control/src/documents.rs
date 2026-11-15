@@ -600,6 +600,32 @@ impl Workspace {
     }
 }
 
+/// A file path a tool may write to: project-relative, forward slashes, no
+/// `..`, not a hidden or engine document (a picture must never overwrite a
+/// scene).
+pub(crate) fn normalize_output_path(path: &str) -> Result<String> {
+    let mut path = path.trim().replace('\\', "/");
+    while let Some(rest) = path.strip_prefix("./") {
+        path = rest.to_owned();
+    }
+    let bad = path.is_empty()
+        || path.starts_with('/')
+        || path.contains(':')
+        || path
+            .split('/')
+            .any(|part| part.is_empty() || part == ".." || part.starts_with('.'))
+        || wish_asset::is_document(&path)
+        || path == crate::project::PROJECT_FILE;
+    if bad {
+        return Err(Diagnostic::error(
+            "invalid_output_path",
+            format!("'{path}' is not a file the tool may write."),
+            "Give a project-relative path such as \"captures/shot.png\" (not a scene, prefab, meta or project file).",
+        )
+        .at_path("/out"));
+    }
+    Ok(path)
+}
 #[cfg(test)]
 mod tests {
     use super::*;

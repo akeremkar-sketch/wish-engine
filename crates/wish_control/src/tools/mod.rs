@@ -7,6 +7,7 @@ mod asset;
 mod project;
 mod scene;
 mod sim;
+mod view;
 
 /// How much a tool tells: `summary` (the default, cheapest), `normal`, `full`.
 pub(crate) const DETAIL: Param = Param::optional(
@@ -35,4 +36,6 @@ pub(crate) const CATALOG: &[Tool] = &[
     sim::SIM_RESTORE,
     sim::SIM_STOP,
     sim::LOGS_GET,
+    view::CAPTURE_FRAME,
+    view::DESCRIBE_VIEW,
 ];
