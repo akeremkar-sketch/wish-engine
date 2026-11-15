@@ -1,0 +1,5 @@
+error: #[component] sets the representation itself; remove this #[repr(...)]
+ --> tests/ui/repr_conflict.rs:4:1
+  |
+4 | #[repr(C)]
+  | ^^^^^^^^^^

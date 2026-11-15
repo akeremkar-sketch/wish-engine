@@ -144,9 +144,30 @@ fn expand_input(
     let is_enum = matches!(input.data, Data::Enum(_));
     check_attributes(&input.attrs, attribute, is_enum)?;
 
+    // Every field type must be plain data. Stating it once per impl, spanned
+    // at the field's type, makes a non-plain field fail there and only there:
+    // inside the impls the bound is assumed, so the generated bodies do not
+    // repeat the error (identical errors at one span are reported once).
+    let bounds: Vec<TokenStream2> = match &input.data {
+        Data::Struct(data) => data
+            .fields
+            .iter()
+            .map(|field| {
+                let ty = &field.ty;
+                quote_spanned!(ty.span()=> #ty: ::wish_schema::Plain)
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    let where_clause = if bounds.is_empty() {
+        TokenStream2::new()
+    } else {
+        quote!(where #(#bounds),*)
+    };
+
     let plain_impl = match &mut input.data {
         Data::Struct(data) => struct_impl(&name, &doc, data, attribute)?,
-        Data::Enum(data) => enum_impl(&name, &doc, data, attribute)?,
+        Data::Enum(data) => enum_impl(&ident, &doc, data, attribute)?,
         Data::Union(data) => {
             return Err(Error::new_spanned(
                 data.union_token,
@@ -172,7 +193,7 @@ fn expand_input(
     let marker = role.marker().map(|marker| {
         quote! {
             #[automatically_derived]
-            impl #marker for #ident {
+            impl #marker for #ident #where_clause {
                 const NAME: &'static str = #name;
             }
         }
@@ -183,12 +204,12 @@ fn expand_input(
 
         #[automatically_derived]
         #[allow(unsafe_code, clippy::undocumented_unsafe_blocks)]
-        unsafe impl ::wish_schema::Plain for #ident {
+        unsafe impl ::wish_schema::Plain for #ident #where_clause {
             #plain_impl
         }
 
         #[automatically_derived]
-        impl ::core::default::Default for #ident {
+        impl ::core::default::Default for #ident #where_clause {
             fn default() -> Self {
                 <Self as ::wish_schema::Plain>::default_value()
             }
@@ -407,10 +428,17 @@ fn struct_impl(
 }
 
 /// The body of `impl Plain` for a fieldless enum.
-fn enum_impl(name: &str, doc: &str, data: &DataEnum, attribute: &str) -> syn::Result<TokenStream2> {
+fn enum_impl(
+    ident: &Ident,
+    doc: &str,
+    data: &DataEnum,
+    attribute: &str,
+) -> syn::Result<TokenStream2> {
+    let name = ident.to_string();
     let Some(first) = data.variants.first() else {
+        // An empty variant list has no position of its own: point at the name.
         return Err(Error::new_spanned(
-            &data.variants,
+            ident,
             format!("#[{attribute}] enums need at least one variant; the first one is the default"),
         ));
     };

@@ -1,0 +1,31 @@
+error[E0204]: the trait `Copy` cannot be implemented for this type
+ --> tests/ui/non_plain_field.rs:4:12
+  |
+3 | #[component]
+  | ------------ in this attribute macro expansion
+4 | pub struct Name {
+  |            ^^^^
+5 |     pub value: String,
+  |     ----------------- this field does not implement `Copy`
+  |
+  = note: this error originates in the derive macro `Copy` which comes from the expansion of the attribute macro `component` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: `String` cannot be stored in a world: it is not plain data
+ --> tests/ui/non_plain_field.rs:5:16
+  |
+5 |     pub value: String,
+  |                ^^^^^^ not plain data
+  |
+  = help: the trait `Plain` is not implemented for `String`
+  = note: fields of components, resources and events must be bool, an integer, f32 or f64, Vec2, Vec3, Vec4, Quat, Mat4, Color, Entity, Text, AssetRef, a fixed-size array of these, or a type marked #[schema]
+  = note: to hold text use `Text`; to refer to another entity use `Entity`
+  = help: the following other types implement trait `Plain`:
+            Name
+            [T; N]
+            bool
+            f32
+            f64
+            glam::f32::scalar::mat4::Mat4
+            glam::f32::scalar::quat::Quat
+            glam::f32::scalar::vec4::Vec4
+          and $N others

@@ -1,0 +1,5 @@
+error: #[component] already implements Clone, Copy, Debug, PartialEq, Default; remove `Clone` from the derive list
+ --> tests/ui/derive_conflict.rs:4:10
+  |
+4 | #[derive(Clone)]
+  |          ^^^^^

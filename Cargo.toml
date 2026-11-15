@@ -33,14 +33,16 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
-# Procedural macros. serde_derive already brings syn 3; wish_schema_macros is
-# written against the syn 2 API and can be moved over later to drop the duplicate.
+# Procedural macros. syn 3, the same major version serde_derive uses, so the
+# build compiles one syn.
 proc-macro2 = "1"
 quote = "1"
-syn = { version = "2", features = ["full"] }
+syn = { version = "3", features = ["full"] }
 
 # Tests only.
 proptest = "1"
+# Compile-fail tests: the macros' error messages are part of the interface.
+trybuild = "1.0.123"
 
 [workspace.lints.rust]
 # `unsafe` is allowed only in the crates listed in CLAUDE.md, which opt in locally.
