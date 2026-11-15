@@ -217,7 +217,7 @@ fn run_reports_the_first_scene_error_with_its_position() {
 fn mv_moves_an_asset_and_updates_the_scenes_that_use_it() {
     let root = project(
         "mv",
-        r#"{ "format": 1, "entities": { "a": { "components": { "Model": { "mesh": "assets/old.glb#Mesh0" } } } } }"#,
+        r#"{ "format": 1, "entities": { "a": { "components": { "MeshRef": { "mesh": "assets/old.glb#Mesh0" } } } } }"#,
     );
     std::fs::create_dir_all(root.join("assets")).unwrap();
     std::fs::write(root.join("assets/old.glb"), "data").unwrap();

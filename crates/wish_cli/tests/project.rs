@@ -59,8 +59,8 @@ impl Drop for Dir {
     }
 }
 
-const GOOD: &str = "{\n  \"entities\": {\n    \"a\": {\n      \"components\": {\n        \"Model\": {\n          \"mesh\": \"assets/a.glb\"\n        }\n      }\n    }\n  },\n  \"format\": 1\n}\n";
-const LOOSE: &str = r#"{ "format": 1, "entities": { "a": { "components": { "Model": { "mesh": "assets/a.glb" } } } } }"#;
+const GOOD: &str = "{\n  \"entities\": {\n    \"a\": {\n      \"components\": {\n        \"MeshRef\": {\n          \"mesh\": \"assets/a.glb\"\n        }\n      }\n    }\n  },\n  \"format\": 1\n}\n";
+const LOOSE: &str = r#"{ "format": 1, "entities": { "a": { "components": { "MeshRef": { "mesh": "assets/a.glb" } } } } }"#;
 
 #[test]
 fn check_reports_every_problem_and_fails_only_on_errors() {
@@ -86,7 +86,7 @@ fn check_reports_every_problem_and_fails_only_on_errors() {
     assert_eq!(report["warnings"], 1);
 
     dir.write("missing.scene.json", &GOOD.replace("a.glb", "b.glb"));
-    dir.write("typo.scene.json", &GOOD.replace("Model", "Modl"));
+    dir.write("typo.scene.json", &GOOD.replace("MeshRef", "MeshRf"));
     let (ok, report) = wen_json(&args);
     assert!(!ok);
     assert_eq!(report["ok"], false);
@@ -141,6 +141,82 @@ fn check_reports_every_problem_and_fails_only_on_errors() {
     ]);
     assert!(ok, "{report}");
     assert_eq!(report["files"], 1);
+}
+
+#[test]
+fn render_scenes_are_checked_and_run_like_any_other() {
+    let dir = Dir::new("render");
+    let scene = "{\n  \"entities\": {\n    \"camera\": {\n      \"components\": {\n        \"Camera\": {\n          \"fov_y_deg\": 50\n        },\n        \"Transform\": {\n          \"translation\": [0, 2, 8]\n        }\n      }\n    },\n    \"cube\": {\n      \"components\": {\n        \"Material\": {\n          \"metallic\": 1\n        },\n        \"Primitive\": {\n          \"shape\": \"Cube\"\n        }\n      }\n    }\n  },\n  \"format\": 1,\n  \"resources\": {\n    \"Exposure\": {\n      \"ev100\": 12\n    }\n  }\n}\n";
+    dir.write("main.scene.json", scene);
+    let (ok, report) = wen_json(&[
+        "check",
+        "--example",
+        "stress",
+        "--root",
+        dir.arg(),
+        "--json",
+    ]);
+    assert!(ok, "{report}");
+    assert_eq!(report["errors"], 0);
+    assert_eq!(report["warnings"], 0, "{report}");
+
+    let (ok, run) = wen_json(&[
+        "run",
+        "--example",
+        "stress",
+        "--scene",
+        "main.scene.json",
+        "--root",
+        dir.arg(),
+        "--frames",
+        "3",
+        "--json",
+    ]);
+    assert!(ok, "{run}");
+    assert_eq!(run["scene_entities"], 2);
+
+    // Mistakes in render components get the usual positioned diagnostics.
+    dir.write(
+        "bad.scene.json",
+        &scene.replace("50", "500").replace("\"Cube\"", "\"Cubee\""),
+    );
+    let (ok, report) = wen_json(&[
+        "check",
+        "bad.scene.json",
+        "--example",
+        "stress",
+        "--root",
+        dir.arg(),
+        "--json",
+    ]);
+    assert!(!ok);
+    let codes: Vec<&str> = report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["code"].as_str().unwrap())
+        .collect();
+    assert_eq!(codes, ["value_out_of_range", "unknown_variant"], "{report}");
+    assert_eq!(report["diagnostics"][0]["location"]["line"], 6);
+
+    // The engine's types are in the schema listing.
+    let (_, schema) = wen_json(&["schema", "--json"]);
+    for name in [
+        "Transform",
+        "Camera",
+        "DirectionalLight",
+        "Primitive",
+        "Material",
+        "Model",
+        "SceneId",
+    ] {
+        assert!(schema["components"][name].is_object(), "{name}");
+    }
+    assert!(schema["resources"]["Sky"].is_object());
+    assert_eq!(
+        schema["components"]["Camera"]["properties"]["fov_y_deg"]["maximum"],
+        179.0
+    );
 }
 
 #[test]

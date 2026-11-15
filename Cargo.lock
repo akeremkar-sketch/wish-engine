@@ -1674,8 +1674,10 @@ dependencies = [
  "wish_core",
  "wish_ecs",
  "wish_examples",
+ "wish_render",
  "wish_scene",
  "wish_schema",
+ "wish_transform",
 ]
 
 [[package]]
@@ -1717,8 +1719,13 @@ dependencies = [
  "naga",
  "png",
  "pollster",
+ "serde_json",
  "wgpu",
  "wish_core",
+ "wish_ecs",
+ "wish_scene",
+ "wish_schema",
+ "wish_transform",
 ]
 
 [[package]]
@@ -1750,6 +1757,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.10",
+]
+
+[[package]]
+name = "wish_transform"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wish_core",
+ "wish_ecs",
+ "wish_schema",
 ]
 
 [[package]]

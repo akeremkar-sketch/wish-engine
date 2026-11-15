@@ -64,8 +64,7 @@ pub fn load_scene_app(
     config: AppConfig,
 ) -> Result<SceneApp> {
     let mut app = App::new(config);
-    wish_examples::register_types(example, app.world_mut())?;
-    wish_scene::instantiate::register(app.world_mut())?;
+    crate::types::register_scene_types(example, app.world_mut())?;
 
     let mut warnings = Vec::new();
     let mut library = PrefabLibrary::new();

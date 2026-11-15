@@ -8,6 +8,27 @@ use wish_core::{Diagnostic, Result};
 use wish_ecs::{Registry, TextTable, TypeInfo};
 use wish_schema::{JsonContext, TypeSchema, from_json};
 
+/// Components the engine derives and adds itself, with what to tell someone
+/// who writes one in a scene. They are ordinary components in the world, but
+/// a scene file cannot set them: the engine would overwrite the value.
+const ENGINE_WRITTEN: &[(&str, &str)] = &[
+    (
+        crate::instantiate::SCENE_ID,
+        "added by the engine when a scene is loaded. Remove it: every entity gets a SceneId from its key in the scene file.",
+    ),
+    (
+        "GlobalTransform",
+        "computed by the engine from the entity's Transform and its parents'. Remove it and set \"Transform\" instead.",
+    ),
+];
+
+fn engine_written(name: &str) -> Option<&'static str> {
+    ENGINE_WRITTEN
+        .iter()
+        .find(|(written, _)| *written == name)
+        .map(|(_, hint)| *hint)
+}
+
 /// The component type registered as `name`, if scenes may write it.
 pub(crate) fn component<'r>(registry: &'r Registry, name: &str) -> Result<&'r TypeInfo> {
     let Some(info) = registry
@@ -16,7 +37,7 @@ pub(crate) fn component<'r>(registry: &'r Registry, name: &str) -> Result<&'r Ty
     else {
         let names: Vec<&str> = registry
             .components()
-            .filter(|(_, info)| !info.is_managed() && info.name() != crate::instantiate::SCENE_ID)
+            .filter(|(_, info)| !info.is_managed() && engine_written(info.name()).is_none())
             .map(|(_, info)| info.name())
             .collect();
         return Err(Diagnostic::error(
@@ -26,13 +47,11 @@ pub(crate) fn component<'r>(registry: &'r Registry, name: &str) -> Result<&'r Ty
         )
         .with_candidates(names.iter().copied()));
     };
-    if name == crate::instantiate::SCENE_ID {
+    if let Some(hint) = engine_written(name) {
         return Err(Diagnostic::error(
             "managed_component",
-            format!(
-                "'{name}' is added by the engine when a scene is loaded and cannot be written in a scene."
-            ),
-            "Remove it: every entity gets a SceneId from its key in the scene file.",
+            format!("'{name}' is written by the engine and cannot be set in a scene."),
+            format!("'{name}' is {hint}"),
         ));
     }
     if info.is_managed() {

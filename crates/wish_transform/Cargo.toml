@@ -1,0 +1,19 @@
+[package]
+name = "wish_transform"
+description = "Transforms for Wish Engine: local and global placement of entities, propagated down the hierarchy."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+wish_core.workspace = true
+wish_ecs.workspace = true
+wish_schema.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

@@ -16,8 +16,10 @@ wish_asset = { path = "crates/wish_asset" }
 wish_core = { path = "crates/wish_core" }
 wish_ecs = { path = "crates/wish_ecs" }
 wish_examples = { path = "crates/wish_examples" }
+wish_render = { path = "crates/wish_render" }
 wish_scene = { path = "crates/wish_scene" }
 wish_schema = { path = "crates/wish_schema" }
+wish_transform = { path = "crates/wish_transform" }
 wish_schema_macros = { path = "crates/wish_schema_macros" }
 
 # External crates. Check the license before adding one (see deny.toml).

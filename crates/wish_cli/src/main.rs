@@ -13,6 +13,7 @@
 mod args;
 mod project_cmds;
 mod scene;
+mod types;
 
 use std::process::ExitCode;
 use std::time::Instant;
@@ -282,7 +283,7 @@ fn move_asset(
 ) -> Result<String> {
     let root = std::path::Path::new(root.unwrap_or("."));
     let mut app = App::new(AppConfig::default());
-    wish_examples::register_types(example, app.world_mut())?;
+    types::register_scene_types(example, app.world_mut())?;
     let plan = wish_asset::plan_move(root, from, to, app.world().registry())?;
     if !dry_run {
         wish_asset::apply_move(root, &plan)?;
@@ -417,10 +418,11 @@ fn registry_schemas(registry: &Registry) -> Value {
 }
 
 fn schema(example: Option<&str>, as_json: bool) -> Result<String> {
-    let app = match example {
+    let mut app = match example {
         Some(name) => wish_examples::build(name, AppConfig::default())?,
         None => App::new(AppConfig::default()),
     };
+    types::register_engine_types(app.world_mut())?;
     let mut document = registry_schemas(app.world().registry());
     if as_json {
         if let Some(object) = document.as_object_mut() {
