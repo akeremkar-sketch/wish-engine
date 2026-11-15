@@ -33,6 +33,14 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
+# Rendering (wish_render only, ADR-012). `wgpu` is the only graphics API the
+# engine talks to; `naga` turns shader errors into positioned diagnostics.
+bytemuck = { version = "1", features = ["derive"] }
+naga = { version = "30", features = ["wgsl-in"] }
+png = "0.18"
+pollster = "1"
+wgpu = "30"
+
 # Procedural macros. syn 3, the same major version serde_derive uses, so the
 # build compiles one syn.
 proc-macro2 = "1"
