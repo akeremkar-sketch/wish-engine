@@ -32,6 +32,11 @@ pub enum Command {
         seed: u64,
         /// Record the app hash every this many ticks (0: never).
         hash_every: u64,
+        /// A scene file to load instead of the example's own entities; the
+        /// example then only supplies the component types.
+        scene: Option<String>,
+        /// The project folder that scene and prefab paths are relative to.
+        root: Option<String>,
     },
     /// Measure the core on the `stress` workload.
     Bench {
@@ -67,6 +72,8 @@ fn flags_of(command: &str) -> &'static [(&'static str, bool)] {
             ("--frames", true),
             ("--seed", true),
             ("--hash-every", true),
+            ("--scene", true),
+            ("--root", true),
             ("--headless", false),
             ("--json", false),
         ],
@@ -167,7 +174,7 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
             example: value_of("--example")
                 .ok_or_else(|| {
                     usage_error(
-                        "'wen run' needs an example to run; scene files arrive in a later version."
+                        "'wen run' needs an example to run, or an example whose types a --scene uses."
                             .to_owned(),
                         format!(
                             "Add --example <name>. Built-in examples: {}.",
@@ -181,6 +188,8 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
             seed: value_of("--seed").map_or(Ok(0), |value| parse_number("--seed", value))?,
             hash_every: value_of("--hash-every")
                 .map_or(Ok(0), |value| parse_number("--hash-every", value))?,
+            scene: value_of("--scene").map(str::to_owned),
+            root: value_of("--root").map(str::to_owned),
         },
         "bench" => Command::Bench {
             entities: value_of("--entities")
@@ -223,6 +232,8 @@ mod tests {
                     frames: 600,
                     seed: 0,
                     hash_every: 0,
+                    scene: None,
+                    root: None,
                 },
                 json: true,
             }
@@ -238,6 +249,8 @@ mod tests {
                 frames: 10,
                 seed: 7,
                 hash_every: 5,
+                scene: None,
+                root: None,
             }
         );
     }

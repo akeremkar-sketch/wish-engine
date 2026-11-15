@@ -16,7 +16,7 @@ pub(crate) fn component<'r>(registry: &'r Registry, name: &str) -> Result<&'r Ty
     else {
         let names: Vec<&str> = registry
             .components()
-            .filter(|(_, info)| !info.is_managed())
+            .filter(|(_, info)| !info.is_managed() && info.name() != crate::instantiate::SCENE_ID)
             .map(|(_, info)| info.name())
             .collect();
         return Err(Diagnostic::error(
@@ -26,6 +26,15 @@ pub(crate) fn component<'r>(registry: &'r Registry, name: &str) -> Result<&'r Ty
         )
         .with_candidates(names.iter().copied()));
     };
+    if name == crate::instantiate::SCENE_ID {
+        return Err(Diagnostic::error(
+            "managed_component",
+            format!(
+                "'{name}' is added by the engine when a scene is loaded and cannot be written in a scene."
+            ),
+            "Remove it: every entity gets a SceneId from its key in the scene file.",
+        ));
+    }
     if info.is_managed() {
         return Err(Diagnostic::error(
             "managed_component",

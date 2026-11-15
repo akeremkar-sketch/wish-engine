@@ -11,6 +11,7 @@
 //! ```
 
 mod args;
+mod scene;
 
 use std::process::ExitCode;
 use std::time::Instant;
@@ -22,12 +23,14 @@ use wish_ecs::{Registry, TypeInfo};
 use wish_schema::json_schema;
 
 use crate::args::{Args, Command, parse};
+use crate::scene::load_scene_app;
 
 const USAGE: &str = "\
 wen - the Wish Engine command-line tool
 
 USAGE:
-    wen run --example <name> [--frames <n>] [--seed <n>] [--hash-every <n>] [--headless] [--json]
+    wen run --example <name> [--scene <file> [--root <folder>]] [--frames <n>] [--seed <n>]
+            [--hash-every <n>] [--headless] [--json]
     wen bench [--entities <n>] [--ticks <n>] [--seed <n>] [--json]
     wen schema [--example <name>] [--json]
     wen examples [--json]
@@ -37,6 +40,9 @@ COMMANDS:
     run        Simulate a built-in example without a window and report its final state
                (frames default to 600, seed to 0). Runs are deterministic: the same
                seed and frame count always give the same hashes.
+               With --scene, the scene file (a path relative to --root, default: the
+               current folder) gives the entities and resources instead, and the
+               example only supplies the component types. Prefabs are found in --root.
     bench      Time the core on many moving entities (defaults: 100000 entities, 600 ticks).
                Build with --release for meaningful numbers.
     schema     Print the JSON Schema of every registered component, resource and event.
@@ -71,7 +77,19 @@ fn execute(args: Args) -> Result<String> {
             frames,
             seed,
             hash_every,
-        } => run(&example, frames, seed, hash_every, args.json),
+            scene,
+            root,
+        } => run(
+            &RunOptions {
+                example: &example,
+                frames,
+                seed,
+                hash_every,
+                scene: scene.as_deref(),
+                root: root.as_deref(),
+            },
+            args.json,
+        ),
         Command::Bench {
             entities,
             ticks,
@@ -96,12 +114,40 @@ fn execute(args: Args) -> Result<String> {
     }
 }
 
-fn run(example: &str, frames: u64, seed: u64, hash_every: u64, as_json: bool) -> Result<String> {
+struct RunOptions<'a> {
+    example: &'a str,
+    frames: u64,
+    seed: u64,
+    hash_every: u64,
+    scene: Option<&'a str>,
+    root: Option<&'a str>,
+}
+
+fn run(options: &RunOptions, as_json: bool) -> Result<String> {
+    let RunOptions {
+        example,
+        frames,
+        seed,
+        hash_every,
+        scene,
+        root,
+    } = *options;
     let config = AppConfig {
         seed,
         ..AppConfig::default()
     };
-    let mut app = wish_examples::build(example, config)?;
+    let mut warnings: Vec<Diagnostic> = Vec::new();
+    let mut scene_entities: Option<usize> = None;
+    let mut app = match scene {
+        Some(scene) => {
+            let root = std::path::Path::new(root.unwrap_or("."));
+            let loaded = load_scene_app(example, scene, root, config)?;
+            warnings = loaded.warnings;
+            scene_entities = Some(loaded.scene_entities);
+            loaded.app
+        }
+        None => wish_examples::build(example, config)?,
+    };
     // Wall-clock time is measured here, outside the simulation; it never
     // reaches the world.
     let started = Instant::now();
@@ -119,6 +165,9 @@ fn run(example: &str, frames: u64, seed: u64, hash_every: u64, as_json: bool) ->
         let mut output = json!({
             "ok": true,
             "example": example,
+            "scene": scene,
+            "scene_entities": scene_entities,
+            "warnings": warnings,
             "seed": seed,
             "ticks": app.tick(),
             "entities": world.entity_count(),
@@ -148,8 +197,8 @@ fn run(example: &str, frames: u64, seed: u64, hash_every: u64, as_json: bool) ->
             checkpoint["app_hash"].as_str().unwrap_or_default()
         ));
     }
-    for failure in &failures {
-        text.push_str(&format!("\n{failure}"));
+    for problem in warnings.iter().chain(&failures) {
+        text.push_str(&format!("\n{problem}"));
     }
     Ok(text)
 }

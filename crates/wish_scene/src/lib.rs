@@ -11,6 +11,8 @@
 //!   [`load`], which reads and validates one against the registered types.
 //! - [`edit`]: [`Transaction`]s of [`EditOp`]s, revisions, undo and redo,
 //!   and the activity log of who changed what.
+//! - [`instantiate`]: creating a document's entities in a world, each with a
+//!   [`SceneId`].
 //! - [`prefab`]: the [`PrefabLibrary`], [`load_prefab`], and expanding a
 //!   scene's prefab instances into plain entities.
 //!
@@ -22,6 +24,7 @@
 
 pub mod document;
 pub mod edit;
+pub mod instantiate;
 pub mod json;
 pub mod prefab;
 mod schema_check;
@@ -31,4 +34,5 @@ pub use document::{
     load, load_with_prefabs,
 };
 pub use edit::{Action, Actor, Applied, EditOp, LogEntry, MAX_LOG, MAX_UNDO, Transaction};
+pub use instantiate::{SCENE_ID, SceneEntities, SceneId};
 pub use prefab::{ExpandedEntity, PREFAB_ROOT, PrefabLibrary, load_prefab};

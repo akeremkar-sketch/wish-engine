@@ -17,6 +17,7 @@ wish_app.workspace = true
 wish_core.workspace = true
 wish_ecs.workspace = true
 wish_examples.workspace = true
+wish_scene.workspace = true
 wish_schema.workspace = true
 
 [lints]

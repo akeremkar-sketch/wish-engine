@@ -499,6 +499,7 @@ dependencies = [
  "wish_core",
  "wish_ecs",
  "wish_examples",
+ "wish_scene",
  "wish_schema",
 ]
 
