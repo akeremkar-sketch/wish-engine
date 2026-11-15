@@ -15,6 +15,7 @@ mod capture;
 mod project_cmds;
 mod scene;
 mod types;
+mod view;
 
 use std::process::ExitCode;
 use std::time::Instant;
@@ -44,6 +45,8 @@ USAGE:
                 [--size <w>x<h>] [--view lit|ids|depth|normals|wireframe] [--software] [--shaders <folder>] [--json]
     wen describe --example <name> --scene <file> [--root <folder>] [--camera <id>]
                  [--size <w>x<h>] [--software] [--shaders <folder>] [--json]
+    wen view --example <name> --scene <file> [--root <folder>] [--size <w>x<h>]
+             [--view lit|ids|depth|normals|wireframe] [--software] [--shaders <folder>] [--exit-after <frames>]
     wen shaders [--dir <folder>] [--json]
     wen mv <from> <to> --example <name> [--root <folder>] [--dry-run] [--json]
     wen schema [--example <name>] [--json]
@@ -77,6 +80,11 @@ COMMANDS:
                its pixel count, how much of it is not hidden by other things, its screen
                box and its distance; and the entities that are drawn but not visible
                (default size 640x360; each entity costs one extra render).
+    view       Open a window onto a scene. Right mouse button + mouse looks around, W A S D move,
+               Q / E go down / up, Shift is faster, F returns to the scene's camera, 1-5 pick
+               the view (lit, ids, depth, normals, wireframe), a left click names the entity
+               under the cursor. Changed scene, prefab, model or shader files are reloaded; a
+               mistake is reported and the last good picture stays. Needs a desktop session.
     shaders    Check every shader of the engine (syntax and validation, no GPU needed); --dir checks
                a folder of <name>.wgsl files in place of the built-in ones. Pass the same folder
                as --shaders to capture/describe to draw with them. Fails if there is any problem.
@@ -187,6 +195,7 @@ fn execute(args: Args) -> Result<String> {
         )),
         Command::Capture(capture) => capture::capture(&capture, args.json),
         Command::Describe(describe) => capture::describe(&describe, args.json),
+        Command::View(view) => view::view(&view, args.json),
         Command::Schema { example } => schema(example.as_deref(), args.json),
         Command::Examples => Ok(if args.json {
             json!({ "ok": true, "examples": wish_examples::NAMES }).to_string()

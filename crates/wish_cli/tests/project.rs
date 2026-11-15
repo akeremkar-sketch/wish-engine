@@ -612,3 +612,23 @@ fn shaders_are_checked_and_a_folder_of_edits_can_be_drawn_with() {
     assert!(!ok);
     assert_eq!(report["error"]["code"], "shader_syntax");
 }
+
+#[test]
+fn view_checks_its_arguments_before_opening_a_window() {
+    let (ok, report) = wen_json(&["view", "--example", "stress", "--json"]);
+    assert!(!ok);
+    assert_eq!(report["error"]["code"], "invalid_arguments");
+    let (ok, report) = wen_json(&[
+        "view",
+        "--example",
+        "stress",
+        "--scene",
+        "main.scene.json",
+        "--view",
+        "idz",
+        "--json",
+    ]);
+    assert!(!ok);
+    assert_eq!(report["error"]["code"], "unknown_view");
+    assert_eq!(report["error"]["hint"], "Did you mean 'ids'?");
+}

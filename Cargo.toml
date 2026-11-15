@@ -21,6 +21,7 @@ wish_render = { path = "crates/wish_render" }
 wish_scene = { path = "crates/wish_scene" }
 wish_schema = { path = "crates/wish_schema" }
 wish_transform = { path = "crates/wish_transform" }
+wish_window = { path = "crates/wish_window" }
 wish_schema_macros = { path = "crates/wish_schema_macros" }
 
 # External crates. Check the license before adding one (see deny.toml).
@@ -46,6 +47,11 @@ naga = { version = "30", features = ["wgsl-in"] }
 png = "0.18"
 pollster = "1"
 wgpu = "30"
+
+# Window (wish_window only). winit opens the window and delivers input;
+# softbuffer puts the finished picture on it (the renderer draws offscreen).
+softbuffer = "0.4"
+winit = "0.30"
 
 # Procedural macros. syn 3, the same major version serde_derive uses, so the
 # build compiles one syn.

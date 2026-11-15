@@ -10,7 +10,7 @@ use wish_core::{Diagnostic, Result};
 /// The commands `wen` understands.
 pub const COMMANDS: &[&str] = &[
     "run", "bench", "schema", "mv", "check", "fmt", "migrate", "watch", "capture", "describe",
-    "shaders", "examples", "help", "version",
+    "shaders", "view", "examples", "help", "version",
 ];
 
 /// A parsed command line.
@@ -105,6 +105,8 @@ pub enum Command {
     Capture(CaptureArgs),
     /// List what a camera sees: which entities are on screen and how much.
     Describe(DescribeArgs),
+    /// Open a window onto a scene.
+    View(ViewArgs),
     /// Check the engine's shaders (or a developer's copies of them).
     Shaders {
         /// A folder of `<name>.wgsl` files that replace the built-in shaders.
@@ -144,6 +146,27 @@ pub struct CaptureArgs {
     pub shaders: Option<String>,
     /// Where to write the PNG.
     pub out: String,
+}
+
+/// The options of `wen view`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ViewArgs {
+    /// The example whose component types the scene uses.
+    pub example: String,
+    /// The scene file, relative to the root.
+    pub scene: String,
+    /// The project folder (default: the current folder).
+    pub root: Option<String>,
+    /// The window's size in pixels.
+    pub size: (u32, u32),
+    /// The view to start in.
+    pub view: String,
+    /// Use the software adapter.
+    pub software: bool,
+    /// A folder of `<name>.wgsl` files that replace the built-in shaders.
+    pub shaders: Option<String>,
+    /// Close after this many frames (for scripts).
+    pub exit_after: Option<u64>,
 }
 
 /// The options of `wen describe`.
@@ -223,6 +246,17 @@ fn flags_of(command: &str) -> &'static [(&'static str, bool)] {
             ("--json", false),
         ],
         "shaders" => &[("--dir", true), ("--json", false)],
+        "view" => &[
+            ("--example", true),
+            ("--scene", true),
+            ("--root", true),
+            ("--size", true),
+            ("--view", true),
+            ("--software", false),
+            ("--shaders", true),
+            ("--exit-after", true),
+            ("--json", false),
+        ],
         "describe" => &[
             ("--example", true),
             ("--scene", true),
@@ -490,6 +524,31 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
                 size: value_of("--size").map_or(Ok((640, 360)), parse_size)?,
                 software: values.iter().any(|(flag, _)| *flag == "--software"),
                 shaders: value_of("--shaders").map(str::to_owned),
+            })
+        }
+        "view" => {
+            let required = |flag: &str, what: &str| {
+                value_of(flag).map(str::to_owned).ok_or_else(|| {
+                    usage_error(
+                        format!("'wen view' needs {flag}: {what}."),
+                        format!(
+                            "Write it like: wen view --example stress --scene scenes/main.scene.json (built-in examples: {})",
+                            wish_examples::NAMES.join(", ")
+                        ),
+                    )
+                })
+            };
+            Command::View(ViewArgs {
+                example: required("--example", "the example whose component types the scene uses")?,
+                scene: required("--scene", "the scene file to look at")?,
+                root: value_of("--root").map(str::to_owned),
+                size: value_of("--size").map_or(Ok((1280, 720)), parse_size)?,
+                view: value_of("--view").unwrap_or("lit").to_owned(),
+                software: values.iter().any(|(flag, _)| *flag == "--software"),
+                shaders: value_of("--shaders").map(str::to_owned),
+                exit_after: value_of("--exit-after")
+                    .map(|value| parse_number("--exit-after", value))
+                    .transpose()?,
             })
         }
         "shaders" => Command::Shaders {

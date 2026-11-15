@@ -41,7 +41,7 @@ fn entity_by_scene_id(world: &mut wish_ecs::World, id: &str) -> Result<Entity> {
 
 /// The name an entity has in the scene file, or its numeric form when it was
 /// not made by the scene.
-fn scene_id_of(world: &wish_ecs::World, entity: Entity) -> String {
+pub(crate) fn scene_id_of(world: &wish_ecs::World, entity: Entity) -> String {
     world
         .get::<SceneId>(entity)
         .and_then(|scene_id| world.text(scene_id.id))
@@ -51,7 +51,7 @@ fn scene_id_of(world: &wish_ecs::World, entity: Entity) -> String {
 /// Loads every model the scene's Model entities name from the project and
 /// uploads it. A model that cannot be loaded is reported as a warning and not
 /// drawn (the rest of the scene still is); its import warnings are passed on.
-fn load_models(
+pub(crate) fn load_models(
     scene: &RenderScene,
     root: &Path,
     gpu: &Gpu,
