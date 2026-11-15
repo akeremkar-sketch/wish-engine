@@ -35,7 +35,7 @@ const INTERNAL: &[&str] = &["SceneId", "Hierarchy", "GlobalTransform"];
 pub(crate) const SCENE_GET: Tool = Tool {
     name: "scene_get",
     title: "Scene outline",
-    description: "The scene's hierarchy: entity ids, their component names and children, and the scene's resources. summary lists names only; normal adds the component values as written in the file; full adds notes, sibling order and prefab overrides. Use root and depth to look at part of a big scene.",
+    description: "The scene's hierarchy: entity ids, their component names and children, and the scene's resources. summary lists names only; normal adds the component values as written in the file; full adds notes, sibling order and prefab overrides. Use root and depth to look at part of a big scene. Also shows what is inside a prefab: pass its path as scene (\"prefabs/crate.prefab.json\"); there is no need to read files.",
     params: &[
         SCENE,
         Param::optional(
@@ -644,6 +644,14 @@ fn changes_json(changes: &[String]) -> Value {
 }
 
 fn refuse_if_file_invalid(workspace: &Workspace, path: &str) -> Result<()> {
+    if path.ends_with(".prefab.json") {
+        return Err(Diagnostic::error(
+            "prefab_read_only",
+            format!("'{path}' is a prefab: the tools can look at prefabs but not change them yet."),
+            "Change an instance instead: set / replace on the instance's id for its root, set_override for the prefab's other entities. Editing prefabs themselves comes with the prefab editor.",
+        )
+        .at_path("/scene"));
+    }
     if let Some(problem) = &workspace.document(path)?.disk_problem {
         let mut refusal = problem.clone();
         refusal.severity = wish_core::Severity::Error;

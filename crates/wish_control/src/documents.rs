@@ -99,11 +99,11 @@ pub(crate) fn normalize_scene_path(path: &str) -> Result<String> {
     let outside = path.starts_with('/')
         || path.contains(':')
         || path.split('/').any(|part| part == ".." || part.is_empty());
-    if outside || !path.ends_with(".scene.json") {
+    if outside || !(path.ends_with(".scene.json") || path.ends_with(".prefab.json")) {
         return Err(Diagnostic::error(
             "invalid_scene_path",
             format!("'{path}' is not a scene file path inside the project."),
-            "Give a project-relative path ending in .scene.json, such as \"scenes/main.scene.json\".",
+            "Give a project-relative path ending in .scene.json (or .prefab.json to look at a prefab), such as \"scenes/main.scene.json\".",
         )
         .at_path("/scene"));
     }
@@ -116,7 +116,12 @@ fn load_document(
     workspace_registry: &wish_ecs::Registry,
     prefabs: &Arc<PrefabLibrary>,
 ) -> Result<(SceneDocument, Vec<Diagnostic>)> {
-    let result = wish_scene::load_with_prefabs(text, path, workspace_registry, Arc::clone(prefabs));
+    // Prefabs open read-only, through the prefab loader (it checks the root).
+    let result = if path.ends_with(".prefab.json") {
+        wish_scene::load_prefab(text, path, workspace_registry)
+    } else {
+        wish_scene::load_with_prefabs(text, path, workspace_registry, Arc::clone(prefabs))
+    };
     let errors = result.diagnostics.iter().filter(|d| d.is_error()).count();
     match result.document {
         Some(document) if errors == 0 => Ok((document, result.diagnostics)),

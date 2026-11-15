@@ -172,8 +172,28 @@ pub fn envelope(outcome: Result<Map<String, Value>>) -> Value {
             map.insert("ok".to_owned(), Value::Bool(true));
             Value::Object(map)
         }
-        Err(problem) => json!({ "ok": false, "error": problem }),
+        Err(problem) => json!({ "ok": false, "error": explained(problem) }),
     }
+}
+
+/// An unknown name that stands for a familiar concept from other engines
+/// gets an explanation of how it is done here, before the usual hint.
+fn explained(mut problem: Diagnostic) -> Diagnostic {
+    const CODES: &[&str] = &[
+        "unknown_component",
+        "unknown_type",
+        "unknown_resource",
+        "expr_unknown_name",
+    ];
+    if CODES.contains(&problem.code.as_ref()) {
+        let explanation = crate::concepts::quoted_names(&problem.message)
+            .into_iter()
+            .find_map(crate::concepts::explain);
+        if let Some(explanation) = explanation {
+            problem.hint = format!("{explanation} ({})", problem.hint);
+        }
+    }
+    problem
 }
 
 /// Reads an actor's name: `human`, `file`, or anything else as an agent.

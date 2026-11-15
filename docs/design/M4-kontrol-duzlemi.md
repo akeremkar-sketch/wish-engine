@@ -216,3 +216,24 @@ Taslaktaki 24 araçtan M4'te **20**'si uygulanır; `script_build`, `test_run`, `
 - **`wen mcp [--root] [--software] [--example]`**: stdout yalnızca protokol (ilk sorun stderr'e, çıkış kodu ≠ 0); `wen new`'in `.mcp.json`'u bunu başlatır.
 - **Test:** `wish_mcp/tests/protocol.rs` (5): el sıkışma ve sürüm, aktör adı geçmişte, 20 aracın listesi ve şemaları, yapılandırılmış sonuç + görsel bloğu, kaynaklar (her tanı kodunun sayfası okunur) ve istemler, bozuk iletiler. `wish_cli/tests/parity.rs`: **MCP ayağı** (aynı örnek oturumu `wen mcp` sürecine JSON-RPC ile: `structuredContent` süreç içi yanıtla aynı, sahne dosyaları aynı) ve **çıkış ölçütünün betikli hali**: boş proje (`wen new`) → yalnızca MCP ile kılavuz okuma, `project_info`, `schema_get`, üç platform + top kurma, `check`, `sim_start`/`sim_step`, `describe_view` (dördü de görünür), `capture_frame` (görsel bloğu), `entity_query` ile doğrulama. Toplam 355 test (debug + release).
 - **Claude Code ile gerçek bağlantı denenmedi:** bu makinede `claude` komut satırı aracı yok (masaüstü uygulaması kullanılıyor). Bağlantı WP7'de değerlendirme koşumu için Claude Code CLI kurulumu gerektirecek (kullanıcı onayı); o zamana dek kullanıcı `wen new` ile açılan bir projeyi Claude Code'da açarak deneyebilir.
+
+### WP7 — ajan değerlendirmeleri
+
+- **Düzenek (`crates/wish_evals`, `evals/README.md`):** 10 görev (`tasks.rs`: Türkçe istem, kurulum, motorun kendi araçlarıyla denetim, referans çözüm). `wish-evals selftest` modelsiz ve ücretsizdir: her denetim kurulumda **başarısız**, referans çözümden sonra **başarılı** olmalı (10/10) — "hiçbir şey yapmadan geçen görev" olamaz. `wish-evals run`: her deneme taze bir `wen new` projesi (MCP yazılım bağdaştırıcısında), `claude -p` yalnızca projenin `wish` MCP araçlarıyla (`--strict-mcp-config`, yerleşik araçlar kapalı, `--setting-sources project`), sonra denetim; döküm (`transcript.jsonl`) ve taban çizgisi (`baseline.json`) denemeyle saklanır. `wish-evals recheck`: düzeltilmiş bir denetimi ajanı yeniden koşmadan eski denemelere uygular. Kayıt `evals/results/<etiket>.json`: geçti/kaldı ve nedeni, araç çağrısı, hatalı çağrı (ilk çağrı hatalı mı), tur, belirteç, süre, API karşılığı maliyet.
+- **Ortam (kullanıcı onayıyla, 16 Kasım 2026):** Claude Code CLI 2.1.325 kuruldu (`npm install -g @anthropic-ai/claude-code`); claude.ai aboneliğiyle oturum açık, koşumlar abonelik kotasından harcar. Değerlendirilen model `claude-sonnet-5-5`, efor `medium` (dökümlerde doğrulandı).
+- **Sonuçlar:**
+
+| Koşu | Geçen | Hatalı araç çağrısı | Ortalama çağrı / süre | API karşılığı |
+|---|---|---|---|---|
+| İlk (`2026-11-16-sonnet-5-5-medium`) | **30/30 (%100)** | 12 | ~8,8 / ~18 s | 2,44 $ |
+| Düzeltmelerden sonra (`…-after-fixes`) | **30/30 (%100)** | 7 | ~8,3 / ~17 s | 2,36 $ |
+| Prefab açıklaması sonrası, yalnız 05 (`…-crate-row-recheck`) | 3/3 (düzeltilmiş denetimle) | 1 | 10 / ~21 s | 0,28 $ |
+
+- **Değerlendirmelerin bulduğu ve düzeltilenler (ADR-010: yüzey sezgiyle değil ölçümle):**
+  1. *Prefab'ın içine bakmanın aracı yoktu* — ajan her denemede dosyayı `Read`/`Bash` ile okumaya çalıştı (değişmez 4 açığı). `scene_get`/`entity_get`/`entity_query` artık `.prefab.json` yolunu salt okur; değiştirme `prefab_read_only` + "örneği değiştir" ipucu (prefab düzenleme M8a'nın prefab düzenleyicisiyle). Yetenek eklendiği halde ajan ilk koşuda yine `Read` denedi: yetenek **araç açıklamasında** yazmadıkça görülmüyor; `scene_get` açıklamasına eklenince `Read` denemeleri tamamen kalktı.
+  2. *Başka motorların kavramları* (`Collider`, `Body`, `Name`, `Visibility`): `concepts.rs` kavram eşlemesi — bilinmeyen ad tanınan bir kavramsa ipucu motorun bunu nasıl yaptığını söyler ("varlıklar kimlikleriyle adlandırılır", "fizik M6'da", "görünenler Primitive/Model'den"); tek yerde, zarf düzeyinde, her araca.
+  3. *Yalnızca kökü olan prefab'ta `set_override`*: ipucu "geçerli ad yok" diyordu; artık "örneğin kendi bileşenlerini ver / set kullan" diyor (`wish_scene`).
+  4. *Öz-testin bulduğu*: tam sayı parametreleri `640.0`'ı reddediyordu; artık tam değerli ondalık kabul edilir (birim testli).
+  5. *Görevin kendi belirsizliği*: "aralarında 2 m" iki türlü okunabiliyor (merkezler arası 2 m ya da 1 m'lik kasalar arasında 2 m boşluk); denetim artık ikisini de kabul eder (tutarlı aralıkla). Ders: başarısız bir deneme önce **denetimin** doğruluğu açısından incelenir.
+- **Kalan hatalı çağrılar** yalnızca motorda olmayan bileşenleri isteme (artık açıklamalı) ve bir kez yanlış parametre adı; ikisi de ilk ipucuyla düzeltildi.
+- **M4 çıkış ölçütü (Sonnet 5.5 · medium ≥ %80): karşılandı, %100.** Bilinçli sınır: görevler M4'ün yetenekleriyle (sahne, gözlem, oturum) sınırlı; oyun kodu ve fizik görevleri M5/M6'da eklenir. M7'de Unity/Unreal MCP karşılaştırması bu düzenekle yapılacak.

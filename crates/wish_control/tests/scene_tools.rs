@@ -487,3 +487,94 @@ fn new_scenes_and_prefab_instances() {
     assert_eq!(bad["error"]["code"], "invalid_scene_path");
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Found by the M4 agent evaluations: agents tried to read a prefab with
+/// file tools (there was no tool for it), asked for components other
+/// engines have, and used set_override on a prefab that has only a root.
+#[test]
+fn what_the_agent_evaluations_found() {
+    let dir = project("evals");
+    std::fs::write(
+        dir.join("prefabs/crate.prefab.json"),
+        r#"{ "format": 1, "entities": { "root": { "components": { "Primitive": { "shape": "Cube" }, "Transform": {} } } } }"#,
+    )
+    .unwrap();
+    let mut ws = open(&dir);
+    let me = parse_actor("claude-code");
+    // A prefab can be looked at...
+    let outline = ok(&ws.call(
+        "scene_get",
+        &json!({ "scene": "prefabs/crate.prefab.json", "detail": "normal" }),
+        &me,
+    ))
+    .clone();
+    assert_eq!(outline["tree"][0]["id"], "root");
+    assert_eq!(
+        outline["tree"][0]["components"]["Primitive"]["shape"],
+        "Cube"
+    );
+    let values = ok(&ws.call(
+        "entity_get",
+        &json!({ "scene": "prefabs/crate.prefab.json", "ids": ["root"] }),
+        &me,
+    ))
+    .clone();
+    assert_eq!(
+        values["entities"][0]["components"]["Transform"]["scale"],
+        json!([1.0, 1.0, 1.0])
+    );
+    // ...but not changed.
+    let refused = ws.call("edit_apply", &json!({ "scene": "prefabs/crate.prefab.json", "ops": [{ "op": "despawn", "id": "root" }] }), &me);
+    assert_eq!(refused["error"]["code"], "prefab_read_only");
+    assert!(
+        refused["error"]["hint"]
+            .as_str()
+            .unwrap()
+            .contains("set_override")
+    );
+    // Familiar names from other engines are explained.
+    let collider = ws.call("entity_query", &json!({ "with": ["Collider"] }), &me);
+    assert!(
+        collider["error"]["hint"]
+            .as_str()
+            .unwrap()
+            .starts_with("Physics"),
+        "{collider}"
+    );
+    let name = ws.call("schema_get", &json!({ "names": ["Name"] }), &me);
+    assert!(
+        name["error"]["hint"]
+            .as_str()
+            .unwrap()
+            .contains("named by their id"),
+        "{name}"
+    );
+    let visibility = ws.call(
+        "entity_query",
+        &json!({ "where": "Visibility.visible == true" }),
+        &me,
+    );
+    assert!(
+        visibility["error"]["hint"]
+            .as_str()
+            .unwrap()
+            .contains("Primitive"),
+        "{visibility}"
+    );
+    // An override on a root-only prefab says what to do instead.
+    let override_root = ws.call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "instantiate", "id": "c1", "prefab": "prefabs/crate.prefab.json",
+            "overrides": { "c1": { "Transform": { "translation": [1, 0, 0] } } } }] }),
+        &me,
+    );
+    assert_eq!(override_root["error"]["code"], "unknown_prefab_entity");
+    assert!(
+        override_root["error"]["hint"]
+            .as_str()
+            .unwrap()
+            .contains("only its root"),
+        "{override_root}"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}

@@ -245,12 +245,23 @@ fn invalid(tool: &str, param: &Param, got: &Value) -> Diagnostic {
     .at_path(format!("/{}", param.name))
 }
 
+/// A JSON number that is a whole number (`3` or `3.0`), as an integer.fn whole(value: &Value) -> Option<i64> {    value.as_i64().or_else(|| {        value            .as_f64()            .filter(|n| n.fract() == 0.0 && n.abs() < 9.0e15)            .map(|n| n as i64)    })}
+/// A JSON number that is a whole number (`3` or `3.0`), as an integer.
+fn whole(value: &Value) -> Option<i64> {
+    value.as_i64().or_else(|| {
+        value
+            .as_f64()
+            .filter(|n| n.fract() == 0.0 && n.abs() < 9.0e15)
+            .map(|n| n as i64)
+    })
+}
+
 fn check_value(tool: &str, param: &Param, value: &Value) -> Result<()> {
     let ok = match param.kind {
         Kind::String => value.is_string(),
-        Kind::Integer { min, max } => value
-            .as_i64()
-            .is_some_and(|number| (min..=max).contains(&number)),
+        Kind::Integer { min, max } => {
+            whole(value).is_some_and(|number| (min..=max).contains(&number))
+        }
         Kind::Number { min, max } => value
             .as_f64()
             .is_some_and(|number| number.is_finite() && number >= min && number <= max),
@@ -319,7 +330,12 @@ pub fn parse(tool: &str, params: &[Param], args: &Value) -> Result<Args> {
         match given.get(param.name) {
             Some(value) if !value.is_null() => {
                 check_value(tool, param, value)?;
-                values.insert(param.name.to_owned(), value.clone());
+                // 640.0 is 640: store whole numbers as integers.
+                let value = match (param.kind, whole(value)) {
+                    (Kind::Integer { .. }, Some(number)) => Value::from(number),
+                    _ => value.clone(),
+                };
+                values.insert(param.name.to_owned(), value);
             }
             _ if param.required => {
                 return Err(Diagnostic::error(
@@ -421,6 +437,14 @@ mod tests {
         Param::optional("names", Kind::StringList, "Which ones."),
         Param::optional("dry_run", Kind::Boolean, "Only preview."),
     ];
+
+    #[test]
+    fn a_whole_number_written_with_a_point_is_a_whole_number() {
+        // Agents and JSON libraries sometimes write 640 as 640.0.
+        let args = parse("t", PARAMS, &json!({ "scene": "s", "limit": 5.0 })).unwrap();
+        assert_eq!(args.int("limit"), Some(5));
+        assert!(parse("t", PARAMS, &json!({ "scene": "s", "limit": 5.5 })).is_err());
+    }
 
     #[test]
     fn good_arguments_get_their_defaults() {

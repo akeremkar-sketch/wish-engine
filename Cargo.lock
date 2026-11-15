@@ -3066,6 +3066,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "wish_evals"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wish_control",
+ "wish_core",
+]
+
+[[package]]
 name = "wish_examples"
 version = "0.1.0"
 dependencies = [

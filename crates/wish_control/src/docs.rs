@@ -336,6 +336,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "No prefab file has that path. Prefabs are project-relative .prefab.json files.",
     ),
     (
+        "prefab_read_only",
+        "The tools can read prefabs (scene_get, entity_get, entity_query with the prefab path as scene) but not change them yet. Change instances instead: set / replace for an instance's root, set_override for the prefab's other entities.",
+    ),
+    (
         "prefab_root_with_parent",
         "A prefab's root entity cannot have a parent.",
     ),
@@ -688,6 +692,7 @@ these tools, and the same edits land in one shared history (`actor` says who mad
 \n\
 A scene is a file of entities, each an id and components: `{{ \"op\": \"spawn\", \"id\": \"crate\", \"components\": {{ \"Primitive\": {{ \"shape\": \"Cube\" }}, \"Transform\": {{ \"translation\": [0, 0.5, 0] }} }} }}`.\n\
 Component values are patches on defaults: give only the fields you change. `parent` puts an entity under another; transforms combine down the tree.\n\
+Prefabs are reusable parts: the `instantiate` operation places one (`\"prefab\": \"prefabs/crate.prefab.json\"`, with the instance's own `components`); look inside a prefab with `scene_get` and `\"scene\": \"prefabs/crate.prefab.json\"`.\n\
 Something to see needs a `Camera` (with a `Transform`), a `DirectionalLight` for light, and `Primitive` or `Model` entities to draw.\n\
 \n\
 ## Rules\n\
