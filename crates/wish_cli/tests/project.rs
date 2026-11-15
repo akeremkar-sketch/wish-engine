@@ -283,6 +283,88 @@ fn capture_draws_a_scene_file_into_a_png() {
     assert_eq!(report["error"]["code"], "invalid_capture_size");
 }
 
+/// A one-triangle GLB with a red material, built by hand.
+fn triangle_glb() -> Vec<u8> {
+    let positions: Vec<u8> = [-1.0f32, -1.0, 0.0, 1.0, -1.0, 0.0, 0.0, 1.5, 0.0]
+        .iter()
+        .flat_map(|v| v.to_le_bytes())
+        .collect();
+    let json = serde_json::json!({
+        "asset": { "version": "2.0" },
+        "buffers": [{ "byteLength": 36 }],
+        "bufferViews": [{ "buffer": 0, "byteLength": 36 }],
+        "accessors": [{ "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [-1, -1, 0], "max": [1, 1.5, 0] }],
+        "meshes": [{ "primitives": [{ "attributes": { "POSITION": 0 }, "material": 0 }] }],
+        "materials": [{ "doubleSided": true, "pbrMetallicRoughness": { "baseColorFactor": [0.9, 0.1, 0.1, 1.0], "metallicFactor": 0.0 } }],
+        "nodes": [{ "mesh": 0 }],
+        "scenes": [{ "nodes": [0] }]
+    });
+    let mut text = serde_json::to_vec(&json).unwrap();
+    while !text.len().is_multiple_of(4) {
+        text.push(b' ');
+    }
+    let total = 12 + 8 + text.len() + 8 + positions.len();
+    let mut out = b"glTF".to_vec();
+    out.extend_from_slice(&2u32.to_le_bytes());
+    out.extend_from_slice(&(total as u32).to_le_bytes());
+    out.extend_from_slice(&(text.len() as u32).to_le_bytes());
+    out.extend_from_slice(b"JSON");
+    out.extend_from_slice(&text);
+    out.extend_from_slice(&(positions.len() as u32).to_le_bytes());
+    out.extend_from_slice(b"BIN\0");
+    out.extend_from_slice(&positions);
+    out
+}
+
+#[test]
+fn capture_draws_models_from_the_projects_assets_and_reports_the_ones_it_cannot() {
+    let dir = Dir::new("capture-model");
+    std::fs::write(dir.0.join("assets/tri.glb"), triangle_glb()).unwrap();
+    std::fs::write(dir.0.join("assets/broken.glb"), b"not a model").unwrap();
+    dir.write(
+        "main.scene.json",
+        r#"{ "format": 1, "entities": {
+            "cam": { "components": { "Camera": {}, "Transform": { "translation": [0, 0, 6] } } },
+            "sun": { "components": { "DirectionalLight": {} } },
+            "tri": { "components": { "Model": { "asset": "assets/tri.glb" } } },
+            "bad": { "components": { "Model": { "asset": "assets/broken.glb" } } }
+        } }"#,
+    );
+    let out = dir.0.join("model.png");
+    let (ok, report) = wen_json(&[
+        "capture",
+        "--example",
+        "stress",
+        "--scene",
+        "main.scene.json",
+        "--root",
+        dir.arg(),
+        "--software",
+        "--size",
+        "160x120",
+        "--out",
+        out.to_str().unwrap(),
+        "--json",
+    ]);
+    assert!(ok, "{report}");
+    assert_eq!(report["drawn"], 1, "the good model is drawn: {report}");
+    let warnings: Vec<&serde_json::Value> = report["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|w| w["code"] != "not_canonical")
+        .collect();
+    assert_eq!(
+        warnings.len(),
+        1,
+        "one report per broken model: {warnings:?}"
+    );
+    assert_eq!(warnings[0]["code"], "model_not_loaded");
+    assert_eq!(warnings[0]["location"]["file"], "assets/broken.glb");
+    assert!(warnings[0]["hint"].as_str().unwrap().contains("glTF"));
+    assert!(out.exists());
+}
+
 #[test]
 fn fmt_rewrites_to_canonical_form_and_check_mode_only_reports() {
     let dir = Dir::new("fmt");

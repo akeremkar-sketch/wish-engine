@@ -3,31 +3,46 @@
 //! Triangles wind counter-clockwise seen from outside (their front face),
 //! which is what the renderer draws; the tests check this for every shape.
 
-use wish_core::math::Vec3;
+use wish_core::math::{Vec2, Vec3, Vec4};
 
 use crate::components::Shape;
 
-/// A triangle mesh: positions and normals per vertex, three indices per
-/// triangle.
+/// A triangle mesh: positions, normals, texture coordinates and tangents per
+/// vertex, three indices per triangle.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MeshData {
     /// Vertex positions, local space.
     pub positions: Vec<Vec3>,
     /// Unit normals, one per vertex.
     pub normals: Vec<Vec3>,
+    /// Texture coordinates, one per vertex.
+    pub uvs: Vec<Vec2>,
+    /// Tangents (xyz direction, w the bitangent's sign), one per vertex;
+    /// zero where there is no normal map.
+    pub tangents: Vec<Vec4>,
     /// Three per triangle, counter-clockwise seen from the front.
     pub indices: Vec<u32>,
 }
 
-/// Bytes per vertex in the GPU vertex buffer: position then normal.
-pub(crate) const VERTEX_STRIDE: u64 = 24;
+/// Bytes per vertex in the GPU vertex buffer: position (12), normal (12),
+/// texture coordinates (8), tangent (16).
+pub(crate) const VERTEX_STRIDE: u64 = 48;
 
 impl MeshData {
     /// The vertex buffer: position and normal, little-endian `f32`s.
     pub(crate) fn vertex_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(self.positions.len() * VERTEX_STRIDE as usize);
-        for (position, normal) in self.positions.iter().zip(&self.normals) {
-            for value in position.to_array().into_iter().chain(normal.to_array()) {
+        for (index, position) in self.positions.iter().enumerate() {
+            let normal = self.normals.get(index).copied().unwrap_or(Vec3::Y);
+            let uv = self.uvs.get(index).copied().unwrap_or(Vec2::ZERO);
+            let tangent = self.tangents.get(index).copied().unwrap_or(Vec4::ZERO);
+            let values = position
+                .to_array()
+                .into_iter()
+                .chain(normal.to_array())
+                .chain(uv.to_array())
+                .chain(tangent.to_array());
+            for value in values {
                 bytes.extend_from_slice(&value.to_le_bytes());
             }
         }
@@ -46,8 +61,22 @@ impl MeshData {
         let base = u32::try_from(self.positions.len()).unwrap_or(u32::MAX);
         self.positions.extend(corners);
         self.normals.extend([normal; 4]);
+        self.uvs.extend([Vec2::ZERO, Vec2::X, Vec2::ONE, Vec2::Y]);
+        self.tangents.extend([Vec4::ZERO; 4]);
         self.indices
             .extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+}
+
+impl From<&wish_import::Primitive> for MeshData {
+    fn from(primitive: &wish_import::Primitive) -> Self {
+        Self {
+            positions: primitive.positions.clone(),
+            normals: primitive.normals.clone(),
+            uvs: primitive.uvs.clone(),
+            tangents: primitive.tangents.clone(),
+            indices: primitive.indices.clone(),
+        }
     }
 }
 
@@ -119,6 +148,11 @@ fn sphere(segments: u32, rings: u32) -> MeshData {
             );
             mesh.positions.push(normal * 0.5);
             mesh.normals.push(normal);
+            mesh.uvs.push(Vec2::new(
+                segment as f32 / segments as f32,
+                ring as f32 / rings as f32,
+            ));
+            mesh.tangents.push(Vec4::ZERO);
         }
     }
     let row = segments + 1;

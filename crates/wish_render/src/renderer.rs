@@ -15,24 +15,27 @@
 //! The order is fixed for now; shadows (WP5) and the debug outputs (WP6)
 //! turn it into a small graph of passes with declared inputs and outputs.
 
+use std::collections::BTreeMap;
+
 use wish_core::math::{Mat4, Vec3};
 use wish_core::{Diagnostic, Entity, Result};
 
 use crate::capture::{CAPTURE_FORMAT, Target};
 use crate::components::{EMISSIVE_NITS, Shape};
-use crate::extract::{Mesh, RenderScene};
+use crate::extract::{MaterialData, Mesh, RenderScene};
 use crate::gpu::Gpu;
 use crate::image::RgbaImage;
 use crate::mesh::{MeshData, VERTEX_STRIDE, primitive};
 use crate::shader::ShaderLibrary;
+use crate::texture;
 
 const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 /// Bytes of the frame uniform: two matrices and eight vectors.
 const FRAME_UNIFORM_SIZE: u64 = 256;
-/// Bytes of one draw's uniform data: two matrices and three vectors.
-const DRAW_UNIFORM_SIZE: u64 = 176;
+/// Bytes of one draw's uniform data: two matrices and four vectors.
+const DRAW_UNIFORM_SIZE: u64 = 192;
 /// Distance between draws in the draw uniform buffer. 256 is a multiple of
 /// every adapter's uniform offset alignment.
 const DRAW_UNIFORM_STRIDE: u64 = 256;
@@ -146,6 +149,67 @@ impl GpuMesh {
     }
 }
 
+/// What one draw call draws: a built-in shape (with the entity's own
+/// Material), or one primitive of an uploaded model (with the material from
+/// its file).
+enum Source<'a> {
+    Shape(usize),
+    Primitive(&'a GpuPrimitive),
+}
+
+/// The draw calls of a frame and their uniform data.
+#[derive(Default)]
+struct DrawList<'a> {
+    bytes: Bytes,
+    draws: Vec<(Source<'a>, u64)>,
+}
+
+impl<'a> DrawList<'a> {
+    fn push(
+        &mut self,
+        source: Source<'a>,
+        world: &Mat4,
+        material: &MaterialData,
+        normal_scale: f32,
+        occlusion_strength: f32,
+        alpha_cutoff: f32,
+    ) {
+        let start = self.draws.len() as u64 * DRAW_UNIFORM_STRIDE;
+        self.bytes.pad_to(start);
+        self.bytes.mat4(world);
+        self.bytes.mat4(&world.inverse().transpose());
+        self.bytes.floats(&material.base_color);
+        self.bytes
+            .floats(&[material.metallic, material.roughness, 0.0, 0.0]);
+        self.bytes.vec4(material.emissive, 0.0);
+        self.bytes
+            .floats(&[normal_scale, occlusion_strength, alpha_cutoff, 0.0]);
+        self.draws.push((source, start));
+    }
+}
+
+/// One primitive of an uploaded model.
+struct GpuPrimitive {
+    mesh: GpuMesh,
+    /// The material's five textures and the sampler.
+    textures: wgpu::BindGroup,
+    material: MaterialData,
+    normal_scale: f32,
+    occlusion_strength: f32,
+    /// 0 unless the material masks by alpha.
+    alpha_cutoff: f32,
+    double_sided: bool,
+    /// Primitive space to the model's space.
+    matrix: Mat4,
+}
+
+/// A model on the GPU.
+struct GpuModel {
+    primitives: Vec<GpuPrimitive>,
+    /// How many of its materials blend alpha, which is not drawn blended yet.
+    blended: usize,
+}
+
 /// What a frame produced.
 #[derive(Debug)]
 pub struct Frame {
@@ -165,11 +229,19 @@ pub struct Renderer {
     frame_layout: wgpu::BindGroupLayout,
     draw_layout: wgpu::BindGroupLayout,
     hdr_layout: wgpu::BindGroupLayout,
+    material_layout: wgpu::BindGroupLayout,
     sky: wgpu::RenderPipeline,
     opaque: wgpu::RenderPipeline,
+    /// The same, without back-face culling, for double-sided materials.
+    opaque_double: wgpu::RenderPipeline,
     tonemap: wgpu::RenderPipeline,
-    /// Cube, sphere, plane, in [`shape_index`] order.
+    sampler: wgpu::Sampler,
+    /// Textures of a material that has none: white, flat normal.
+    default_textures: wgpu::BindGroup,
+    /// Cube, sphere, plane, in `shape_index` order.
     shapes: Vec<GpuMesh>,
+    /// Uploaded models, by project path.
+    models: BTreeMap<String, GpuModel>,
 }
 
 impl std::fmt::Debug for Renderer {
@@ -184,6 +256,33 @@ fn shape_index(shape: Shape) -> usize {
         Shape::Sphere => 1,
         Shape::Plane => 2,
     }
+}
+
+/// A material's five textures (base colour, metallic-roughness, normal,
+/// occlusion, emissive) and the sampler as one bind group.
+fn material_group(
+    gpu: &Gpu,
+    layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    textures: [&wgpu::TextureView; 5],
+) -> wgpu::BindGroup {
+    let mut entries: Vec<wgpu::BindGroupEntry<'_>> = textures
+        .iter()
+        .enumerate()
+        .map(|(binding, view)| wgpu::BindGroupEntry {
+            binding: u32::try_from(binding).unwrap_or(0),
+            resource: wgpu::BindingResource::TextureView(view),
+        })
+        .collect();
+    entries.push(wgpu::BindGroupEntry {
+        binding: 5,
+        resource: wgpu::BindingResource::Sampler(sampler),
+    });
+    gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("material"),
+        layout,
+        entries: &entries,
+    })
 }
 
 fn uniform_entry(binding: u32, dynamic: bool, size: u64) -> wgpu::BindGroupLayoutEntry {
@@ -242,6 +341,33 @@ impl Renderer {
                     count: None,
                 }],
             });
+            let texture_entry = |binding: u32| wgpu::BindGroupLayoutEntry {
+                binding,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            };
+            let material_layout =
+                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("material"),
+                    entries: &[
+                        texture_entry(0),
+                        texture_entry(1),
+                        texture_entry(2),
+                        texture_entry(3),
+                        texture_entry(4),
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 5,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                            count: None,
+                        },
+                    ],
+                });
             let layout = |layouts: &[&wgpu::BindGroupLayout]| {
                 let layouts: Vec<Option<&wgpu::BindGroupLayout>> =
                     layouts.iter().map(|layout| Some(*layout)).collect();
@@ -296,48 +422,104 @@ impl Renderer {
                     offset: 12,
                     shader_location: 1,
                 },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x2,
+                    offset: 24,
+                    shader_location: 2,
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x4,
+                    offset: 32,
+                    shader_location: 3,
+                },
             ];
-            let opaque = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("opaque"),
-                layout: Some(&layout(&[&frame_layout, &draw_layout])),
-                vertex: wgpu::VertexState {
-                    module: &opaque_shader,
-                    entry_point: Some("vs_main"),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    buffers: &[Some(wgpu::VertexBufferLayout {
-                        array_stride: VERTEX_STRIDE,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &attributes,
-                    })],
-                },
-                primitive: wgpu::PrimitiveState {
-                    cull_mode: Some(wgpu::Face::Back),
-                    ..wgpu::PrimitiveState::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: DEPTH_FORMAT,
-                    depth_write_enabled: Some(true),
-                    depth_compare: Some(wgpu::CompareFunction::Less),
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &opaque_shader,
-                    entry_point: Some("fs_main"),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: HDR_FORMAT,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                multiview_mask: None,
-                cache: None,
+            let opaque_layout = layout(&[&frame_layout, &draw_layout, &material_layout]);
+            let opaque_pipeline = |name: &str, cull_mode: Option<wgpu::Face>| {
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some(name),
+                    layout: Some(&opaque_layout),
+                    vertex: wgpu::VertexState {
+                        module: &opaque_shader,
+                        entry_point: Some("vs_main"),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        buffers: &[Some(wgpu::VertexBufferLayout {
+                            array_stride: VERTEX_STRIDE,
+                            step_mode: wgpu::VertexStepMode::Vertex,
+                            attributes: &attributes,
+                        })],
+                    },
+                    primitive: wgpu::PrimitiveState {
+                        cull_mode,
+                        ..wgpu::PrimitiveState::default()
+                    },
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: DEPTH_FORMAT,
+                        depth_write_enabled: Some(true),
+                        depth_compare: Some(wgpu::CompareFunction::Less),
+                        stencil: wgpu::StencilState::default(),
+                        bias: wgpu::DepthBiasState::default(),
+                    }),
+                    multisample: wgpu::MultisampleState::default(),
+                    fragment: Some(wgpu::FragmentState {
+                        module: &opaque_shader,
+                        entry_point: Some("fs_main"),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: HDR_FORMAT,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    multiview_mask: None,
+                    cache: None,
+                })
+            };
+            let opaque = opaque_pipeline("opaque", Some(wgpu::Face::Back));
+            let opaque_double = opaque_pipeline("opaque double-sided", None);
+            let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("material"),
+                address_mode_u: wgpu::AddressMode::Repeat,
+                address_mode_v: wgpu::AddressMode::Repeat,
+                address_mode_w: wgpu::AddressMode::Repeat,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                mipmap_filter: wgpu::MipmapFilterMode::Linear,
+                ..wgpu::SamplerDescriptor::default()
             });
-            (frame_layout, draw_layout, hdr_layout, sky, opaque, tonemap)
+            (
+                frame_layout,
+                draw_layout,
+                hdr_layout,
+                material_layout,
+                sky,
+                opaque,
+                opaque_double,
+                tonemap,
+                sampler,
+            )
         })?;
-        let (frame_layout, draw_layout, hdr_layout, sky, opaque, tonemap) = pipelines;
+        let (
+            frame_layout,
+            draw_layout,
+            hdr_layout,
+            material_layout,
+            sky,
+            opaque,
+            opaque_double,
+            tonemap,
+            sampler,
+        ) = pipelines;
+        let default_textures = gpu.checked("create the default textures", |gpu| {
+            let white = texture::solid(gpu, [255; 4], true, "white");
+            let white_linear = texture::solid(gpu, [255; 4], false, "white data");
+            let flat_normal = texture::solid(gpu, [128, 128, 255, 255], false, "flat normal");
+            material_group(
+                gpu,
+                &material_layout,
+                &sampler,
+                [&white, &white_linear, &flat_normal, &white_linear, &white],
+            )
+        })?;
         // Separately, so that a broken device stops here with a diagnostic
         // instead of failing somewhere inside the next step.
         let shapes = gpu.checked("upload the built-in shapes", |gpu| {
@@ -350,11 +532,120 @@ impl Renderer {
             frame_layout,
             draw_layout,
             hdr_layout,
+            material_layout,
             sky,
             opaque,
+            opaque_double,
             tonemap,
+            sampler,
+            default_textures,
             shapes,
+            models: BTreeMap::new(),
         })
+    }
+
+    /// Whether a model has been uploaded under `path`.
+    pub fn has_model(&self, path: &str) -> bool {
+        self.models.contains_key(path)
+    }
+
+    /// Uploads a model so that `Model` entities whose asset is `path` are
+    /// drawn. Uploading again replaces the old copy (a changed file).
+    pub fn upload_model(
+        &mut self,
+        gpu: &Gpu,
+        path: &str,
+        model: &wish_import::Model,
+    ) -> Result<()> {
+        let uploaded = gpu.checked("upload a model", |gpu| {
+            // Each texture is uploaded once per way it is used (colour or
+            // data), because that decides how the GPU decodes it.
+            let mut views: BTreeMap<(usize, bool), wgpu::TextureView> = BTreeMap::new();
+            let mut view_of = |slot: Option<wish_import::TextureRef>, srgb: bool| {
+                let reference = slot?;
+                let texture = model.textures.get(reference.texture)?;
+                Some(
+                    views
+                        .entry((reference.texture, srgb))
+                        .or_insert_with(|| texture::upload(gpu, texture, srgb, path))
+                        .clone(),
+                )
+            };
+            let white = texture::solid(gpu, [255; 4], true, "white");
+            let white_linear = texture::solid(gpu, [255; 4], false, "white data");
+            let flat_normal = texture::solid(gpu, [128, 128, 255, 255], false, "flat normal");
+            let default_material = wish_import::Material::default();
+            // One bind group per material; primitives without one use the
+            // default material.
+            let mut groups = Vec::new();
+            for material in model.materials.iter().chain([&default_material]) {
+                let base =
+                    view_of(material.base_color_texture, true).unwrap_or_else(|| white.clone());
+                let mr = view_of(material.metallic_roughness_texture, false)
+                    .unwrap_or_else(|| white_linear.clone());
+                let normal =
+                    view_of(material.normal_texture, false).unwrap_or_else(|| flat_normal.clone());
+                let occlusion = view_of(material.occlusion_texture, false)
+                    .unwrap_or_else(|| white_linear.clone());
+                let emissive =
+                    view_of(material.emissive_texture, true).unwrap_or_else(|| white.clone());
+                groups.push(material_group(
+                    gpu,
+                    &self.material_layout,
+                    &self.sampler,
+                    [&base, &mr, &normal, &occlusion, &emissive],
+                ));
+            }
+            let mut primitives = Vec::new();
+            let mut blended = 0;
+            for placed in model.placed() {
+                let Some(source) = model
+                    .meshes
+                    .get(placed.mesh)
+                    .and_then(|mesh| mesh.primitives.get(placed.primitive))
+                else {
+                    continue;
+                };
+                let index = source
+                    .material
+                    .filter(|index| *index < model.materials.len());
+                let material = index
+                    .and_then(|index| model.materials.get(index))
+                    .unwrap_or(&default_material);
+                if material.alpha_mode == wish_import::AlphaMode::Blend {
+                    blended += 1;
+                }
+                let group_index = index.unwrap_or(model.materials.len());
+                let Some(textures) = groups.get(group_index) else {
+                    continue;
+                };
+                primitives.push(GpuPrimitive {
+                    mesh: GpuMesh::new(gpu, &MeshData::from(source), path),
+                    textures: textures.clone(),
+                    material: MaterialData {
+                        base_color: material.base_color,
+                        metallic: material.metallic,
+                        roughness: material.roughness,
+                        emissive: material.emissive,
+                    },
+                    normal_scale: material.normal_scale,
+                    occlusion_strength: material.occlusion_strength,
+                    alpha_cutoff: if material.alpha_mode == wish_import::AlphaMode::Mask {
+                        material.alpha_cutoff.max(1e-4)
+                    } else {
+                        0.0
+                    },
+                    double_sided: material.double_sided,
+                    matrix: placed.matrix,
+                });
+            }
+            GpuModel {
+                primitives,
+                blended,
+            }
+        })?;
+        self.models.insert(path.to_owned(), uploaded);
+        Ok(())
     }
 
     /// Draws `scene` from `camera` (or from its first camera) into a
@@ -413,15 +704,13 @@ impl Renderer {
         frame.vec4([exposure, EMISSIVE_NITS, 0.0], 0.0);
         frame.pad_to(FRAME_UNIFORM_SIZE);
 
+        // What one draw call draws: a built-in shape (with the entity's own
+        // `Material`), or one primitive of an uploaded model (with the
+        // material from its file).
         let mut warnings = Vec::new();
-        let mut draws = Vec::new();
-        let mut draw_bytes = Bytes::default();
-        let mut models = 0usize;
+        let mut draw_list = DrawList::default();
+        let mut blended_models: Vec<&str> = Vec::new();
         for draw in &scene.draws {
-            let Mesh::Primitive(shape) = draw.mesh else {
-                models += 1;
-                continue;
-            };
             if draw.world.determinant().abs() < 1e-12 || !draw.world.is_finite() {
                 warnings.push(Diagnostic::warning(
                     "degenerate_transform",
@@ -433,23 +722,60 @@ impl Renderer {
                 ));
                 continue;
             }
-            let start = draws.len() as u64 * DRAW_UNIFORM_STRIDE;
-            draw_bytes.pad_to(start);
-            draw_bytes.mat4(&draw.world);
-            draw_bytes.mat4(&draw.world.inverse().transpose());
-            draw_bytes.floats(&draw.material.base_color);
-            draw_bytes.floats(&[draw.material.metallic, draw.material.roughness, 0.0, 0.0]);
-            draw_bytes.vec4(draw.material.emissive, 0.0);
-            draws.push((shape_index(shape), start));
+            match draw.mesh {
+                Mesh::Primitive(shape) => draw_list.push(
+                    Source::Shape(shape_index(shape)),
+                    &draw.world,
+                    &draw.material,
+                    1.0,
+                    1.0,
+                    0.0,
+                ),
+                Mesh::Model => {
+                    let path = draw.model_path.as_deref().unwrap_or_default();
+                    // A `#sub` part names something inside the file; the
+                    // whole model is drawn for now.
+                    let file = path.split('#').next().unwrap_or(path);
+                    let Some((key, model)) = self.models.get_key_value(file) else {
+                        warnings.push(Diagnostic::warning(
+                            "model_not_loaded",
+                            format!(
+                                "Entity {} was not drawn: the model '{file}' has not been loaded.",
+                                draw.entity
+                            ),
+                            "Load the model before drawing (wen capture does it from the scene's assets); check the path in the Model component.",
+                        )
+                        .at_file(file));
+                        continue;
+                    };
+                    if model.blended > 0 && !blended_models.contains(&key.as_str()) {
+                        blended_models.push(key.as_str());
+                    }
+                    for primitive in &model.primitives {
+                        draw_list.push(
+                            Source::Primitive(primitive),
+                            &(draw.world * primitive.matrix),
+                            &primitive.material,
+                            primitive.normal_scale,
+                            primitive.occlusion_strength,
+                            primitive.alpha_cutoff,
+                        );
+                    }
+                }
+            }
         }
-        if models > 0 {
+        for key in blended_models {
             warnings.push(Diagnostic::warning(
-                "model_not_drawn",
-                format!("{models} model(s) were not drawn: glTF models are drawn from M3 WP4 on."),
-                "Use \"Primitive\" shapes until glTF loading lands; the Model components stay valid.",
+                "alpha_blend_not_blended",
+                format!("The model '{key}' has materials that blend alpha; they are drawn opaque."),
+                "Blended transparency arrives later (M6). Use alpha mode MASK in the material for cut-outs such as leaves.",
             ));
         }
-        draw_bytes.pad_to((draws.len().max(1) as u64) * DRAW_UNIFORM_STRIDE);
+        let DrawList { mut bytes, draws } = draw_list;
+        let draw_bytes = {
+            bytes.pad_to((draws.len().max(1) as u64) * DRAW_UNIFORM_STRIDE);
+            bytes
+        };
 
         gpu.checked("draw the frame", |gpu| {
             let device = &gpu.device;
@@ -558,14 +884,27 @@ impl Renderer {
                     occlusion_query_set: None,
                     multiview_mask: None,
                 });
-                pass.set_pipeline(&self.opaque);
                 pass.set_bind_group(0, &frame_group, &[]);
-                for (shape, offset) in &draws {
-                    let Some(mesh) = self.shapes.get(*shape) else {
-                        continue;
+                for (source, offset) in &draws {
+                    let (mesh, textures, double_sided) = match source {
+                        Source::Shape(shape) => {
+                            let Some(mesh) = self.shapes.get(*shape) else {
+                                continue;
+                            };
+                            (mesh, &self.default_textures, false)
+                        }
+                        Source::Primitive(primitive) => {
+                            (&primitive.mesh, &primitive.textures, primitive.double_sided)
+                        }
                     };
+                    pass.set_pipeline(if double_sided {
+                        &self.opaque_double
+                    } else {
+                        &self.opaque
+                    });
                     let offset = u32::try_from(*offset).unwrap_or(u32::MAX);
                     pass.set_bind_group(1, &draw_group, &[offset]);
+                    pass.set_bind_group(2, textures, &[]);
                     pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                     pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..mesh.index_count, 0, 0..1);

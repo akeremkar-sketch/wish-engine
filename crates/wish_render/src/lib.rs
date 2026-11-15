@@ -26,6 +26,7 @@ pub mod image;
 pub mod mesh;
 pub mod renderer;
 pub mod shader;
+mod texture;
 
 pub use capture::{MAX_CAPTURE_SIZE, draw_probe};
 pub use components::{

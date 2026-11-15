@@ -249,7 +249,7 @@ fn what_cannot_be_drawn_is_reported_not_hidden() {
     let frame = renderer.render(&gpu, &scene, None, 32, 32).unwrap();
     assert_eq!(frame.drawn, 0);
     let codes: Vec<&str> = frame.warnings.iter().map(|w| w.code.as_ref()).collect();
-    assert_eq!(codes, ["degenerate_transform", "model_not_drawn"]);
+    assert_eq!(codes, ["degenerate_transform", "model_not_loaded"]);
     assert!(frame.warnings.iter().all(|w| !w.hint.is_empty()));
 }
 
