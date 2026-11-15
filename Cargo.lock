@@ -480,6 +480,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "wish_app"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "serde_json",
+ "wish_core",
+ "wish_ecs",
+ "wish_schema",
+]
+
+[[package]]
 name = "wish_core"
 version = "0.1.0"
 dependencies = [

@@ -16,6 +16,7 @@ pub mod diagnostic;
 pub mod entity;
 pub mod hash;
 pub mod math;
+pub mod rng;
 pub mod suggest;
 pub mod text;
 
@@ -23,4 +24,5 @@ pub use color::Color;
 pub use diagnostic::{Diagnostic, DiagnosticData, Location, Result, Severity};
 pub use entity::Entity;
 pub use hash::{Hash128, StableHasher, hash_bytes};
+pub use rng::Rng;
 pub use text::Text;

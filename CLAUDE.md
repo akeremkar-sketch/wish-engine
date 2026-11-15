@@ -9,7 +9,8 @@ Wish Engine: yapay zekâya tamamen entegre ama yapay zekâsız da eksiksiz kulla
   - Biten: WP1 (çalışma alanı, lint'ler, lisanslar, CI dosyası, git), WP2 (`wish_core`: `Entity`, `Text`, `Color`, matematik türleri, `Diagnostic`, kararlı hash, öneri yardımcıları), WP3 (`wish_schema` + `wish_schema_macros`: şema modeli, `Plain` sözleşmesi, `#[component]`/`#[resource]`/`#[event]`/`#[schema]`, JSON ⇄ bayt, JSON Schema, parmak izi). Toplam 60 test.
   - WP4 (`wish_ecs` temeli: varlıklar, arketip depolama, türlü/JSON/bayt erişim, sorgular ve süzgeçler, kaynaklar, metin tablosu) bitti; model tabanlı test ve Miri ile doğrulandı.
   - WP4b (ertelenmiş komutlar, olaylar, hiyerarşi, değişiklik izleme) bitti; model testi ve Miri ile doğrulandı.
-  - **Sıradaki: WP5 (zamanlayıcı: sabit adım, açık sistem sırası, tohumlu rastgelelik; `wish_app`).** Önerilen model · efor: Opus 5.5 · high. Başlamadan önce tasarım notunun 5. bölümünü ve 12. bölümündeki WP4/WP4b notlarını oku. Zamanlayıcı her sistemden sonra `World::advance_change_tick` ve her güncellemede `World::update_events` çağırmalı; sistemin "son çalıştığı tick"ini `query_since` için tutmalı.
+  - WP5 (`wish_app`: sabit adım, sistem sırası, sistem başına `Rng` akışı; `wish_core::Rng`) bitti.
+  - **Sıradaki: WP6 (anlık görüntü ve dünya hash'i).** Önerilen model · efor: Opus 5.5 · high. Tasarım notunun 6. bölümünü (WP5 sonrası güncel hâli: iki katmanlı anlık görüntü) ve 12. bölümü oku. Hash dolguyu atlamalı (alan aralıkları), metinleri tutamaç değil içerikle hash'lemeli.
 - **Git:** `main` yalnızca M0 belgelerini taşır; M1 çalışması `m1-core` dalındadır. Uzak depo (remote) yok. Commit kimliği depoya özel proje kimliğidir (kullanıcı kararı); kişisel e-posta kullanma.
 - **Ortam (15 Kasım 2026'da doğrulandı):** Rust 1.100.0 (`rust-toolchain.toml` ile sabit) ve Visual Studio 2022 Build Tools 17.14.45 kurulu. Bu oturumun kabuğunda `cargo` PATH'te olmayabilir; her komuttan önce `$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"` çalıştır.
 - **Proje klasörü OneDrive altında** (`Masaüstü\wish-engine`). Derleme çıktıları git'e girmeyen yerel `.cargo/config.toml` ile `C:/wish-build/target` klasörüne yönlendirildi. Bu dosyayı silme; `target/` klasörünü asla proje klasörünün içinde bırakma.
@@ -31,6 +32,7 @@ Wish Engine: yapay zekâya tamamen entegre ama yapay zekâsız da eksiksiz kulla
 - **Her kilometre taşına (ve belirgin biçimde farklı her iş paketine) başlamadan önce önerilen model ve efor değerini söyle**; yol haritasındaki tabloyu esas al, gerekiyorsa gerekçesiyle güncelle. Kullanıcı bunu açıkça istedi.
 - Kullanıcının vizyonu: her şey **sorunsuz** olmalı ve seçimlerde **ileriyi gören, yenilikçi** seçenek tercih edilmeli. İki seçenek arasında kalırsan bunu ölçüt al; ama kapsamı büyüten her öneriyi açıkça "bu 1.0 kapsamını büyütür" diye belirt.
 - Kullanıcıya yalnızca gerçekten onun vermesi gereken kararları sor (ad, lisans, para/hesap gerektiren işler). Teknik kararları gerekçesiyle kendin ver ve belgeye yaz.
+- **İş paketleri arasında onay bekleme** (kullanıcı kararı, 15 Kasım 2026: "bana sormadan ilerle"). Bir paketi doğrula, commit et, kısa durum yaz ve sıradakine geç. Durmak için yalnızca kullanıcıya ait karar, yeni indirme/kurulum onayı ya da geri alınamaz işlem gerekçe olabilir.
 
 ## Değişmezler (çiğnenemez)
 

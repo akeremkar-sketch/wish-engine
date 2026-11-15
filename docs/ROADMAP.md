@@ -93,8 +93,8 @@ M1'in ilk iş paketinde yapılacak tek ortam işi: derleme çıktılarını OneD
 | 3. `wish_schema` | Tamamlandı (15 Kasım 2026): makrolar, JSON ⇄ bayt, JSON Schema, parmak izi. Toplam 60 test, biçim ve clippy temiz. Çıkış ölçütlerinden ikisi karşılandı: "her bileşenin JSON Schema'sı üretilir" ve "JSON gidiş-dönüşü kayıpsızdır" (her sonlu `f32`/`f64` için özellik testiyle) |
 | 4. `wish_ecs` | Tamamlandı (15 Kasım 2026): depolama, türlü ve JSON erişim, sorgular, kaynaklar, metin tablosu. Model tabanlı test + Miri |
 | 4b. `wish_ecs` ek | Tamamlandı (15 Kasım 2026): ertelenmiş komutlar, olaylar, hiyerarşi, değişiklik izleme. Model testi + Miri |
-| 5. Zamanlayıcı | **Sıradaki** — sabit adım, açık sistem sırası, tohumlu rastgelelik. Opus 5.5 · high |
-| 6. Anlık görüntü / hash | Bekliyor |
+| 5. Zamanlayıcı | Tamamlandı (15 Kasım 2026): `wish_app` (sabit adım, sistem sırası, sistem başına rastgelelik akışı), `wish_core::Rng`. Aynı tohumla 600 tick boyunca aynı dünya |
+| 6. Anlık görüntü / hash | **Sıradaki** — Opus 5.5 · high |
 | 7. `wish_cli` | Bekliyor |
 | 8. Test altyapısı, kıyaslama | Bekliyor |
 

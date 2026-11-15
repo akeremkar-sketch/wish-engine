@@ -208,13 +208,13 @@ Yalnızca `world.set_parent` / `world.remove_parent` üzerinden değişir (alanl
 - **Sistem (M1):** `name` + `fn(&mut World) -> Result<()>` + `before`/`after` kısıtları. Hata döndüren sistem devre dışı kalır, tanı kaydedilir, dünya ilerler (M5'teki Wasm tuzak davranışıyla aynı).
 - **Sıra:** kısıtlara göre topolojik sıralama; hazır düğümler arasında **ada göre en küçük** seçilir. Sonuç kayıt sırasından bağımsız tek bir toplam sıradır. Döngü → tanı (döngüdeki sistem adlarıyla).
 - **Yürütme:** tek iş parçacığı, sıralı. Paralellik M1 kapsamı dışıdır; eklendiğinde aynı hash'i üretmek zorundadır.
-- **Rastgelelik:** kendi içimizde yazılan `xoshiro256++`, tohumlama `SplitMix64` (dış crate sürümü değişince dizinin değişmesi riski yok; başvuru vektörleriyle test edilir). Her sistemin kendi akışı vardır: `akış = f(dünya tohumu, sistem adının kararlı hash'i)`. Akış durumları `WorldState` içindedir.
+- **Rastgelelik:** kendi içimizde yazılan `xoshiro256++`, tohumlama `SplitMix64` (dış crate sürümü değişince dizinin değişmesi riski yok; başvuru vektörleriyle test edilir). Her sistemin kendi akışı vardır: `akış = f(dünya tohumu, sistem adının kararlı hash'i)`. ~~Akış durumları `WorldState` içindedir.~~ **WP5'te değişti:** akış durumları, sistemlerin "son çalışma" tick'leri ve devre dışı bayrakları zamanlayıcının (`App`) durumudur; anlık görüntü bu yüzden dünya ile birlikte zamanlayıcıyı da kapsar (§6).
 
 Bilinçli erteleme: Bevy tarzı parametre enjeksiyonu (`fn sys(q: Query<…>, t: Res<Time>)`). M1'de sistemler `&mut World` alır; ergonomik katman, erişim bildirimiyle birlikte M5'te konuk SDK'sı tasarlanırken eklenir.
 
 ## 6. Anlık görüntü ve dünya hash'i
 
-**Anlık görüntü:** `world.snapshot() -> Snapshot` (`WorldState` kopyası + kayıt parmak izi). `world.restore(&snapshot)` parmak izi uyuşmazsa tanı döndürür. Yalnızca tick sınırında alınır. M1'de bellektedir; diske yazım biçimi M4/M5'te.
+**Anlık görüntü (WP5 sonrası güncel hâli):** iki katmanlı. `world.snapshot()` = `WorldState` kopyası + kayıt parmak izi; `app.snapshot()` = dünya anlık görüntüsü + tick sayacı + her sistemin `SystemState`'i (rastgelelik akışı, son çalışma tick'i, devre dışı bayrağı) + sistem listesinin parmak izi. Geleceği belirleyen her şey ikincisindedir. İlk plan: `world.snapshot() -> Snapshot` (`WorldState` kopyası + kayıt parmak izi). `world.restore(&snapshot)` parmak izi uyuşmazsa tanı döndürür. Yalnızca tick sınırında alınır. M1'de bellektedir; diske yazım biçimi M4/M5'te.
 
 **Dünya hash'i:** `world.hash() -> Hash128` (XXH3-128). Sırasıyla: parmak izi, tick, varlık ayırıcı (kuşaklar + serbest liste), her arketip (bileşen kimlikleri, satır sayısı, varlık sütunu, her sütunun verisi ve değişiklik işaretleri), kaynaklar, olay tamponları, rastgelelik akışları. Bölümler etiket ve uzunlukla ayrılır.
 
@@ -270,7 +270,7 @@ wen bench ecs --entities 100000 --ticks 600
 | WP3 | `wish_schema` + makro: şema modeli, JSON ⇄ bayt, JSON Schema, parmak izi | Opus 5.5 · high | Tamamlandı |
 | WP4 | `wish_ecs`: depolama, türlü ve dinamik erişim, sorgular, kaynaklar, metin tablosu | Opus 5.5 · high | Tamamlandı |
 | WP4b | `wish_ecs`: ertelenmiş komutlar, olaylar, hiyerarşi, değişiklik izleme | Opus 5.5 · high | Tamamlandı |
-| WP5 | Zamanlayıcı, sabit adım, rastgelelik (`wish_app`) | Opus 5.5 · high | |
+| WP5 | Zamanlayıcı, sabit adım, rastgelelik (`wish_app`) | Opus 5.5 · high | Tamamlandı |
 | WP6 | Anlık görüntü ve dünya hash'i | Opus 5.5 · high | |
 | WP7 | `wish_cli`: `wen run`, `wen schema`, `wen bench` | Sonnet 5.5 · medium | |
 | WP8 | Determinizm testleri, Miri, kıyaslama, M1 kapanış incelemesi | Opus 5.5 · high | |
@@ -323,3 +323,13 @@ Tasarımdan sonra uygulama sırasında verilen ve sonraki iş paketlerini etkile
 - **Hiyerarşi**, tek bir bileşende (`Hierarchy`: ebeveyn, ilk/son çocuk, önceki/sonraki kardeş) çift bağlı liste olarak durur; liste türü gerekmez, düz veri kalır. Bileşen **motor tarafından yönetilir**: okunabilir (JSON dahil), ama doğrudan yazma, ekleme, silme, `get_mut` ve `&mut` sorgusu `managed_component` tanısıyla reddedilir; değişiklik yalnızca `set_parent` / `remove_parent` ile yapılır. Döngü oluşturma `hierarchy_cycle` ile reddedilir. Bağlantıları izleyen her yürüyüş varlık sayısıyla sınırlıdır; bozuk bağlantılar motoru kilitleyemez.
 - **`despawn` alt ağacı da siler.** Model tabanlı test rastgele `set_parent` / `remove_parent` / `despawn` dizileriyle bunu ve kardeş sırasını doğruluyor.
 - **Öneri algoritması iyileştirildi** (`wish_core::suggest`): iki komşu harfin yer değiştirmesi artık tek hata sayılıyor (`Hti` → `Hit`). Bunu yeni olay testi yakaladı.
+
+### WP5
+
+- **`wish_core::Rng`** (xoshiro256++, SplitMix64 tohumlama) motorun tek rastgelelik kaynağıdır. SplitMix64'ün tohum 0 için yayımlanmış ilk çıktısı ve xoshiro256++'ın [1,2,3,4] durumundan ilk iki çıktısı (algoritmadan elle de hesaplandı) testte sabit; ayrıca türetilmiş yöntemlerin (`below`, aralıklar) bir dizisi kaydedildi. `below` sapmasız Lemire yöntemini kullanır.
+- **Sistem:** `fn(&mut World, &mut SystemContext) -> Result<()>`. `SystemContext`: ad, `Time`, sistemin kendi `Rng`'si, `last_run` (bir önceki çalışmanın sonundaki değişiklik tick'i; `query_since` ile "o zamandan beri ne değişti" sorusu için).
+- **Sıra:** topolojik sıralama, serbest olanlar arasında ada göre en küçük. Ekleme sırasından bağımsız (testli). Kısıt bilinmeyen bir adı gösterirse `unknown_system` + öneri; döngü `system_order_cycle` + döngüdeki adlar. Bu iki durumda tick hiç çalışmaz.
+- **Her sistemden sonra** değişiklik tick'i ilerletilir; **her tick sonunda** olay tamponları döner. `Time` kaynağı her tick başında yazılır.
+- **Hata veren sistem** devre dışı kalır (`system_failed`, asıl tanının kodu, iletisi, ipucu ve konumu korunur); diğerleri çalışmaya devam eder. `enable_system` yeniden açar (ileride sıcak yüklemeden sonra). Yerel Rust sistemlerindeki panik yakalanmaz: yerel kod güvenilir kabul edilir; güvenilmeyen kod M5'te Wasm'da çalışacak.
+- **Süre hesapları tam sayı hızdan yapılır.** `Time::at(tick, hz)`: `elapsed = tick / hz` (f64), `delta = 1/hz` (f32). `update(saniye)` biriktirmeyi saniye değil **tick** biriminde yapar; böylece 1/60'ın `f32` yuvarlaması adım sayısını kaydıramaz (0,05 sn @ 60 Hz = tam 3 tick). Bunu testler yakaladı. Tek çağrıda en fazla `max_steps_per_update` (varsayılan 8) tick çalışır, fazlası atlanır ve raporlanır.
+- **Determinizm testi:** rastgele doğan, zıplayan ve rastgele ölen varlıklarla 600 tick; aynı tohum her 50 tick'te aynı dünyayı veriyor, farklı tohum farklı. Sistem ekleme sırası ters çevrilince ya da rastgele sayı çeken ilgisiz yeni sistemler eklenince sonuç değişmiyor (akışlar sistem adına bağlı).
