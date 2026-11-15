@@ -5,9 +5,9 @@
 #![allow(unsafe_code)]
 
 use core::mem::MaybeUninit;
-use core::ptr;
+use core::{ptr, slice};
 
-use wish_core::Result;
+use wish_core::{Result, StableHasher};
 
 use crate::internal_error;
 
@@ -236,6 +236,49 @@ impl Column {
             Ok(())
         } else {
             Err(internal_error("change ticks are out of step with values"))
+        }
+    }
+
+    /// Feeds the column's state into a hasher: row count, every row's ticks,
+    /// and the field bytes of every value (`spans`), never padding.
+    pub(crate) fn hash_into(&self, spans: &[(usize, usize)], hasher: &mut StableHasher) {
+        hasher.write_u64(self.len as u64);
+        for (added, changed) in self.added.iter().zip(&self.changed) {
+            hasher.write_u64(*added);
+            hasher.write_u64(*changed);
+        }
+        let size = self.item_size;
+        if size == 0 || self.len == 0 {
+            return;
+        }
+        let in_bounds = spans
+            .iter()
+            .all(|(offset, len)| offset.checked_add(*len).is_some_and(|end| end <= size));
+        if !in_bounds {
+            // A broken registry; hash a marker rather than read out of bounds.
+            hasher.write_str("invalid-spans");
+            return;
+        }
+        if spans == [(0, size)] {
+            // No padding anywhere: the whole buffer up to `len` rows is field
+            // bytes, so it can be hashed in one call.
+            // SAFETY: the buffer holds at least `len * size` bytes (every push
+            // ensured it), all of them field bytes of valid values, hence
+            // initialised. The slice borrows `self`, so the buffer cannot
+            // change while it lives.
+            let bytes = unsafe { slice::from_raw_parts(self.as_ptr(), self.len * size) };
+            hasher.write_bytes(bytes);
+            return;
+        }
+        for row in 0..self.len {
+            for &(offset, len) in spans {
+                // SAFETY: the span lies inside the slot (checked above) and the
+                // slot is inside the buffer (`row < len`). Spans cover only
+                // field bytes, which are initialised in every valid value.
+                let bytes =
+                    unsafe { slice::from_raw_parts(self.as_ptr().add(row * size + offset), len) };
+                hasher.write_bytes(bytes);
+            }
         }
     }
 

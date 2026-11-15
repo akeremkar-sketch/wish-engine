@@ -62,7 +62,7 @@ pub use query::{
 };
 pub use registry::{ComponentId, EventId, Registry, ResourceId, TypeInfo};
 pub use text::TextTable;
-pub use world::World;
+pub use world::{World, WorldSnapshot};
 
 use wish_core::Diagnostic;
 

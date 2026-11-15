@@ -11,8 +11,10 @@ publish = false
 
 [workspace.dependencies]
 # Workspace crates. A crate is listed once another crate depends on it.
+wish_app = { path = "crates/wish_app" }
 wish_core = { path = "crates/wish_core" }
 wish_ecs = { path = "crates/wish_ecs" }
+wish_examples = { path = "crates/wish_examples" }
 wish_schema = { path = "crates/wish_schema" }
 wish_schema_macros = { path = "crates/wish_schema_macros" }
 

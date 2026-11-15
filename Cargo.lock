@@ -491,6 +491,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "wish_cli"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wish_app",
+ "wish_core",
+ "wish_ecs",
+ "wish_examples",
+ "wish_schema",
+]
+
+[[package]]
 name = "wish_core"
 version = "0.1.0"
 dependencies = [
@@ -507,6 +519,17 @@ dependencies = [
  "proptest",
  "serde_json",
  "wish_core",
+ "wish_schema",
+]
+
+[[package]]
+name = "wish_examples"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wish_app",
+ "wish_core",
+ "wish_ecs",
  "wish_schema",
 ]
 

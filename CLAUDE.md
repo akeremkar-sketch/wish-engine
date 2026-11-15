@@ -10,7 +10,9 @@ Wish Engine: yapay zekâya tamamen entegre ama yapay zekâsız da eksiksiz kulla
   - WP4 (`wish_ecs` temeli: varlıklar, arketip depolama, türlü/JSON/bayt erişim, sorgular ve süzgeçler, kaynaklar, metin tablosu) bitti; model tabanlı test ve Miri ile doğrulandı.
   - WP4b (ertelenmiş komutlar, olaylar, hiyerarşi, değişiklik izleme) bitti; model testi ve Miri ile doğrulandı.
   - WP5 (`wish_app`: sabit adım, sistem sırası, sistem başına `Rng` akışı; `wish_core::Rng`) bitti.
-  - **Sıradaki: WP6 (anlık görüntü ve dünya hash'i).** Önerilen model · efor: Opus 5.5 · high. Tasarım notunun 6. bölümünü (WP5 sonrası güncel hâli: iki katmanlı anlık görüntü) ve 12. bölümü oku. Hash dolguyu atlamalı (alan aralıkları), metinleri tutamaç değil içerikle hash'lemeli.
+  - WP6 (dünya ve uygulama anlık görüntüsü, kararlı hash, `wish_examples::bounce`) bitti; determinizm çıkış ölçütleri karşılandı.
+  - **Sıradaki: WP7 (`wish_cli`: `wen run --example bounce --headless --frames N --seed S --json`, `wen schema --json`).** Önerilen model · efor: Sonnet 5.5 · medium. Ardından WP8 (kıyaslama, kapanış incelemesi; Opus 5.5 · high).
+- **Hash'leri değiştirme konusunda dikkat:** `wish_ecs/tests/snapshot.rs` ve `wish_core` testlerinde kayıtlı hash/rastgelelik değerleri var. Bunlar kırılırsa önce bilinçli bir format değişikliği olup olmadığını düşün; bilinçliyse sürüm etiketini (`wish-world-hash-v1` vb.) artır.
 - **Git:** `main` yalnızca M0 belgelerini taşır; M1 çalışması `m1-core` dalındadır. Uzak depo (remote) yok. Commit kimliği depoya özel proje kimliğidir (kullanıcı kararı); kişisel e-posta kullanma.
 - **Ortam (15 Kasım 2026'da doğrulandı):** Rust 1.100.0 (`rust-toolchain.toml` ile sabit) ve Visual Studio 2022 Build Tools 17.14.45 kurulu. Bu oturumun kabuğunda `cargo` PATH'te olmayabilir; her komuttan önce `$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"` çalıştır.
 - **Proje klasörü OneDrive altında** (`Masaüstü\wish-engine`). Derleme çıktıları git'e girmeyen yerel `.cargo/config.toml` ile `C:/wish-build/target` klasörüne yönlendirildi. Bu dosyayı silme; `target/` klasörünü asla proje klasörünün içinde bırakma.

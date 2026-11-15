@@ -7,7 +7,7 @@ use core::fmt;
 use std::collections::BTreeMap;
 
 use serde_json::{Map, Value};
-use wish_core::{Diagnostic, Entity, Result, Text};
+use wish_core::{Diagnostic, Entity, Hash128, Result, StableHasher, Text};
 use wish_schema::{
     Component, Event, JsonContext, Resource, TypeSchema, apply_json, to_json, validate_bytes,
 };
@@ -39,6 +39,32 @@ struct WorldState {
     texts: TextTable,
     /// Recorded on every write; starts at 1 so that tick 0 precedes everything.
     change_tick: u64,
+}
+
+/// A copy of a world's state, to return to later.
+///
+/// Holds everything that changes while the world runs. It records the
+/// layouts of the types registered when it was taken, and can only be
+/// restored into a world whose registry starts with exactly those types.
+#[derive(Clone, Debug)]
+pub struct WorldSnapshot {
+    state: WorldState,
+    /// How many component, resource and event types were registered.
+    counts: [usize; 3],
+    /// The fingerprint of those types.
+    fingerprint: Hash128,
+}
+
+impl WorldSnapshot {
+    /// The number of entities in the snapshot.
+    pub fn entity_count(&self) -> usize {
+        self.state.entities.alive()
+    }
+
+    /// The change tick when the snapshot was taken.
+    pub fn change_tick(&self) -> ChangeTick {
+        ChangeTick(self.state.change_tick)
+    }
 }
 
 /// Entities, their components, resources, events and text.
@@ -196,6 +222,114 @@ impl World {
             .ticks(location.row)
             .ok_or_else(|| internal_error("a row has no change ticks"))?;
         Ok(Some((ChangeTick(added), ChangeTick(changed))))
+    }
+
+    // -----------------------------------------------------------------------
+    // Snapshots and hashing
+    // -----------------------------------------------------------------------
+
+    /// A copy of the world's state. Cheap enough to take every tick for
+    /// small worlds; it copies component data as raw memory.
+    pub fn snapshot(&self) -> WorldSnapshot {
+        let counts = self.registry.counts();
+        WorldSnapshot {
+            state: self.state.clone(),
+            counts,
+            fingerprint: self.registry.fingerprint(),
+        }
+    }
+
+    /// Returns the world to a snapshot. Types registered after the snapshot
+    /// was taken stay registered; nothing else survives.
+    ///
+    /// Fails, changing nothing, if the snapshot's types do not match the
+    /// first types registered in this world.
+    pub fn restore(&mut self, snapshot: &WorldSnapshot) -> Result<()> {
+        if self.registry.fingerprint_of(snapshot.counts) != Some(snapshot.fingerprint) {
+            return Err(Diagnostic::error(
+                "snapshot_mismatch",
+                "The snapshot was taken in a world whose component, resource or event types differ from this world's.",
+                "Restore a snapshot only into the world it came from, or into one that registers the same types in the same order (for example after the same code has run).",
+            ));
+        }
+        self.state = snapshot.state.clone();
+        Ok(())
+    }
+
+    /// A stable hash of the world's whole state.
+    ///
+    /// Equal hashes mean the worlds will behave the same from here on, given
+    /// the same inputs: everything that affects the future is included
+    /// (registered types, entities and the order handles will be reused in,
+    /// archetype and row order, component values and change ticks,
+    /// resources, buffered events, the text table, the change tick).
+    /// Padding bytes are never included.
+    ///
+    /// It is a hash of *state*, not of meaning: two worlds that contain the
+    /// same things but were built in a different order can hash differently.
+    pub fn hash(&self) -> Hash128 {
+        let mut hasher = StableHasher::new();
+        hasher.write_str("wish-world-hash-v1");
+        hasher.write_bytes(&self.registry.fingerprint().as_u128().to_le_bytes());
+        hasher.write_u64(self.state.change_tick);
+        self.state.entities.hash_into(&mut hasher);
+
+        hasher.write_u64(self.state.archetypes.len() as u64);
+        for archetype in &self.state.archetypes {
+            hasher.write_u64(archetype.components().len() as u64);
+            for id in archetype.components() {
+                hasher.write_u64(id.index() as u64);
+            }
+            hasher.write_u64(archetype.entities().len() as u64);
+            for entity in archetype.entities() {
+                hasher.write_u64(entity.to_bits());
+            }
+            for (id, column) in archetype.components().iter().zip(&archetype.columns) {
+                let spans = self
+                    .registry
+                    .component(*id)
+                    .map_or(&[][..], TypeInfo::spans);
+                column.hash_into(spans, &mut hasher);
+            }
+        }
+
+        hasher.write_u64(self.state.resources.len() as u64);
+        for (index, slot) in self.state.resources.iter().enumerate() {
+            match slot {
+                Some(column) => {
+                    hasher.write_u8(1);
+                    let spans = self
+                        .registry
+                        .resources()
+                        .nth(index)
+                        .map_or(&[][..], |(_, info)| info.spans());
+                    column.hash_into(spans, &mut hasher);
+                }
+                None => hasher.write_u8(0),
+            }
+        }
+
+        hasher.write_u64(self.state.events.len() as u64);
+        for (index, slot) in self.state.events.iter().enumerate() {
+            match slot {
+                Some(queue) => {
+                    hasher.write_u8(1);
+                    let spans = self
+                        .registry
+                        .events()
+                        .nth(index)
+                        .map_or(&[][..], |(_, info)| info.spans());
+                    queue.hash_into(spans, &mut hasher);
+                }
+                None => hasher.write_u8(0),
+            }
+        }
+
+        hasher.write_u64(self.state.texts.len() as u64);
+        for (_, text) in self.state.texts.iter() {
+            hasher.write_str(text);
+        }
+        hasher.finish()
     }
 
     // -----------------------------------------------------------------------

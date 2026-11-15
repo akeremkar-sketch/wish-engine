@@ -271,7 +271,7 @@ wen bench ecs --entities 100000 --ticks 600
 | WP4 | `wish_ecs`: depolama, türlü ve dinamik erişim, sorgular, kaynaklar, metin tablosu | Opus 5.5 · high | Tamamlandı |
 | WP4b | `wish_ecs`: ertelenmiş komutlar, olaylar, hiyerarşi, değişiklik izleme | Opus 5.5 · high | Tamamlandı |
 | WP5 | Zamanlayıcı, sabit adım, rastgelelik (`wish_app`) | Opus 5.5 · high | Tamamlandı |
-| WP6 | Anlık görüntü ve dünya hash'i | Opus 5.5 · high | |
+| WP6 | Anlık görüntü ve dünya hash'i | Opus 5.5 · high | Tamamlandı |
 | WP7 | `wish_cli`: `wen run`, `wen schema`, `wen bench` | Sonnet 5.5 · medium | |
 | WP8 | Determinizm testleri, Miri, kıyaslama, M1 kapanış incelemesi | Opus 5.5 · high | |
 
@@ -333,3 +333,14 @@ Tasarımdan sonra uygulama sırasında verilen ve sonraki iş paketlerini etkile
 - **Hata veren sistem** devre dışı kalır (`system_failed`, asıl tanının kodu, iletisi, ipucu ve konumu korunur); diğerleri çalışmaya devam eder. `enable_system` yeniden açar (ileride sıcak yüklemeden sonra). Yerel Rust sistemlerindeki panik yakalanmaz: yerel kod güvenilir kabul edilir; güvenilmeyen kod M5'te Wasm'da çalışacak.
 - **Süre hesapları tam sayı hızdan yapılır.** `Time::at(tick, hz)`: `elapsed = tick / hz` (f64), `delta = 1/hz` (f32). `update(saniye)` biriktirmeyi saniye değil **tick** biriminde yapar; böylece 1/60'ın `f32` yuvarlaması adım sayısını kaydıramaz (0,05 sn @ 60 Hz = tam 3 tick). Bunu testler yakaladı. Tek çağrıda en fazla `max_steps_per_update` (varsayılan 8) tick çalışır, fazlası atlanır ve raporlanır.
 - **Determinizm testi:** rastgele doğan, zıplayan ve rastgele ölen varlıklarla 600 tick; aynı tohum her 50 tick'te aynı dünyayı veriyor, farklı tohum farklı. Sistem ekleme sırası ters çevrilince ya da rastgele sayı çeken ilgisiz yeni sistemler eklenince sonuç değişmiyor (akışlar sistem adına bağlı).
+
+### WP6
+
+- **Dünya hash'i** (`World::hash`, sürüm etiketi `wish-world-hash-v1`): kayıt parmak izi, değişiklik tick'i, varlık tablosu (her yuvanın kuşağı ve konumu, serbest liste sırası), arketipler oluşturulma sırasıyla (bileşen kimlikleri, varlıklar, her sütunun satır işaretleri ve alan baytları), kaynaklar, olay kuyrukları (sıra numaraları dahil), metin tablosu. Dolgusu olmayan sütunlar tek çağrıda hash'lenir; diğerlerinde yalnızca alan aralıkları okunur.
+- **Metinler** §6'daki ilk plandan farklı olarak tutamaç numarasıyla hash'lenir; metin tablosunun kendisi de hash'e girdiği için durum yine eksiksiz kapsanır (gelecekteki tutamaçlar tablonun sırasına bağlıdır, yani "durum hash'i" tanımına bu daha uygundur).
+- **Rastgelelik akışları dünya hash'inde değil**, uygulama hash'indedir (`App::hash`, `wish-app-hash-v1`): dünya hash'i + tick sayacı + tohum ve tick hızı + sistem kümesinin parmak izi + her sistemin `Rng` durumu, son çalışma tick'i ve devre dışı bayrağı (ada göre sıralı). "Aynı hash ⇒ aynı gelecek" garantisi uygulama hash'i içindir.
+- **Kayıt parmak izi önek olarak karşılaştırılır.** Anlık görüntü kaç tür kayıtlı olduğunu ve onların parmak izini saklar; kayıt yalnızca eklendiği için sonradan kaydedilen türler geri yüklemeyi engellemez. Farklı türlü bir dünyaya geri yükleme `snapshot_mismatch` ile reddedilir ve hiçbir şeyi değiştirmez.
+- **Uygulama anlık görüntüsü** sistem durumlarını **ada göre** saklar; aynı sistemleri başka sırayla ekleyen bir uygulamaya da geri yüklenebilir. Sistem kümesi (adlar + kısıtlar), tohum ya da tick hızı farklıysa reddedilir. `update` için biriken gerçek zaman geri yüklemede sıfırlanır (simülasyon durumu değildir).
+- **Kayıtlı hash değeri:** sabit bir küçük dünyanın hash'i testte kayıtlı (`06af2cce…`). Hash tanımı değişirse bu test kırılır; değişiklik bilinçli ise sürüm etiketiyle birlikte güncellenir.
+- **Örnek dünya `bounce`** (`wish_examples` crate'i): rastgele doğan, düşen, zıplayan, bazen etiketli (JSON yolundan metin) ve bazen hiyerarşide izci çocuğu olan, rastgele ölen cisimler; zıplamalar olay olarak gönderilip bir imleçle sayılıyor, değişiklik izleme her tick ölçülüyor. Hash ve anlık görüntü testleri motorun her parçasını bu iş yüküyle sınıyor.
+- **M1 çıkış ölçütleri (determinizm):** `bounce` 10.000 tick iki kez çalıştırılıyor, her 100 tick'teki uygulama hash'leri aynı. 5.000. tick'te anlık görüntü → devam, geri yükle → devam ve sıfırdan kurulmuş uygulamaya geri yükle → devam: üçü de kesintisiz çalıştırmayla aynı 10.000. tick hash'ini veriyor. (Debug derlemesinde testlerin tamamı ~1,3 sn.)

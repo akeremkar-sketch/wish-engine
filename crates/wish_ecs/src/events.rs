@@ -47,6 +47,14 @@ impl EventQueue {
         self.current_start += self.previous.len() as u64;
     }
 
+    /// Feeds the queue's state into a hasher.
+    pub(crate) fn hash_into(&self, spans: &[(usize, usize)], hasher: &mut wish_core::StableHasher) {
+        hasher.write_u64(self.previous_start);
+        hasher.write_u64(self.current_start);
+        self.previous.hash_into(spans, hasher);
+        self.current.hash_into(spans, hasher);
+    }
+
     /// The sequence number the next event will get.
     pub(crate) fn next_sequence(&self) -> u64 {
         self.current_start + self.current.len() as u64
@@ -83,6 +91,12 @@ impl<E> EventCursor<E> {
     /// The sequence number of the next event this cursor will read.
     pub fn position(&self) -> u64 {
         self.next
+    }
+
+    /// A cursor that reads from sequence number `position` on. Lets a system
+    /// keep its reading position in a resource (plain data) between ticks.
+    pub fn from_position(position: u64) -> Self {
+        Self::at(position)
     }
 }
 

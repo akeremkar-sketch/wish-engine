@@ -96,6 +96,27 @@ impl Entities {
         self.alive
     }
 
+    /// Feeds everything that decides future handles and locations into a
+    /// hasher: every slot's generation and location, and the free list in order.
+    pub fn hash_into(&self, hasher: &mut wish_core::StableHasher) {
+        hasher.write_u64(self.slots.len() as u64);
+        for slot in &self.slots {
+            hasher.write_u32(slot.generation);
+            match slot.location {
+                Some(location) => {
+                    hasher.write_u8(1);
+                    hasher.write_u64(location.archetype as u64);
+                    hasher.write_u64(location.row as u64);
+                }
+                None => hasher.write_u8(0),
+            }
+        }
+        hasher.write_u64(self.free.len() as u64);
+        for index in &self.free {
+            hasher.write_u32(*index);
+        }
+    }
+
     /// Every living entity, in ascending index order.
     pub fn iter(&self) -> impl Iterator<Item = Entity> + '_ {
         (0u32..)

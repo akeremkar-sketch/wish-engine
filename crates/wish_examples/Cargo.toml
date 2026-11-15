@@ -1,0 +1,19 @@
+[package]
+name = "wish_examples"
+description = "Built-in example worlds for Wish Engine, used by `wen run --example` and by the determinism tests."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+wish_app.workspace = true
+wish_core.workspace = true
+wish_ecs.workspace = true
+wish_schema.workspace = true
+
+
+[lints]
+workspace = true

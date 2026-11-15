@@ -1,9 +1,9 @@
 //! The app: a world, its systems and the fixed-step loop.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
-use wish_core::{Diagnostic, Result, Rng, StableHasher};
-use wish_ecs::{ChangeTick, World};
+use wish_core::{Diagnostic, Hash128, Result, Rng, StableHasher};
+use wish_ecs::{ChangeTick, World, WorldSnapshot};
 
 use crate::schedule::{System, SystemContext, order};
 use crate::time::Time;
@@ -63,6 +63,32 @@ pub struct UpdateReport {
     /// How far simulated time is into the next tick, from 0 to 1. Renderers
     /// use it to interpolate between the last two ticks.
     pub alpha: f32,
+}
+
+/// A copy of everything that decides how an app continues: the world, the
+/// tick counter and every system's state.
+#[derive(Clone, Debug)]
+pub struct AppSnapshot {
+    world: WorldSnapshot,
+    tick: u64,
+    /// Keyed by system name, so the snapshot fits an app that added the same
+    /// systems in another order.
+    systems: BTreeMap<String, SystemState>,
+    /// The fingerprint of the system set (names and constraints).
+    schedule: Hash128,
+    config: AppConfig,
+}
+
+impl AppSnapshot {
+    /// The tick the app will simulate next after restoring.
+    pub fn tick(&self) -> u64 {
+        self.tick
+    }
+
+    /// The world part of the snapshot.
+    pub fn world(&self) -> &WorldSnapshot {
+        &self.world
+    }
 }
 
 /// The seed of a system's random stream: a stable hash of the app seed and
@@ -317,6 +343,110 @@ impl App {
         }
         report.alpha = self.accumulator.clamp(0.0, 1.0) as f32;
         Ok(report)
+    }
+
+    /// A stable fingerprint of the system set: names and ordering
+    /// constraints, independent of the order systems were added in.
+    pub fn schedule_fingerprint(&self) -> Hash128 {
+        let mut systems: Vec<&System> = self.systems.iter().collect();
+        systems.sort_by(|a, b| a.name.cmp(&b.name));
+        let mut hasher = StableHasher::new();
+        hasher.write_str("wish-schedule-v1");
+        hasher.write_u64(systems.len() as u64);
+        for system in systems {
+            hasher.write_str(&system.name);
+            for (label, names) in [("before", &system.before), ("after", &system.after)] {
+                hasher.write_str(label);
+                hasher.write_u64(names.len() as u64);
+                for name in names {
+                    hasher.write_str(name);
+                }
+            }
+        }
+        hasher.finish()
+    }
+
+    /// A copy of everything that decides how the app continues.
+    pub fn snapshot(&self) -> AppSnapshot {
+        AppSnapshot {
+            world: self.world.snapshot(),
+            tick: self.tick,
+            systems: self
+                .system_states()
+                .map(|(name, state)| (name.to_owned(), state.clone()))
+                .collect(),
+            schedule: self.schedule_fingerprint(),
+            config: self.config,
+        }
+    }
+
+    /// Returns the app to a snapshot: world, tick and system states.
+    ///
+    /// The app must have the same systems (by name and constraints) and the
+    /// same seed and tick rate as when the snapshot was taken; otherwise
+    /// nothing changes and the error says what differs. Real time owed by
+    /// [`App::update`] is discarded.
+    pub fn restore(&mut self, snapshot: &AppSnapshot) -> Result<()> {
+        if snapshot.schedule != self.schedule_fingerprint() {
+            let mut expected: Vec<&str> = snapshot.systems.keys().map(String::as_str).collect();
+            expected.sort_unstable();
+            return Err(Diagnostic::error(
+                "snapshot_mismatch",
+                "The snapshot was taken with a different set of systems or ordering constraints.",
+                format!(
+                    "Add the same systems with the same constraints before restoring. The snapshot has: {}.",
+                    expected.join(", ")
+                ),
+            ));
+        }
+        if snapshot.config.seed != self.config.seed
+            || snapshot.config.tick_rate_hz != self.config.tick_rate_hz
+        {
+            return Err(Diagnostic::error(
+                "snapshot_mismatch",
+                format!(
+                    "The snapshot was taken with seed {} at {} Hz; this app uses seed {} at {} Hz.",
+                    snapshot.config.seed,
+                    snapshot.config.tick_rate_hz,
+                    self.config.seed,
+                    self.config.tick_rate_hz
+                ),
+                "Create the app with the snapshot's seed and tick rate.",
+            ));
+        }
+        self.world.restore(&snapshot.world)?;
+        for (system, state) in self.systems.iter().zip(self.states.iter_mut()) {
+            if let Some(saved) = snapshot.systems.get(&system.name) {
+                *state = saved.clone();
+            }
+        }
+        self.tick = snapshot.tick;
+        self.accumulator = 0.0;
+        Ok(())
+    }
+
+    /// A stable hash of everything that decides how the app continues: the
+    /// world hash, the tick counter, the seed and tick rate, the system set,
+    /// and each system's random stream, last run and enabled flag.
+    pub fn hash(&self) -> Hash128 {
+        let mut hasher = StableHasher::new();
+        hasher.write_str("wish-app-hash-v1");
+        hasher.write_bytes(&self.world.hash().as_u128().to_le_bytes());
+        hasher.write_u64(self.tick);
+        hasher.write_u64(self.config.seed);
+        hasher.write_u32(self.config.tick_rate_hz);
+        hasher.write_bytes(&self.schedule_fingerprint().as_u128().to_le_bytes());
+        let mut states: Vec<(&str, &SystemState)> = self.system_states().collect();
+        states.sort_by(|a, b| a.0.cmp(b.0));
+        for (name, state) in states {
+            hasher.write_str(name);
+            for word in state.rng.state() {
+                hasher.write_u64(word);
+            }
+            hasher.write_u64(state.last_run.get());
+            hasher.write_u8(u8::from(state.disabled.is_some()));
+        }
+        hasher.finish()
     }
 
     /// The names of disabled systems.

@@ -398,6 +398,42 @@ impl Registry {
         self.events.unknown(name)
     }
 
+    /// How many component, resource and event types are registered.
+    pub fn counts(&self) -> [usize; 3] {
+        [
+            self.components.infos.len(),
+            self.resources.infos.len(),
+            self.events.infos.len(),
+        ]
+    }
+
+    /// The fingerprint of every registered type's layout, in registration
+    /// order. Two registries with the same fingerprint interpret stored
+    /// bytes the same way.
+    pub fn fingerprint(&self) -> Hash128 {
+        self.fingerprint_of(self.counts()).unwrap_or_default()
+    }
+
+    /// The fingerprint of the first `counts` types of each kind, or `None`
+    /// if fewer are registered. Registration only appends, so a snapshot
+    /// taken before more types were registered still matches this prefix.
+    pub fn fingerprint_of(&self, counts: [usize; 3]) -> Option<Hash128> {
+        let mut hasher = wish_core::StableHasher::new();
+        hasher.write_str("wish-registry-v1");
+        for (table, count) in [&self.components, &self.resources, &self.events]
+            .into_iter()
+            .zip(counts)
+        {
+            hasher.write_str(table.kind);
+            hasher.write_u64(count as u64);
+            for info in table.infos.get(..count)? {
+                hasher.write_bytes(&info.fingerprint.as_u128().to_le_bytes());
+                hasher.write_u8(u8::from(info.managed));
+            }
+        }
+        Some(hasher.finish())
+    }
+
     /// Marks a component as kept consistent by the world itself.
     pub(crate) fn mark_managed(&mut self, id: ComponentId) {
         if let Some(info) = self.components.infos.get_mut(id.index()) {
