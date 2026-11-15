@@ -13,7 +13,8 @@ Wish Engine: yapay zekâya tamamen entegre ama yapay zekâsız da eksiksiz kulla
   - M2 WP4 (prefab'lar: `PrefabLibrary`, `load_prefab`, örnek + `overrides`, `expand()` ile türetilmiş kimlikler `örnek/prefab_varlığı`, `Instantiate`/`SetOverride`/`ReplaceOverride`/`RemoveOverride`) bitti.
   - M2 WP5 (`SceneDocument::instantiate`, `SceneId`, `wen run --example <ad> --scene <dosya> [--root <klasör>]`) bitti; sahne dosyasında `SceneId` yazılamaz.
   - M2 WP6 (`AssetRef` şema türü, `wish_asset`: dizin, `*.meta.json`, şemaya göre başvuru denetimi, `wen mv`) bitti. Dosya izleme bilerek WP7'ye bırakıldı (`notify` bağımlılığı orada eklenecek, lisansı denetlenecek).
-  - **Sıradaki: M2 WP7 (`wen check / fmt / migrate`, dosya izleyici ile sıcak yükleme).** Önerilen model · efor: Sonnet 5.5 · medium. İş paketleri ve modelleri tasarım notunun §10'unda; WP1–WP6 notları §12'de.
+  - M2 WP7 (`load_project`, `wen check / fmt / migrate / watch`, yoklamalı `Watcher`, `HotScene` ile sıcak yükleme: geçersiz değişiklik son iyi sahneyi bozmaz) bitti; izleyici `notify` kullanmaz (karar §12 WP7).
+  - **Sıradaki: M2 WP8 (M1'den devralınanlar: `trybuild` derleme-hatası testleri, makronun yinelenen hata iletileri, `syn` 3; kapanış incelemesi), sonra M2'yi `main`'e birleştir.** Önerilen model · efor: Opus 5.5 · high. İş paketleri ve modelleri tasarım notunun §10'unda; WP1–WP7 notları §12'de.
   - M3 (ilk piksel) M2 ile paralel yürüyebilir.
 - **`wen`'i çalıştırmak:** `cargo run -p wish_cli --release -- run --example bounce --frames 10000 --seed 7 --json`. Derlenmiş ikili `C:\wish-build\target\release\wen.exe` altında.
 - **Hash'leri değiştirme konusunda dikkat:** `wish_ecs/tests/snapshot.rs` ve `wish_core` testlerinde kayıtlı hash/rastgelelik değerleri var. Bunlar kırılırsa önce bilinçli bir format değişikliği olup olmadığını düşün; bilinçliyse sürüm etiketini (`wish-world-hash-v1` vb.) artır.

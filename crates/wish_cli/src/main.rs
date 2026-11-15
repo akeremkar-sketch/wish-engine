@@ -11,6 +11,7 @@
 //! ```
 
 mod args;
+mod project_cmds;
 mod scene;
 
 use std::process::ExitCode;
@@ -23,6 +24,7 @@ use wish_ecs::{Registry, TypeInfo};
 use wish_schema::json_schema;
 
 use crate::args::{Args, Command, parse};
+use crate::project_cmds::Outcome;
 use crate::scene::load_scene_app;
 
 const USAGE: &str = "\
@@ -32,6 +34,10 @@ USAGE:
     wen run --example <name> [--scene <file> [--root <folder>]] [--frames <n>] [--seed <n>]
             [--hash-every <n>] [--headless] [--json]
     wen bench [--entities <n>] [--ticks <n>] [--seed <n>] [--json]
+    wen check [files...] --example <name> [--root <folder>] [--json]
+    wen fmt [files...] --example <name> [--root <folder>] [--check] [--json]
+    wen migrate [files...] [--root <folder>] [--json]
+    wen watch --example <name> --scene <file> [--root <folder>] [--seconds <n>] [--json]
     wen mv <from> <to> --example <name> [--root <folder>] [--dry-run] [--json]
     wen schema [--example <name>] [--json]
     wen examples [--json]
@@ -46,6 +52,14 @@ COMMANDS:
                example only supplies the component types. Prefabs are found in --root.
     bench      Time the core on many moving entities (defaults: 100000 entities, 600 ticks).
                Build with --release for meaningful numbers.
+    check      Check every prefab, scene and meta file of the project (syntax, schema,
+               references, asset files) and report all problems with file, line and
+               column. Exits with failure if there is any error.
+    fmt        Rewrite documents in canonical form; --check only lists the ones that are
+               not (for CI). Files with errors are skipped and reported.
+    migrate    Upgrade documents of older format versions (format 1 is the only one so far).
+    watch      Load a scene and reload it when files change; an invalid change is reported
+               and the last good scene stays. With --json, one JSON line per event.
     mv         Move an asset file or folder (paths relative to --root) and update every
                asset reference to it in scenes and prefabs, all or nothing. The example
                supplies the component types that tell where references are.
@@ -57,10 +71,14 @@ Add --json to any command for a single machine-readable JSON document.";
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let json = arguments.iter().any(|argument| argument == "--json");
-    match parse(&arguments).and_then(execute) {
-        Ok(output) => {
-            println!("{output}");
-            ExitCode::SUCCESS
+    match parse(&arguments).and_then(execute_any) {
+        Ok(outcome) => {
+            println!("{}", outcome.text);
+            if outcome.success {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
         }
         Err(diagnostic) => {
             if json {
@@ -70,6 +88,37 @@ fn main() -> ExitCode {
             }
             ExitCode::FAILURE
         }
+    }
+}
+
+/// Runs a parsed command. The project commands report problems in their own
+/// output and decide the exit status themselves; the others succeed with
+/// their output or fail with one diagnostic.
+fn execute_any(args: Args) -> Result<Outcome> {
+    let root_of = |root: &Option<String>| std::path::PathBuf::from(root.as_deref().unwrap_or("."));
+    match &args.command {
+        Command::Check {
+            paths,
+            example,
+            root,
+        } => project_cmds::check(paths, example, &root_of(root), args.json),
+        Command::Format {
+            paths,
+            example,
+            root,
+            check,
+        } => project_cmds::format(paths, example, &root_of(root), *check, args.json),
+        Command::Migrate { paths, root } => project_cmds::migrate(paths, &root_of(root), args.json),
+        Command::Watch {
+            example,
+            scene,
+            root,
+            seconds,
+        } => project_cmds::watch(example, scene, &root_of(root), *seconds, args.json),
+        _ => execute(args).map(|text| Outcome {
+            text,
+            success: true,
+        }),
     }
 }
 
@@ -106,6 +155,14 @@ fn execute(args: Args) -> Result<String> {
             root,
             dry_run,
         } => move_asset(&from, &to, &example, root.as_deref(), dry_run, args.json),
+        Command::Check { .. }
+        | Command::Format { .. }
+        | Command::Migrate { .. }
+        | Command::Watch { .. } => Err(Diagnostic::error(
+            "internal_error",
+            "A project command was run through the simple path.",
+            "This is a bug in wen. Please report it.",
+        )),
         Command::Schema { example } => schema(example.as_deref(), args.json),
         Command::Examples => Ok(if args.json {
             json!({ "ok": true, "examples": wish_examples::NAMES }).to_string()

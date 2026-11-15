@@ -9,7 +9,8 @@ use wish_core::{Diagnostic, Result};
 
 /// The commands `wen` understands.
 pub const COMMANDS: &[&str] = &[
-    "run", "bench", "schema", "mv", "examples", "help", "version",
+    "run", "bench", "schema", "mv", "check", "fmt", "migrate", "watch", "examples", "help",
+    "version",
 ];
 
 /// A parsed command line.
@@ -62,6 +63,44 @@ pub enum Command {
         /// Report what would change without changing anything.
         dry_run: bool,
     },
+    /// Check every document of a project.
+    Check {
+        /// Report only these project-relative files (all when empty).
+        paths: Vec<String>,
+        /// The example whose component types the documents use.
+        example: String,
+        /// The project folder (default: the current folder).
+        root: Option<String>,
+    },
+    /// Rewrite documents in canonical form.
+    Format {
+        /// Format only these project-relative files (all when empty).
+        paths: Vec<String>,
+        /// The example whose component types the documents use.
+        example: String,
+        /// The project folder (default: the current folder).
+        root: Option<String>,
+        /// Only report files that are not canonical; change nothing.
+        check: bool,
+    },
+    /// Upgrade documents of older format versions.
+    Migrate {
+        /// Migrate only these project-relative files (all when empty).
+        paths: Vec<String>,
+        /// The project folder (default: the current folder).
+        root: Option<String>,
+    },
+    /// Load a scene and keep it in step with the files on disk.
+    Watch {
+        /// The example whose component types the scene uses.
+        example: String,
+        /// The scene file, relative to the root.
+        scene: String,
+        /// The project folder (default: the current folder).
+        root: Option<String>,
+        /// Stop after this many seconds (0: run until interrupted).
+        seconds: u64,
+    },
     /// Print the JSON Schemas of the registered types.
     Schema {
         /// Load the types of this example; only built-in types without it.
@@ -105,6 +144,21 @@ fn flags_of(command: &str) -> &'static [(&'static str, bool)] {
             ("--dry-run", false),
             ("--json", false),
         ],
+        "check" => &[("--example", true), ("--root", true), ("--json", false)],
+        "fmt" => &[
+            ("--example", true),
+            ("--root", true),
+            ("--check", false),
+            ("--json", false),
+        ],
+        "migrate" => &[("--root", true), ("--json", false)],
+        "watch" => &[
+            ("--example", true),
+            ("--scene", true),
+            ("--root", true),
+            ("--seconds", true),
+            ("--json", false),
+        ],
         _ => &[("--json", false)],
     }
 }
@@ -145,7 +199,7 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
     let mut index = 0;
     while let Some(argument) = rest.get(index) {
         index += 1;
-        if command == "mv" && !argument.starts_with('-') {
+        if matches!(command, "mv" | "check" | "fmt" | "migrate") && !argument.starts_with('-') {
             positional.push(argument);
             continue;
         }
@@ -263,6 +317,48 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
                 dry_run: values.iter().any(|(flag, _)| *flag == "--dry-run"),
             }
         }
+        "check" | "fmt" | "watch" => {
+            let example = value_of("--example")
+                .ok_or_else(|| {
+                    usage_error(
+                        format!("'wen {command}' needs --example to know the component types the documents use."),
+                        format!(
+                            "Add --example <name>. Built-in examples: {}.",
+                            wish_examples::NAMES.join(", ")
+                        ),
+                    )
+                })?
+                .to_owned();
+            let root = value_of("--root").map(str::to_owned);
+            let paths: Vec<String> = positional.iter().map(|path| (*path).to_owned()).collect();
+            match command {
+                "check" => Command::Check { paths, example, root },
+                "fmt" => Command::Format {
+                    paths,
+                    example,
+                    root,
+                    check: values.iter().any(|(flag, _)| *flag == "--check"),
+                },
+                _ => Command::Watch {
+                    example,
+                    scene: value_of("--scene")
+                        .ok_or_else(|| {
+                            usage_error(
+                                "'wen watch' needs a --scene to load.".to_owned(),
+                                "Add --scene <file>, a path relative to the project folder.".to_owned(),
+                            )
+                        })?
+                        .to_owned(),
+                    root,
+                    seconds: value_of("--seconds")
+                        .map_or(Ok(0), |value| parse_number("--seconds", value))?,
+                },
+            }
+        }
+        "migrate" => Command::Migrate {
+            paths: positional.iter().map(|path| (*path).to_owned()).collect(),
+            root: value_of("--root").map(str::to_owned),
+        },
         "examples" => Command::Examples,
         "version" => Command::Version,
         _ => Command::Help,

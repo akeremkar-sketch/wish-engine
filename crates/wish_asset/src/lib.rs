@@ -20,10 +20,15 @@
 //!
 //! Design: `docs/design/M2-veri-katmani.md` §5.
 
+pub mod hot;
 pub mod index;
 pub mod meta;
 pub mod moves;
+pub mod project;
 pub mod refs;
+
+pub use hot::{HotScene, Reload, Watcher};
+pub use project::{FileKind, Project, ProjectFile, load_project};
 
 pub use index::{AssetIndex, is_document};
 pub use meta::{AssetMeta, META_FORMAT, meta_path, parse_meta, read_meta, write_meta};

@@ -56,6 +56,15 @@ pub(crate) fn walk_files(root: &Path) -> Result<Vec<(String, PathBuf)>> {
     Ok(found)
 }
 
+/// Every engine document (scene, prefab or meta file) below `root`, as
+/// project-relative paths with their real paths, in path order.
+pub fn documents(root: &Path) -> Result<Vec<(String, PathBuf)>> {
+    Ok(walk_files(root)?
+        .into_iter()
+        .filter(|(name, _)| is_document(name))
+        .collect())
+}
+
 /// The asset files of a project: everything except hidden folders and
 /// engine documents.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
