@@ -176,6 +176,77 @@ fn a_scene_is_drawn_with_sky_light_and_materials() {
     check_golden("basic", &frame.image);
 }
 
+/// The ground point the sun's ray through `point` lands on.
+fn shadow_of(scene: &RenderScene, point: Vec3) -> Vec3 {
+    let direction = scene.lights[0].direction;
+    point + direction * (-point.y / direction.y)
+}
+
+#[test]
+fn objects_cast_shadows_on_the_ground_and_a_light_can_turn_them_off() {
+    let gpu = gpu();
+    let renderer = Renderer::new(&gpu).unwrap();
+    let (shadowed, _) = prepare(SCENE);
+    let source = SCENE.replace(
+        "\"DirectionalLight\": { \"illuminance_lux\": 100000 }",
+        "\"DirectionalLight\": { \"illuminance_lux\": 100000, \"shadows\": false }",
+    );
+    assert_ne!(source, SCENE, "the scene was edited");
+    let (unshadowed, _) = prepare(&source);
+    assert!(shadowed.lights[0].shadows && !unshadowed.lights[0].shadows);
+    let with = renderer.render(&gpu, &shadowed, None, 320, 240).unwrap();
+    let without = renderer.render(&gpu, &unshadowed, None, 320, 240).unwrap();
+    let luminance = |p: [u8; 4]| u32::from(p[0]) + u32::from(p[1]) + u32::from(p[2]);
+
+    // The tips of the shadows: where the sun's rays through the top of each
+    // object land on the ground. These points are open ground in the image
+    // (not hidden behind the objects), so without shadows they are lit.
+    let reference = luminance(pixel_at(&without, &unshadowed, Vec3::new(0.0, 0.0, 2.5)));
+    {
+        let (name, top) = ("orb", Vec3::new(1.1, 1.2, 0.0));
+        let tip = shadow_of(&shadowed, top);
+        let dark = luminance(pixel_at(&with, &shadowed, tip));
+        let bright = luminance(pixel_at(&without, &unshadowed, tip));
+        assert!(
+            bright * 10 > reference * 9,
+            "without shadows the ground at the {name}'s shadow tip is lit ({bright} vs {reference})"
+        );
+        assert!(
+            dark * 10 < bright * 7,
+            "with shadows the ground at the {name}'s shadow tip is clearly darker ({dark} vs {bright})"
+        );
+    }
+    // All three objects cast shadows: the images differ in a lot of pixels
+    // (the cube's and the lamp's shadows are not checked point by point).
+    let diff = with.image.diff(&without.image, 20).expect("same size");
+    assert!(
+        diff.differing_pixels > 400,
+        "shadows change the image: {diff:?}"
+    );
+    // Away from every shadow the two images agree.
+    let far = Vec3::new(0.6, 0.0, 2.5);
+    let (a, b) = (
+        pixel_at(&with, &shadowed, far),
+        pixel_at(&without, &unshadowed, far),
+    );
+    assert!(
+        a.iter().zip(b).all(|(x, y)| x.abs_diff(y) <= 2),
+        "{a:?} vs {b:?}"
+    );
+}
+#[test]
+fn a_scene_without_a_light_draws_without_shadow_trouble() {
+    let gpu = gpu();
+    let renderer = Renderer::new(&gpu).unwrap();
+    let source = SCENE.replace(
+        "\"DirectionalLight\": { \"illuminance_lux\": 100000 }",
+        "\"Primitive\": { \"shape\": \"Cube\" }",
+    );
+    let (scene, _) = prepare(&source);
+    assert!(scene.lights.is_empty());
+    let frame = renderer.render(&gpu, &scene, None, 96, 72).unwrap();
+    assert!(frame.warnings.is_empty(), "{:?}", frame.warnings);
+}
 #[test]
 fn drawing_is_repeatable() {
     let gpu = gpu();
@@ -256,7 +327,7 @@ fn what_cannot_be_drawn_is_reported_not_hidden() {
 #[test]
 fn the_engine_shaders_check_clean_and_map_errors_to_their_module() {
     let library = engine_shaders();
-    for entry in ["sky_pass", "opaque", "tonemap_pass"] {
+    for entry in ["sky_pass", "opaque", "tonemap_pass", "shadow_pass"] {
         library
             .check(entry)
             .unwrap_or_else(|problem| panic!("{entry}: {problem}"));

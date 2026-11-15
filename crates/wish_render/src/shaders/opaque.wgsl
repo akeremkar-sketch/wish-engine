@@ -1,25 +1,10 @@
 #import common
 #import sky
 #import brdf
+#import draw
 
 // Opaque surfaces, lit by one directional light, the ambient light, and the
 // sky's reflection. Output is already multiplied by the exposure.
-
-// The layout must match `DrawUniform` in renderer.rs.
-struct Draw {
-    model: mat4x4<f32>,
-    // The inverse transpose of the model matrix, for normals.
-    normal_matrix: mat4x4<f32>,
-    base_color: vec4<f32>,
-    // x: metallic factor, y: roughness factor.
-    params: vec4<f32>,
-    // rgb: emissive factor.
-    emissive: vec4<f32>,
-    // x: normal scale, y: occlusion strength, z: alpha cutoff (0: no cutoff).
-    params2: vec4<f32>,
-};
-
-@group(1) @binding(0) var<uniform> draw: Draw;
 
 // The material's textures. A slot without a texture holds a 1x1 default, so
 // the factors alone decide.
@@ -107,7 +92,9 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
             let specular = distribution_ggx(n_dot_h, alpha)
                 * visibility_smith(n_dot_v, n_dot_l, alpha) * f;
             let diffuse = (vec3<f32>(1.0) - f) * diffuse_colour / PI;
-            colour += (diffuse + specular) * frame.light_radiance.rgb * n_dot_l;
+            // Shadows only dim the direct light; sampled at the geometric normal.
+            let visibility = shadow_visibility(in.world_position, normalize(in.normal));
+            colour += (diffuse + specular) * frame.light_radiance.rgb * n_dot_l * visibility;
         }
     }
     // Ambient light on the diffuse part, the sky's reflection on the

@@ -32,8 +32,11 @@ use crate::texture;
 const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-/// Bytes of the frame uniform: two matrices and eight vectors.
-const FRAME_UNIFORM_SIZE: u64 = 256;
+/// Bytes of the frame uniform: three matrices and nine vectors.
+const FRAME_UNIFORM_SIZE: u64 = 336;
+/// Side of the shadow map, in texels.
+pub const SHADOW_MAP_SIZE: u32 = 2048;
+const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// Bytes of one draw's uniform data: two matrices and four vectors.
 const DRAW_UNIFORM_SIZE: u64 = 192;
 /// Distance between draws in the draw uniform buffer. 256 is a multiple of
@@ -61,6 +64,16 @@ const SHADERS: &[(&str, &str, &str)] = &[
         "tonemap",
         "wish_render/shaders/tonemap.wgsl",
         include_str!("shaders/tonemap.wgsl"),
+    ),
+    (
+        "draw",
+        "wish_render/shaders/draw.wgsl",
+        include_str!("shaders/draw.wgsl"),
+    ),
+    (
+        "shadow_pass",
+        "wish_render/shaders/shadow_pass.wgsl",
+        include_str!("shaders/shadow_pass.wgsl"),
     ),
     (
         "sky_pass",
@@ -149,6 +162,79 @@ impl GpuMesh {
     }
 }
 
+/// A light's view of the scene.
+#[derive(Clone, Copy)]
+struct LightFit {
+    /// World space to the light's clip space.
+    view_proj: Mat4,
+    /// Depth bias in clip-space depth.
+    depth_bias: f32,
+    /// How far to push a lookup off the surface, along its normal, meters.
+    normal_offset: f32,
+}
+
+/// Fits an orthographic view along direction around all casters (a
+/// matrix and the corners of a local bounding box each), so that the shadow
+/// map covers exactly what is drawn. None when there is nothing to cover or
+/// the numbers are not finite.
+fn fit_light(direction: Vec3, casters: &[(Mat4, Vec3, Vec3)]) -> Option<LightFit> {
+    let up = if direction.y.abs() > 0.99 {
+        Vec3::X
+    } else {
+        Vec3::Y
+    };
+    let view = wish_core::math::camera::rh::view::look_to_mat4(Vec3::ZERO, direction, up);
+    let mut low = Vec3::splat(f32::MAX);
+    let mut high = Vec3::splat(f32::MIN);
+    for (matrix, min, max) in casters {
+        for corner in 0..8 {
+            let point = Vec3::new(
+                if corner & 1 == 0 { min.x } else { max.x },
+                if corner & 2 == 0 { min.y } else { max.y },
+                if corner & 4 == 0 { min.z } else { max.z },
+            );
+            let in_light = view.transform_point3(matrix.transform_point3(point));
+            low = low.min(in_light);
+            high = high.max(in_light);
+        }
+    }
+    if casters.is_empty() || !low.is_finite() || !high.is_finite() {
+        return None;
+    }
+    // A margin of a few texels so that edges are not clipped by filtering.
+    let width = (high.x - low.x).max(high.y - low.y).max(1e-3);
+    let texel = width / SHADOW_MAP_SIZE as f32;
+    let margin = texel * 4.0;
+    // In this view the light looks down -Z: distances grow as z falls.
+    let near = -high.z - margin;
+    let far = -low.z + margin;
+    let projection = wish_core::math::camera::rh::proj::directx::orthographic(
+        low.x - margin,
+        high.x + margin,
+        low.y - margin,
+        high.y + margin,
+        near,
+        far,
+    );
+    let depth_range = (far - near).max(1e-3);
+    Some(LightFit {
+        view_proj: projection * view,
+        depth_bias: texel * 2.0 / depth_range,
+        normal_offset: texel * 1.5,
+    })
+}
+
+/// The bounding box of some points; a point at the origin if there are none.
+fn bounds_of(points: &[Vec3]) -> (Vec3, Vec3) {
+    let mut iter = points.iter().copied();
+    let Some(first) = iter.next() else {
+        return (Vec3::ZERO, Vec3::ZERO);
+    };
+    iter.fold((first, first), |(low, high), point| {
+        (low.min(point), high.max(point))
+    })
+}
+
 /// What one draw call draws: a built-in shape (with the entity's own
 /// Material), or one primitive of an uploaded model (with the material from
 /// its file).
@@ -162,6 +248,20 @@ enum Source<'a> {
 struct DrawList<'a> {
     bytes: Bytes,
     draws: Vec<(Source<'a>, u64)>,
+    /// For each draw: its matrix and the corners of its local bounding box,
+    /// to fit the shadow map around everything that can cast a shadow.
+    casters: Vec<(Mat4, Vec3, Vec3)>,
+}
+
+/// How a draw's surface is lit: the numbers the material side of the shader
+/// reads.
+#[derive(Clone, Copy)]
+struct Surface<'a> {
+    material: &'a MaterialData,
+    normal_scale: f32,
+    occlusion_strength: f32,
+    /// 0 unless alpha masks.
+    alpha_cutoff: f32,
 }
 
 impl<'a> DrawList<'a> {
@@ -169,11 +269,16 @@ impl<'a> DrawList<'a> {
         &mut self,
         source: Source<'a>,
         world: &Mat4,
-        material: &MaterialData,
-        normal_scale: f32,
-        occlusion_strength: f32,
-        alpha_cutoff: f32,
+        bounds: (Vec3, Vec3),
+        surface: Surface<'_>,
     ) {
+        let Surface {
+            material,
+            normal_scale,
+            occlusion_strength,
+            alpha_cutoff,
+        } = surface;
+        self.casters.push((*world, bounds.0, bounds.1));
         let start = self.draws.len() as u64 * DRAW_UNIFORM_STRIDE;
         self.bytes.pad_to(start);
         self.bytes.mat4(world);
@@ -201,6 +306,8 @@ struct GpuPrimitive {
     double_sided: bool,
     /// Primitive space to the model's space.
     matrix: Mat4,
+    /// The primitive's bounding box in its own space.
+    bounds: (Vec3, Vec3),
 }
 
 /// A model on the GPU.
@@ -223,6 +330,22 @@ pub struct Frame {
     pub warnings: Vec<Diagnostic>,
 }
 
+/// Everything built when a renderer is created, before it is taken apart.
+struct Pipelines {
+    frame_layout: wgpu::BindGroupLayout,
+    draw_layout: wgpu::BindGroupLayout,
+    hdr_layout: wgpu::BindGroupLayout,
+    material_layout: wgpu::BindGroupLayout,
+    light_layout: wgpu::BindGroupLayout,
+    sky: wgpu::RenderPipeline,
+    opaque: wgpu::RenderPipeline,
+    opaque_double: wgpu::RenderPipeline,
+    shadow: wgpu::RenderPipeline,
+    tonemap: wgpu::RenderPipeline,
+    sampler: wgpu::Sampler,
+    shadow_sampler: wgpu::Sampler,
+}
+
 /// Draws scenes. Holds the pipelines and the built-in meshes, so create one
 /// and reuse it for many frames.
 pub struct Renderer {
@@ -236,6 +359,10 @@ pub struct Renderer {
     opaque_double: wgpu::RenderPipeline,
     tonemap: wgpu::RenderPipeline,
     sampler: wgpu::Sampler,
+    light_layout: wgpu::BindGroupLayout,
+    /// The shadow pass: depth only, from the light.
+    shadow: wgpu::RenderPipeline,
+    shadow_sampler: wgpu::Sampler,
     /// Textures of a material that has none: white, flat normal.
     default_textures: wgpu::BindGroup,
     /// Cube, sphere, plane, in `shape_index` order.
@@ -304,7 +431,7 @@ impl Renderer {
     pub fn new(gpu: &Gpu) -> Result<Self> {
         let library = engine_shaders();
         let mut modules = Vec::new();
-        for entry in ["sky_pass", "opaque", "tonemap_pass"] {
+        for entry in ["sky_pass", "opaque", "tonemap_pass", "shadow_pass"] {
             modules.push((entry, library.check(entry)?.source));
         }
         let pipelines = gpu.checked("build the render pipelines", |gpu| {
@@ -322,7 +449,38 @@ impl Renderer {
             };
             let frame_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("frame"),
-                entries: &[uniform_entry(0, false, FRAME_UNIFORM_SIZE)],
+                entries: &[
+                    uniform_entry(0, false, FRAME_UNIFORM_SIZE),
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Depth,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                        count: None,
+                    },
+                ],
+            });
+            let light_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("light"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(64),
+                    },
+                    count: None,
+                }],
             });
             let draw_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("draw"),
@@ -486,29 +644,77 @@ impl Renderer {
                 mipmap_filter: wgpu::MipmapFilterMode::Linear,
                 ..wgpu::SamplerDescriptor::default()
             });
-            (
+            // The shadow pass: depth only, from the light. Back faces are not
+            // culled so that single-sided surfaces such as planes cast too; a
+            // slope-scaled bias keeps surfaces from shadowing themselves.
+            let shadow_shader = module("shadow_pass");
+            let shadow = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("shadow"),
+                layout: Some(&layout(&[&light_layout, &draw_layout])),
+                vertex: wgpu::VertexState {
+                    module: &shadow_shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: VERTEX_STRIDE,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &attributes[..1],
+                    })],
+                },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: SHADOW_FORMAT,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState {
+                        constant: 2,
+                        slope_scale: 2.0,
+                        clamp: 0.0,
+                    },
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                fragment: None,
+                multiview_mask: None,
+                cache: None,
+            });
+            // Nearest, so that every adapter compares the same texels.
+            let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("shadow"),
+                mag_filter: wgpu::FilterMode::Nearest,
+                min_filter: wgpu::FilterMode::Nearest,
+                compare: Some(wgpu::CompareFunction::LessEqual),
+                ..wgpu::SamplerDescriptor::default()
+            });
+            Pipelines {
                 frame_layout,
                 draw_layout,
                 hdr_layout,
                 material_layout,
+                light_layout,
                 sky,
                 opaque,
                 opaque_double,
+                shadow,
                 tonemap,
                 sampler,
-            )
+                shadow_sampler,
+            }
         })?;
-        let (
+        let Pipelines {
             frame_layout,
             draw_layout,
             hdr_layout,
             material_layout,
+            light_layout,
             sky,
             opaque,
             opaque_double,
+            shadow,
             tonemap,
             sampler,
-        ) = pipelines;
+            shadow_sampler,
+        } = pipelines;
         let default_textures = gpu.checked("create the default textures", |gpu| {
             let white = texture::solid(gpu, [255; 4], true, "white");
             let white_linear = texture::solid(gpu, [255; 4], false, "white data");
@@ -538,6 +744,9 @@ impl Renderer {
             opaque_double,
             tonemap,
             sampler,
+            light_layout,
+            shadow,
+            shadow_sampler,
             default_textures,
             shapes,
             models: BTreeMap::new(),
@@ -637,6 +846,7 @@ impl Renderer {
                     },
                     double_sided: material.double_sided,
                     matrix: placed.matrix,
+                    bounds: bounds_of(&source.positions),
                 });
             }
             GpuModel {
@@ -702,7 +912,6 @@ impl Renderer {
         frame.vec4(scene.sky.horizon, 0.0);
         frame.vec4(scene.sky.ground, scene.sky.luminance);
         frame.vec4([exposure, EMISSIVE_NITS, 0.0], 0.0);
-        frame.pad_to(FRAME_UNIFORM_SIZE);
 
         // What one draw call draws: a built-in shape (with the entity's own
         // `Material`), or one primitive of an uploaded model (with the
@@ -726,10 +935,13 @@ impl Renderer {
                 Mesh::Primitive(shape) => draw_list.push(
                     Source::Shape(shape_index(shape)),
                     &draw.world,
-                    &draw.material,
-                    1.0,
-                    1.0,
-                    0.0,
+                    (Vec3::splat(-0.5), Vec3::splat(0.5)),
+                    Surface {
+                        material: &draw.material,
+                        normal_scale: 1.0,
+                        occlusion_strength: 1.0,
+                        alpha_cutoff: 0.0,
+                    },
                 ),
                 Mesh::Model => {
                     let path = draw.model_path.as_deref().unwrap_or_default();
@@ -755,10 +967,13 @@ impl Renderer {
                         draw_list.push(
                             Source::Primitive(primitive),
                             &(draw.world * primitive.matrix),
-                            &primitive.material,
-                            primitive.normal_scale,
-                            primitive.occlusion_strength,
-                            primitive.alpha_cutoff,
+                            primitive.bounds,
+                            Surface {
+                                material: &primitive.material,
+                                normal_scale: primitive.normal_scale,
+                                occlusion_strength: primitive.occlusion_strength,
+                                alpha_cutoff: primitive.alpha_cutoff,
+                            },
                         );
                     }
                 }
@@ -771,9 +986,35 @@ impl Renderer {
                 "Blended transparency arrives later (M6). Use alpha mode MASK in the material for cut-outs such as leaves.",
             ));
         }
-        let DrawList { mut bytes, draws } = draw_list;
+        let DrawList {
+            mut bytes,
+            draws,
+            casters,
+        } = draw_list;
         let draw_bytes = {
             bytes.pad_to((draws.len().max(1) as u64) * DRAW_UNIFORM_STRIDE);
+            bytes
+        };
+
+        // The shadow map is fitted around everything drawn. A light that does
+        // not cast shadows, or a scene with nothing in it, gets a 1x1 map that
+        // is cleared to "nothing in the way".
+        let fit = scene
+            .lights
+            .first()
+            .filter(|light| light.shadows)
+            .and_then(|light| fit_light(light.direction, &casters));
+        frame.mat4(&fit.map_or(Mat4::IDENTITY, |fit| fit.view_proj));
+        frame.floats(&[
+            if fit.is_some() { 1.0 } else { 0.0 },
+            fit.map_or(0.0, |fit| fit.depth_bias),
+            fit.map_or(0.0, |fit| fit.normal_offset),
+            1.0 / SHADOW_MAP_SIZE as f32,
+        ]);
+        frame.pad_to(FRAME_UNIFORM_SIZE);
+        let light_bytes = {
+            let mut bytes = Bytes::default();
+            bytes.mat4(&fit.map_or(Mat4::IDENTITY, |fit| fit.view_proj));
             bytes
         };
 
@@ -809,13 +1050,50 @@ impl Renderer {
             .create_view(&wgpu::TextureViewDescriptor::default());
             let frame_buffer = buffer_with(gpu, "frame", &frame.0, wgpu::BufferUsages::UNIFORM);
             let draw_buffer = buffer_with(gpu, "draws", &draw_bytes.0, wgpu::BufferUsages::UNIFORM);
+            let shadow_size = if fit.is_some() { SHADOW_MAP_SIZE } else { 1 };
+            let shadow_texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("shadow map"),
+                size: wgpu::Extent3d {
+                    width: shadow_size,
+                    height: shadow_size,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: SHADOW_FORMAT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let shadow_view = shadow_texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let light_buffer =
+                buffer_with(gpu, "light", &light_bytes.0, wgpu::BufferUsages::UNIFORM);
+            let light_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("light"),
+                layout: &self.light_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: light_buffer.as_entire_binding(),
+                }],
+            });
             let frame_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("frame"),
                 layout: &self.frame_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: frame_buffer.as_entire_binding(),
-                }],
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: frame_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&shadow_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&self.shadow_sampler),
+                    },
+                ],
             });
             let draw_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("draws"),
@@ -854,6 +1132,43 @@ impl Renderer {
                         store: wgpu::StoreOp::Store,
                     },
                 })
+            }
+            {
+                // The shadow pass: the scene's depth seen from the light. With
+                // no shadows it only clears the 1x1 map to 1.0.
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("shadow"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &shadow_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                if fit.is_some() {
+                    pass.set_pipeline(&self.shadow);
+                    pass.set_bind_group(0, &light_group, &[]);
+                    for (source, offset) in &draws {
+                        let mesh = match source {
+                            Source::Shape(shape) => match self.shapes.get(*shape) {
+                                Some(mesh) => mesh,
+                                None => continue,
+                            },
+                            Source::Primitive(primitive) => &primitive.mesh,
+                        };
+                        let offset = u32::try_from(*offset).unwrap_or(u32::MAX);
+                        pass.set_bind_group(1, &draw_group, &[offset]);
+                        pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+                        pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+                        pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                    }
+                }
             }
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -956,4 +1271,64 @@ pub fn project_to_pixel(
         (ndc.x * 0.5 + 0.5) * width as f32,
         (0.5 - ndc.y * 0.5) * height as f32,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn clip(fit: &LightFit, point: Vec3) -> Vec3 {
+        let clip = fit.view_proj * point.extend(1.0);
+        clip.truncate() / clip.w
+    }
+
+    #[test]
+    fn the_light_view_covers_every_corner_of_what_is_drawn() {
+        let boxes = [
+            (
+                Mat4::from_translation(Vec3::new(3.0, 0.5, -2.0)),
+                Vec3::splat(-0.5),
+                Vec3::splat(0.5),
+            ),
+            (
+                Mat4::from_scale(Vec3::new(30.0, 1.0, 30.0)),
+                Vec3::splat(-0.5),
+                Vec3::splat(0.5),
+            ),
+        ];
+        for direction in [
+            Vec3::NEG_Y,
+            Vec3::new(0.3, -0.8, -0.5).normalize(),
+            Vec3::Y,
+            Vec3::NEG_Z,
+        ] {
+            let fit = fit_light(direction, &boxes).expect("something to cover");
+            for (matrix, low, high) in &boxes {
+                for corner in 0..8u8 {
+                    let point = Vec3::new(
+                        if corner & 1 == 0 { low.x } else { high.x },
+                        if corner & 2 == 0 { low.y } else { high.y },
+                        if corner & 4 == 0 { low.z } else { high.z },
+                    );
+                    let ndc = clip(&fit, matrix.transform_point3(point));
+                    assert!(
+                        ndc.x.abs() <= 1.0 && ndc.y.abs() <= 1.0 && (0.0..=1.0).contains(&ndc.z),
+                        "{direction:?}: {ndc:?} is outside the shadow map"
+                    );
+                }
+            }
+            assert!(fit.depth_bias > 0.0 && fit.normal_offset > 0.0);
+        }
+    }
+
+    #[test]
+    fn nothing_drawn_or_bad_numbers_mean_no_shadow_map() {
+        assert!(fit_light(Vec3::NEG_Y, &[]).is_none());
+        let broken = [(
+            Mat4::from_scale(Vec3::splat(f32::NAN)),
+            Vec3::splat(-0.5),
+            Vec3::splat(0.5),
+        )];
+        assert!(fit_light(Vec3::NEG_Y, &broken).is_none());
+    }
 }
