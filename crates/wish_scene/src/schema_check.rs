@@ -52,6 +52,25 @@ pub(crate) fn resource<'r>(registry: &'r Registry, name: &str) -> Result<&'r Typ
         })
 }
 
+/// Merges `patch` into `target`: objects merge key by key, anything else
+/// is replaced. This mirrors how component JSON patches a value, so a patch
+/// merged into a valid patch is still valid.
+pub(crate) fn merge(target: &mut Value, patch: &Value) {
+    match (target, patch) {
+        (Value::Object(target), Value::Object(patch)) => {
+            for (key, value) in patch {
+                match target.get_mut(key) {
+                    Some(existing) => merge(existing, value),
+                    None => {
+                        target.insert(key.clone(), value.clone());
+                    }
+                }
+            }
+        }
+        (target, patch) => *target = patch.clone(),
+    }
+}
+
 /// Checks a JSON value (a patch on the type's defaults) against a schema.
 /// Diagnostics carry JSON pointers below `pointer`.
 pub(crate) fn check_value(schema: &TypeSchema, value: &Value, pointer: &str) -> Result<()> {

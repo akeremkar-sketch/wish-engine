@@ -27,8 +27,12 @@
 //!   an entity's children, so there is one place to change.
 //! - A component's JSON is a *patch* on the type's defaults: fields left out
 //!   keep their default.
+//! - An entity with `prefab` is an *instance* of that prefab; its
+//!   `components` patch the prefab root's, and `overrides` patch the other
+//!   prefab entities' (see [`crate::prefab`]).
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use serde_json::{Map, Value};
 use wish_core::suggest::unknown_name_hint;
@@ -37,7 +41,12 @@ use wish_ecs::Registry;
 
 use crate::edit::History;
 use crate::json::{self, Json, Member, Node, Span};
+use crate::prefab::{PREFAB_ROOT, PrefabLibrary};
 use crate::schema_check;
+
+/// Component patches for the entities of a prefab instance, by prefab
+/// entity id, then by component name.
+pub type Overrides = BTreeMap<String, BTreeMap<String, Value>>;
 
 /// The scene file format this build reads and writes.
 pub const FORMAT: u32 = 1;
@@ -63,9 +72,22 @@ pub struct SceneEntity {
     pub(crate) order: i64,
     pub(crate) components: BTreeMap<String, Value>,
     pub(crate) notes: Option<String>,
+    pub(crate) prefab: Option<String>,
+    pub(crate) overrides: Overrides,
 }
 
 impl SceneEntity {
+    /// The path of the prefab this entity is an instance of, if any.
+    pub fn prefab(&self) -> Option<&str> {
+        self.prefab.as_deref()
+    }
+
+    /// For an instance, the component patches of the prefab's other
+    /// entities.
+    pub fn overrides(&self) -> &Overrides {
+        &self.overrides
+    }
+
     /// The id of this entity's parent, if it has one.
     pub fn parent(&self) -> Option<&str> {
         self.parent.as_deref()
@@ -108,6 +130,28 @@ impl SceneEntity {
         if let Some(notes) = &self.notes {
             object.insert("notes".to_owned(), Value::String(notes.clone()));
         }
+        if let Some(prefab) = &self.prefab {
+            object.insert("prefab".to_owned(), Value::String(prefab.clone()));
+        }
+        if !self.overrides.is_empty() {
+            object.insert(
+                "overrides".to_owned(),
+                Value::Object(
+                    self.overrides
+                        .iter()
+                        .map(|(inner, components)| {
+                            let components: Map<String, Value> = components
+                                .iter()
+                                .map(|(name, value)| (name.clone(), value.clone()))
+                                .collect();
+                            let mut patch = Map::new();
+                            patch.insert("components".to_owned(), Value::Object(components));
+                            (inner.clone(), Value::Object(patch))
+                        })
+                        .collect(),
+                ),
+            );
+        }
         Value::Object(object)
     }
 }
@@ -115,13 +159,14 @@ impl SceneEntity {
 /// A scene, ready to be edited, saved or turned into a world.
 ///
 /// Two documents are equal when their content (entities and resources) is;
-/// revision numbers and edit history are not compared.
+/// revision numbers, edit history and the prefab library are not compared.
 #[derive(Clone, Debug, Default)]
 pub struct SceneDocument {
     pub(crate) entities: BTreeMap<String, SceneEntity>,
     pub(crate) resources: BTreeMap<String, Value>,
     pub(crate) revision: u64,
     pub(crate) history: History,
+    pub(crate) prefabs: Arc<PrefabLibrary>,
 }
 
 impl PartialEq for SceneDocument {
@@ -156,6 +201,18 @@ impl SceneDocument {
     /// How many edits the document has had since it was created or loaded.
     pub fn revision(&self) -> u64 {
         self.revision
+    }
+
+    /// The prefabs this scene's instances refer to.
+    pub fn prefabs(&self) -> &PrefabLibrary {
+        &self.prefabs
+    }
+
+    /// Replaces the prefab library, for example after a prefab file
+    /// changed. The content is not checked again here: [`Self::expand`]
+    /// reports instances whose prefab is missing.
+    pub fn set_prefabs(&mut self, prefabs: Arc<PrefabLibrary>) {
+        self.prefabs = prefabs;
     }
 
     /// The entities with no parent, in sibling order.
@@ -233,12 +290,42 @@ impl LoadResult {
     }
 }
 
-/// Reads and validates a scene file.
+/// What kind of file is being read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FileKind {
+    Scene,
+    Prefab,
+}
+
+/// Reads and validates a scene file that places no prefabs (an instance is
+/// reported as `prefab_not_found`). See [`load_with_prefabs`].
 ///
 /// `file` is the project-relative path shown in diagnostics (or `""`).
 /// Syntax errors stop at the first one; after that, every semantic problem
 /// is collected, so that one run shows everything that needs fixing.
 pub fn load(source: &str, file: &str, registry: &Registry) -> LoadResult {
+    load_with(source, file, registry, Arc::default(), FileKind::Scene)
+}
+
+/// Reads and validates a scene file whose instances refer to the prefabs
+/// in `prefabs`. The document keeps the library for editing and
+/// expanding.
+pub fn load_with_prefabs(
+    source: &str,
+    file: &str,
+    registry: &Registry,
+    prefabs: Arc<PrefabLibrary>,
+) -> LoadResult {
+    load_with(source, file, registry, prefabs, FileKind::Scene)
+}
+
+pub(crate) fn load_with(
+    source: &str,
+    file: &str,
+    registry: &Registry,
+    prefabs: Arc<PrefabLibrary>,
+    kind: FileKind,
+) -> LoadResult {
     let root = match json::parse(source, file) {
         Ok(root) => root,
         Err(diagnostic) => {
@@ -252,9 +339,14 @@ pub fn load(source: &str, file: &str, registry: &Registry) -> LoadResult {
         file,
         root: &root,
         registry,
+        prefabs: &prefabs,
+        kind,
         diagnostics: Vec::new(),
     };
-    let document = validator.run();
+    let document = validator.run().map(|mut document| {
+        document.prefabs = Arc::clone(&prefabs);
+        document
+    });
     let mut diagnostics = validator.diagnostics;
     let document = if diagnostics.iter().any(Diagnostic::is_error) {
         None
@@ -290,6 +382,8 @@ struct Validator<'a> {
     file: &'a str,
     root: &'a Node,
     registry: &'a Registry,
+    prefabs: &'a PrefabLibrary,
+    kind: FileKind,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -299,6 +393,38 @@ struct Pending {
     order: i64,
     components: BTreeMap<String, Value>,
     notes: Option<String>,
+    prefab: Option<String>,
+    overrides: Overrides,
+}
+
+/// Checks that an instance of `prefab` (at `path`) may override the prefab
+/// entity `inner`: it exists and is not the root, whose changes go in the
+/// instance's own components.
+pub(crate) fn check_override_target(prefab: &SceneDocument, path: &str, inner: &str) -> Result<()> {
+    if inner == PREFAB_ROOT {
+        return Err(Diagnostic::error(
+            "override_on_root",
+            "The prefab's root cannot be overridden.",
+            "Changes to the prefab's root go in the instance's own \"components\".",
+        ));
+    }
+    if prefab.entity(inner).is_none() {
+        let ids: Vec<&str> = prefab
+            .entities()
+            .map(|(id, _)| id)
+            .filter(|id| *id != PREFAB_ROOT)
+            .collect();
+        return Err(Diagnostic::error(
+            "unknown_prefab_entity",
+            format!("The prefab '{path}' has no entity '{inner}'."),
+            format!(
+                "{} If the entity was renamed or removed in the prefab, rename or delete this override.",
+                unknown_name_hint(inner, &ids)
+            ),
+        )
+        .with_candidates(ids.iter().copied()));
+    }
+    Ok(())
 }
 
 fn escape(segment: &str) -> String {
@@ -320,7 +446,7 @@ fn kind_name(node: &Node) -> &'static str {
     }
 }
 
-impl Validator<'_> {
+impl<'a> Validator<'a> {
     fn push(&mut self, diagnostic: Diagnostic, span: Span, pointer: &str) {
         let mut diagnostic = diagnostic.at_line(span.line, Some(span.column));
         if !pointer.is_empty() {
@@ -373,10 +499,23 @@ impl Validator<'_> {
         self.check_format(root, members);
         let mut entities = BTreeMap::new();
         let mut resources = BTreeMap::new();
+        let mut entities_span = root.span;
         for member in members {
             match member.key.as_str() {
                 "format" => {}
-                "entities" => entities = self.read_entities(member),
+                "entities" => {
+                    entities_span = member.key_span;
+                    entities = self.read_entities(member);
+                }
+                "resources" if self.kind == FileKind::Prefab => self.push(
+                    Diagnostic::error(
+                        "prefab_with_resources",
+                        "A prefab file cannot set resources.",
+                        "Resources belong to the scene: move them to the scene file that places this prefab.",
+                    ),
+                    member.key_span,
+                    "/resources",
+                ),
                 "resources" => resources = self.read_resources(member),
                 _ => self.unknown_key(
                     member,
@@ -386,11 +525,21 @@ impl Validator<'_> {
                 ),
             }
         }
+        if self.kind == FileKind::Prefab && !entities.contains_key(PREFAB_ROOT) {
+            self.push(
+                Diagnostic::error(
+                    "prefab_without_root",
+                    "A prefab file needs an entity called \"root\".",
+                    "Name the prefab's top entity \"root\" and put the others below it; a scene places the prefab through its root.",
+                ),
+                entities_span,
+                "/entities",
+            );
+        }
         Some(SceneDocument {
             entities,
             resources,
-            revision: 0,
-            history: History::default(),
+            ..SceneDocument::default()
         })
     }
 
@@ -454,10 +603,42 @@ impl Validator<'_> {
                 continue;
             }
             if let Some(read) = self.read_entity(entry, &entity_pointer) {
+                if self.kind == FileKind::Prefab {
+                    self.check_prefab_entity(entry, &entity_pointer, &read);
+                }
                 pending.insert(entry.key.clone(), read);
             }
         }
         self.resolve_parents(pending)
+    }
+
+    /// In a prefab file, the root has no parent and every other entity has
+    /// one, so that everything hangs below the root.
+    fn check_prefab_entity(&mut self, entry: &Member, pointer: &str, read: &Pending) {
+        match (&read.parent, entry.key == PREFAB_ROOT) {
+            (Some((_, span)), true) => self.push(
+                Diagnostic::error(
+                    "prefab_root_with_parent",
+                    "The prefab's \"root\" entity has a parent.",
+                    "Remove its \"parent\": the root is the top of the prefab, and the scene decides where each instance goes.",
+                ),
+                *span,
+                &join(pointer, "parent"),
+            ),
+            (None, false) => self.push(
+                Diagnostic::error(
+                    "prefab_entity_outside_root",
+                    format!(
+                        "Entity '{}' has no parent, so it is not part of the prefab's root.",
+                        entry.key
+                    ),
+                    "Give it \"parent\": \"root\" (or an entity below the root): everything in a prefab hangs below its root.",
+                ),
+                entry.key_span,
+                pointer,
+            ),
+            _ => {}
+        }
     }
 
     fn read_entity(&mut self, entry: &Member, pointer: &str) -> Option<Pending> {
@@ -472,10 +653,38 @@ impl Validator<'_> {
             order: 0,
             components: BTreeMap::new(),
             notes: None,
+            prefab: None,
+            overrides: BTreeMap::new(),
         };
+        // The prefab first: checking overrides needs it.
+        let prefab_member = members.iter().find(|member| member.key == "prefab");
+        let prefab = prefab_member.and_then(|member| {
+            let read = self.read_prefab(member, &join(pointer, "prefab"));
+            pending.prefab = read.as_ref().map(|(path, _)| path.clone());
+            read
+        });
         for member in members {
             let member_pointer = join(pointer, &member.key);
             match member.key.as_str() {
+                "prefab" => {}
+                "overrides" if prefab_member.is_none() => self.push(
+                    Diagnostic::error(
+                        "overrides_without_prefab",
+                        format!(
+                            "Entity '{}' has \"overrides\" but is not a prefab instance.",
+                            entry.key
+                        ),
+                        "Overrides change the entities of a placed prefab. Add \"prefab\" with the prefab's path, or move the changes into \"components\".",
+                    ),
+                    member.key_span,
+                    &member_pointer,
+                ),
+                "overrides" => {
+                    if let Some((path, prefab)) = &prefab {
+                        pending.overrides =
+                            self.read_overrides(path, prefab, member, &member_pointer);
+                    }
+                }
                 "components" => {
                     pending.components = self.read_components(&entry.key, member, &member_pointer);
                 }
@@ -517,11 +726,122 @@ impl Validator<'_> {
                     member,
                     pointer,
                     &format!("Entity '{}'", entry.key),
-                    &["components", "notes", "order", "parent"],
+                    &[
+                        "components",
+                        "notes",
+                        "order",
+                        "overrides",
+                        "parent",
+                        "prefab",
+                    ],
                 ),
             }
         }
         Some(pending)
+    }
+
+    /// Reads an entity's `prefab` key. Returns the path and the prefab when
+    /// it can be placed here.
+    fn read_prefab(
+        &mut self,
+        member: &Member,
+        pointer: &str,
+    ) -> Option<(String, &'a SceneDocument)> {
+        let Json::String(path) = &member.value.value else {
+            self.mismatch(
+                &member.value,
+                pointer,
+                "\"prefab\"",
+                "a string",
+                "\"prefabs/enemy.prefab.json\"",
+            );
+            return None;
+        };
+        if self.kind == FileKind::Prefab {
+            self.push(
+                Diagnostic::error(
+                    "nested_prefab",
+                    "A prefab cannot place another prefab.",
+                    "Prefabs are one level deep for now: copy the other prefab's entities into this one, or place both prefabs in the scene.",
+                ),
+                member.key_span,
+                pointer,
+            );
+            return None;
+        }
+        let library = self.prefabs;
+        let Some(prefab) = library.get(path) else {
+            let paths = library.paths();
+            let diagnostic = Diagnostic::error(
+                "prefab_not_found",
+                format!("No prefab '{path}' is loaded."),
+                if paths.is_empty() {
+                    "No prefabs are loaded. Check the path (project-relative, such as \"prefabs/enemy.prefab.json\") and that the file exists.".to_owned()
+                } else {
+                    unknown_name_hint(path, &paths)
+                },
+            )
+            .with_candidates(paths.iter().copied());
+            self.push(diagnostic, member.value.span, pointer);
+            return None;
+        };
+        Some((path.clone(), prefab))
+    }
+
+    /// Reads an instance's `overrides`: component patches for the prefab's
+    /// entities other than the root.
+    fn read_overrides(
+        &mut self,
+        path: &str,
+        prefab: &SceneDocument,
+        member: &Member,
+        pointer: &str,
+    ) -> Overrides {
+        let Some(entries) = self.members(
+            &member.value,
+            pointer,
+            "\"overrides\"",
+            "{ \"weapon\": { \"components\": {} } }",
+        ) else {
+            return BTreeMap::new();
+        };
+        let mut overrides = BTreeMap::new();
+        for entry in entries {
+            let entry_pointer = join(pointer, &entry.key);
+            if let Err(diagnostic) = check_override_target(prefab, path, &entry.key) {
+                self.push(diagnostic, entry.key_span, &entry_pointer);
+                continue;
+            }
+            let Some(fields) = self.members(
+                &entry.value,
+                &entry_pointer,
+                &format!("the override of '{}'", entry.key),
+                "{ \"components\": {} }",
+            ) else {
+                continue;
+            };
+            let mut components = BTreeMap::new();
+            for field in fields {
+                if field.key == "components" {
+                    components = self.read_components(
+                        &entry.key,
+                        field,
+                        &join(&entry_pointer, "components"),
+                    );
+                } else {
+                    self.unknown_key(
+                        field,
+                        &entry_pointer,
+                        &format!("The override of '{}'", entry.key),
+                        &["components"],
+                    );
+                }
+            }
+            if !components.is_empty() {
+                overrides.insert(entry.key.clone(), components);
+            }
+        }
+        overrides
     }
 
     fn read_components(
@@ -705,6 +1025,8 @@ impl Validator<'_> {
                         order: entity.order,
                         components: entity.components,
                         notes: entity.notes,
+                        prefab: entity.prefab,
+                        overrides: entity.overrides,
                     },
                 )
             })

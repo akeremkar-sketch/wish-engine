@@ -13,14 +13,18 @@
 //! changed on disk, so there is one history with who did what in it.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::sync::Arc;
 
 use serde_json::{Map, Value};
 use wish_core::suggest::unknown_name_hint;
 use wish_core::{Diagnostic, Result};
 use wish_ecs::Registry;
 
-use crate::document::{MAX_SCENE_ID_LEN, SceneDocument, SceneEntity, is_valid_scene_id};
-use crate::schema_check;
+use crate::document::{
+    MAX_SCENE_ID_LEN, Overrides, SceneDocument, SceneEntity, check_override_target,
+    is_valid_scene_id,
+};
+use crate::schema_check::{self, merge};
 
 /// How many transactions can be undone. Older ones are forgotten.
 pub const MAX_UNDO: usize = 1000;
@@ -66,6 +70,25 @@ pub enum EditOp {
         /// Notes for people.
         notes: Option<String>,
     },
+    /// Places a prefab: adds an entity that is an instance of it.
+    Instantiate {
+        /// The new instance's id. The prefab's other entities get the ids
+        /// `id/<prefab entity id>` when the scene is expanded.
+        id: String,
+        /// The prefab's project-relative path, as loaded in the document's
+        /// prefab library.
+        prefab: String,
+        /// The instance's parent, if any.
+        parent: Option<String>,
+        /// Its sibling order.
+        order: i64,
+        /// Patches on the prefab root's components.
+        components: BTreeMap<String, Value>,
+        /// Patches on the components of the prefab's other entities.
+        overrides: Overrides,
+        /// Notes for people.
+        notes: Option<String>,
+    },
     /// Removes an entity and everything below it in the hierarchy.
     Despawn {
         /// The entity.
@@ -73,6 +96,10 @@ pub enum EditOp {
     },
     /// Changes a component by merging `value` into it: the fields `value`
     /// names change, the others stay. Adds the component if it is missing.
+    ///
+    /// On a prefab instance, `Set`, `Replace` and `Remove` work on the
+    /// instance's patches of the prefab root, not on the prefab itself:
+    /// removing a patch brings back the prefab's value.
     Set {
         /// The entity.
         id: String,
@@ -114,6 +141,40 @@ pub enum EditOp {
         /// The new id.
         to: String,
     },
+    /// Merges `value` into an instance's patch of one prefab entity's
+    /// component, adding the patch if it is missing.
+    SetOverride {
+        /// The instance.
+        id: String,
+        /// The prefab entity (not `root`).
+        entity: String,
+        /// The component's name.
+        component: String,
+        /// The fields to change.
+        value: Value,
+    },
+    /// Sets an instance's patch of one prefab entity's component to
+    /// exactly `value`.
+    ReplaceOverride {
+        /// The instance.
+        id: String,
+        /// The prefab entity (not `root`).
+        entity: String,
+        /// The component's name.
+        component: String,
+        /// The patch's new JSON.
+        value: Value,
+    },
+    /// Removes an instance's patch of one prefab entity's component, so
+    /// that the prefab's value applies again.
+    RemoveOverride {
+        /// The instance.
+        id: String,
+        /// The prefab entity.
+        entity: String,
+        /// The component's name.
+        component: String,
+    },
     /// Sets or clears an entity's notes.
     SetNotes {
         /// The entity.
@@ -150,6 +211,20 @@ impl EditOp {
             parent: None,
             order: 0,
             components: BTreeMap::new(),
+            notes: None,
+        }
+    }
+
+    /// An operation that places `prefab` as a top-level instance with no
+    /// changes.
+    pub fn instantiate(id: &str, prefab: &str) -> Self {
+        Self::Instantiate {
+            id: id.to_owned(),
+            prefab: prefab.to_owned(),
+            parent: None,
+            order: 0,
+            components: BTreeMap::new(),
+            overrides: BTreeMap::new(),
             notes: None,
         }
     }
@@ -235,26 +310,20 @@ fn component_pointer(id: &str, component: &str) -> String {
     format!("/entities/{id}/components/{component}")
 }
 
+fn override_pointer(id: &str, entity: &str, component: &str) -> String {
+    format!("/entities/{id}/overrides/{entity}/components/{component}")
+}
+
 fn resource_pointer(name: &str) -> String {
     format!("/resources/{name}")
 }
 
-/// Merges `patch` into `target`: objects merge key by key, anything else
-/// is replaced. This mirrors how component JSON patches a value.
-fn merge(target: &mut Value, patch: &Value) {
-    match (target, patch) {
-        (Value::Object(target), Value::Object(patch)) => {
-            for (key, value) in patch {
-                match target.get_mut(key) {
-                    Some(existing) => merge(existing, value),
-                    None => {
-                        target.insert(key.clone(), value.clone());
-                    }
-                }
-            }
-        }
-        (target, patch) => *target = patch.clone(),
-    }
+/// Checks a component value: the type is registered and writable, and the
+/// JSON fits its schema.
+fn checked_value(registry: &Registry, component: &str, value: &Value, pointer: &str) -> Result<()> {
+    let info = schema_check::component(registry, component)
+        .map_err(|problem| problem.at_path(pointer.to_owned()))?;
+    schema_check::check_value(info.schema(), value, pointer)
 }
 
 /// What applying one operation needs to remember.
@@ -405,6 +474,7 @@ impl SceneDocument {
         let mut content = SceneDocument {
             entities: self.entities.clone(),
             resources: self.resources.clone(),
+            prefabs: Arc::clone(&self.prefabs),
             ..SceneDocument::default()
         };
         let mut changes = BTreeSet::new();
@@ -518,9 +588,48 @@ impl SceneDocument {
         component: &str,
         value: &Value,
     ) -> Result<()> {
-        let info = schema_check::component(registry, component)
-            .map_err(|problem| problem.at_path(component_pointer(id, component)))?;
-        schema_check::check_value(info.schema(), value, &component_pointer(id, component))
+        checked_value(
+            registry,
+            component,
+            value,
+            &component_pointer(id, component),
+        )
+    }
+
+    /// The prefab at `path` in the document's library.
+    fn prefab(&self, path: &str) -> Result<&SceneDocument> {
+        self.prefabs.get(path).ok_or_else(|| {
+            let paths = self.prefabs.paths();
+            Diagnostic::error(
+                "prefab_not_found",
+                format!("No prefab '{path}' is loaded."),
+                if paths.is_empty() {
+                    "No prefabs are loaded for this scene. Load the prefab file first, then place it.".to_owned()
+                } else {
+                    unknown_name_hint(path, &paths)
+                },
+            )
+            .with_candidates(paths.iter().copied())
+        })
+    }
+
+    /// Checks the instance `id` may override the prefab entity `entity`.
+    /// Returns the instance's prefab path.
+    fn override_target(&self, id: &str, entity: &str) -> Result<String> {
+        let instance = self.require(id)?;
+        let Some(path) = instance.prefab.clone() else {
+            return Err(Diagnostic::error(
+                "not_an_instance",
+                format!("Entity '{id}' is not a prefab instance, so it has no overrides."),
+                "Change its components directly, or use an instance of a prefab.",
+            )
+            .at_path(entity_pointer(id)));
+        };
+        let prefab = self.prefab(&path)?;
+        check_override_target(prefab, &path, entity).map_err(|problem| {
+            problem.at_path(format!("{}/overrides/{entity}", entity_pointer(id)))
+        })?;
+        Ok(path)
     }
 
     fn apply_op(&mut self, op: &EditOp, registry: &Registry) -> Result<OpOutcome> {
@@ -544,6 +653,53 @@ impl SceneDocument {
                         order: *order,
                         components: components.clone(),
                         notes: notes.clone(),
+                        prefab: None,
+                        overrides: BTreeMap::new(),
+                    },
+                );
+                Ok(OpOutcome {
+                    inverse: vec![EditOp::Despawn { id: id.clone() }],
+                    changes: vec![entity_pointer(id)],
+                })
+            }
+            EditOp::Instantiate {
+                id,
+                prefab,
+                parent,
+                order,
+                components,
+                overrides,
+                notes,
+            } => {
+                self.check_new_id(id)?;
+                self.check_parent(id, parent.as_deref())?;
+                let source = self.prefab(prefab)?;
+                for (name, value) in components {
+                    self.checked_component(registry, id, name, value)?;
+                }
+                for (inner, patches) in overrides {
+                    check_override_target(source, prefab, inner).map_err(|problem| {
+                        problem.at_path(format!("{}/overrides/{inner}", entity_pointer(id)))
+                    })?;
+                    for (name, value) in patches {
+                        checked_value(registry, name, value, &override_pointer(id, inner, name))?;
+                    }
+                }
+                // Empty patch lists are not kept, so the file stays canonical.
+                let overrides: Overrides = overrides
+                    .iter()
+                    .filter(|(_, patches)| !patches.is_empty())
+                    .map(|(inner, patches)| (inner.clone(), patches.clone()))
+                    .collect();
+                self.entities.insert(
+                    id.clone(),
+                    SceneEntity {
+                        parent: parent.clone(),
+                        order: *order,
+                        components: components.clone(),
+                        notes: notes.clone(),
+                        prefab: Some(prefab.clone()),
+                        overrides,
                     },
                 );
                 Ok(OpOutcome {
@@ -558,17 +714,126 @@ impl SceneDocument {
                 let mut changes = Vec::with_capacity(subtree.len());
                 for gone in &subtree {
                     if let Some(entity) = self.entities.remove(gone) {
-                        inverse.push(EditOp::Spawn {
-                            id: gone.clone(),
-                            parent: entity.parent,
-                            order: entity.order,
-                            components: entity.components,
-                            notes: entity.notes,
+                        inverse.push(match entity.prefab {
+                            Some(prefab) => EditOp::Instantiate {
+                                id: gone.clone(),
+                                prefab,
+                                parent: entity.parent,
+                                order: entity.order,
+                                components: entity.components,
+                                overrides: entity.overrides,
+                                notes: entity.notes,
+                            },
+                            None => EditOp::Spawn {
+                                id: gone.clone(),
+                                parent: entity.parent,
+                                order: entity.order,
+                                components: entity.components,
+                                notes: entity.notes,
+                            },
                         });
                         changes.push(entity_pointer(gone));
                     }
                 }
                 Ok(OpOutcome { inverse, changes })
+            }
+            EditOp::SetOverride {
+                id,
+                entity,
+                component,
+                value,
+            }
+            | EditOp::ReplaceOverride {
+                id,
+                entity,
+                component,
+                value,
+            } => {
+                self.override_target(id, entity)?;
+                let pointer = override_pointer(id, entity, component);
+                let previous = self
+                    .entities
+                    .get(id)
+                    .and_then(|instance| instance.overrides.get(entity))
+                    .and_then(|patches| patches.get(component))
+                    .cloned();
+                let next = match (op, &previous) {
+                    (EditOp::SetOverride { .. }, Some(existing)) => {
+                        let mut merged = existing.clone();
+                        merge(&mut merged, value);
+                        merged
+                    }
+                    _ => value.clone(),
+                };
+                checked_value(registry, component, &next, &pointer)?;
+                if let Some(instance) = self.entities.get_mut(id) {
+                    instance
+                        .overrides
+                        .entry(entity.clone())
+                        .or_default()
+                        .insert(component.clone(), next);
+                }
+                let inverse = match previous {
+                    Some(old) => EditOp::ReplaceOverride {
+                        id: id.clone(),
+                        entity: entity.clone(),
+                        component: component.clone(),
+                        value: old,
+                    },
+                    None => EditOp::RemoveOverride {
+                        id: id.clone(),
+                        entity: entity.clone(),
+                        component: component.clone(),
+                    },
+                };
+                Ok(OpOutcome {
+                    inverse: vec![inverse],
+                    changes: vec![pointer],
+                })
+            }
+            EditOp::RemoveOverride {
+                id,
+                entity,
+                component,
+            } => {
+                let pointer = override_pointer(id, entity, component);
+                let instance = self.require(id)?;
+                let patches = instance.overrides.get(entity);
+                let Some(old) = patches.and_then(|patches| patches.get(component)).cloned() else {
+                    let names: Vec<&str> = patches
+                        .map(|patches| patches.keys().map(String::as_str).collect())
+                        .unwrap_or_default();
+                    return Err(Diagnostic::error(
+                        "override_not_found",
+                        format!(
+                            "Instance '{id}' does not override the '{component}' component of '{entity}'."
+                        ),
+                        if names.is_empty() {
+                            format!("'{id}' has no overrides for '{entity}'.")
+                        } else {
+                            unknown_name_hint(component, &names)
+                        },
+                    )
+                    .with_candidates(names.iter().copied())
+                    .at_path(pointer));
+                };
+                if let Some(instance) = self.entities.get_mut(id)
+                    && let Some(patches) = instance.overrides.get_mut(entity)
+                {
+                    patches.remove(component);
+                    if patches.is_empty() {
+                        instance.overrides.remove(entity);
+                    }
+                }
+                Ok(OpOutcome {
+                    inverse: vec![EditOp::ReplaceOverride {
+                        id: id.clone(),
+                        entity: entity.clone(),
+                        component: component.clone(),
+                        value: old,
+                    }],
+                    changes: vec![pointer],
+                })
             }
             EditOp::Set {
                 id,
