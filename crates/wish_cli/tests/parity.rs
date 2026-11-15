@@ -105,6 +105,26 @@ fn examples() -> Vec<(&'static str, Value)> {
         ),
         ("scene_get", json!({ "detail": "normal" })),
         ("asset_info", json!({ "path": "assets/models/tri.glb" })),
+        ("sim_step", json!({})),
+        ("sim_start", json!({ "seed": 3 })),
+        ("sim_step", json!({ "frames": 60 })),
+        ("sim_snapshot", json!({ "label": "a" })),
+        (
+            "sim_step",
+            json!({ "until": "Transform.translation.y > 100", "max_frames": 10 }),
+        ),
+        ("sim_snapshot", json!({ "action": "list" })),
+        (
+            "entity_query",
+            json!({ "session": "s1", "with": ["Camera"], "components": ["Transform"] }),
+        ),
+        ("entity_get", json!({ "session": "s1", "ids": ["box"] })),
+        ("sim_restore", json!({ "snapshot": "a", "fork": true })),
+        ("sim_step", json!({ "session": "s2", "frames": 5 })),
+        ("sim_restore", json!({ "session": "s1", "snapshot": "b" })),
+        ("logs_get", json!({})),
+        ("sim_stop", json!({ "session": "s2" })),
+        ("sim_stop", json!({ "session": "s1" })),
     ]
 }
 

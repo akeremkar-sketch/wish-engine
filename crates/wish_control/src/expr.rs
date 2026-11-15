@@ -533,9 +533,11 @@ impl Parser<'_> {
     }
 
     fn component_names(&self) -> Vec<&str> {
+        // Resources are named like components: `Stats.bounces > 10`.
         self.registry
             .components()
             .map(|(_, info)| info.name())
+            .chain(self.registry.resources().map(|(_, info)| info.name()))
             .collect()
     }
 
@@ -563,8 +565,10 @@ impl Parser<'_> {
         let schema = self
             .registry
             .components()
-            .find(|(_, info)| info.name() == name)
-            .map(|(_, info)| wish_schema::json_schema::json_schema(info.schema()));
+            .map(|(_, info)| info)
+            .chain(self.registry.resources().map(|(_, info)| info))
+            .find(|info| info.name() == name)
+            .map(|info| wish_schema::json_schema::json_schema(info.schema()));
         let mut steps = Vec::new();
         let mut current = schema;
         loop {

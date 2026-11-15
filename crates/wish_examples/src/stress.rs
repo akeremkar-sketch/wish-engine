@@ -116,3 +116,10 @@ pub fn build_with(config: AppConfig, entities: u32) -> Result<App> {
 pub fn build(config: AppConfig) -> Result<App> {
     build_with(config, 1_000)
 }
+
+/// Adds the example's systems to an app that has its types.
+pub fn add_systems(app: &mut App) -> Result<()> {
+    app.add_system(System::new("movement", movement))?;
+    app.add_system(System::new("spin", spin))?;
+    Ok(())
+}

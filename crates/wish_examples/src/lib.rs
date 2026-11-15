@@ -64,3 +64,15 @@ pub fn build(name: &str, config: AppConfig) -> Result<App> {
         _ => Err(unknown_example(name)),
     }
 }
+
+/// Adds the systems of the example called `name` to `app`, whose world
+/// already has the example's types (see [`register_types`]). The example's
+/// own entities are not created: a scene gives those. Resources the systems
+/// need are added with their defaults unless the scene has set them.
+pub fn add_systems(name: &str, app: &mut App) -> Result<()> {
+    match name {
+        "bounce" => bounce::add_systems(app),
+        "stress" => stress::add_systems(app),
+        _ => Err(unknown_example(name)),
+    }
+}

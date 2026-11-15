@@ -1,21 +1,32 @@
 //! Scene tools: `scene_get`, `entity_query`, `entity_get`, `edit_apply`,
 //! `edit_history`.
 
+use std::borrow::Cow;
+use std::collections::BTreeMap;
+
 use serde_json::{Map, Value, json};
 use wish_core::{Diagnostic, Entity, Result};
 use wish_scene::{Action, Actor, SceneDocument, Transaction};
 
 use super::DETAIL;
-use crate::documents::{WorldView, touched};
-use crate::expr::{Expr, Subject};
+use crate::documents::touched;
+use crate::expr::Expr;
 use crate::param::{Args, Kind, Param};
+use crate::sessions::{LiveSubject, entity_names};
 use crate::tool::Tool;
 use crate::workspace::Workspace;
+use wish_ecs::World;
 
 const SCENE: Param = Param::optional(
     "scene",
     Kind::String,
     "The scene file, project-relative (default: the project's scene from wish.json).",
+);
+
+const SESSION: Param = Param::optional(
+    "session",
+    Kind::String,
+    "Look at this play session's live world instead of the scene file (a session id from sim_start).",
 );
 
 /// Components the engine keeps for itself and does not show by default.
@@ -50,6 +61,7 @@ pub(crate) const ENTITY_QUERY: Tool = Tool {
     description: "Finds entities by component (with), by a condition (where, e.g. \"Transform.translation.y < 0 && has(Camera)\"), by id pattern (name, e.g. \"crate_*\") or by distance (near: { \"point\": [x, y, z], \"radius\": r }, world positions). Values are the effective ones: prefab parts expanded, defaults filled in. Returns ids in order, and with components their values.",
     params: &[
         SCENE,
+        SESSION,
         Param::optional(
             "with",
             Kind::StringList,
@@ -97,6 +109,7 @@ pub(crate) const ENTITY_GET: Tool = Tool {
     description: "The component values of entities, by id: the effective values (prefab parts expanded, defaults filled in), plus parent, prefab and notes. Engine-internal components (SceneId, Hierarchy, GlobalTransform) are left out unless named.",
     params: &[
         SCENE,
+        SESSION,
         Param::required(
             "ids",
             Kind::StringList,
@@ -178,24 +191,9 @@ pub(crate) const EDIT_HISTORY: Tool = Tool {
 
 // --------------------------------------------------------------------------
 
-struct ViewEntity<'a> {
-    view: &'a WorldView,
-    id: &'a str,
-    entity: Entity,
-}
-
-impl Subject for ViewEntity<'_> {
-    fn id(&self) -> &str {
-        self.id
-    }
-    fn component(&self, name: &str) -> Option<Value> {
-        self.view.world.get_json(self.entity, name).ok()
-    }
-}
-
 /// An entity's world position, from its `GlobalTransform`.
-fn world_position(view: &WorldView, entity: Entity) -> Option<[f64; 3]> {
-    let matrix = view.world.get_json(entity, "GlobalTransform").ok()?;
+fn world_position(world: &World, entity: Entity) -> Option<[f64; 3]> {
+    let matrix = world.get_json(entity, "GlobalTransform").ok()?;
     let values = matrix.get("matrix")?.as_array()?;
     let at = |i: usize| values.get(i).and_then(Value::as_f64);
     Some([at(12)?, at(13)?, at(14)?])
@@ -361,7 +359,15 @@ fn scene_get(workspace: &mut Workspace, args: &Args, actor: &Actor) -> Result<Ma
 }
 
 fn entity_query(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<String, Value>> {
-    let (path, notes) = open(workspace, args, false)?;
+    let session_id = match args.str("session") {
+        Some(id) => Some(workspace.session_id(Some(id))?),
+        None => None,
+    };
+    let (path, notes) = if session_id.is_some() {
+        (String::new(), Vec::new())
+    } else {
+        open(workspace, args, false)?
+    };
     let with = args.strings("with");
     check_component_names(workspace, &with, "with")?;
     let include = args.strings("components");
@@ -405,25 +411,34 @@ fn entity_query(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map
     let pattern = args.str("name").map(str::to_owned);
     let limit = usize::try_from(args.int("limit").unwrap_or(50)).unwrap_or(50);
     let cursor = args.str("cursor").map(str::to_owned);
-    let revision = workspace.document(&path)?.doc.revision();
-    let view = workspace.view(&path)?;
+    let revision = match &session_id {
+        Some(id) => workspace.session(id)?.app.tick(),
+        None => workspace.document(&path)?.doc.revision(),
+    };
+    let (world, ids): (&World, Cow<'_, BTreeMap<String, Entity>>) = match &session_id {
+        Some(id) => {
+            let world = workspace.session(id)?.app.world();
+            (world, Cow::Owned(entity_names(world)))
+        }
+        None => {
+            let view = workspace.view(&path)?;
+            (&view.world, Cow::Borrowed(&view.ids))
+        }
+    };
 
     let mut matched: Vec<(String, Entity, Option<f64>)> = Vec::new();
-    for (id, &entity) in &view.ids {
+    for (id, &entity) in ids.iter() {
         if let Some(pattern) = &pattern
             && !crate::expr::glob(pattern, id)
         {
             continue;
         }
-        if !with
-            .iter()
-            .all(|name| view.world.get_json(entity, name).is_ok())
-        {
+        if !with.iter().all(|name| world.get_json(entity, name).is_ok()) {
             continue;
         }
         let distance = match near {
             Some((point, radius)) => {
-                let Some(at) = world_position(view, entity) else {
+                let Some(at) = world_position(world, entity) else {
                     continue;
                 };
                 let d = ((at[0] - point[0]).powi(2)
@@ -438,7 +453,11 @@ fn entity_query(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map
             None => None,
         };
         if let Some(condition) = &condition
-            && !condition.matches(&ViewEntity { view, id, entity })
+            && !condition.matches(&LiveSubject {
+                world,
+                id,
+                entity: Some(entity),
+            })
         {
             continue;
         }
@@ -484,7 +503,7 @@ fn entity_query(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map
         if !include.is_empty() {
             let mut values = Map::new();
             for name in &include {
-                if let Ok(value) = view.world.get_json(*entity, name) {
+                if let Ok(value) = world.get_json(*entity, name) {
                     values.insert(name.clone(), value);
                 }
             }
@@ -493,8 +512,16 @@ fn entity_query(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map
         entities.push(Value::Object(item));
     }
     let mut out = Map::new();
-    out.insert("scene".to_owned(), json!(path));
-    out.insert("revision".to_owned(), json!(revision));
+    match &session_id {
+        Some(id) => {
+            out.insert("session".to_owned(), json!(id));
+            out.insert("tick".to_owned(), json!(revision));
+        }
+        None => {
+            out.insert("scene".to_owned(), json!(path));
+            out.insert("revision".to_owned(), json!(revision));
+        }
+    }
     out.insert("matched".to_owned(), json!(total));
     if start + page.len() < total
         && let Some((last, _, _)) = page.last()
@@ -507,7 +534,15 @@ fn entity_query(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map
 }
 
 fn entity_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<String, Value>> {
-    let (path, notes) = open(workspace, args, false)?;
+    let session_id = match args.str("session") {
+        Some(id) => Some(workspace.session_id(Some(id))?),
+        None => None,
+    };
+    let (path, notes) = if session_id.is_some() {
+        (String::new(), Vec::new())
+    } else {
+        open(workspace, args, false)?
+    };
     let ids = args.strings("ids");
     if ids.is_empty() || ids.len() > 100 {
         return Err(Diagnostic::error(
@@ -522,18 +557,33 @@ fn entity_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<S
     }
     let only = args.strings("components");
     check_component_names(workspace, &only, "components")?;
-    let revision = workspace.document(&path)?.doc.revision();
-    let doc = workspace.document(&path)?.doc.clone();
-    let view = workspace.view(&path)?;
-    let known: Vec<&str> = view.ids.keys().map(String::as_str).collect();
+    let revision = match &session_id {
+        Some(id) => workspace.session(id)?.app.tick(),
+        None => workspace.document(&path)?.doc.revision(),
+    };
+    let doc = match &session_id {
+        Some(_) => None,
+        None => Some(workspace.document(&path)?.doc.clone()),
+    };
+    let (world, names): (&World, Cow<'_, BTreeMap<String, Entity>>) = match &session_id {
+        Some(id) => {
+            let world = workspace.session(id)?.app.world();
+            (world, Cow::Owned(entity_names(world)))
+        }
+        None => {
+            let view = workspace.view(&path)?;
+            (&view.world, Cow::Borrowed(&view.ids))
+        }
+    };
+    let known: Vec<&str> = names.keys().map(String::as_str).collect();
     let mut entities = Vec::new();
     for (index, id) in ids.iter().enumerate() {
-        let Some(&entity) = view.ids.get(id) else {
+        let Some(&entity) = names.get(id) else {
             return Err(unknown_entity(id, &known, &format!("/ids/{index}")));
         };
         let mut item = Map::new();
         item.insert("id".to_owned(), json!(id));
-        if let Some(described) = doc.entity(id) {
+        if let Some(described) = doc.as_ref().and_then(|doc| doc.entity(id)) {
             if let Some(parent) = described.parent() {
                 item.insert("parent".to_owned(), json!(parent));
             }
@@ -543,11 +593,11 @@ fn entity_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<S
             if let Some(notes) = described.notes() {
                 item.insert("notes".to_owned(), json!(notes));
             }
-        } else {
+        } else if doc.is_some() {
             item.insert("from_prefab".to_owned(), json!(true));
         }
         let mut components = Map::new();
-        if let Value::Object(all) = view.world.entity_json(entity)? {
+        if let Value::Object(all) = world.entity_json(entity)? {
             for (name, value) in all {
                 let wanted = if only.is_empty() {
                     !INTERNAL.contains(&name.as_str())
@@ -563,8 +613,16 @@ fn entity_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<S
         entities.push(Value::Object(item));
     }
     let mut out = Map::new();
-    out.insert("scene".to_owned(), json!(path));
-    out.insert("revision".to_owned(), json!(revision));
+    match &session_id {
+        Some(id) => {
+            out.insert("session".to_owned(), json!(id));
+            out.insert("tick".to_owned(), json!(revision));
+        }
+        None => {
+            out.insert("scene".to_owned(), json!(path));
+            out.insert("revision".to_owned(), json!(revision));
+        }
+    }
     out.insert("entities".to_owned(), json!(entities));
     finish(&mut out, notes, workspace, &path);
     Ok(out)

@@ -6,6 +6,7 @@ use crate::tool::Tool;
 mod asset;
 mod project;
 mod scene;
+mod sim;
 
 /// How much a tool tells: `summary` (the default, cheapest), `normal`, `full`.
 pub(crate) const DETAIL: Param = Param::optional(
@@ -28,4 +29,10 @@ pub(crate) const CATALOG: &[Tool] = &[
     asset::ASSET_LIST,
     asset::ASSET_INFO,
     asset::ASSET_MOVE,
+    sim::SIM_START,
+    sim::SIM_STEP,
+    sim::SIM_SNAPSHOT,
+    sim::SIM_RESTORE,
+    sim::SIM_STOP,
+    sim::LOGS_GET,
 ];

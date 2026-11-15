@@ -34,6 +34,8 @@ pub struct Workspace {
     pub(crate) types: App,
     /// Open scene documents.
     pub(crate) docs: crate::documents::Documents,
+    /// Play sessions and their log.
+    pub(crate) sessions: crate::sessions::Sessions,
     /// (scene, actor) → the revision that actor last saw.
     pub(crate) seen: std::collections::BTreeMap<(String, String), u64>,
 }
@@ -86,6 +88,7 @@ impl Workspace {
             example,
             types,
             docs: crate::documents::Documents::default(),
+            sessions: crate::sessions::Sessions::default(),
             seen: std::collections::BTreeMap::new(),
         })
     }
