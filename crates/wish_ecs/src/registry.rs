@@ -56,6 +56,8 @@ pub struct TypeInfo {
     /// and sorted. Only these bytes are ever read as bytes: the rest is
     /// padding and may be uninitialised in storage.
     spans: Vec<(usize, usize)>,
+    /// Offsets of every `Text` handle inside a value.
+    text_offsets: Vec<usize>,
     default: Vec<u8>,
     type_id: Option<TypeId>,
     /// Kept consistent by the world itself (like the hierarchy links), so it
@@ -69,9 +71,12 @@ impl TypeInfo {
         let default = default_bytes(&schema)?;
         let mut spans = Vec::new();
         collect_spans(&schema, 0, &mut spans);
+        let mut text_offsets = Vec::new();
+        collect_text_offsets(&schema, 0, &mut text_offsets);
         Ok(Self {
             fingerprint: fingerprint(&schema),
             spans: merge_spans(spans),
+            text_offsets,
             schema,
             default,
             type_id,
@@ -118,6 +123,29 @@ impl TypeInfo {
 
     pub(crate) fn spans(&self) -> &[(usize, usize)] {
         &self.spans
+    }
+
+    pub(crate) fn text_offsets(&self) -> &[usize] {
+        &self.text_offsets
+    }
+}
+
+fn collect_text_offsets(schema: &TypeSchema, base: usize, out: &mut Vec<usize>) {
+    match &schema.kind {
+        TypeKind::Text => out.push(base),
+        TypeKind::Array { element, len } => {
+            if element.contains_text() {
+                for index in 0..*len as usize {
+                    collect_text_offsets(element, base + index * element.byte_len(), out);
+                }
+            }
+        }
+        TypeKind::Struct(fields) => {
+            for field in fields {
+                collect_text_offsets(&field.ty, base + field.offset as usize, out);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -206,11 +234,14 @@ impl Table {
                 schema.name
             )));
         }
+        schema.validate()?;
         if let Some(index) = self.by_name(&schema.name) {
-            let new_fingerprint = fingerprint(&schema);
+            // Binding a Rust type to storage registered from a schema decides
+            // whether those bytes may be viewed as `T`, so the layouts are
+            // compared structurally, never by hash.
             if let Some(info) = self.infos.get_mut(index as usize)
                 && info.type_id.is_none()
-                && info.fingerprint == new_fingerprint
+                && info.schema.same_layout(&schema)
             {
                 // Registered earlier from its schema alone; now the Rust type is known too.
                 info.type_id = Some(type_id);
@@ -223,13 +254,34 @@ impl Table {
     }
 
     fn register_schema(&mut self, schema: TypeSchema) -> Result<u32> {
+        // Validate before anything else walks the schema: it may come from an
+        // untrusted script module.
+        schema.validate()?;
         if let Some(index) = self.by_name(&schema.name) {
             return match self.get(index) {
-                Some(info) if info.fingerprint == fingerprint(&schema) => Ok(index),
+                Some(info) if info.schema.same_layout(&schema) => Ok(index),
                 _ => Err(self.conflict(&schema.name)),
             };
         }
         self.push(TypeInfo::new(schema, None)?)
+    }
+
+    /// The index of the type `T` registered as `name`: bound to `T` by type
+    /// id, or registered from a schema alone with exactly `T`'s layout (so
+    /// that a world built from schemas behaves the same as one built from
+    /// Rust types).
+    fn lookup<T: Plain>(&self, name: &str) -> Option<u32> {
+        if let Some(index) = self.by_type(TypeId::of::<T>()) {
+            return Some(index);
+        }
+        let index = self.by_name(name)?;
+        let info = self.get(index)?;
+        let fits = info.type_id.is_none()
+            && size_of::<T>() == info.size()
+            && align_of::<T>() == info.schema.align as usize
+            && align_of::<T>() <= 8
+            && info.schema.same_layout(&T::schema());
+        fits.then_some(index)
     }
 
     fn push(&mut self, info: TypeInfo) -> Result<u32> {
@@ -297,9 +349,10 @@ impl Registry {
         self.components.by_name(name).map(ComponentId)
     }
 
-    /// The id of the component type `T`, if it has been registered.
-    pub fn component_id_of<T: 'static>(&self) -> Option<ComponentId> {
-        self.components.by_type(TypeId::of::<T>()).map(ComponentId)
+    /// The id of the component type `T`, if it has been registered (as `T`,
+    /// or from a schema with exactly `T`'s name and layout).
+    pub fn component_id_of<T: Component>(&self) -> Option<ComponentId> {
+        self.components.lookup::<T>(T::NAME).map(ComponentId)
     }
 
     /// Every registered component, in registration order.
@@ -322,9 +375,10 @@ impl Registry {
         self.resources.by_name(name).map(ResourceId)
     }
 
-    /// The id of the resource type `T`, if it has been registered.
-    pub fn resource_id_of<T: 'static>(&self) -> Option<ResourceId> {
-        self.resources.by_type(TypeId::of::<T>()).map(ResourceId)
+    /// The id of the resource type `T`, if it has been registered (as `T`,
+    /// or from a schema with exactly `T`'s name and layout).
+    pub fn resource_id_of<T: Resource>(&self) -> Option<ResourceId> {
+        self.resources.lookup::<T>(T::NAME).map(ResourceId)
     }
 
     /// Every registered resource, in registration order.
@@ -371,9 +425,10 @@ impl Registry {
         self.events.by_name(name).map(EventId)
     }
 
-    /// The id of the event type `T`, if it has been registered.
-    pub fn event_id_of<T: 'static>(&self) -> Option<EventId> {
-        self.events.by_type(TypeId::of::<T>()).map(EventId)
+    /// The id of the event type `T`, if it has been registered (as `T`,
+    /// or from a schema with exactly `T`'s name and layout).
+    pub fn event_id_of<T: Event>(&self) -> Option<EventId> {
+        self.events.lookup::<T>(T::NAME).map(EventId)
     }
 
     /// Every registered event type, in registration order.

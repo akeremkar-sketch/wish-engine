@@ -4,7 +4,7 @@
 
 Yapay zekâya tamamen entegre ama yapay zekâsız da eksiksiz kullanılabilen, açık kaynak, ücretsiz ve komisyonsuz bir 3D oyun motoru.
 
-**Durum:** geliştirmenin çok başında; henüz çalıştırılabilir bir motor yok. M0 (tasarım) tamamlandı, M1 (çekirdek) sürüyor: şema, veri deposu (ECS), zamanlayıcı, anlık görüntü/hash ve `wen` komut satırı aracı hazır; sırada kıyaslama ve kapanış incelemesi.
+**Durum:** geliştirmenin başında; henüz pencere, görüntü ya da sahne dosyası yok. M0 (tasarım) ve M1 (çekirdek) tamamlandı: şema, veri deposu (ECS), deterministik zamanlayıcı, anlık görüntü/hash ve `wen` komut satırı aracı çalışıyor. Sırada M2 (sahne dosyaları) ve M3 (ilk görüntü).
 
 ## Derleme
 

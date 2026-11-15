@@ -273,7 +273,7 @@ wen bench ecs --entities 100000 --ticks 600
 | WP5 | Zamanlayıcı, sabit adım, rastgelelik (`wish_app`) | Opus 5.5 · high | Tamamlandı |
 | WP6 | Anlık görüntü ve dünya hash'i | Opus 5.5 · high | Tamamlandı |
 | WP7 | `wish_cli`: `wen run`, `wen schema`, `wen bench` | Sonnet 5.5 · medium | Tamamlandı (`wen bench` WP8'de) |
-| WP8 | Determinizm testleri, Miri, kıyaslama, M1 kapanış incelemesi | Opus 5.5 · high | |
+| WP8 | Determinizm testleri, Miri, kıyaslama, M1 kapanış incelemesi | Opus 5.5 · high | Tamamlandı |
 
 ## 11. Açık sorular (uygulama sırasında kapanacak)
 
@@ -308,7 +308,7 @@ Tasarımdan sonra uygulama sırasında verilen ve sonraki iş paketlerini etkile
 - **Tüm erişim `&mut World` üzerinden.** Sorgular da dahil (`world.query::<Q>()` dünyayı değişken ödünç alır). Tek yazıcı garantisi derleyiciden gelir; çalışma zamanı ödünç denetimi yok. Paralel sistemler eklendiğinde (M1 sonrası) salt okunur sorgular için `&World` yolu eklenecek.
 - **Sorgu erişim denetimi `TypeId` ile yapılır**, bileşen kimliğiyle değil: böylece `(&mut A, &A)` gibi hatalı bir sorgu, `A` hiç kaydedilmemiş olsa bile `conflicting_query_access` tanısıyla reddedilir.
 - **Kaydedilmemiş bileşen** türlü sorguda hiçbir şeyle eşleşmez (hata değil); `With<T>` boş, `Without<T>` koşulsuz geçer. Adla erişimde ise (`set_json`) `unknown_component` tanısı ve en yakın adın önerisi döner.
-- **`set_json` atomiktir.** Değer önce bir kopya üzerinde uygulanır; reddedilirse dünya değişmez. Bileşen yoksa varsayılanlardan başlar, varsa yama uygular.
+- **`set_json` atomiktir.** Değer önce bir kopya üzerinde uygulanır; reddedilirse dünya değişmez. Bileşen yoksa varsayılanlardan başlar, varsa yama uygular. *(Kapanış incelemesi bu iddianın metin tablosu için yanlış olduğunu buldu; WP8'de düzeltildi, bkz. WP8 notları.)*
 - **Kaynaklar** tek satırlık sütunlardır; aynı türlü, JSON ve bayt yolları kullanılır.
 - **WP4b'ye ertelenenler:** ertelenmiş komut tamponu (`Commands`), olaylar, hiyerarşi bileşeni, değişiklik izleme (`changed_tick` ve `Mut<T>` sarmalayıcısı). Bunlar zamanlayıcıyla (WP5) birlikte anlam kazanıyor; ayrı ve küçük bir iş paketi olarak daha güvenli.
 - **Toplu ekleme yok.** Bir varlığa birden çok bileşen eklemek her ekleme için bir arketip taşıması yapar. 100 bin varlıklı kıyaslama (WP8) yetersiz gösterirse demet tabanlı `spawn_with` eklenecek.
@@ -353,3 +353,36 @@ Tasarımdan sonra uygulama sırasında verilen ve sonraki iş paketlerini etkile
 - **Duvar saati yalnızca burada** ölçülür (`elapsed_ms`); simülasyona hiç girmez.
 - **Ölçüm (sürüm derlemesi, bu makine):** `wen run --example bounce --frames 10000 --seed 7` 29 ms; 182 varlık; dünya hash'i `f1eb0801…`, uygulama hash'i `837b9d39…` (her çalıştırmada aynı).
 - Sahne dosyası (M2) gelene kadar `run` yalnızca yerleşik örnekleri çalıştırır; `--example` verilmezse hata bunu açıkça söyler.
+
+### WP8 ve M1 kapanışı
+
+**Kıyaslama** (`wen bench`, `stress` iş yükü, sürüm derlemesi, bu makine: Ryzen 5 5600): 100.000 varlık, 600 tick. Tick ortalaması 0,50 ms, en kötü 0,88 ms (60 Hz bütçesi 16,67 ms). Dünyayı kurmak 51 ms, dünya hash'i 5,5 ms, anlık görüntü ~3 ms, geri yükleme ~3 ms. ADR-004'ün geri dönüş tetikleyicisi (bevy_ecs) gerekmedi; `scalar-math` (SIMD'siz matematik) şimdilik yeterli.
+
+**Bağımsız kapanış incelemesi.** Ayrı bir ajan, tasarım gerekçelerini değil kodu okuyarak `unsafe` güvenliğini ve determinizmi inceledi. Pratik bir bellek güvenliği açığı bulmadı; şu bulguları getirdi (her biri kodda doğrulandı):
+
+| # | Bulgu | Karar |
+|---|---|---|
+| 1 | Sıfır boyutlu öğeli dev dizi şeması doğrulamadan geçip motoru kilitleyebiliyordu (ilke 7'yi çiğner) | **Düzeltildi:** `validate` önce sınırları denetler: derinlik ≤ 32, değer ≤ 1 MiB, bir değerin tam gezintisi ≤ 2^20 düğüm, sıfır boyutlu öğeli dizi yasak. Kayıt, şemayı başka hiçbir işlem yürümeden önce doğrular |
+| 2 | Reddedilen JSON değeri metin tablosunu yine de büyütüyordu (`set_json`, `set_resource_json`, `send_json`, komutlar) | **Düzeltildi:** metinler önce `PendingTexts`'te toplanır, değer kabul edilirse aynı tutamaçlarla işlenir |
+| 3 | Rust türünün şemayla kaydedilmiş depoya bağlanması 128 bitlik hash eşitliğine dayanıyordu | **Düzeltildi:** `TypeSchema::same_layout` ile yapısal karşılaştırma. Anlık görüntü geri yüklemesi hâlâ parmak izi önekiyle denetlenir: anlık görüntüler yalnızca süreç içinde `World::snapshot` ile üretilir ve dışarıdan oluşturulamaz |
+| 4 | Yalnızca şemayla kaydedilmiş bileşen türlü sorguda görünmüyordu; eşit hash farklı gelecek verebiliyordu | **Düzeltildi:** türlü arama, ad + yapısal düzen eşleşmesine geri düşer (`Table::lookup`) |
+| 5 | NaN bit desenleri hash'e giriyor | **Bilinçli olarak ertelendi:** aynı derlemede NaN bitleri deterministiktir (D1 korunur). Platformlar arası hedef D2'nin işi; çözüm (hash'te ve JSON'da NaN kanonikleştirme) her hash'i yavaşlatacağı için D2 ile birlikte yapılacak |
+| 6 | `update` için biriken gerçek zaman uygulama hash'inde yok | **Belge düzeltildi:** "eşit hash ⇒ eşit gelecek" `step`/`run` içindir; gerçek zaman tekrar oynatmanın parçası değildir |
+| 7 | Ham baytlarla dünyanın vermediği metin tutamacı saklanabiliyordu | **Düzeltildi:** `insert_bytes` tutamaçları denetler (`invalid_text_handle`). Yerel kod başka bir dünyanın `Text`'ini ekleyebilir; bu belgelenmiş bir sınırlamadır |
+| 8a | 2^32 kez yeniden kullanılan dizinde kuşak taşınca eski tutamaç geçerli olabiliyordu | **Düzeltildi:** kuşağı tükenen dizin emekliye ayrılır |
+| 8b | Alt akıştaki bir crate `serde_json/preserve_order` açarsa JSON alan işleme sırası değişir | Not edildi: aynı derleme için deterministik; D2 kapsamında |
+
+İnceleme ayrıca şunların sağlam olduğunu doğruladı: sütun kopyalarının sınırları, ham `MaybeUninit` kopyaları, yalnızca alan aralıklarının okunması, ZST işaretçileri, sorgu işaretçilerinin yeniden ödünç almadan geçerli kalması, `Changed` süzgecinin öğeden önce okuması, erişim denetimi, makronun reddettiği biçimler (generic, union, tuple yapı, kullanıcı `repr`), arketip taşıma ve `swap_remove` konum düzeltmeleri, hiyerarşi bağlantıları, olay imleçleri, komut hedefleri, HashMap/duvar saati/işletim sistemi rastgeleliği kullanılmaması.
+
+**M1 çıkış ölçütleri:**
+
+| Ölçüt | Durum |
+|---|---|
+| 10.000 tick iki kez aynı hash | Karşılandı (`wish_examples/tests/determinism.rs`) |
+| 5.000'de anlık görüntü → geri yükle → devam = kesintisiz | Karşılandı (aynı uygulamada ve sıfırdan kurulmuş uygulamada) |
+| Her bileşenin JSON Schema'sı; JSON gidiş-dönüşü kayıpsız | Karşılandı (her sonlu `f32`/`f64` için özellik testi) |
+| Miri temiz | Karşılandı (`wish_ecs`, katı işaretçi kökeni) |
+| CI yeşil | **Doğrulanmadı:** uzak depo yok; `ci.yml` ve `deny.toml` hiç çalışmadı |
+| 100 bin varlık kıyaslaması kaydedildi | Karşılandı (yukarıda) |
+
+**M1'den M2'ye devredilenler:** derleme hatası testleri (`trybuild`) ve makronun düz veri olmayan alan için yinelenen hata iletileri; `syn` 3'e geçiş; CI'ın ilk gerçek çalıştırması (depo GitHub'a gönderildiğinde).

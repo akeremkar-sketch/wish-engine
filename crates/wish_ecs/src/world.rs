@@ -19,7 +19,7 @@ use crate::events::{EventCursor, EventQueue};
 use crate::internal_error;
 use crate::query::{Access, ChangeTick, Mut, QueryData, QueryFilter, QueryIter};
 use crate::registry::{ComponentId, EventId, Registry, ResourceId, TypeInfo};
-use crate::text::TextTable;
+use crate::text::{PendingTexts, TextTable};
 
 /// The archetype of entities with no components. Always present.
 const EMPTY_ARCHETYPE: usize = 0;
@@ -129,6 +129,20 @@ fn missing_resource(name: &str) -> Diagnostic {
         format!("The resource '{name}' is registered but has no value in this world."),
         "Set the resource first; fields you leave out take their default values.",
     )
+}
+
+/// Applies a JSON value to `bytes` without touching the text table. Returns
+/// the new strings the value refers to, to be committed only if the whole
+/// value was accepted, so that a rejected value leaves the world unchanged.
+fn apply_json_pending(
+    schema: &TypeSchema,
+    value: &Value,
+    bytes: &mut [u8],
+    texts: &TextTable,
+) -> Result<Vec<String>> {
+    let mut pending = PendingTexts::new(texts);
+    apply_json(schema, value, bytes, &mut JsonContext::new(&mut pending))?;
+    Ok(pending.into_added())
 }
 
 /// Two distinct elements of a slice, mutably.
@@ -720,12 +734,40 @@ impl World {
         Ok(Some(bytes))
     }
 
+    /// Adds the strings collected while converting an accepted JSON value.
+    /// They get exactly the handles the value was given (see `PendingTexts`).
+    fn commit_texts(&mut self, added: Vec<String>) -> Result<()> {
+        for text in added {
+            self.state.texts.intern(&text)?;
+        }
+        Ok(())
+    }
+
     /// Adds or replaces a component from raw bytes, for data from outside
     /// native code (script modules). The bytes are checked first: a value
-    /// whose `bool` or enum fields hold invalid bytes is rejected.
+    /// whose `bool` or enum fields hold invalid bytes, or whose text handles
+    /// are not in this world's text table, is rejected.
     pub fn insert_bytes(&mut self, entity: Entity, id: ComponentId, bytes: &[u8]) -> Result<()> {
         self.check_writable(id)?;
-        validate_bytes(self.component_info(id)?.schema(), bytes)?;
+        let info = self.component_info(id)?;
+        validate_bytes(info.schema(), bytes)?;
+        for offset in info.text_offsets() {
+            let handle = bytes
+                .get(*offset..offset + 4)
+                .and_then(|slot| <[u8; 4]>::try_from(slot).ok())
+                .map(u32::from_le_bytes)
+                .ok_or_else(|| internal_error("a text offset lies outside its value"))?;
+            if handle as usize >= self.state.texts.len() {
+                return Err(Diagnostic::error(
+                    "invalid_text_handle",
+                    format!(
+                        "The value refers to text handle {handle}, but this world's text table has {} entries.",
+                        self.state.texts.len()
+                    ),
+                    "Text handles only have meaning in the world that issued them. Intern the string in this world first, or set the component through JSON with the string itself.",
+                ));
+            }
+        }
         self.put_component(entity, id, bytes)
     }
 
@@ -753,12 +795,8 @@ impl World {
             .component(id)
             .ok_or_else(|| internal_error("a component id has no type information"))?;
         let mut bytes = current.unwrap_or_else(|| info.default_bytes().to_vec());
-        apply_json(
-            info.schema(),
-            value,
-            &mut bytes,
-            &mut JsonContext::new(&mut state.texts),
-        )?;
+        let added = apply_json_pending(info.schema(), value, &mut bytes, &state.texts)?;
+        self.commit_texts(added)?;
         self.put_component(entity, id, &bytes)
     }
 
@@ -885,12 +923,8 @@ impl World {
             }
             None => info.default_bytes().to_vec(),
         };
-        apply_json(
-            info.schema(),
-            value,
-            &mut bytes,
-            &mut JsonContext::new(&mut state.texts),
-        )?;
+        let added = apply_json_pending(info.schema(), value, &mut bytes, &state.texts)?;
+        self.commit_texts(added)?;
         self.put_resource(id, &bytes)
     }
 
@@ -932,12 +966,8 @@ impl World {
             .event(id)
             .ok_or_else(|| internal_error("an event id has no type information"))?;
         let mut bytes = info.default_bytes().to_vec();
-        apply_json(
-            info.schema(),
-            value,
-            &mut bytes,
-            &mut JsonContext::new(&mut state.texts),
-        )?;
+        let added = apply_json_pending(info.schema(), value, &mut bytes, &state.texts)?;
+        self.commit_texts(added)?;
         self.push_event(id, &bytes)
     }
 

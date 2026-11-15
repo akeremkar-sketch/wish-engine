@@ -718,6 +718,67 @@ fn json_schema_describes_the_json_form() {
     assert_eq!(translation["x-aliases"], json!(["position"]));
 }
 
+/// Schemas from untrusted sources (script modules) must not be able to make
+/// any walk over a value run for ever, allocate without bound or overflow the
+/// stack. Each of these is rejected quickly by `validate`.
+#[test]
+fn hostile_schemas_are_rejected_quickly() {
+    let empty = TypeSchema::structure("Empty", "", 0, 1, Vec::new());
+    let zero_size_array = TypeSchema::array(empty, u32::MAX as usize, 0, 1);
+    let nested_zero_size = TypeSchema::array(zero_size_array.clone(), u32::MAX as usize, 0, 1);
+    let huge = TypeSchema::array(u8::schema(), 1 << 21, 1 << 21, 1);
+    let mut deep = u8::schema();
+    for _ in 0..40 {
+        deep = TypeSchema::array(deep, 1, 1, 1);
+    }
+    let wide = TypeSchema::array(
+        TypeSchema::array(u8::schema(), 1024, 1024, 1),
+        1024,
+        1 << 20,
+        1,
+    );
+    for (case, schema) in [
+        ("zero-size elements", zero_size_array),
+        ("nested zero-size elements", nested_zero_size),
+        ("too large", huge),
+        ("too deep", deep),
+        ("too many nodes", wide),
+    ] {
+        let started = std::time::Instant::now();
+        let problem = schema.validate().expect_err(case);
+        assert_eq!(problem.code, "invalid_schema", "{case}");
+        assert!(
+            started.elapsed().as_secs() < 1,
+            "{case} took too long to reject"
+        );
+    }
+}
+
+#[test]
+fn same_layout_ignores_documentation_but_not_layout() {
+    let original = Mover::schema();
+    let mut documented = original.clone();
+    documented.doc = "Other words.".to_owned();
+    if let TypeKind::Struct(fields) = &mut documented.kind {
+        fields[0].unit = Some("km/h".to_owned());
+        fields[0].default = None;
+        fields[0].range = None;
+    }
+    assert!(original.same_layout(&documented));
+
+    let mut retyped = original.clone();
+    if let TypeKind::Struct(fields) = &mut retyped.kind {
+        // `enabled` is a bool; a u8 has the same size but other valid values.
+        let enabled = fields
+            .iter_mut()
+            .find(|field| field.name == "enabled")
+            .unwrap();
+        enabled.ty = u8::schema();
+    }
+    assert!(!original.same_layout(&retyped));
+    assert!(!Shape::schema().same_layout(&u8::schema()));
+}
+
 #[test]
 fn inconsistent_schemas_are_rejected() {
     let overlapping = TypeSchema::structure(

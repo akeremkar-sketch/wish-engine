@@ -428,6 +428,11 @@ impl App {
     /// A stable hash of everything that decides how the app continues: the
     /// world hash, the tick counter, the seed and tick rate, the system set,
     /// and each system's random stream, last run and enabled flag.
+    ///
+    /// Equal hashes mean equal futures under [`App::step`] and [`App::run`]
+    /// given the same inputs. Real time owed by [`App::update`] (and its step
+    /// limit) is left out on purpose: it decides *how many* ticks run in a
+    /// frame, not what a tick does, and it is not part of a replay.
     pub fn hash(&self) -> Hash128 {
         let mut hasher = StableHasher::new();
         hasher.write_str("wish-app-hash-v1");

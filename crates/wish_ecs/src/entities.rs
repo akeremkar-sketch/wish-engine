@@ -66,11 +66,17 @@ impl Entities {
     }
 
     /// Frees a living entity and returns where its data was.
+    ///
+    /// An index whose generation is used up is retired instead of reused:
+    /// wrapping the generation back to 0 would make long-dead handles valid
+    /// again.
     pub fn free(&mut self, entity: Entity) -> Option<EntityLocation> {
         let slot = self.slot_mut(entity)?;
         let location = slot.location.take()?;
-        slot.generation = slot.generation.wrapping_add(1);
-        self.free.push(entity.index());
+        if let Some(next) = slot.generation.checked_add(1) {
+            slot.generation = next;
+            self.free.push(entity.index());
+        }
         self.alive -= 1;
         Some(location)
     }
@@ -160,6 +166,23 @@ mod tests {
         assert_eq!(entities.alloc(HERE).unwrap().index(), 3);
         assert_eq!(entities.alloc(HERE).unwrap().index(), 1);
         assert_eq!(entities.alloc(HERE).unwrap().index(), 4);
+    }
+
+    #[test]
+    fn an_index_whose_generations_are_used_up_is_retired() {
+        let mut entities = Entities::default();
+        let first = entities.alloc(HERE).unwrap();
+        entities.slots[0].generation = u32::MAX;
+        let last = Entity::new(first.index(), u32::MAX);
+        assert_eq!(entities.free(last), Some(HERE));
+        let next = entities.alloc(HERE).unwrap();
+        assert_ne!(
+            next.index(),
+            first.index(),
+            "the used-up index is not handed out again"
+        );
+        assert_eq!(entities.location(last), None);
+        assert_eq!(entities.location(Entity::new(first.index(), 0)), None);
     }
 
     #[test]

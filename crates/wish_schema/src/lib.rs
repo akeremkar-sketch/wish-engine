@@ -49,7 +49,10 @@ pub use json::{
     JsonContext, NoTexts, TextStore, apply_json, default_bytes, from_json, to_json, validate_bytes,
 };
 pub use json_schema::json_schema;
-pub use model::{FieldSchema, NumberRange, TypeKind, TypeSchema, VariantSchema};
+pub use model::{
+    FieldSchema, MAX_DEPTH, MAX_NODES, MAX_VALUE_SIZE, NumberRange, TypeKind, TypeSchema,
+    VariantSchema,
+};
 pub use plain::{Component, Event, Plain, Resource};
 pub use wish_schema_macros::{component, event, resource, schema};
 
