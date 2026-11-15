@@ -21,6 +21,7 @@ wish_render = { path = "crates/wish_render" }
 wish_scene = { path = "crates/wish_scene" }
 wish_schema = { path = "crates/wish_schema" }
 wish_transform = { path = "crates/wish_transform" }
+wish_control = { path = "crates/wish_control" }
 wish_window = { path = "crates/wish_window" }
 wish_schema_macros = { path = "crates/wish_schema_macros" }
 

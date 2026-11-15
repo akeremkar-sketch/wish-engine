@@ -14,6 +14,7 @@ mod args;
 mod capture;
 mod project_cmds;
 mod scene;
+mod tool_cmds;
 mod types;
 mod view;
 
@@ -48,6 +49,8 @@ USAGE:
     wen view --example <name> --scene <file> [--root <folder>] [--size <w>x<h>]
              [--view lit|ids|depth|normals|wireframe] [--software] [--shaders <folder>] [--exit-after <frames>]
     wen shaders [--dir <folder>] [--json]
+    wen call <tool> ['{json args}' | --<param> <value> ...] [--root <folder>] [--actor <name>]
+    wen do [<file> | -] [--root <folder>] [--actor <name>]
     wen mv <from> <to> --example <name> [--root <folder>] [--dry-run] [--json]
     wen schema [--example <name>] [--json]
     wen examples [--json]
@@ -88,7 +91,15 @@ COMMANDS:
     shaders    Check every shader of the engine (syntax and validation, no GPU needed); --dir checks
                a folder of <name>.wgsl files in place of the built-in ones. Pass the same folder
                as --shaders to capture/describe to draw with them. Fails if there is any problem.
-    mv        Move an asset file or folder (paths relative to --root) and update every
+    call       Run one control-plane tool (the same tools the MCP server offers) and print its
+               JSON answer, exactly as an MCP client receives it. Arguments are one JSON object
+               or --name value flags. `wen call project_info` is a good start; an unknown tool
+               name lists them all.
+    do         Run a list of tool calls in one process, in order, one answer per line. The list
+               is a JSON array or one { \"tool\": ..., \"args\": { ... } } per line, from a file or
+               standard input. Simulation sessions live as long as the process, so a sequence
+               such as sim_start, sim_step, capture_frame belongs in one `wen do`.
+    mv         Move an asset file or folder (paths relative to --root) and update every
                asset reference to it in scenes and prefabs, all or nothing. The example
                supplies the component types that tell where references are.
     schema     Print the JSON Schema of every registered component, resource and event.
@@ -137,6 +148,8 @@ fn execute_any(args: Args) -> Result<Outcome> {
             check,
         } => project_cmds::format(paths, example, &root_of(root), *check, args.json),
         Command::Shaders { dir } => capture::shaders(dir.as_deref(), args.json),
+        Command::Call(call) => Ok(tool_cmds::call(call)),
+        Command::Do(calls) => Ok(tool_cmds::run_calls(calls)),
         Command::Migrate { paths, root } => project_cmds::migrate(paths, &root_of(root), args.json),
         Command::Watch {
             example,
@@ -188,6 +201,8 @@ fn execute(args: Args) -> Result<String> {
         | Command::Format { .. }
         | Command::Migrate { .. }
         | Command::Shaders { .. }
+        | Command::Call(_)
+        | Command::Do(_)
         | Command::Watch { .. } => Err(Diagnostic::error(
             "internal_error",
             "A project command was run through the simple path.",

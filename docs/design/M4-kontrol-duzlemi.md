@@ -155,3 +155,16 @@ Taslaktaki 24 araçtan M4'te **20**'si uygulanır; `script_build`, `test_run`, `
 
 1. `edit_apply`'da `Transform.rotation` için `euler_deg` kısa yazımı (M3'ten devir): ajan için kuaterniyon yazmak hata kaynağı. WP2'de karar: **evet**, ama yalnızca giriş kolaylığı — belgeye kuaterniyon yazılır (dosya kanonik kalır), yanıtta ikisi de gösterilir.
 2. `entity_get` sonuçlarında türetilmiş değerler (`GlobalTransform`) gösterilsin mi? Öneri: oturumlarda evet (salt okunur işaretli), belgede hayır.
+
+## 14. Uygulama notları
+
+### WP1 — `wish_control` iskeleti, `wen call` / `wen do`
+
+- **Crate:** `wish_control` (`param`, `project`, `tool`, `tools/`, `types`, `workspace`). Motor türlerinin listesi `wish_cli::types`'tan buraya taşındı; `wish_cli::types` artık yalnızca eski `--example` komutları için ince bir uyarlayıcı.
+- **Parametre tablosu (`Param`, `Kind`):** her aracın parametreleri `const` bir dizi; aynı tablodan `input_schema` (MCP JSON Schema: tür, aralık, `enum`, `default`, `description`, `additionalProperties: false`), `parse` (ayrıştırıcı + varsayılanlar) ve `from_flags` (komut satırı `--ad değer`; liste için virgül ya da JSON, tek başına yazılan bayrak `true`) üretilir. Hata kodları: `invalid_arguments` (nesne değil), `unknown_parameter` (+ "did you mean", `candidates`), `missing_parameter`, `invalid_parameter` (ne beklendiği + örnek yazım + parametrenin belgesi); hepsi `location.path` = `/<parametre>`.
+- **Zarf:** `Workspace::call(tool, args, actor) -> Value` hiç başarısız olmaz: araç içindeki bir panik `internal_error` yanıtına döner, süreç ayakta kalır. Yanıt anahtarları sıralı (serde_json `Map` = `BTreeMap`) → aynı çağrı her yerde aynı baytlar.
+- **`wish.json`:** `format`, `name`, `scene`, `engine`, `types.example`; konumlu `invalid_project_file` hataları (bilinmeyen ayar → öneri). Bozuk ya da eksik `wish.json` çalışma alanını açmayı engellemez: araçlar motor türleriyle çalışır, `project_info` ve `check` sorunu raporlar (eksikse `no_project_file` uyarısı "`wen new`" ipucuyla).
+- **Araçlar:** `project_info` (ad, varsayılan sahne, sahne/prefab listesi, varlık sayısı, `check`'in hata/uyarı sayıları, tür sayıları), `schema_get` (`names` / `search` (tüm sözcükler ad, alan adı ve belgelerde aranır) / `detail`: summary = ilk cümle + alan adları, normal = alanların türü/birimi/aralığı/varsayılanı/belgesi, full = JSON Schema; yönetilen türler `read_only`), `check` (`passed`, dosya/hata/uyarı sayıları, tanılar; `paths` yanlışsa `file_not_found` + en yakın dosya). Araç adı kuralı: `snake_case`, `ad_eylem` ya da tek fiil (`check`, taslaktaki gibi).
+- **`wen call <araç> ['{json}' | --param değer …] [--root] [--example] [--actor]`** ve **`wen do [dosya | -]`** (JSON dizisi ya da satır başına bir çağrı; her yanıt bir satır; bozuk liste satır numarasıyla). Çıkış kodu `ok`'tan.
+- **Eşlik testi (`wish_cli/tests/parity.rs`):** her araç için örnek çağrılar (bilerek hatalı olanlar dahil) süreç içinde, `wen call` ile ve `wen do` ile koşulur; üç çıktı **bayt bayt** aynı. Katalogdaki bir araç örneksizse test başarısız olur. MCP ayağı WP6'da eklenecek.
+- **Test:** `wish_control` birim (parametre ve proje dosyası) + `tests/catalog.rs` (katalog kuralları: belgeler, varsayılanlar kendi denetiminden geçer, değiştiren araçlar `dry_run` taşır; bozuk/eksik `wish.json`; `schema_get` arama). Toplam 316 test yeşil.

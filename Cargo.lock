@@ -3015,6 +3015,7 @@ dependencies = [
  "serde_json",
  "wish_app",
  "wish_asset",
+ "wish_control",
  "wish_core",
  "wish_ecs",
  "wish_examples",
@@ -3024,6 +3025,22 @@ dependencies = [
  "wish_schema",
  "wish_transform",
  "wish_window",
+]
+
+[[package]]
+name = "wish_control"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wish_app",
+ "wish_asset",
+ "wish_core",
+ "wish_ecs",
+ "wish_examples",
+ "wish_render",
+ "wish_scene",
+ "wish_schema",
+ "wish_transform",
 ]
 
 [[package]]

@@ -1,24 +1,16 @@
 //! The types a `wen` command knows about: the engine's own, and those of
-//! the chosen built-in example.
-//!
-//! Until game modules exist (M5), a project's own component types cannot be
-//! loaded, so commands that read scene files take the types of a built-in
-//! example (`--example`) next to the engine's.
+//! the chosen built-in example. The control plane owns the list; this module
+//! only adapts it for the older commands that take `--example`.
 
 use wish_core::Result;
 use wish_ecs::World;
 
-/// Registers the engine's components and resources (`SceneId`, `Transform`,
-/// `GlobalTransform`, and the rendering types) and then the types of
-/// `example`.
+/// Registers the engine's types and then those of `example`.
 pub fn register_scene_types(example: &str, world: &mut World) -> Result<()> {
-    register_engine_types(world)?;
-    wish_examples::register_types(example, world)
+    wish_control::types::register_project_types(Some(example), world)
 }
 
 /// Registers only the engine's own types.
 pub fn register_engine_types(world: &mut World) -> Result<()> {
-    wish_scene::instantiate::register(world)?;
-    wish_transform::register(world)?;
-    wish_render::components::register(world)
+    wish_control::types::register_engine_types(world)
 }
