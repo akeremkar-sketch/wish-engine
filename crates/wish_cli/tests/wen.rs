@@ -80,7 +80,30 @@ fn text_output_for_people() {
     assert!(stdout.contains("world hash: "));
     let (ok, stdout, _) = wen(&["examples"]);
     assert!(ok);
-    assert_eq!(stdout.trim(), "bounce");
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["bounce", "stress"]);
+}
+
+#[test]
+fn bench_reports_timings_and_a_deterministic_hash() {
+    let arguments = [
+        "bench",
+        "--entities",
+        "2000",
+        "--ticks",
+        "30",
+        "--seed",
+        "3",
+        "--json",
+    ];
+    let (ok, first) = wen_json(&arguments);
+    assert!(ok, "{first}");
+    assert_eq!(first["entities"], 2000);
+    assert_eq!(first["ticks"], 30);
+    for key in ["mean", "median", "p95", "max"] {
+        assert!(first["tick_ms"][key].as_f64().unwrap() >= 0.0, "{key}");
+    }
+    let (_, second) = wen_json(&arguments);
+    assert_eq!(first["world_hash"], second["world_hash"]);
 }
 
 #[test]

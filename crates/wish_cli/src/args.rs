@@ -8,7 +8,7 @@ use wish_core::suggest::unknown_name_hint;
 use wish_core::{Diagnostic, Result};
 
 /// The commands `wen` understands.
-pub const COMMANDS: &[&str] = &["run", "schema", "examples", "help", "version"];
+pub const COMMANDS: &[&str] = &["run", "bench", "schema", "examples", "help", "version"];
 
 /// A parsed command line.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -32,6 +32,15 @@ pub enum Command {
         seed: u64,
         /// Record the app hash every this many ticks (0: never).
         hash_every: u64,
+    },
+    /// Measure the core on the `stress` workload.
+    Bench {
+        /// How many entities to create.
+        entities: u32,
+        /// How many ticks to time.
+        ticks: u64,
+        /// The random seed.
+        seed: u64,
     },
     /// Print the JSON Schemas of the registered types.
     Schema {
@@ -59,6 +68,12 @@ fn flags_of(command: &str) -> &'static [(&'static str, bool)] {
             ("--seed", true),
             ("--hash-every", true),
             ("--headless", false),
+            ("--json", false),
+        ],
+        "bench" => &[
+            ("--entities", true),
+            ("--ticks", true),
+            ("--seed", true),
             ("--json", false),
         ],
         "schema" => &[("--example", true), ("--json", false)],
@@ -166,6 +181,19 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
             seed: value_of("--seed").map_or(Ok(0), |value| parse_number("--seed", value))?,
             hash_every: value_of("--hash-every")
                 .map_or(Ok(0), |value| parse_number("--hash-every", value))?,
+        },
+        "bench" => Command::Bench {
+            entities: value_of("--entities")
+                .map_or(Ok(100_000), |value| parse_number("--entities", value))?
+                .try_into()
+                .map_err(|_| {
+                    usage_error(
+                        "--entities is too large.".to_owned(),
+                        "Use at most 4294967294 entities.".to_owned(),
+                    )
+                })?,
+            ticks: value_of("--ticks").map_or(Ok(600), |value| parse_number("--ticks", value))?,
+            seed: value_of("--seed").map_or(Ok(0), |value| parse_number("--seed", value))?,
         },
         "schema" => Command::Schema {
             example: value_of("--example").map(str::to_owned),

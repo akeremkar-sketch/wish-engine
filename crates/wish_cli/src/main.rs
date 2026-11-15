@@ -28,6 +28,7 @@ wen - the Wish Engine command-line tool
 
 USAGE:
     wen run --example <name> [--frames <n>] [--seed <n>] [--hash-every <n>] [--headless] [--json]
+    wen bench [--entities <n>] [--ticks <n>] [--seed <n>] [--json]
     wen schema [--example <name>] [--json]
     wen examples [--json]
     wen help | version
@@ -36,6 +37,8 @@ COMMANDS:
     run        Simulate a built-in example without a window and report its final state
                (frames default to 600, seed to 0). Runs are deterministic: the same
                seed and frame count always give the same hashes.
+    bench      Time the core on many moving entities (defaults: 100000 entities, 600 ticks).
+               Build with --release for meaningful numbers.
     schema     Print the JSON Schema of every registered component, resource and event.
     examples   List the built-in examples.
 
@@ -69,6 +72,11 @@ fn execute(args: Args) -> Result<String> {
             seed,
             hash_every,
         } => run(&example, frames, seed, hash_every, args.json),
+        Command::Bench {
+            entities,
+            ticks,
+            seed,
+        } => bench(entities, ticks, seed, args.json),
         Command::Schema { example } => schema(example.as_deref(), args.json),
         Command::Examples => Ok(if args.json {
             json!({ "ok": true, "examples": wish_examples::NAMES }).to_string()
@@ -144,6 +152,90 @@ fn run(example: &str, frames: u64, seed: u64, hash_every: u64, as_json: bool) ->
         text.push_str(&format!("\n{failure}"));
     }
     Ok(text)
+}
+
+fn milliseconds(start: Instant) -> f64 {
+    (start.elapsed().as_secs_f64() * 1_000_000.0).round() / 1000.0
+}
+
+/// Times the core on the `stress` workload: building the world, ticking it,
+/// hashing it, and taking and restoring a snapshot.
+fn bench(entities: u32, ticks: u64, seed: u64, as_json: bool) -> Result<String> {
+    let config = AppConfig {
+        seed,
+        ..AppConfig::default()
+    };
+    let started = Instant::now();
+    let mut app = wish_examples::stress::build_with(config, entities)?;
+    let build_ms = milliseconds(started);
+
+    let mut tick_ms: Vec<f64> = Vec::with_capacity(usize::try_from(ticks).unwrap_or(0));
+    for _ in 0..ticks {
+        let started = Instant::now();
+        let report = app.step()?;
+        tick_ms.push(milliseconds(started));
+        if let Some(failure) = report.failures.into_iter().next() {
+            return Err(failure);
+        }
+    }
+    let mut sorted = tick_ms.clone();
+    sorted.sort_by(f64::total_cmp);
+    let percentile = |fraction: f64| -> f64 {
+        let index = ((sorted.len() as f64 - 1.0) * fraction).round() as usize;
+        sorted.get(index).copied().unwrap_or(0.0)
+    };
+    let mean = if tick_ms.is_empty() {
+        0.0
+    } else {
+        tick_ms.iter().sum::<f64>() / tick_ms.len() as f64
+    };
+
+    let started = Instant::now();
+    let world_hash = app.world().hash();
+    let hash_ms = milliseconds(started);
+    let started = Instant::now();
+    let snapshot = app.snapshot();
+    let snapshot_ms = milliseconds(started);
+    let started = Instant::now();
+    app.restore(&snapshot)?;
+    let restore_ms = milliseconds(started);
+
+    let budget_ms = 1000.0 / f64::from(app.config().tick_rate_hz);
+    let round = |value: f64| (value * 1000.0).round() / 1000.0;
+    if as_json {
+        return Ok(json!({
+            "ok": true,
+            "workload": "stress",
+            "entities": entities,
+            "ticks": ticks,
+            "seed": seed,
+            "build_ms": build_ms,
+            "tick_ms": {
+                "mean": round(mean),
+                "median": round(percentile(0.5)),
+                "p95": round(percentile(0.95)),
+                "max": round(percentile(1.0)),
+            },
+            "tick_budget_ms": round(budget_ms),
+            "hash_ms": hash_ms,
+            "snapshot_ms": snapshot_ms,
+            "restore_ms": restore_ms,
+            "world_hash": world_hash.to_string(),
+        })
+        .to_string());
+    }
+    Ok(format!(
+        "stress - {entities} entities - {ticks} ticks\n\
+         build:    {build_ms:.1} ms\n\
+         tick:     mean {mean:.3} ms, median {:.3} ms, p95 {:.3} ms, max {:.3} ms (budget at {} Hz: {budget_ms:.2} ms)\n\
+         hash:     {hash_ms:.3} ms\n\
+         snapshot: {snapshot_ms:.3} ms, restore {restore_ms:.3} ms\n\
+         world hash: {world_hash}",
+        percentile(0.5),
+        percentile(0.95),
+        percentile(1.0),
+        app.config().tick_rate_hz,
+    ))
 }
 
 fn schemas<'a>(types: impl Iterator<Item = &'a TypeInfo>) -> Value {
