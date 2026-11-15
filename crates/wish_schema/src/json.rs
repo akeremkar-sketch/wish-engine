@@ -17,6 +17,7 @@
 //! | `Mat4` | 16 numbers, column-major |
 //! | `Entity` | `"12v3"` or `"null"` |
 //! | `Text` | string |
+//! | `AssetRef` | string: a project-relative file path, optionally `#sub`; `""` is none |
 //! | enum | variant name |
 //! | array | array of the same length |
 //! | struct | object; fields left out keep their current value |
@@ -27,6 +28,7 @@
 //! inspected.
 
 use serde_json::{Map, Number, Value};
+use wish_core::asset::validate_asset_ref;
 use wish_core::suggest::unknown_name_hint;
 use wish_core::{Diagnostic, Entity, Result, Text};
 
@@ -344,7 +346,7 @@ pub fn to_json(schema: &TypeSchema, bytes: &[u8], texts: &dyn TextStore) -> Resu
             )
         }
         TypeKind::Entity => Value::String(entity_from_image(array(schema, bytes)?).to_string()),
-        TypeKind::Text => {
+        TypeKind::Text | TypeKind::AssetRef => {
             let handle = Text::from_index(u32::from_le_bytes(array(schema, bytes)?));
             match texts.resolve(handle) {
                 Some(text) => Value::String(text.to_owned()),
@@ -594,6 +596,23 @@ fn apply(
             let handle = ctx
                 .texts
                 .intern(text)
+                .map_err(|problem| ctx.locate(problem))?;
+            store(schema, bytes, &handle.index().to_le_bytes())
+        }
+        TypeKind::AssetRef => {
+            let Value::String(reference) = value else {
+                return Err(ctx.type_mismatch(schema, value));
+            };
+            if let Err(problem) = validate_asset_ref(reference) {
+                return Err(ctx.error(
+                    "invalid_asset_ref",
+                    format!("'{reference}' is not a valid asset reference: {problem}."),
+                    "Write a path relative to the project folder with '/' between folders, such as \"assets/models/crate.glb\" or \"assets/models/crate.glb#Mesh0\"; use \"\" for no asset.",
+                ));
+            }
+            let handle = ctx
+                .texts
+                .intern(reference)
                 .map_err(|problem| ctx.locate(problem))?;
             store(schema, bytes, &handle.index().to_le_bytes())
         }

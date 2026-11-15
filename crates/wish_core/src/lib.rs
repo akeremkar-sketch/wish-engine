@@ -2,6 +2,7 @@
 //!
 //! - [`Entity`]: handle to an entity in a world.
 //! - [`Text`]: handle to a string in a world's text table.
+//! - [`AssetRef`]: a text handle that the schema knows is an asset file path.
 //! - [`Color`] and [`math`]: the value types components are built from.
 //! - [`Diagnostic`]: the single error and warning format used across the engine.
 //! - [`StableHasher`] and [`Hash128`]: hashing whose output never changes
@@ -11,6 +12,7 @@
 //! This crate has no knowledge of worlds, schemas or rendering; everything else
 //! in the engine depends on it.
 
+pub mod asset;
 pub mod color;
 pub mod diagnostic;
 pub mod entity;
@@ -20,6 +22,7 @@ pub mod rng;
 pub mod suggest;
 pub mod text;
 
+pub use asset::AssetRef;
 pub use color::Color;
 pub use diagnostic::{Diagnostic, DiagnosticData, Location, Result, Severity};
 pub use entity::Entity;

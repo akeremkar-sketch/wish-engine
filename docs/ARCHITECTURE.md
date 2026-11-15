@@ -43,8 +43,8 @@ Kod örnekleri **hedeflenen kullanım biçimini** gösterir; kesin imzalar ilgil
 | `wish_ecs` | Dünya, arketip depolama, sorgular, komutlar, kaynaklar, olaylar, zamanlayıcı, anlık görüntü, dünya hash'i | M1 |
 | `wish_app` | Ana döngü, sabit adım, eklenti kaydı, oturum yönetimi | M1 |
 | `wish_cli` | `wen` ikilisi | M1 → sürekli |
-| `wish_scene` | Sahne/prefab belge modeli, kanonik biçimlendirici, yama/işlem, geri al, doğrulama | M2 |
-| `wish_asset` | Varlık sunucusu, içe aktarıcılar, dosya izleme, önbellek | M2 |
+| `wish_scene` | Konumlu katı JSON + kanonik yazıcı, sahne/prefab belgesi ve doğrulaması, işlemler + geri al/yinele + `actor` günlüğü, prefab açma, belge → dünya (`SceneId`) | M2 |
+| `wish_asset` | Varlık dizini, `*.meta.json`, şemaya göre `AssetRef` bulma/denetleme, `wen mv`, tüm proje yükleme (`wen check/fmt`), yoklamalı izleyici + sıcak yükleme. İçe aktarıcılar ve önbellek M3'te | M2 (+M3) |
 | `wish_render` | wgpu, render grafiği, materyaller, başsız yakalama, hata ayıklama görünümleri | M3 |
 | `wish_window`, `wish_input` | Pencere, aygıtlar, eylem haritaları, enjeksiyon/kayıt | M3 / M5 |
 | `wish_control` | Kontrol düzlemi API'si | M4 |
@@ -218,7 +218,7 @@ my_game/
   .wish/                   önbellek, anlık görüntüler, tekrarlar (git dışı)
 ```
 
-Örnek sahne (gösterim amaçlı; kesin biçim M2'de):
+Örnek sahne (biçim 1, M2'de kesinleşti; kanonik dosyada anahtarlar bayt sırasıyla yazılır, `wen fmt` bunu yapar. Kesin kurallar: [design/M2-veri-katmani.md](design/M2-veri-katmani.md) §2–§3 ve §12):
 
 ```json
 {

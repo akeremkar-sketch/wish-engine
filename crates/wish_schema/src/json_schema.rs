@@ -54,6 +54,12 @@ fn base(schema: &TypeSchema) -> Value {
         TypeKind::Mat4 => number_array(16),
         TypeKind::Entity => json!({ "type": "string", "pattern": ENTITY_PATTERN }),
         TypeKind::Text => json!({ "type": "string" }),
+        TypeKind::AssetRef => json!({
+            "type": "string",
+            "maxLength": wish_core::asset::MAX_ASSET_PATH_LEN,
+            "x-asset": true,
+            "description": "A project-relative file path, with an optional #sub-object. Empty means no asset.",
+        }),
         TypeKind::Enum(variants) => {
             let choices: Vec<Value> = variants
                 .iter()

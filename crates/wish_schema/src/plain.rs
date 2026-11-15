@@ -6,7 +6,7 @@
 #![allow(unsafe_code)]
 
 use wish_core::math::{Mat4, Quat, Vec2, Vec3, Vec4};
-use wish_core::{Color, Entity, Text};
+use wish_core::{AssetRef, Color, Entity, Text};
 
 use crate::model::{TypeKind, TypeSchema};
 
@@ -32,7 +32,7 @@ use crate::model::{TypeKind, TypeSchema};
 #[diagnostic::on_unimplemented(
     message = "`{Self}` cannot be stored in a world: it is not plain data",
     label = "not plain data",
-    note = "fields of components, resources and events must be bool, an integer, f32 or f64, Vec2, Vec3, Vec4, Quat, Mat4, Color, Entity, Text, a fixed-size array of these, or a type marked #[schema]",
+    note = "fields of components, resources and events must be bool, an integer, f32 or f64, Vec2, Vec3, Vec4, Quat, Mat4, Color, Entity, Text, AssetRef, a fixed-size array of these, or a type marked #[schema]",
     note = "to hold text use `Text`; to refer to another entity use `Entity`"
 )]
 pub unsafe trait Plain: Copy + 'static {
@@ -257,6 +257,29 @@ unsafe impl Plain for Text {
     }
 }
 
+// SAFETY: `AssetRef` is `repr(transparent)` over `Text`, which is
+// `repr(transparent)` over a `u32`: 4 bytes, alignment 4, no padding, every
+// bit pattern valid.
+unsafe impl Plain for AssetRef {
+    fn schema() -> TypeSchema {
+        TypeSchema::primitive("AssetRef", TypeKind::AssetRef)
+    }
+
+    fn default_value() -> Self {
+        AssetRef::NONE
+    }
+
+    fn encode(&self, out: &mut [u8]) {
+        put(out, &self.text().index().to_le_bytes());
+    }
+
+    fn decode(bytes: &[u8]) -> Option<Self> {
+        Some(AssetRef::from_text(Text::from_index(u32::from_le_bytes(
+            bytes.try_into().ok()?,
+        ))))
+    }
+}
+
 // SAFETY: `[T; N]` is `N` values of `T` back to back, with `T`'s alignment and
 // no padding beyond what `T` itself has. It is valid exactly when each
 // element is, which `decode` checks element by element.
@@ -332,6 +355,7 @@ mod tests {
         check_layout::<Color>();
         check_layout::<Entity>();
         check_layout::<Text>();
+        check_layout::<AssetRef>();
         check_layout::<[Vec3; 5]>();
         check_layout::<[[u16; 3]; 2]>();
         check_layout::<[u64; 0]>();

@@ -1,0 +1,5 @@
+error: #[component] needs named fields: write `struct Name { field: Type }` so each value has a name in JSON
+ --> tests/ui/tuple_struct.rs:4:17
+  |
+4 | pub struct Speed(f32);
+  |                 ^^^^^

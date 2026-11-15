@@ -1,0 +1,5 @@
+error: #[component] types cannot be generic: the engine has to describe one fixed layout
+ --> tests/ui/generic.rs:4:19
+  |
+4 | pub struct Wrapper<T> {
+  |                   ^^^

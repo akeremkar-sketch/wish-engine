@@ -64,6 +64,11 @@ pub enum TypeKind {
     Entity,
     /// A handle to a string in the world's text table.
     Text,
+    /// A handle to a string in the world's text table that holds an asset
+    /// file reference (`"assets/models/crate.glb#Mesh0"`): stored like
+    /// [`TypeKind::Text`], but checked as a path and known to tools as a
+    /// file reference.
+    AssetRef,
     /// A fieldless enum stored as one byte.
     Enum(Vec<VariantSchema>),
     /// A fixed-size array.
@@ -150,7 +155,7 @@ impl TypeKind {
         Some(match self {
             Self::Bool | Self::I8 | Self::U8 | Self::Enum(_) => (1, 1),
             Self::I16 | Self::U16 => (2, 2),
-            Self::I32 | Self::U32 | Self::F32 | Self::Text => (4, 4),
+            Self::I32 | Self::U32 | Self::F32 | Self::Text | Self::AssetRef => (4, 4),
             Self::I64 | Self::U64 | Self::F64 => (8, 8),
             Self::Vec2 | Self::Entity => (8, 4),
             Self::Vec3 => (12, 4),
@@ -197,6 +202,9 @@ impl TypeKind {
             Self::Color => "an array [r, g, b, a]".to_owned(),
             Self::Entity => "an entity id string such as \"12v3\", or \"null\"".to_owned(),
             Self::Text => "a string".to_owned(),
+            Self::AssetRef => {
+                "a project-relative file path string such as \"assets/models/crate.glb#Mesh0\", or \"\" for none".to_owned()
+            }
             Self::Enum(_) => "a variant name as a string".to_owned(),
             Self::Array { len, .. } => format!("an array of {len} items"),
             Self::Struct(_) => "an object".to_owned(),
@@ -298,9 +306,10 @@ impl TypeSchema {
         }
     }
 
-    /// Whether the type holds a [`TypeKind::Text`] anywhere inside it.
+    /// Whether the type holds a [`TypeKind::Text`] or [`TypeKind::AssetRef`]
+    /// (both are text-table handles) anywhere inside it.
     pub fn contains_text(&self) -> bool {
-        self.any_kind(&|kind| matches!(kind, TypeKind::Text))
+        self.any_kind(&|kind| matches!(kind, TypeKind::Text | TypeKind::AssetRef))
     }
 
     /// Whether some byte patterns are not valid values of this type (it

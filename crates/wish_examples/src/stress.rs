@@ -7,7 +7,7 @@
 
 use wish_app::{App, AppConfig, System, SystemContext};
 use wish_core::math::Vec3;
-use wish_core::{Result, Rng};
+use wish_core::{AssetRef, Result, Rng};
 use wish_ecs::World;
 use wish_schema::component;
 
@@ -25,6 +25,17 @@ pub struct Velocity {
     /// Velocity.
     #[schema(unit = "m/s")]
     pub value: Vec3,
+}
+
+/// A mesh and textures taken from asset files. Not part of the benchmark
+/// world: it is registered only for scene files (`register_types`), where
+/// it shows asset references.
+#[component]
+pub struct Model {
+    /// The mesh file, e.g. `assets/models/crate.glb#Mesh0`.
+    pub mesh: AssetRef,
+    /// Texture files, empty for none.
+    pub textures: [AssetRef; 2],
 }
 
 /// A rotation that advances every tick.

@@ -886,6 +886,20 @@ impl World {
         T::decode(&bytes)
     }
 
+    /// Removes a resource's value, by name. Returns whether it had one.
+    pub fn remove_resource_json(&mut self, name: &str) -> Result<bool> {
+        let id = self
+            .registry
+            .resource_id(name)
+            .ok_or_else(|| self.registry.unknown_resource(name))?;
+        Ok(self
+            .state
+            .resources
+            .get_mut(id.index())
+            .and_then(Option::take)
+            .is_some())
+    }
+
     /// A resource in JSON form, by name.
     pub fn resource_json(&self, name: &str) -> Result<Value> {
         let id = self

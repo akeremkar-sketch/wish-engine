@@ -1,0 +1,5 @@
+error: a range names both ends and includes them, for example `range = 0.0..=50.0`
+ --> tests/ui/half_open_range.rs:5:22
+  |
+5 |     #[schema(range = 0.0..100.0)]
+  |                      ^^^^^^^^^^

@@ -132,7 +132,7 @@ impl TypeInfo {
 
 fn collect_text_offsets(schema: &TypeSchema, base: usize, out: &mut Vec<usize>) {
     match &schema.kind {
-        TypeKind::Text => out.push(base),
+        TypeKind::Text | TypeKind::AssetRef => out.push(base),
         TypeKind::Array { element, len } => {
             if element.contains_text() {
                 for index in 0..*len as usize {

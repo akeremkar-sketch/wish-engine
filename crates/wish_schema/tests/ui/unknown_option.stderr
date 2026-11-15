@@ -1,0 +1,5 @@
+error: unknown option; the options are `unit = "..."`, `range = a..=b`, `default = value` and `alias = "..."`
+ --> tests/ui/unknown_option.rs:5:14
+  |
+5 |     #[schema(units = "hp")]
+  |              ^^^^^

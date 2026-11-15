@@ -1,0 +1,5 @@
+error: #[component] takes no arguments
+ --> tests/ui/arguments.rs:3:13
+  |
+3 | #[component(name = "x")]
+  |             ^^^^^^^^^^

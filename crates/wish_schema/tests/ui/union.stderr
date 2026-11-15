@@ -1,0 +1,5 @@
+error: #[component] cannot be used on a union; use a struct or a fieldless enum
+ --> tests/ui/union.rs:4:5
+  |
+4 | pub union Bits {
+  |     ^^^^^
