@@ -149,7 +149,7 @@ Hepsi M1'deki gibi `--json` ile MCP zarfında çıktı verir.
 | # | İş paketi | Model · efor |
 |---|---|---|
 | WP1 | `wish_scene::json`: aralık kaydeden katı ayrıştırıcı + kanonik yazıcı | Sonnet 5.5 · high — **tamamlandı** |
-| WP2 | `SceneDocument`: yükleme, doğrulama (şema, kimlik, parent, döngü), konumlu tanılar, 30 bozuk dosya testi | Sonnet 5.5 · high |
+| WP2 | `SceneDocument`: yükleme, doğrulama (şema, kimlik, parent, döngü), konumlu tanılar, 30 bozuk dosya testi | Sonnet 5.5 · high — **tamamlandı** |
 | WP3 | İşlemler, revizyonlar, geri al/yinele, `actor`, fark; model tabanlı test | Opus 5.5 · high |
 | WP4 | Prefab'lar (tek düzey, yamalar, türetilmiş kimlikler) | Opus 5.5 · high |
 | WP5 | `SceneId`, belge → dünya aktarımı, `wen run <sahne>` | Sonnet 5.5 · medium |
@@ -173,3 +173,13 @@ Hepsi M1'deki gibi `--json` ile MCP zarfında çıktı verir.
 - **Doğrulama:** rastgele `Value` → kanonik → oku → aynı değer ve aynı bayt (sabit nokta); her konum gerçekten o değerin ilk karakterine işaret ediyor; rastgele metinde ayrıştırıcı çökmüyor, hata her zaman konum ve ipucu taşıyor.
 - **Testin yakaladığı hata:** yüksek vekil yarısı geçersiz bir ikinci yarıyla gelince birleştirme hesabı taşıyordu (kötü niyetli girdide çökme). Hesap, aralık doğrulandıktan sonraya alındı; iki örnek test olarak eklendi.
 - **Hata ipuçları kendi başına yeterli olmalı:** testler ipucunun ilgili terimi (ör. "surrogate", "four") içermesini zorluyor; ileti ile ipucu birbirinin yerini tutmaz.
+
+### WP2 — `SceneDocument` ve doğrulama
+
+- **`load(kaynak, dosya, &Registry) -> LoadResult { document, diagnostics }`.** Sözdizimi hatasında ilk hatada durur (ayrıştırıcı katıdır); sözdizimi geçtikten sonra **tüm** anlamsal sorunları toplar ve dosya sırasıyla verir: `wen check` tek çalıştırmada her şeyi gösterebilsin diye. Belge yalnızca hata yoksa döner; uyarılar yüklemeyi engellemez.
+- **Her tanı dosya + satır + sütun + JSON işaretçisi taşır.** Şema tanıları (M1'in `from_json`) kendi işaretçisini verir; `Node::locate` onu konuma çevirir. `unknown_field` anahtarın, diğerleri (aralık, tür, uzunluk, bilinmeyen varyant) değerin konumuna işaret eder.
+- **Yeni tanı kodları:** `missing_format`, `unsupported_format`, `unknown_key` (üst düzey ya da varlık anahtarı; ""şunu mu demek istediniz"" ile), `invalid_scene_id`, `unknown_parent`, `hierarchy_cycle` (döngü bir kez, en küçük kimliğin `parent` değerinde; ileti döngüyü `a -> b -> c -> a` diye yazar), `unknown_component` (adaylar yönetilen bileşenleri içermez), `managed_component` (`Hierarchy` dosyada yazılamaz), `unknown_resource`, `not_canonical` (uyarı). Mevcut `type_mismatch` ve şema kodları aynen kullanılıyor.
+- **Bileşen değerleri JSON olarak, dosyadaki hâliyle saklanır** (yama biçimi; varsayılanlar eklenmez). Doğrulama için bir kopya `from_json` ile kontrol edilir; metinler atılan bir tabloya işlenir.
+- **Kanonik biçim belge düzeyinde de sabit nokta:** `to_canonical` boş bölümleri yazmaz (`entities`, `resources`, boş `components`, 0 olan `order`). `not_canonical` uyarısı "kaynak = belgeden üretilen kanonik metin" karşılaştırmasıdır; boş bölümleri açıkça yazan dosya da uyarı alır. Testler: gevşek dosya → uyarı + belge; yazılan kanonik metin → sıfır tanı ve aynı bayt.
+- **Test:** 35 bozuk dosya (her biri tek bir yanlış; beklenen kod, satır, sütun ve ipucundaki anahtar kelime); döngü + 3 bağımsız hata aynı dosyada beş yerine dört tanı verir; işaretçiler; dosya yolu olmayan yükleme.
+- **Bilinçli sınırlar:** `prefab`/`overrides` anahtarları WP4'e kadar `unknown_key` verir; sahne kimlikleri yalnızca ASCII (`[a-z][a-z0-9_]*`, ≤ 64).

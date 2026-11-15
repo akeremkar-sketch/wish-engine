@@ -8,7 +8,8 @@ Wish Engine: yapay zekâya tamamen entegre ama yapay zekâsız da eksiksiz kulla
   - Crate'ler: `wish_core` (kimlikler, tanı, kararlı hash, `Rng`, öneriler), `wish_schema` + `wish_schema_macros` (şema, `Plain`, JSON ⇄ bayt, JSON Schema), `wish_ecs` (dünya, sorgular, komutlar, olaylar, hiyerarşi, değişiklik izleme, anlık görüntü, hash), `wish_app` (sabit adım, zamanlayıcı), `wish_examples` (`bounce`, `stress`), `wish_cli` (`wen`).
 - **Süren: M2 (veri katmanı)**, `m2-data` dalında. Tasarım notu yazıldı: [docs/design/M2-veri-katmani.md](docs/design/M2-veri-katmani.md) — M2'de kod yazmadan önce oku.
   - M2 WP1 (`wish_scene::json`: aralık kaydeden katı JSON ayrıştırıcı + kanonik yazıcı) bitti.
-  - **Sıradaki: M2 WP2 (`SceneDocument`: yükleme, şema/kimlik/parent/döngü doğrulaması, konumlu tanılar, 30 bozuk dosya testi).** Önerilen model · efor: Sonnet 5.5 · high. İş paketleri ve her birinin modeli tasarım notunun §10'unda; WP1 notları §12'de.
+  - M2 WP2 (`SceneDocument`, `load`, doğrulama, 35 bozuk dosya testi) bitti.
+  - **Sıradaki: M2 WP3 (işlemler, revizyonlar, geri al/yinele, `actor`, fark; model tabanlı test).** Önerilen model · efor: Opus 5.5 · high. İş paketleri ve modelleri tasarım notunun §10'unda; WP1/WP2 notları §12'de.
   - M3 (ilk piksel) M2 ile paralel yürüyebilir.
 - **`wen`'i çalıştırmak:** `cargo run -p wish_cli --release -- run --example bounce --frames 10000 --seed 7 --json`. Derlenmiş ikili `C:\wish-build\target\release\wen.exe` altında.
 - **Hash'leri değiştirme konusunda dikkat:** `wish_ecs/tests/snapshot.rs` ve `wish_core` testlerinde kayıtlı hash/rastgelelik değerleri var. Bunlar kırılırsa önce bilinçli bir format değişikliği olup olmadığını düşün; bilinçliyse sürüm etiketini (`wish-world-hash-v1` vb.) artır.

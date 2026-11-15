@@ -540,6 +540,8 @@ dependencies = [
  "proptest",
  "serde_json",
  "wish_core",
+ "wish_ecs",
+ "wish_schema",
 ]
 
 [[package]]

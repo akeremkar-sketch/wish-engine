@@ -10,6 +10,8 @@ publish.workspace = true
 [dependencies]
 serde_json.workspace = true
 wish_core.workspace = true
+wish_ecs.workspace = true
+wish_schema.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
