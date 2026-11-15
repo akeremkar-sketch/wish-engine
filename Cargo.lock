@@ -490,6 +490,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "wish_ecs"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "serde_json",
+ "wish_core",
+ "wish_schema",
+]
+
+[[package]]
 name = "wish_schema"
 version = "0.1.0"
 dependencies = [

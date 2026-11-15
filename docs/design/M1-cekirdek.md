@@ -174,7 +174,7 @@ struct WorldState { tick, entities, archetypes, resources, events, texts, rng }
 
 - Arketip = sıralı `ComponentId` kümesi. Arketipler **oluşturulma sırasıyla** numaralanır ve o sırayla gezilir.
 - Arketip araması `BTreeMap<Vec<ComponentId>, ArchetypeId>` (hash haritası üzerinde gezinme yok).
-- Sütun: `AlignedBytes { words: Vec<u64>, len: usize }`. `Vec<u64>` 8 hizalamayı güvenli biçimde garanti eder; elle bellek ayırma (`alloc`) yok.
+- Sütun: `Column { words: Vec<MaybeUninit<u64>>, item_size, len }`. `u64` sözcükleri 8 hizalamayı güvenli biçimde garanti eder; elle bellek ayırma (`alloc`) yok. `MaybeUninit` olmasının nedeni §12 WP4 notunda.
 - Her sütunda satır başına `changed_tick: u32` (değişiklik izleme). Değişiklik işaretleri sistem davranışını etkilediği için durumun parçasıdır ve hash'e girer.
 - Silme: `swap_remove` (deterministik; aynı işlem dizisi aynı satır sırasını üretir).
 
@@ -268,7 +268,8 @@ wen bench ecs --entities 100000 --ticks 600
 | WP1 | Çalışma alanı, lint'ler, lisanslar, CI, git | Sonnet 5.5 · medium | Tamamlandı |
 | WP2 | `wish_core`: `Entity`, `Diagnostic`, kararlı hash, öneri yardımcıları | Sonnet 5.5 · medium | Tamamlandı |
 | WP3 | `wish_schema` + makro: şema modeli, JSON ⇄ bayt, JSON Schema, parmak izi | Opus 5.5 · high | Tamamlandı |
-| WP4 | `wish_ecs`: depolama, sorgular, komutlar, kaynaklar, olaylar, metinler, hiyerarşi | Opus 5.5 · high | |
+| WP4 | `wish_ecs`: depolama, türlü ve dinamik erişim, sorgular, kaynaklar, metin tablosu | Opus 5.5 · high | Tamamlandı |
+| WP4b | `wish_ecs`: ertelenmiş komutlar, olaylar, hiyerarşi, değişiklik izleme | Opus 5.5 · high | |
 | WP5 | Zamanlayıcı, sabit adım, rastgelelik (`wish_app`) | Opus 5.5 · high | |
 | WP6 | Anlık görüntü ve dünya hash'i | Opus 5.5 · high | |
 | WP7 | `wish_cli`: `wen run`, `wen schema`, `wen bench` | Sonnet 5.5 · medium | |
@@ -296,3 +297,18 @@ Tasarımdan sonra uygulama sırasında verilen ve sonraki iş paketlerini etkile
 - **Şema doğrulaması** (`TypeSchema::validate`) makronun ürettiği şemalar için hep geçer; asıl amacı M5'te Wasm modülünden gelecek şemaları güven sınırında denetlemektir.
 - **Tür düzeyi varsayılanlar** iki yerde tanımlı ve bir testle eşitlenmiş durumda: Rust tarafında `Plain::default_value()`, şema tarafında `default_bytes` (dördey = birim, matris = birim, renk = opak beyaz, varlık = `null`, enum = ilk varyant, diğerleri sıfır).
 - **Parmak izi yalnızca yerleşimi kapsar** (ad, boyut, hizalama, ofset, enum değerleri). Belge, birim, aralık, varsayılan ve takma ad değişince parmak izi değişmez; çünkü saklı baytların anlamı değişmez.
+
+### WP4
+
+- **Sütunlar `MaybeUninit` saklar; dolgu hiçbir zaman bayt olarak okunmaz.** §2'deki ilk plan "dolgu her zaman sıfırdır" varsayıyordu. Bu yanlıştı: güvenli kod `&mut T` üzerinden bütün bir değer atadığında (`*t = Health { .. }`) derleyici dolgu baytlarını başlatılmamış bırakabilir, ve başlatılmamış baytı `u8` olarak okumak tanımsız davranıştır. Dolguyu sonradan sıfırlamak da güvenli değildi: `mem::forget` güvenli koddur ve sıfırlama kodunu atlatır. Çözüm:
+  - Kayıt her tür için **alan aralıklarını** (`spans`) hesaplar: dolgu dışındaki bayt aralıkları, birleştirilmiş.
+  - Bayt olarak okuma (`component_bytes`, JSON, ileride dünya hash'i) yalnızca bu aralıkları kopyalar; dolgu sıfır çıkar.
+  - Tüm değer kopyaları (arketipler arası taşıma, `swap_remove`, ileride anlık görüntü) ham bellek kopyasıdır; `MaybeUninit` için bu tanımlıdır.
+  - Böylece §2'deki iki kural korunur: dolgu yorumlanmaz; hash dolguyu atlar.
+- **Tüm erişim `&mut World` üzerinden.** Sorgular da dahil (`world.query::<Q>()` dünyayı değişken ödünç alır). Tek yazıcı garantisi derleyiciden gelir; çalışma zamanı ödünç denetimi yok. Paralel sistemler eklendiğinde (M1 sonrası) salt okunur sorgular için `&World` yolu eklenecek.
+- **Sorgu erişim denetimi `TypeId` ile yapılır**, bileşen kimliğiyle değil: böylece `(&mut A, &A)` gibi hatalı bir sorgu, `A` hiç kaydedilmemiş olsa bile `conflicting_query_access` tanısıyla reddedilir.
+- **Kaydedilmemiş bileşen** türlü sorguda hiçbir şeyle eşleşmez (hata değil); `With<T>` boş, `Without<T>` koşulsuz geçer. Adla erişimde ise (`set_json`) `unknown_component` tanısı ve en yakın adın önerisi döner.
+- **`set_json` atomiktir.** Değer önce bir kopya üzerinde uygulanır; reddedilirse dünya değişmez. Bileşen yoksa varsayılanlardan başlar, varsa yama uygular.
+- **Kaynaklar** tek satırlık sütunlardır; aynı türlü, JSON ve bayt yolları kullanılır.
+- **WP4b'ye ertelenenler:** ertelenmiş komut tamponu (`Commands`), olaylar, hiyerarşi bileşeni, değişiklik izleme (`changed_tick` ve `Mut<T>` sarmalayıcısı). Bunlar zamanlayıcıyla (WP5) birlikte anlam kazanıyor; ayrı ve küçük bir iş paketi olarak daha güvenli.
+- **Toplu ekleme yok.** Bir varlığa birden çok bileşen eklemek her ekleme için bir arketip taşıması yapar. 100 bin varlıklı kıyaslama (WP8) yetersiz gösterirse demet tabanlı `spawn_with` eklenecek.

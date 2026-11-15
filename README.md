@@ -4,7 +4,7 @@
 
 Yapay zekâya tamamen entegre ama yapay zekâsız da eksiksiz kullanılabilen, açık kaynak, ücretsiz ve komisyonsuz bir 3D oyun motoru.
 
-**Durum:** geliştirmenin çok başında; henüz çalıştırılabilir bir motor yok. M0 (tasarım) tamamlandı, M1 (çekirdek) sürüyor: `wish_core` ve `wish_schema` hazır, sırada `wish_ecs`.
+**Durum:** geliştirmenin çok başında; henüz çalıştırılabilir bir motor yok. M0 (tasarım) tamamlandı, M1 (çekirdek) sürüyor: `wish_core`, `wish_schema` ve `wish_ecs`'in temeli hazır.
 
 ## Derleme
 
