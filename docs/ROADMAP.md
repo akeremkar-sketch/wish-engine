@@ -116,6 +116,8 @@ M1'in ilk iş paketinde yapılacak tek ortam işi: derleme çıktılarını OneD
 
 ## M3 — İlk piksel
 
+**Durum:** tasarım notu yazıldı (15 Kasım 2026): [design/M3-ilk-piksel.md](design/M3-ilk-piksel.md). Uygulama `m3-render` dalında, WP1'den (başsız/yazılım render kanıt işi) başlayacak.
+
 **Çıktı.** `wish_window`, `wish_render` (render grafiği, PBR, yönlü ışık + gölge, kamera, gökyüzü/ortam ışığı), glTF içe aktarma, başsız yakalama (`wen capture`), hata ayıklama görünümleri (kimlik, derinlik, normal, tel kafes).
 
 **Çıkış ölçütü.**
