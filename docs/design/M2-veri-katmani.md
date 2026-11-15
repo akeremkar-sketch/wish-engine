@@ -150,7 +150,7 @@ Hepsi M1'deki gibi `--json` ile MCP zarfında çıktı verir.
 |---|---|---|
 | WP1 | `wish_scene::json`: aralık kaydeden katı ayrıştırıcı + kanonik yazıcı | Sonnet 5.5 · high — **tamamlandı** |
 | WP2 | `SceneDocument`: yükleme, doğrulama (şema, kimlik, parent, döngü), konumlu tanılar, 30 bozuk dosya testi | Sonnet 5.5 · high — **tamamlandı** |
-| WP3 | İşlemler, revizyonlar, geri al/yinele, `actor`, fark; model tabanlı test | Opus 5.5 · high |
+| WP3 | İşlemler, revizyonlar, geri al/yinele, `actor`, fark; model tabanlı test | Opus 5.5 · high — **tamamlandı** |
 | WP4 | Prefab'lar (tek düzey, yamalar, türetilmiş kimlikler) | Opus 5.5 · high |
 | WP5 | `SceneId`, belge → dünya aktarımı, `wen run <sahne>` | Sonnet 5.5 · medium |
 | WP6 | `wish_asset`: `AssetRef` şema türü, keşif, `*.meta.json`, izleme, `wen mv` | Sonnet 5.5 · high |
@@ -183,3 +183,16 @@ Hepsi M1'deki gibi `--json` ile MCP zarfında çıktı verir.
 - **Kanonik biçim belge düzeyinde de sabit nokta:** `to_canonical` boş bölümleri yazmaz (`entities`, `resources`, boş `components`, 0 olan `order`). `not_canonical` uyarısı "kaynak = belgeden üretilen kanonik metin" karşılaştırmasıdır; boş bölümleri açıkça yazan dosya da uyarı alır. Testler: gevşek dosya → uyarı + belge; yazılan kanonik metin → sıfır tanı ve aynı bayt.
 - **Test:** 35 bozuk dosya (her biri tek bir yanlış; beklenen kod, satır, sütun ve ipucundaki anahtar kelime); döngü + 3 bağımsız hata aynı dosyada beş yerine dört tanı verir; işaretçiler; dosya yolu olmayan yükleme.
 - **Bilinçli sınırlar:** `prefab`/`overrides` anahtarları WP4'e kadar `unknown_key` verir; sahne kimlikleri yalnızca ASCII (`[a-z][a-z0-9_]*`, ≤ 64).
+
+### WP3 — işlemler, geri al, etkinlik günlüğü
+
+- **İşlemler (`EditOp`):** `Spawn` (ebeveyn, sıra, bileşenler, not), `Despawn` (alt ağaçla), `Set` (birleştirme: adı geçen alanlar değişir), `Replace` (tam değer), `Remove`, `Reparent` (sıra isteğe bağlı), `Rename` (çocukların `parent`'ı da güncellenir), `SetNotes`, `SetResource` / `ReplaceResource` / `RemoveResource`. §4 taslağına göre eklenenler: `Replace` ve `ReplaceResource` (geri almanın kesin tersi için gerekli; ajanlar da kullanabilir), `SetNotes`. `Instantiate` (prefab) WP4'te.
+- **`Set` birleştirmesi** M1'in `apply_json` anlamıyla aynıdır: nesneler anahtar anahtar birleşir, diziler ve diğer değerler tümüyle değişir.
+- **Hep ya da hiç:** işlem belgenin bir kopyasına sırayla uygulanır; herhangi bir adım reddedilirse orijinal belgeye dokunulmaz, tanı `location.op` ile adımı, `location.path` ile JSON işaretçisini gösterir. Bileşen ve kaynak değerleri yüklemedeki şema denetiminin aynısından geçer (ortak `schema_check` modülü: aynı hata aynı tanıyı alır).
+- **Ters işlemler uygulama anında hesaplanır** ve geri alma bunları tersten uygular. Silinen alt ağaç ebeveyn önce olmak üzere tam hâliyle (bileşenler, notlar, sıra) geri gelir; yeniden adlandırma çocukları da geri taşır.
+- **Revizyonlar:** her başarılı işlem, geri alma ve yineleme revizyonu 1 artırır. `base_revision` uyuşmazsa `stale_revision`; boş işlem `empty_transaction`. `preview` hiçbir şeyi değiştirmeden fark listesini verir (M4'te `dry_run`).
+- **Fark listesi:** her işlem değişen JSON işaretçilerini sıralı döndürür.
+- **Kim yaptı:** `Actor::Human` / `Agent(ad)` / `File`. Etkinlik günlüğü (`log()`, en çok 1000) her düzenleme, geri alma ve yinelemeyi revizyon, aktör ve değişikliklerle kaydeder: hibrit eşlik değişmezinin (tek geçmiş, `actor`) belge düzeyindeki karşılığı. Geri alma yığını en çok 1000 işlem; yeni bir düzenleme yineleme yığınını temizler.
+- **Belge eşitliği** yalnızca içeriği karşılaştırır (varlıklar ve kaynaklar), revizyon ve geçmişi değil.
+- **Yeni tanı kodları:** `unknown_entity`, `entity_exists`, `component_not_found`, `resource_not_found`, `stale_revision`, `empty_transaction`.
+- **M2 çıkış ölçütü karşılandı (geri al):** model tabanlı test, 128 senaryoda 100'e kadar rastgele işlem (bir kısmı bilerek geçersiz: aralık dışı değer, döngü, olmayan bileşen) uygular. Her başarılı adımdan sonra belge kanonik metninden **sıfır hatayla** yeniden yüklenir; her reddedilen adım belgeyi bayt düzeyinde aynı bırakır. Sonra hepsi geri alınır: başlangıç dosyası bayt bayt geri gelir. Hepsi yinelenir: son dosya bayt bayt geri gelir.

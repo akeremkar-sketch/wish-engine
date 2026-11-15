@@ -33,10 +33,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::{Map, Value};
 use wish_core::suggest::unknown_name_hint;
 use wish_core::{Diagnostic, Result};
-use wish_ecs::{Registry, TextTable};
-use wish_schema::{JsonContext, from_json};
+use wish_ecs::Registry;
 
+use crate::edit::History;
 use crate::json::{self, Json, Member, Node, Span};
+use crate::schema_check;
 
 /// The scene file format this build reads and writes.
 pub const FORMAT: u32 = 1;
@@ -58,10 +59,10 @@ pub fn is_valid_scene_id(id: &str) -> bool {
 /// One entity of a scene.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SceneEntity {
-    parent: Option<String>,
-    order: i64,
-    components: BTreeMap<String, Value>,
-    notes: Option<String>,
+    pub(crate) parent: Option<String>,
+    pub(crate) order: i64,
+    pub(crate) components: BTreeMap<String, Value>,
+    pub(crate) notes: Option<String>,
 }
 
 impl SceneEntity {
@@ -85,7 +86,7 @@ impl SceneEntity {
         self.notes.as_deref()
     }
 
-    fn to_value(&self) -> Value {
+    pub(crate) fn to_value(&self) -> Value {
         let mut object = Map::new();
         if !self.components.is_empty() {
             object.insert(
@@ -112,11 +113,21 @@ impl SceneEntity {
 }
 
 /// A scene, ready to be edited, saved or turned into a world.
-#[derive(Clone, Debug, Default, PartialEq)]
+///
+/// Two documents are equal when their content (entities and resources) is;
+/// revision numbers and edit history are not compared.
+#[derive(Clone, Debug, Default)]
 pub struct SceneDocument {
-    entities: BTreeMap<String, SceneEntity>,
-    resources: BTreeMap<String, Value>,
-    revision: u64,
+    pub(crate) entities: BTreeMap<String, SceneEntity>,
+    pub(crate) resources: BTreeMap<String, Value>,
+    pub(crate) revision: u64,
+    pub(crate) history: History,
+}
+
+impl PartialEq for SceneDocument {
+    fn eq(&self, other: &Self) -> bool {
+        self.entities == other.entities && self.resources == other.resources
+    }
 }
 
 impl SceneDocument {
@@ -379,6 +390,7 @@ impl Validator<'_> {
             entities,
             resources,
             revision: 0,
+            history: History::default(),
         })
     }
 
@@ -538,39 +550,13 @@ impl Validator<'_> {
 
     /// Checks one component of an entity. Returns whether it is valid.
     fn check_component(&mut self, entry: &Member, pointer: &str) -> bool {
-        let Some(info) = self
-            .registry
-            .component_id(&entry.key)
-            .and_then(|id| self.registry.component(id))
-        else {
-            let names: Vec<&str> = self
-                .registry
-                .components()
-                .filter(|(_, info)| !info.is_managed())
-                .map(|(_, info)| info.name())
-                .collect();
-            let diagnostic = Diagnostic::error(
-                "unknown_component",
-                format!("No component named '{}' is registered.", entry.key),
-                unknown_name_hint(&entry.key, &names),
-            )
-            .with_candidates(names.iter().copied());
-            self.push(diagnostic, entry.key_span, pointer);
-            return false;
-        };
-        if info.is_managed() {
-            let diagnostic = Diagnostic::error(
-                "managed_component",
-                format!(
-                    "'{}' is kept consistent by the engine and cannot be written in a scene file.",
-                    entry.key
-                ),
-                "The hierarchy comes from each entity's \"parent\" and \"order\"; remove this component.",
-            );
-            self.push(diagnostic, entry.key_span, pointer);
-            return false;
+        match schema_check::component(self.registry, &entry.key) {
+            Ok(info) => self.check_value(info.schema(), &entry.value, pointer),
+            Err(diagnostic) => {
+                self.push(diagnostic, entry.key_span, pointer);
+                false
+            }
         }
-        self.check_value(info.schema(), &entry.value, pointer)
     }
 
     /// Checks a JSON value against a schema, with every problem located at
@@ -581,11 +567,8 @@ impl Validator<'_> {
         node: &Node,
         pointer: &str,
     ) -> bool {
-        // Strings go to a table that is thrown away: only the checking matters.
-        let mut texts = TextTable::default();
-        let mut context = JsonContext::at_path(&mut texts, pointer);
-        match from_json(schema, &node.to_value(), &mut context) {
-            Ok(_) => true,
+        match schema_check::check_value(schema, &node.to_value(), pointer) {
+            Ok(()) => true,
             Err(diagnostic) => {
                 let located = diagnostic
                     .location
@@ -619,24 +602,12 @@ impl Validator<'_> {
         let mut resources = BTreeMap::new();
         for entry in entries {
             let resource_pointer = join(pointer, &entry.key);
-            let Some(info) = self
-                .registry
-                .resource_id(&entry.key)
-                .and_then(|id| self.registry.resource(id))
-            else {
-                let names: Vec<&str> = self
-                    .registry
-                    .resources()
-                    .map(|(_, info)| info.name())
-                    .collect();
-                let diagnostic = Diagnostic::error(
-                    "unknown_resource",
-                    format!("No resource named '{}' is registered.", entry.key),
-                    unknown_name_hint(&entry.key, &names),
-                )
-                .with_candidates(names.iter().copied());
-                self.push(diagnostic, entry.key_span, &resource_pointer);
-                continue;
+            let info = match schema_check::resource(self.registry, &entry.key) {
+                Ok(info) => info,
+                Err(diagnostic) => {
+                    self.push(diagnostic, entry.key_span, &resource_pointer);
+                    continue;
+                }
             };
             if self.check_value(info.schema(), &entry.value, &resource_pointer) {
                 resources.insert(entry.key.clone(), entry.value.to_value());
