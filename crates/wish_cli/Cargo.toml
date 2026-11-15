@@ -18,8 +18,15 @@ wish_asset.workspace = true
 wish_core.workspace = true
 wish_ecs.workspace = true
 wish_examples.workspace = true
+wish_import.workspace = true
+wish_render.workspace = true
 wish_scene.workspace = true
 wish_schema.workspace = true
+wish_transform.workspace = true
+wish_window.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [lints]
 workspace = true

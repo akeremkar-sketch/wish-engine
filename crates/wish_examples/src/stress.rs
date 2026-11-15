@@ -27,11 +27,11 @@ pub struct Velocity {
     pub value: Vec3,
 }
 
-/// A mesh and textures taken from asset files. Not part of the benchmark
-/// world: it is registered only for scene files (`register_types`), where
-/// it shows asset references.
+/// A mesh and textures taken from asset files, to show asset references in
+/// scene files. Not part of the benchmark world: it is registered only for
+/// scene files (`register_types`).
 #[component]
-pub struct Model {
+pub struct MeshRef {
     /// The mesh file, e.g. `assets/models/crate.glb#Mesh0`.
     pub mesh: AssetRef,
     /// Texture files, empty for none.

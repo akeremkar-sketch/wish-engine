@@ -10,7 +10,7 @@ Boyutlar görecelidir (S < M < L < XL); takvim sözü değildir.
 | M0 | Tasarım | Vizyon, kararlar, mimari, MCP taslağı | S | Fable 5.2 · xhigh — **tamamlandı** |
 | M1 | Çekirdek | Şema, ECS, sabit adım, determinizm, anlık görüntü | L | İlk oturum Fable 5.2 · high → sonra Opus 5.5 · high — **tamamlandı** |
 | M2 | Veri katmanı | Sahne formatı, biçimlendirici, doğrulama, varlık sunucusu, işlem/geri al | M | Sonnet 5.5 · high (tasarım ağırlıklı iş paketleri Opus 5.5 · high) — **tamamlandı** |
-| M3 | İlk piksel | wgpu render temeli, glTF, başsız yakalama | L | Opus 5.5 · high (çekirdek) → Sonnet 5.5 · medium (içe aktarıcılar) |
+| M3 | İlk piksel | wgpu render temeli, glTF, başsız yakalama | L | Opus 5.5 · high (çekirdek) → Sonnet 5.5 · medium (içe aktarıcılar) — **tamamlandı** |
 | M4 | Kontrol düzlemi + MCP | Tek API, MCP sunucusu, komut satırı eşliği, ilk ajan değerlendirmeleri | M | İlk oturum Opus 5.5 · high (araç tasarımı) → Sonnet 5.5 · medium |
 | M5 | Oyun mantığı | Wasm ev sahibi + SDK, sıcak yükleme, girdi, senaryo testleri, gömülü araç zinciri denemesi | L | Opus 5.5 · high (ABI, ev sahibi) → Sonnet 5.5 · medium |
 | M6 | Oyun sistemleri | Fizik, ses, oyun içi arayüz, animasyon, 2D alt kümesi | L | Sonnet 5.5 · medium (sorunlu bütünleşmede Opus 5.5 · high) |
@@ -116,6 +116,10 @@ M1'in ilk iş paketinde yapılacak tek ortam işi: derleme çıktılarını OneD
 
 ## M3 — İlk piksel
 
+**Durum: tamamlandı (15 Kasım 2026).** Tasarım ve uygulama notları: [design/M3-ilk-piksel.md](design/M3-ilk-piksel.md) (§14: WP1–WP8 ve "M3 kapanışı"). Bağımsız kapanış incelemesi 11 bulgu verdi; ikisi yüksek önemliydi (hostile glTF süreci çökertiyor / donduruyor) ve düzeltildi; kalan açıklar (örnekleme bellek kopyası → M6, aygıt kaybı kurtarma → M5) notta.
+
+**M3 sonucu:** çıkış ölçütleri karşılandı; kanıt tablosu tasarım notunda. Dürüst eksikler: Khronos modellerinin "doğru görünmesi" yalnızca gözle doğrulandı (modeller depoda değil, CI karşılığı yok); pencere döngüsü CI'da çalışmaz ve penceredeki resmin içeriğine gözle bakılmadı. Sapmalar: pencere sunumu `softbuffer` ile (renderer ekran dışına çizer), WESL yerine kendi `#import` ön işlemcisi.
+
 **Çıktı.** `wish_window`, `wish_render` (render grafiği, PBR, yönlü ışık + gölge, kamera, gökyüzü/ortam ışığı), glTF içe aktarma, başsız yakalama (`wen capture`), hata ayıklama görünümleri (kimlik, derinlik, normal, tel kafes).
 
 **Çıkış ölçütü.**
@@ -169,6 +173,7 @@ M1'in ilk iş paketinde yapılacak tek ortam işi: derleme çıktılarını OneD
 - Vitrin oyunu baştan sona oynanabilir, senaryo testleri geçer.
 - Değerlendirme takımı: Sonnet 5.5 · medium ≥ %90. Haiku 5.5 sonuçları kaydedilir.
 - Claude dışında en az bir MCP istemcisiyle temel görevler doğrulanır.
+- **Karşılaştırmalı ölçüm (kullanıcı kararı, 15 Kasım 2026):** değerlendirme takımının motordan bağımsız bir alt kümesi aynı modelle Unity ve Unreal'ın MCP bağlantılarında da koşulur; görev başarısı, adım sayısı, token ve hata sayısı yan yana raporlanır. Amaç "Claude ile daha sorunsuz" iddiasını ölçerek kanıtlamak; sonuç kötü çıkan alanlar sürtünme giderme listesine girer. Unity/Unreal kurulumu o sırada ayrıca onaya sunulur. (Bir ölçümdür, 1.0 özellik kapsamını büyütmez.)
 
 ## M8 — Hibrit arayüz
 

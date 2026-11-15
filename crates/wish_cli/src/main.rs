@@ -11,8 +11,11 @@
 //! ```
 
 mod args;
+mod capture;
 mod project_cmds;
 mod scene;
+mod types;
+mod view;
 
 use std::process::ExitCode;
 use std::time::Instant;
@@ -38,6 +41,13 @@ USAGE:
     wen fmt [files...] --example <name> [--root <folder>] [--check] [--json]
     wen migrate [files...] [--root <folder>] [--json]
     wen watch --example <name> --scene <file> [--root <folder>] [--seconds <n>] [--json]
+    wen capture --example <name> --scene <file> --out <png> [--root <folder>] [--camera <id>]
+                [--size <w>x<h>] [--view lit|ids|depth|normals|wireframe] [--software] [--shaders <folder>] [--json]
+    wen describe --example <name> --scene <file> [--root <folder>] [--camera <id>]
+                 [--size <w>x<h>] [--software] [--shaders <folder>] [--json]
+    wen view --example <name> --scene <file> [--root <folder>] [--size <w>x<h>]
+             [--view lit|ids|depth|normals|wireframe] [--software] [--shaders <folder>] [--exit-after <frames>]
+    wen shaders [--dir <folder>] [--json]
     wen mv <from> <to> --example <name> [--root <folder>] [--dry-run] [--json]
     wen schema [--example <name>] [--json]
     wen examples [--json]
@@ -60,7 +70,25 @@ COMMANDS:
     migrate    Upgrade documents of older format versions (format 1 is the only one so far).
     watch      Load a scene and reload it when files change; an invalid change is reported
                and the last good scene stays. With --json, one JSON line per event.
-    mv         Move an asset file or folder (paths relative to --root) and update every
+    capture    Draw a scene into a PNG without a window (default 1280x720, from the first
+               camera unless --camera names one). --software uses the CPU rasterizer,
+               the same on every machine. Rendering never changes the simulation.
+               --view picks what is drawn: lit (the picture), ids (each entity in its own
+               colour), depth (white near, black far), normals (surface direction as
+               colour), wireframe (triangle edges, hidden ones left out).
+    describe   Say what a camera sees without looking at a picture: for each visible entity
+               its pixel count, how much of it is not hidden by other things, its screen
+               box and its distance; and the entities that are drawn but not visible
+               (default size 640x360; each entity costs one extra render).
+    view       Open a window onto a scene. Right mouse button + mouse looks around, W A S D move,
+               Q / E go down / up, Shift is faster, F returns to the scene's camera, 1-5 pick
+               the view (lit, ids, depth, normals, wireframe), a left click names the entity
+               under the cursor. Changed scene, prefab, model or shader files are reloaded; a
+               mistake is reported and the last good picture stays. Needs a desktop session.
+    shaders    Check every shader of the engine (syntax and validation, no GPU needed); --dir checks
+               a folder of <name>.wgsl files in place of the built-in ones. Pass the same folder
+               as --shaders to capture/describe to draw with them. Fails if there is any problem.
+    mv        Move an asset file or folder (paths relative to --root) and update every
                asset reference to it in scenes and prefabs, all or nothing. The example
                supplies the component types that tell where references are.
     schema     Print the JSON Schema of every registered component, resource and event.
@@ -108,6 +136,7 @@ fn execute_any(args: Args) -> Result<Outcome> {
             root,
             check,
         } => project_cmds::format(paths, example, &root_of(root), *check, args.json),
+        Command::Shaders { dir } => capture::shaders(dir.as_deref(), args.json),
         Command::Migrate { paths, root } => project_cmds::migrate(paths, &root_of(root), args.json),
         Command::Watch {
             example,
@@ -158,11 +187,15 @@ fn execute(args: Args) -> Result<String> {
         Command::Check { .. }
         | Command::Format { .. }
         | Command::Migrate { .. }
+        | Command::Shaders { .. }
         | Command::Watch { .. } => Err(Diagnostic::error(
             "internal_error",
             "A project command was run through the simple path.",
             "This is a bug in wen. Please report it.",
         )),
+        Command::Capture(capture) => capture::capture(&capture, args.json),
+        Command::Describe(describe) => capture::describe(&describe, args.json),
+        Command::View(view) => view::view(&view, args.json),
         Command::Schema { example } => schema(example.as_deref(), args.json),
         Command::Examples => Ok(if args.json {
             json!({ "ok": true, "examples": wish_examples::NAMES }).to_string()
@@ -282,7 +315,7 @@ fn move_asset(
 ) -> Result<String> {
     let root = std::path::Path::new(root.unwrap_or("."));
     let mut app = App::new(AppConfig::default());
-    wish_examples::register_types(example, app.world_mut())?;
+    types::register_scene_types(example, app.world_mut())?;
     let plan = wish_asset::plan_move(root, from, to, app.world().registry())?;
     if !dry_run {
         wish_asset::apply_move(root, &plan)?;
@@ -417,10 +450,11 @@ fn registry_schemas(registry: &Registry) -> Value {
 }
 
 fn schema(example: Option<&str>, as_json: bool) -> Result<String> {
-    let app = match example {
+    let mut app = match example {
         Some(name) => wish_examples::build(name, AppConfig::default())?,
         None => App::new(AppConfig::default()),
     };
+    types::register_engine_types(app.world_mut())?;
     let mut document = registry_schemas(app.world().registry());
     if as_json {
         if let Some(object) = document.as_object_mut() {

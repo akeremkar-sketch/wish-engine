@@ -1,0 +1,243 @@
+# M3 — İlk piksel: tasarım notu
+
+Durum: yazıldı (15 Kasım 2026). Kod yazmadan önce oku. Bağlam: [ROADMAP](../ROADMAP.md) M3, [DECISIONS](../DECISIONS.md) ADR-012/013, [ARCHITECTURE](../ARCHITECTURE.md) "Render hattı".
+
+## 1. Hedef ve sınırlar
+
+M3 sonunda: bir sahne dosyası (M2) **pencere açmadan** PNG'ye çizilir; modeller glTF'den gelir; "şu pikselde hangi varlık var" sorusu kimlik tamponundan yanıtlanır; gölgelendirici hataları ortak tanı formatında dosya/satırla gelir. Pencere en sonda, ince.
+
+**Kapsam dışı (M3'te yapılmaz, M10 listesine):** animasyon/iskelet (M6), kümelenmiş ışık (tek yönlü ışık yetiyor; nokta/spot ışıklar M6'da), IBL/ortam haritası (M3'te prosedürel gökyüzü + sabit ortam ışığı), MSAA, ardıl işlemler (ton eşleme hariç), bindless/GPU güdümlü çizim. Bunlar "taban çizgisi" (ADR-012) içinde ama sonraki kilometre taşlarında; render grafiği (§4) bunları sonradan eklemeyi mümkün kılar.
+
+**Değişmezler:** 2 (determinizm): render determinizm sınırının **dışındadır** (ADR, mimari §Kare döngüsü) — simülasyon durumu GPU'dan hiç okunmaz, render ECS'e yazmaz. 8 (gözlemlenebilirlik): her render özelliği `wen capture`/kimlik sorgusuyla görülebilir ve başsız testle sınanır. 5 (tanı): gölgelendirici hatası da `Diagnostic`.
+
+## 2. Crate'ler ve bağımlılık yönü
+
+| Crate | Sorumluluk | Dış bağımlılıklar |
+|---|---|---|
+| `wish_import` | glTF/GLB → CPU verisi (`Model`: ağlar, materyaller, dokular, düğüm ağacı). GPU bilmez | `gltf`, `image` |
+| `wish_transform` | `Transform` (yerel), `GlobalTransform` (türetilmiş), hiyerarşi boyunca yayılım sistemi | — |
+| `wish_render` | wgpu aygıtı, kaynaklar, render grafiği, PBR, gölge, gökyüzü, ton eşleme, hata ayıklama görünümleri, yakalama, ECS'ten sahne çıkarımı | `wgpu`, `naga`, `pollster`, `bytemuck`, `png` |
+| `wish_window` | `winit` penceresi, sunum yüzeyi, basit uçuş kamerası (en son iş paketi) | `winit` |
+
+Yön: `wish_render` → `wish_import` (veri türleri), `wish_transform`, `wish_ecs`, `wish_asset` (varlık yolu çözme); `wish_window` → `wish_render`. `wish_import` ve `wish_transform` render'ı tanımaz. wgpu yalnızca `wish_render`'da (değişmez 6: dış kütüphane yalnızca kendi sarmalayıcısında). `wen` (CLI) geçici ev sahibidir; kontrol düzlemi `wish_control` M4'te gelince `capture`/`describe_view` oraya taşınır, işlev `wish_render` API'sinde kalır (değişmez 4: önce kontrol düzlemi — M4'e kadar `wish_render` işlevleri tek giriş noktasıdır, CLI sadece çağırır).
+
+## 3. Bileşenler (şema önce)
+
+Hepsi `#[component]`, belge yorumlu, birimli:
+
+- `Transform { translation: Vec3 (m), rotation: Quat, scale: Vec3 }` — sahne dosyasında `translation`/`rotation`/`scale`; `rotation` için ek olarak `euler_deg` kısa yazımı **M3'te yok** (mimari belgedeki örnek gösterim amaçlıydı; kesin biçim: dörtlü). Gerekirse M4'te editör/ajan kolaylığı olarak sorulur.
+- `GlobalTransform` — yazılamaz (motor türetir, `Hierarchy` gibi). **Karar:** WP2'de `wish_ecs`'e yeni yönetilen-bileşen kaydı eklemek yerine (unsafe'li crate), M2'deki `SceneId` yolu izlenir: sahnede yazılması `managed_component` ile reddedilir.
+- `Camera { fov_y_deg (1–179), near (m), far (m) }` — `aspect` yakalama boyutundan gelir. Sahnede birden çok kamera olabilir; yakalama `--camera <sahne_kimliği>` ile seçer (yoksa ilk kamera).
+- `DirectionalLight { color: Color, illuminance_lux, shadows: bool }` — yön, varlığın `GlobalTransform`'unun −Z ekseni.
+- `Model { asset: AssetRef }` — bir glTF/GLB'nin sahnesini bu varlığın altına açar. **Karar (M2 prefab'ıyla ilişki):** glTF düğümleri sahne varlıkları **olmaz**; `Model` tek varlıktır ve içindeki düğüm ağacı render tarafında tutulur (yalnızca kendi transformuyla çizilir). Sebep: bir modelin yüzlerce düğümünü sahne dosyasına yazmak anlamsızdır ve hash/geri al'ı şişirir; elle düzenleme gerekirse prefab'a "açma" M8a'da düşünülür. Kimlik tamponu varlık düzeyindedir (Model = bir varlık); alt düğüm kimliği `describe_view`'a ek alan olarak (`node`) gelir.
+- `MeshRenderer { mesh: AssetRef, material: AssetRef }` — M3'te **yok**: ilkel şekiller (küp, küre, düzlem) için `Primitive { shape: enum, size... }` + `Material` (taban renk, metal, pürüz) bileşeni testleri ve vitrin öncesi sahneleri glTF'siz kurabilmek için gerekli. → `Primitive` ve `Material` bileşenleri M3'tedir; `.mat.json` dosyası ADR-013'ün özel gölgelendirici için olan parçası sonraya.
+- Kaynaklar: `Sky { zenith: Color, horizon: Color, ground: Color, sun_disk: bool }`, `Ambient { color: Color, intensity }`, `Exposure { ev100 }`.
+
+## 4. Render mimarisi
+
+```
+ECS dünyası ─(çıkarım, salt okunur)→ RenderScene (CPU: kameralar, ışıklar, çizim listesi, kimlik haritası)
+RenderScene + Model/Texture önbelleği ─→ Renderer (wgpu)
+   geçişler (render grafiği düğümleri): Gölge → Opak PBR → Gökyüzü → Ton eşleme → [Hata ayıklama: Kimlik | Derinlik | Normal | Tel kafes] → Sunum | Yakalama
+```
+
+- **Çıkarım (`extract`)** ECS'i salt okur ve `RenderScene` üretir: görünür çizimler `(model/ilkel, dünya matrisi, materyal, varlık kimliği)`. Sıra sahne kimliğine göre sabit (hata ayıklama çıktıları tekrarlanabilir olsun). Render tarafı ECS'e **yazmaz**.
+- **Render grafiği:** düğüm = geçiş (girdi/çıktı doku bildirimi), kenarlar kaynak kullanımı. M3'te grafik küçük ve doğrusaldır ama düğüm arayüzü (`Pass { reads, writes, run }`) baştan vardır ki gölge/ardıl/yan çıktı geçişleri sonradan eklenebilsin (ADR-012). Yan çıktılar yalnızca istenince çalışır.
+- **Hedefler:** ana renk `Rgba16Float` (HDR) → ton eşleme (Khronos PBR Neutral; ACES değil: gri tonlama yan etkisi yok, glTF örnekleriyle karşılaştırmaya uygun) → `Rgba8UnormSrgb`. Kimlik `R32Uint`, derinlik `Depth32Float`, normal `Rgba16Float` (veya oktaedral `Rg16Float` — WP6'da ölçülür).
+- **PBR:** glTF 2.0 metal-pürüz modeli (taban renk, metal-pürüz, normal, occlusion, emissive; `KHR_materials_emissive_strength`, `KHR_texture_transform` M3'te desteklenir; diğer uzantılar `unsupported_extension` **uyarısıyla** atlanır, sessizce yok sayılmaz). Işık: tek yönlü ışık + sabit ortam + prosedürel gökyüzü yansıması yaklaşığı.
+- **Gölge:** yönlü ışık için tek gölge haritası, sahne sınırlarına oturtulmuş ortografik kesit (2048², PCF 3×3, eğim-ölçekli yanlılık). **Basamaklı** gölge (CSM) ADR-012 taban çizgisindedir ama büyük açık dünya ihtiyacı M7 vitrin oyununda ölçülür; M3'te arayüz basamak sayısına hazır, uygulama 1 basamak.
+- **Tel kafes:** `POLYGON_MODE_LINE` özelliği her bağdaştırıcıda (özellikle yazılım) yok; bu yüzden ağdan türetilen kenar indeks tamponuyla `LineList`. Her yerde çalışır.
+- **Hata ayıklama görünümleri** (`lit | ids | depth | normals | wireframe`): her biri ayrı çıktı; `ids` ve `depth` ayrıca sayısal olarak okunabilir (`describe`).
+
+## 5. Gölgelendirici dili ve hataları (ADR-013 doğrulaması)
+
+ADR-013 "M3 başında WESL olgunluğu doğrulanır". Durum: `wesl` crate'i 0.6 (derleyici), `naga` 30 WGSL ayrıştırıcı + doğrulayıcı. **WP1'de doğrulanacak:** (a) `wesl` ile `import` çözümü ve hata konumları, (b) `naga` hata aralıkları (span) → satır/sütun. Karar kuralı: WESL derleyicisi konumlu hata veriyorsa ve bağımlılık ağacı lisans listesine uyuyorsa WESL; değilse **kendi basit `#import "yol"` ön işlemcimiz** (modül sayısı M3'te 4–6, ön işlemci ~100 satır; kaynak haritası satır eşlemesi tutar) + naga. Her iki durumda hata `Diagnostic`: `shader_syntax`/`shader_validation`, dosya + satır + sütun + kaynak satırı alıntısı + ipucu. Gölgelendirici dosyaları `crates/wish_render/shaders/*.wgsl` içinde gömülü (`include_str!`) ve ayrıca geliştirmede dosyadan sıcak yüklenebilir (WP7). Kullanıcı gölgelendiricisi (`*.mat.json`) M3 kapsamı dışı.
+
+## 6. Başsız render ve CI
+
+- **Bağdaştırıcı seçimi:** `Renderer::new(RenderOptions { backend, software: bool })`. `software: true` → `force_fallback_adapter` (Windows: WARP üzerinden DX12; Linux: lavapipe/Vulkan — CI'da `mesa-vulkan-drivers` kurulur; macOS CI M3'te yok). Gerçek GPU yoksa ve yazılım yoksa **net tanı** (`no_gpu_adapter`, ipucu: yazılım bağdaştırıcısı/`--software`), çökme yok.
+- **Altın görüntü:** PNG; karşılaştırma `max kanal farkı ≤ T` ve `farklı piksel oranı ≤ P` (başlangıç T=2/255 yazılım–yazılım, P=%0,5; WP1'de lavapipe ↔ WARP farkı **ölçülür** ve eşikler ona göre konur). Altınlar platform başına ayrı klasör gerekirse (`golden/windows`, `golden/linux`) ayrı tutulur. Sapma raporu: fark görüntüsü + sayısal özet; `UPDATE_GOLDEN=1` ile yenilenir, diff incelenir (M1'in `TRYBUILD=overwrite` düzeni gibi).
+- **Risk — yazılım render sürücüler arasında birebir aynı olmaz.** Azaltma: eşik + deterministik sahne (rastgelelik yok), tek örnekleme, bilinen basit sahneler. Bu risk WP1'in **çıkış koşuludur**: iki platformda aynı sahne eşik içinde aynı çıkmıyorsa M3 planı revize edilir (kullanıcıya haber verilir).
+
+## 7. İçe aktarma (`wish_import`)
+
+`gltf` crate'iyle GLB/glTF: ağ (konum, normal, teğet, UV0, indeks; teğet yoksa mikktspace benzeri üretim — WP4'te `gltf` crate'inin sağladığı/ayrı küçük kütüphanenin lisansı denetlenir), materyal, doku (`image` ile PNG/JPEG çözme; KTX2 M3'te yok), düğüm ağacı, birim/koordinat dönüşümü gerekmez (ADR-021: glTF ile aynı). Hatalar `Diagnostic` (`gltf_parse`, `unsupported_extension`, `missing_buffer`, `image_decode`) dosya yolu ve (mümkünse) JSON işaretçisiyle. `*.meta.json` `import` ayarları: `scale`, `generate_tangents`, `flip_uv_y` — WP4'te yalnızca bunlar (M2 meta altyapısı kullanılır, bilinmeyen anahtar `unknown_key`).
+
+Varlık yolu çözme `AssetRef` (M2) ile: `Model.asset = "assets/models/crate.glb"`; var olmayan dosya `wen check`'te `asset_not_found`.
+
+## 8. Komut satırı (geçici ev sahibi; M4'te `wish_control`'e taşınır)
+
+| Komut | Ne yapar |
+|---|---|
+| `wen capture --example E --scene S [--root R] [--camera ID] [--size 1280x720] [--view lit\|ids\|depth\|normals\|wireframe] [--software] --out dosya.png [--json]` | Sahneyi yükler, çizer, PNG yazar; `--json` ile `{ok, path, size, adapter, hash}` (hash: PNG baytları; GPU'ya bağlı, determinizm iddiası **değil**) |
+| `wen describe --example E --scene S [--camera ID] [--at x,y] [--json]` | Kimlik tamponundan: `--at` ile o pikseldeki varlık (sahne kimliği, düğüm); yoksa görünen her varlığın ekran kutusu, görünürlük yüzdesi, kameraya uzaklık (`describe_view`'ın çekirdeği) |
+| `wen view --example E --scene S` | Pencere açar (WP8) |
+
+## 9. Test planı (çıkış ölçütleriyle)
+
+| Çıkış ölçütü | Kanıt |
+|---|---|
+| Standart glTF örnek modelleri doğru görünür | Khronos glTF-Sample-Assets'ten küçük bir küme (Box, Duck, DamagedHelmet, MetalRoughSpheres, NormalTangentTest …) başvuru görüntüleriyle karşılaştırma + insan gözü incelemesi (altın görüntü değil: başvurular farklı renderer'larla üretilmiş, birebir eşleşmez). **İndirme gerektirir → kullanıcı onayı** (§12); onaya kadar `wish_import` testleri depoda üretilen küçük glTF'lerle (kod ile yazılmış Box, üçgen, dokulu düzlem) çalışır |
+| `wen capture` penceresiz; altın görüntü CI'da yazılım bağdaştırıcısıyla geçer | CI'da Windows (WARP) + Linux (lavapipe) matrisinde `cargo test` içindeki altın testleri; `wen capture` entegrasyon testi |
+| Kimlik tamponundan "şu pikselde hangi varlık" doğru | Sahnede bilinen konumlu 3 küp: piksel → varlık eşlemesi; arka plan = yok; örtülme (öndeki kazanır); kısmi görünürlük yüzdesi |
+| Gölgelendirici hatası ortak tanı formatında, dosya ve satırla | Bozuk gölgelendirici örnekleri (sözdizimi, tür, olmayan içe aktarma) → `Diagnostic` dosya/satır/sütun/ipucu; M1/M2'deki "bozuk dosya" test desenini izler |
+| (ek) Render ECS'e yazmaz, hash'i değiştirmez | Çizimden önce/sonra dünya hash'i eşit |
+| (ek) GPU yokken çökme yok | Bağdaştırıcı yoksa `no_gpu_adapter` tanısı testi (yazılım zorlanmadan, kasıtlı geçersiz backend ile) |
+
+## 10. İş paketleri ve önerilen model
+
+| # | İş paketi | Model · efor |
+|---|---|---|
+| WP1 | **Kanıt işi (spike):** wgpu başsız + yazılım bağdaştırıcısı Windows/Linux CI'da ışık-gölge-yok üçgen çizip PNG yazar; iki platform farkı ölçülür ve eşikler belirlenir; WESL/naga hata konumu doğrulaması (ADR-013 kararı); yeni bağımlılıkların lisans taraması (`deny.toml`). **Çıkış koşulu:** §6 riski | Opus 5.5 · high |
+| WP2 | `wish_transform` (Transform, GlobalTransform, yayılım) ; sahne bileşenleri (`Camera`, `DirectionalLight`, `Primitive`, `Material`, `Model`, kaynaklar); çıkarım (`RenderScene`) | Sonnet 5.5 · high |
+| WP3 | Render çekirdeği: aygıt/kaynak yönetimi, render grafiği iskeleti, PBR (dokusuz), gökyüzü, ton eşleme, yakalama + PNG, `wen capture` | Opus 5.5 · high |
+| WP4 | `wish_import`: glTF → `Model`, dokular, materyal uzantıları, teğet; render'da dokulu PBR | Sonnet 5.5 · medium |
+| WP5 | Yönlü ışık gölgesi (tek gölge haritası, PCF) | Sonnet 5.5 · high |
+| WP6 | Hata ayıklama görünümleri: kimlik, derinlik, normal, tel kafes; `wen describe`; görünürlük yüzdesi | Sonnet 5.5 · high |
+| WP7 | Gölgelendirici tanıları + (geliştirmede) gölgelendirici sıcak yükleme | Sonnet 5.5 · medium |
+| WP8 | `wish_window` + `wen view` (ince); M3 kapanış incelemesi (bağımsız ajan) + M3 sonucu | Opus 5.5 · high (inceleme), Sonnet 5.5 · medium (pencere) |
+
+## 11. Riskler
+
+1. **Yazılım render farkı** (§6) — WP1 çıkış koşulu.
+2. **Bağımlılık ağırlığı:** `wgpu` ağacı geniştir (derleme süresi, lisans çeşitliliği). WP1 `cargo-deny` ile ölçer; izin listesi dışı lisans çıkarsa durur ve bildirir (yeni lisans eklemek kullanıcı kararıdır).
+3. **Derleme süresi/CI süresi:** `wgpu` ilk derlemede dakikalar ekler; CI önbelleği (`Swatinem/rust-cache`) WP1'de eklenir.
+4. **Kapsam büyümesi:** CSM, IBL, nokta ışıklar cazip; M3 "ilk piksel"dir, bunlar listeye yazılır (§1).
+
+## 12. Kullanıcıya ait kararlar / onaylar
+
+- **glTF örnek modellerinin indirilmesi** (Khronos glTF-Sample-Assets, birden çok lisans: çoğu CC-BY/CC0/SI; depoya girmeden yalnızca yerelde test için indirilecek, depoya **eklenmeyecek**): kaynağı, dosya adları ve boyutu söyleyerek WP4 sonunda onay istenecek.
+- Yeni bir dış bağımlılığın izin listesi dışında lisansı çıkarsa: lisans listesine ekleme onayı.
+- Kapsam: bu notta "M3'te yok" denen her şey (animasyon, IBL, CSM, nokta ışık, KTX2) **1.0 kapsamı içindedir**, sonraki kilometre taşlarına yazılmıştır; kapsamı büyüten bir değişiklik olursa burada belirtilir.
+
+## 14. Uygulama notları
+
+### WP1 — kanıt işi (spike)
+
+- **Sonuç: §6 riski bu aşamada gerçekleşmedi; plan değişmeden sürüyor.** Köşe renkli üçgen (kenar kapsama + renk ara değerleme sınavı), 256×256, `Rgba8UnormSrgb`: Windows'ta WARP ("Microsoft Basic Render Driver", DX12) ve Linux CI'da lavapipe (Vulkan) arasındaki **en büyük kanal farkı 1/255**, piksellerin %5,3'ünde tek seviyelik yuvarlama; kenar piksellerinde fark yok. Eşik: bir piksel kanal farkı 2'yi aşarsa "farklı", en çok %0,5 farklı piksel. Işık/doku/gölge gelince (WP3–WP5) aynı ölçüm tekrarlanır (`measure_the_difference_between_two_captures`, el ile çalışan test).
+- **Altın görüntüler** `crates/wish_render/tests/golden/*.png` (WARP'tan üretildi), `UPDATE_GOLDEN=1` ile yenilenir. Her çalıştırma çizdiğini `target/tmp/captures/<ad>-<işletim sistemi>-<arka uç>.png` olarak bırakır; CI bunları **yapıt** olarak saklar (iki platformu karşılaştırmak ve başarısız bir altın testini incelemek için).
+- **CI:** Linux'ta `mesa-vulkan-drivers` (lavapipe) kurulur; Windows'ta WARP sistemle gelir. CI artık kilometre taşı dallarında da (`m[0-9]*`) çalışır. Windows işi `wgpu` derlemesiyle ~6 dk.
+- **Hata yönetimi:** `wgpu`'nun yakalanmamış hatada varsayılan davranışı panik; `Gpu` kendi kaydedici işleyicisini kurar ve her GPU işini doğrulama + bellek hata kapsamında çalıştırır (`gpu_error`). Bağdaştırıcı yoksa `no_gpu_adapter` (yazılım/donanım için ayrı ipucu), cihaz açılamazsa `gpu_device_failed`, geri okuma başarısızsa `gpu_readback_failed`, geçersiz boyut `invalid_capture_size`.
+- **Gölgelendirici tanıları:** `check_wgsl` (`naga` 30): sözdizimi `shader_syntax`, doğrulama `shader_validation`; konum karakter sütunu (Türkçe karakterli yorum testli), iletiye kaynak satırı eklenir. `naga` doğrulama hatasında birden çok aralık verir; en dar olanı seçilir. Bilinen sınır: `naga` bazı tür hatalarını `return` satırına değil, yanlış türdeki değerin tanımlandığı yere bağlar (test bunu belgeler).
+- **ADR-013 kararı:** WESL 0.6 denendi; ayrıntı ve karar [DECISIONS](../DECISIONS.md) ADR-013 "M3 doğrulaması". Kısaca: M3'te `naga` + kaynak haritalı küçük içe aktarma ön işlemcisi (WP3), WESL arayüzün arkasına sonra.
+- **Bağımlılıklar:** `wgpu` 30, `naga` 30, `png` 0.18, `pollster` 1, `bytemuck` 1. Lisanslar CI'daki `cargo-deny`'dan geçti (izin listesine ekleme gerekmedi).
+
+### WP2 — dönüşümler, sahne bileşenleri, çıkarım
+
+- **`wish_transform`:** `Transform { translation (m, takma ad "position"), rotation (birim kuaterniyon [x,y,z,w]), scale (varsayılan 1) }` ve türetilmiş `GlobalTransform { matrix }`. `update_global_transforms(&mut World)`: ebeveyn önce, kökler varlık sırasıyla, çocuklar kardeş sırasıyla gezilir; `GlobalTransform` yalnızca değer değiştiyse yazılır (değişiklik izleme anlamlı kalır, ikinci çalıştırma dünya hash'ini değiştirmez). `Transform`'u olmayan bir varlık çocuklarını kıpırdatmaz (kimlik dönüşümü sayılır) ve `GlobalTransform` taşımaz; `Transform`'unu kaybeden varlığın eski `GlobalTransform`'u silinir. Sıfır ya da sonlu olmayan dönüş "dönüş yok" sayılır, NaN hiyerarşiye yayılmaz.
+- **Karar — `GlobalTransform` yönetilen değil, sahne dosyasında yazılamayan bileşen.** `SceneId` ile aynı yol: `wish_scene`'in `ENGINE_WRITTEN` listesi (şimdilik `SceneId`, `GlobalTransform`) bu adları `managed_component` koduyla ipuçlu reddeder ve aday listesinden çıkarır; `wish_ecs`'e dokunulmadı.
+- **Bileşenler (`wish_render::components`), hepsi şemalı, birimli, aralıklı:** `Camera { fov_y_deg 1–179 (60), near (0,1 m), far (1000 m) }`, `DirectionalLight { color, illuminance_lux 0–200000 (100000), shadows (true) }`, `Primitive { shape: Cube | Sphere | Plane }` (boyut `Transform` ölçeğinden: küp 1 m, küre çap 1 m, düzlem 1×1 m XZ'de +Y'ye bakar), `Material { base_color, metallic 0–1, roughness 0–1 (0,5), emissive }`, `Model { asset: AssetRef }`; kaynaklar `Sky { zenith, horizon, ground }`, `Ambient { color, intensity }`, `Exposure { ev100 (14) }`. Renkler doğrusal RGB. **Tasarım notundan sapma:** `Primitive` boyut alanı taşımıyor (ölçek zaten var; tek yer kuralı).
+- **Çıkarım (`wish_render::extract`):** `extract(&mut World) -> RenderScene` dünyayı salt okur: kameralar (görünüm matrisi, konum, fov radyan, near/far, `projection(aspect)` wgpu için Z 0–1 / Y yukarı), yönlü ışıklar (yön = varlığın −Z ekseni, ışıma = renk × lux), çizimler (varlık, dünya matrisi, ilkel ya da model yolu, materyal; boş `Model` yolu çizilmez), gökyüzü, ortam (yoğunlukla çarpılmış), pozlama. Hepsi varlık sırasıyla; aynı dünya aynı sahneyi verir. `far <= near` ya da sonlu olmayan yerleşim `invalid_camera`. Çıkarım dünya hash'ini değiştirmez (testli).
+- **`wish_core::math`'a `camera` modülü açıldı** (`glam` 0.34 projeksiyon yapıcılarını `camera::rh::proj::directx` altına taşımış; `perspective_rh` artık yok).
+- **`wen` artık motor türlerini tanır:** `wish_cli::types` (`register_scene_types`: motor türleri + seçilen örneğin türleri). `wen check/fmt/run --scene/mv` kamera/ışık/ilkel içeren sahneleri doğrular; `wen schema` motor türlerini listeler. `stress` örneğinin sahne-yalnız bileşeni `Model` → `MeshRef` oldu (ad çakışması).
+- **Test:** `wish_transform` (8): ebeveyn-çocuk, dönüş+ölçek, dönüşsüz ara varlık, yalnızca değişen yazılır, yeniden ebeveynleme/kaldırma, bozuk dönüş, şema varsayılanları + takma ad ipucu, aynı hiyerarşi aynı hash. `wish_render/tests/extract.rs` (6): sahne dosyası → dünya → çıkarım (kamera, ışık yönü, çizim sırası, materyal, çocuğun ebeveyne göre yerleşimi, kaynaklar), salt okunur + tekrarlanabilir, boş dünya, boş model, bozuk kamera, 6 bileşen değeri hatası (konumlu). `wen` uçtan uca testi (+1): render sahnesi `check` (sıfır tanı) + `run --scene` + konumlu hatalar + şema.
+
+### WP3 — render çekirdeği ve `wen capture`
+
+- **Gölgelendirici kütüphanesi (ADR-013 kararının uygulaması):** `ShaderLibrary` modülleri adla tutar; `#import ad` satırları içe aktarır (her modül bir kez, içe aktardıklarından sonra; döngü `shader_import_cycle`, olmayan modül `shader_import_unknown` "şunu mu demek istediniz" ile, bozuk satır `shader_import_syntax`; hepsi içe aktarma satırının dosya/satır/sütununda). Birleştirilmiş kaynağın her satırı için özgün dosya + satır tutulur; `naga` hatası bu haritayla **hatanın bulunduğu modüle** geri çevrilir (testli: `brdf.wgsl` 4. satırdaki hata `opaque` birleştirilirken `brdf.wgsl:4` olarak raporlanır). Motor modülleri: `common` (çerçeve verisi), `sky`, `brdf`, `tonemap` ve üç geçiş (`sky_pass`, `opaque`, `tonemap_pass`).
+- **Kare:** üç geçiş, sırası sabit: gökyüzü (tam ekran üçgen, HDR `Rgba16Float`) → opak (glTF metal-pürüz BRDF: GGX dağılımı, yükseklik bağıntılı Smith görünürlüğü, Schlick Fresnel, Lambert yayılım; tek yönlü ışık + ortam ışığı + gökyüzünün yansıması için Karis'in analitik çevre BRDF yaklaşığı; ışık yayan; `Depth32Float`, arka yüz ayıklama) → ton eşleme (Khronos PBR Neutral) → `Rgba8UnormSrgb` yakalama. Değerler **ön-pozlanmış** (gökyüzü ve opak geçiş pozlamayla çarparak yazar); pozlama `1 / (1,2 · 2^EV100)`. Şimdilik yalnızca ilk yönlü ışık kullanılır (çok ışık M6). Render grafiği (bildirilmiş girdi/çıktılı geçişler) gölge ve hata ayıklama geçişleriyle (WP5/WP6) gelecek; tasarımdaki "baştan grafik arayüzü" o zamana ertelendi çünkü tek tüketicisi olmayan bir soyutlama olurdu.
+- **Fiziksel birimler tutarlı hâle getirildi (WP2'den değişiklik):** `Ambient.intensity` artık lux (varsayılan 20000, açık gölge), `Sky.luminance` eklendi (cd/m², varsayılan 20000), `Material.emissive` 1 = `EMISSIVE_NITS` (30000 cd/m², varsayılan güneşteki beyaz yüzey kadar parlak). Böylece varsayılan EV100 = 14 ile güneş, gökyüzü, ortam ve ışık yayan yüzeyler aynı ölçekte doğal görünür.
+- **İlkel ağlar:** küp (24 köşe), UV küre (32×16), düzlem; CPU'da deterministik üretim; birim testi her üçgenin dışa baktığını (sarma yönü normal ile uyumlu) ve normallerin birim olduğunu doğrular. Köşe tamponu konum + normal (`f32` küçük-sonlu baytlar).
+- **`Renderer`** ardışık düzenleri ve ilkel ağları bir kez kurar; `render(gpu, scene, camera, w, h) -> Frame { image, camera, drawn, warnings }`. Kamera seçimi: verilen varlık (`not_a_camera`) ya da ilk kamera (`no_camera`). Çizilemeyenler **uyarı** olarak döner, gizlenmez: `degenerate_transform` (sıfır/sonsuz ölçek), `model_not_drawn` (glTF WP4'te).
+- **`wen capture --example E --scene S [--root R] [--camera ID] [--size WxH] [--view lit] [--software] --out x.png [--json]`:** sahneyi yükler, dönüşümleri yayar, çıkarır, paylaşılan aygıtta çizer, PNG yazar; JSON çıktısı kamera sahne kimliği, çizim sayısı, bağdaştırıcı ve uyarıları içerir. `--camera` sahne kimliğiyle (`unknown_entity` + öneri), `--view` WP3'te yalnızca `lit`ti; diğer görünümler WP6'da geldi (aşağıda). Örnek proje: `examples/first-pixel`.
+- **Ölçüm — donanım ↔ yazılım:** aynı sahne 1280×720'de RTX 3060 Ti (Vulkan) ile WARP (DX12) arasında **en çok 1/255** fark (piksellerin %12'sinde tek seviye). CI'da Linux lavapipe (Vulkan) ile WARP altın görüntüsü arasında da **en çok 1/255** (piksellerin %16'sında tek seviye). Üç yol (donanım, WARP, lavapipe) pratikte aynı görüntüyü veriyor; altın görüntü eşiği sınama üçgenindeki gibi: kanal farkı 2'yi aşan piksel en çok %0,5.
+- **Bulgu 1 — ayrı aygıtlar aynı anda çizince WARP süreci çöküyor** (`STATUS_ACCESS_VIOLATION`, sürücü içinde; paralel testlerde tekrarlanabilir; tek aygıtı paylaşan iş parçacıkları sorunsuz). **Çözüm:** süreç genelinde tek GPU kilidi (`gpu_lock`: aygıt açma, her `checked` iş, geri okuma) ve süreç başına paylaşılan aygıt `Gpu::shared`. Gerileme testi: dört iş parçacığı, her biri kendi aygıtıyla, üçer kare.
+- **Bulgu 2 — yalnızca release derlemesinde WARP aygıtı kayboluyordu.** `wgpu` debug derlemesinde DX12 hata ayıklama katmanını açar; release'te kapalı. Katman kapalıyken referans Khronos PBR Neutral biçimi (erken `return` + `peak`'e bölme) WARP'ta aygıtı kaybettiriyor, sonraki her tampon geçersiz oluyor ve `wgpu`'nun `create_buffer_init`'i `expect` ile **panikliyordu**. Daraltma: geçişler tek tek kapatıldı → ton eşleme; gölgelendirici çeşitleri → `tonemap_pbr_neutral`. **Çözüm:** işlev dalsız ve sıfıra bölmesiz, eşdeğer biçimde yeniden yazıldı (altın görüntü değişmedi). **Ek önlemler:** `create_buffer_init` hiç kullanılmıyor (tamponlar kuyruk üzerinden dolduruluyor; hata panik yerine tanı olur); `checked` bellek → iç → doğrulama sırasıyla kök nedeni raporlar (`gpu_out_of_memory`, `gpu_error`); aygıt kaybı geri çağrısı kaydedilir ve sonraki her iş `gpu_lost` ile gerçek nedeni söyler; `WGPU_DEBUG`/`WGPU_VALIDATION` ortam değişkenleri dikkate alınır; **CI render testlerini release'te de çalıştırır.**
+- **Test:** `wish_render/tests/render.rs` (6): sahne dosyasından piksele (gökyüzü mavi, küpün aydınlık yüzü kırmızı, lamba yeşil ışık yayıyor, altın küre sıcak yansıma, zemin gri) + altın görüntü; tekrarlanabilirlik; kamera seçimi/hataları; çizilemeyenlerin uyarıları; motor gölgelendiricilerinin temiz denetimi ve modüle eşlenen hata; ayrı aygıtlarla eşzamanlı çizim. Ağ birim testleri (2). `wen capture` uçtan uca (+1): PNG, JSON, beş hata durumu.
+
+### WP4 — glTF içe aktarma ve dokulu PBR
+
+- **`wish_import` (yalnızca CPU verisi, GPU bilmez):** `load_model_file(yol, ad)` (harici `.bin`/görüntüleri yanındaki klasörden okur) ve `load_model_bytes`. `Model`: ağlar (her biri primitive'ler; konum, normal, UV0, teğet, indeks, materyal), glTF metal-pürüz materyalleri (taban renk, metal, pürüz, ışık yayma, normal ölçeği, occlusion gücü, çift taraflı, alfa kipi + kesim), 8-bit RGBA çözülmüş dokular, düğüm ağacı. `placed()` ağaçta her primitive'i dünya matrisiyle verir (yinelemeli, derinlik sınırlı: `MAX_NODE_DEPTH` 256, döngülü dosya sonsuza gitmez); `bounds()`.
+- **Desteklenenler:** üçgen listesi/şeridi/yelpazesi; `TEXCOORD_0`; taban renk, metal-pürüz, normal, occlusion, emissive dokuları; `KHR_materials_emissive_strength`; normal yoksa **düz normal** (köşeler çözülür), teğet yoksa ve normal dokusu varsa **üretilir** (UV türevli, MikkTSpace değil; aynalanmamış UV'lerde aynı sonuç). **Desteklenmeyenler uyarıdır, sessizce düşmez:** `unsupported_extension` (dosyanın *kullandığı* ama bizim okumadığımız uzantı), `unsupported_texcoord_set` (UV1+ dokusu), `unsupported_primitive_mode` (nokta/çizgi), `primitive_inconsistent`; *gerekli* ve desteklenmeyen uzantı (örn. Draco) **hata** (`unsupported_extension`, "uzantısız yeniden dışa aktar" ipucu).
+- **Hatalar (hepsi dosya yoluyla, ipuçlu):** `gltf_parse`, `gltf_invalid`, `gltf_file_missing` (ayrı `.bin` yoksa: "tek `.glb` kullan"), `gltf_image` (PNG/JPEG olmalı), `gltf_texture_too_large` (2²⁸ piksel sınırı).
+- **Bulgu — `gltf-json` kütüphanesi hostile dosyada panikliyor:** accessor indeksi sınır denetimi yapılmadan kullanılıyor (`root.accessors[i]`, doğrulama kancasında, indeks doğrulamasından önce). **Önlem:** kütüphane çağrısı `catch_unwind` içinde; panik `gltf_invalid` tanısı olur (testli: var olmayan accessor'a işaret eden mesh). Panik iletisi stderr'e yine yazılır.
+- **Render (dokulu PBR):** köşe biçimi 48 bayt (konum, normal, UV, teğet); gölgelendirici beş dokuyu örnekler (eksik yuva 1×1 varsayılan: beyaz, düz normal), normal haritası TBN ile, occlusion yalnızca dolaylı ışığı karartır, alfa MASK `discard`, çift taraflı materyal için ayrı ardışık düzen ve arka yüzde normal çevirme. **Mip zinciri CPU'da** (2×2 kutu süzgeci) ve **anizotropi yok**: her bağdaştırıcı aynı veriden aynı örneklemeyi yapsın (altın görüntü tekrarlanabilirliği). `Renderer::upload_model(gpu, yol, &Model)` ve `has_model`; `Model` varlığı yüklenmemişse `model_not_loaded` (dosya konumlu) uyarısı. Modelin kendi materyalleri kullanılır (`Material` bileşeni yalnızca ilkeller için). **Alfa BLEND** opak çizilir ve `alpha_blend_not_blended` uyarısı verir (karışım M6).
+- **`wen capture`:** sahnenin `Model` varlıklarının dosyalarını projeden yükleyip yükler; yüklenemeyen model (bozuk, eksik) **o model çizilmez, geri kalan çizilir, uyarı verir** (`model_not_loaded` + içe aktarma iletisi/ipucu); modelin içe aktarma uyarıları da iletilir; aynı dosya için yinelenen uyarı tek gösterilir.
+- **Bilinçli sınırlar:** `KHR_texture_transform` ve diğer uzantılar yok (uyarı); `#alt_nesne` yok sayılır, model bütün çizilir; meta dosyası ayarları (`scale`, `generate_tangents`, `flip_uv_y`) bu pakette yok, ihtiyaç Khronos örnekleriyle ölçülünce eklenir; KTX2/Draco yok; iskelet/animasyon M6.
+- **Test:** `wish_import/tests/gltf.rs` (11, kodla üretilmiş GLB'lerle): tam bir quad + materyal; PNG dokular (RGB/gri → RGBA) ve materyal bağları + üretilen teğetler; düğüm ağacı yerleşimi + sınırlar; düz normaller; şerit/yelpaze; desteklenmeyenlerin uyarıları; gerekli uzantı hatası; `emissiveStrength`; 3 bozuk dosya (parse/geçersiz/görüntü); harici `.bin`; döngülü ağaç. `wish_render/tests/models.rs` (5, yazılım bağdaştırıcısıyla): doku renkleri sol/sağ, yalnızca çarpanlar, alfa maskesi delik açar/opak açmaz, çift taraflı arka yüz, normal haritası aydınlatmayı değiştirir. Doku mip birim testleri (2). `wen capture` modeli yükler, bozuk modeli uyarır (+1). Mevcut altın görüntü **değişmedi**.
+
+### WP4 eki — Khronos örnek modelleri (kullanıcı onayıyla indirildi, 15 Kasım 2026)
+
+- **İndirilenler** (`github.com/KhronosGroup/glTF-Sample-Assets`, `glTF-Binary/*.glb`; **depoya girmedi**, `C:\wish-build\khronos-samples\<Ad>\<Ad>.glb`): Box (1,6 KB), Duck (120 KB), DamagedHelmet (3,8 MB), MetalRoughSpheres (11,2 MB), NormalTangentTest (1,8 MB); toplam ~17 MB. Lisansları modele göre farklıdır (çoğu CC-BY/CC0/SCEA); yalnızca yerel görsel karşılaştırma içindir, dağıtılmaz.
+- **Galeri testi** `wish_render/tests/khronos.rs` (`#[ignore]`, elle: `WISH_KHRONOS_DIR=<klasör> cargo test --release -p wish_render --test khronos -- --ignored --nocapture`, `WISH_SOFTWARE=1` ile yazılım bağdaştırıcısı): her modeli içe aktarır, uyarılarını yazar, sınırlarına oturan kamerayla zemin + güneş altında 960×640 çizer, `<Ad>.png` yazar. **Beş modelin beşi uyarısız içe aktarıldı ve doğru göründü:** Box, Duck (doku, gölge), DamagedHelmet (5 doku: normal haritalı paneller, metalik çelik, parlayan emissive arayüz), MetalRoughSpheres (metal/pürüz ızgarası), NormalTangentTest.
+- **Gerçek modellerin bulduğu hata (kodla üretilmiş testler yakalamamıştı): üretilen teğetlerin bitanjant işareti ters çıkıyordu.** `NormalTangentTest` ve `DamagedHelmet` dosyalarında `TANGENT` yok, teğetleri içe aktarıcı üretir. glTF'te normal haritasının yeşil kanalı "görüntüde **yukarı**"yı, yani **azalan V**'yi gösterir; üretim artan V yönünü kullanıyordu. Belirtisi: test sayfasında sağ sütundaki küreler soldakilerden çok farklı aydınlanıyordu. **Düzeltme:** bitanjant = −dP/dV (`generate_tangents`); standart bir quad için `w = +1`. **Test kendi yanlış varsayımımı da taşıyordu:** render testine elle `w = −1` yazmıştım ("V aşağı olduğu için"). Artık `wish_import/tests/gltf.rs` üretilen teğetlerde `w == +1` ve `tangent == +X`'i sabitler; render testi +1 kullanır. Düzeltmeden sonra NormalTangentTest'te her satırdaki küreler tutarlı aydınlanıyor.
+- **M3 çıkış ölçütü "standart glTF örnek modelleri doğru görünür":** beş model için gözle karşılandı (başvuru görüntüleriyle **sayısal** karşılaştırma yapılmadı: Khronos başvuruları farklı renderer'larla üretilmiş, birebir eşleşmez; ton eşleme ve ışık farklıdır). Kaldırılamayan fark: IBL yok (yansımalar gökyüzü gradyanından), bu yüzden metal yüzeyler başvurulardan sade görünür; IBL M3 kapsamı dışında (tasarım §1).
+- **`wen capture` gerçek bir modelle** (Duck, 120 KB, 800×600, ekran kartı): `wen check` varlığın varlığını doğruladı, çizim doğru.
+### WP5 — yönlü ışık gölgesi
+
+- **Tek gölge haritası, 2048², `Depth32Float`.** Işık kesiti (ortografik) sahnede çizilen **her şeyin** sınırlayıcı kutularına oturtulur (`fit_light`): her çizimin yerel kutusunun 8 köşesi dünyaya, oradan ışık uzayına taşınır; x/y/z aralığı hesaplanır, 4 texel kenar payı eklenir. Böylece harita tam çizilenin üstünü örter; ışık yönü yukarı vektörüne paralelse yedek eksen seçilir. Birim testi: dört ışık yönünde (aşağı, eğik, yukarı, −Z) iki kutunun tüm köşeleri haritanın içinde (x,y ∈ [−1,1], z ∈ [0,1]). Çizilecek bir şey yoksa ya da sayılar sonlu değilse gölge yok (1×1 harita 1.0'a temizlenir).
+- **Gölge geçişi:** ışık görünümünden yalnızca derinlik; arka yüzler ayıklanmaz (düzlem gibi tek yüzlü yüzeyler de gölge düşürsün); eğim ölçekli derinlik yanlılığı (`constant 2, slope 2`). Çizim listesini ve çizim tekdüzelerini (dinamik ofsetli) ana geçişle paylaşır: `draw.wgsl` ortak modül, `shadow_pass.wgsl` yeni.
+- **Örnekleme:** opak geçişte **3×3 PCF** (`textureSampleCompareLevel`, düzgün olmayan kontrol akışında da geçerli), **en yakın** süzgeçli karşılaştırma örnekleyicisi (her bağdaştırıcı aynı texelleri kıyaslasın), yüzeyden yüzey normali yönünde **normal ofseti** (1,5 texel) ve texel boyuna bağlı **derinlik yanlılığı** (2 texel / derinlik aralığı): yüzeyin kendi kendini gölgelemesi (acne) olmadan, gölge ağız köşesi kopmadan. Harita dışı ya da `shadows: false` → aydınlık (1,0). Gölge yalnızca **doğrudan ışığı** karartır; ortam ve gökyüzü yansıması gölgelenmez.
+- **Çerçeve verisi** 336 bayta çıktı (ışık matrisi + gölge parametreleri); gölge haritası ve karşılaştırma örnekleyicisi çerçeve bağ grubunda (`group(0)` binding 1, 2).
+- **Bilinçli sınırlar:** alfa MASK'li yüzeyler gölgede **delik açmaz** (gölge geçişi dokusuz); tek basamak (CSM sonra, açık dünya ihtiyacı M7'de ölçülür); yumuşak gölge yarı gölgesi sabit (3×3), ışık boyutuna bağlı değil; kapalı sahnelerde (30 m'lik zemin gibi) harita tüm sahneye yayıldığı için texel ~1,5 cm.
+- **Test:** `fit_light` birim testleri (2); `wish_render/tests/render.rs`: `objects_cast_shadows_on_the_ground_and_a_light_can_turn_them_off` (orb gölgesinin ucunda gölgeli görüntü açıkça daha koyu, gölgesiz aydınlık; üç nesnenin gölgesi toplam görüntüde yüzlerce pikselle fark eder; gölgelerden uzakta iki görüntü eşit) ve ışıksız sahne. **Yöntem notu:** ilk yazdığım gölge testleri nesnenin tam altındaki noktayı ölçüyordu; o nokta görüntüde nesnenin arkasında kaldığı için test **yanlış nedenle** geçiyordu. Karşılaştırmalı (gölgeli/gölgesiz) ve gölge ucundan ölçen yeni test bunu yakaladı. Altın görüntü gölgelerle yenilendi (görsel olarak incelendi); RTX ile WARP arasındaki fark yine ≤ 1/255.
+- **Gözlem — tek seferlik bir `models` hatası:** `wish_render/tests/models.rs::double_sided_materials_show_their_back`, yeni derlenmiş release ikilisinin ilk çalıştırmasında bir kez kırıldı; sonraki 33 çalıştırmada (D3D gölgelendirici önbelleği temizlenerek de) bir daha olmadı. Nedeni belirlenemedi. Test aynı paylaşılan aygıtı birden çok iş parçacığından kullanıyor ve eşiği sınırda olabilir (`c[0] > 2*c[1]` loş bir yüzeyde). CI'da görülürse önce eşiği sağlamlaştır (daha parlak renk/ışık), sonra eşzamanlılığı ara.
+
+### WP6 — hata ayıklama görünümleri ve `wen describe`
+
+- **Mimari:** `Renderer::collect` çizim listesini üretir (artık her çizime sahne içindeki sırasından türeyen bir **kimlik** = indeks + 1 verir; çizim tekdüzesinin `params2.w` alanında); `render` ve yeni `render_view` aynı listeyi kullanır, yani hata ayıklama görünümü gerçek çizimle **aynı** geometriyi, dönüşümü ve gizlemeyi görür. Kod `renderer/debug.rs` (boru hatları, `View`, `IdBuffer`, `describe`) ve `shaders/debug_pass.wgsl` içinde; render hâlâ ECS'ye yazmaz.
+- **Görünümler:** `ids` (`R32Uint` hedef; görüntüde her kimlik altın oran tonuyla ayrı renk, gökyüzü siyah), `depth` (kameraya uzaklık, **logaritmik**: yakın beyaz, `far` siyah; geniş aralıklı sahnelerde yakın ve uzak ikisi de okunur, ama varsayılan 0,1–1000 m aralıkta yakın nesneler arasındaki kontrast düşüktür), `normals` (dünya uzayı normali, `n·0,5+0,5`, arka yüzde ters çevrilir; gökyüzü koyu gri), `wireframe` (koyu dolgu + kenarlar; dolgu biraz geriye itilir, böylece arkadaki kenarlar **gizlenir**, öndekiler görünür). Hepsi `Rgba8Unorm`'a yazılır (sRGB dönüşümü yok: bayt, gölgelendiricinin hesapladığı değerdir). `lit` normal `render`dır (testte bayt bayt aynı).
+- **Normal tamponu sorusu (§13.2) kapandı:** ayrı bir normal/kimlik tamponu tutulmuyor; her hata ayıklama görünümü isteyince kendi geçişini çizer. G-tamponu gerekirse (M6 ışıklandırma) o zaman ölçülür.
+- **Wireframe kenarları:** `mesh::edge_indices` üçgenlerden benzersiz kenar çiftlerini sabit sırayla çıkarır, ağ yüklenirken bir kez hesaplanır (`GpuMesh.edges`). Küpün yüzleri köşe paylaşmadığı için her yüz kendi 4 kenarı + köşegeni (6×5 = 30); yüzeyi ikiye bölen köşegenler görünür (kasıtlı: üçgenlemeyi göstermek ister).
+- **`describe`:** kimlik tamponundan, görünür her varlık için piksel sayısı, **ekranda görünen yüzde** (`visible_fraction`: görünen piksel / varlık *tek başına* çizilseydi kapladığı piksel; görüntü dışında kalan kısım sayılmaz), ekran kutusu (`[sol, üst, sağ, alt]`), kameraya uzaklık (dünya uzayı sınırlayıcı kutu merkezi); ayrıca çizilen ama hiç piksel vermeyen varlıklar (`hidden`: başka şeyin arkasında ya da görüntü dışında). Yüzde ölçümü varlık başına bir ek render ister (en çok `MAX_VISIBILITY_MEASUREMENTS` = 128 varlık; fazlası için `None`). Sıra sahne sırasıdır.
+- **Komut satırı:** `wen capture --view lit|ids|depth|normals|wireframe` (yanlış ad: `unknown_view` + "did you mean"); `wen describe --example E --scene S [--root R] [--camera ID] [--size 640x360] [--software] [--json]` (JSON: `visible[{entity, pixels, visible_percent, bounding_box, distance}]`, `hidden[]`, bağdaştırıcı, uyarılar; `entity` sahne kimliği). İkisi ortak `prepare` adımını paylaşır. M4'te `wish_control` bunları sarar.
+- **Test:** `wish_render/tests/debug_views.rs` (8): kimlik tamponu dört varlığı doğru pikselde bulur (gökyüzü/görüntü dışı `None`); `ids` görünümünde 4 varlık + siyah = 5 renk; `depth` lamba > orb > uzak zemin; `normals` zemin yeşil, küre önü mavi; `wireframe` kenar piksel sayısı sınırlı, çoğu piksel koyu; `describe` kapalı sahnede (önde büyük küp, tam arkasında küçük küp, kenardan sızan küp, görüntü dışı küp) görünür/gizli listesi, ön küp %100 ve 8,00 m, sızan küp %50–97, piksel toplamı kimlik tamponuyla **eşit**; yanlış kamera/görünüm adı ipucu verir; `lit` = `render`. Altın görüntüler: `view-ids`, `view-depth`, `view-normals` (gözle incelendi; wireframe çizgi rasterleştirmesi bağdaştırıcıya bağlı olabileceği için altın değil, yapısal test). CLI: `project.rs` içinde `capture` her görünümü çizer, `describe` JSON ve metin çıktısı, hata ipuçları. `cargo test --release -p wish_render -p wish_cli` yeşil.
+- **Yöntem notu:** `edge_indices` birim testimin küp beklentisi (18) yanlıştı: küpün yüzleri köşe paylaşmıyor (30); testi koşturunca yakalandı.
+
+### WP7 — gölgelendirici tanıları ve geliştirmede sıcak yükleme
+
+- **Tanılar WP3'te hazırdı** (`shader_syntax`/`shader_validation`, dosya + satır + sütun + kaynak satırı + ipucu, `#import` ile gelen modülün kendi dosyasına eşlenir); WP7 bunları geliştirici döngüsüne bağladı: `check_shaders(&library)` GPU'suz tüm boru hattı gölgelendiricilerini denetler (`ENTRY_SHADERS`), `engine_shaders_from_dir(dir)` yerleşik modüllerin yerine `dir/<ad>.wgsl` dosyalarını koyar (tanılarda gerçek dosya yolu görünür).
+- **Sıcak yükleme:** `Renderer::with_shaders(gpu, &library)` ve `Renderer::reload_shaders(&mut self, gpu, &library)`. Yeni boru hatları önce yan tarafta kurulur; yalnızca hepsi başarılıysa takas edilir, **yüklü modeller kalır**; hata olursa renderer eski gölgelendiricilerle çizmeye devam eder (hata konumlu tanı olarak döner). Modellerin malzeme bağ grupları eski düzenle yaratılmıştı; wgpu aynı yapıdaki düzenleri eş saydığı için yeni boru hatlarıyla uyumlu (testle doğrulandı: yeniden yüklemeden sonra dokulu model hâlâ doğru çiziliyor).
+- **Komut satırı:** `wen shaders [--dir D] [--json]` (GPU'suz denetim; sorun varsa çıkış kodu başarısız); `wen capture|describe --shaders D` o klasörle çizer (bozuksa çizmeden `shader_syntax` döner). Dosya izleyip pencerede otomatik yenileme WP8'in `wen view`ine kaldı (aynı `reload_shaders` çağrılacak).
+- **Test:** `models.rs`: gökyüzü gölgelendiricisi dosyadan mavi boyatılır, model kalır ve çizilir; bozuk dosya reddedilir (dosya adı, ipucu) ve görüntü değişmez. `project.rs`: `wen shaders` temiz/bozuk, `capture --shaders` bozuk klasörü reddeder.
+- **Gözlem (WP6 CI'ı):** `watch_reloads_a_valid_change...` testi Linux'ta bir kez kırıldı: test `fs::write` ile (önce keser, sonra yazar) kaydettiği için izleyici boş dosyayı da "reddedildi" diye bildirdi. Testin yazımı artık atomik (geçici dosya + yeniden adlandırma, bir editörün kaydı gibi). Ürün tarafı için not (M4/M5 listesine): gerçek editörler de kesip yazabilir; `watch` boş/yarım dosyayı bildirmeden önce kısa bir kararlılık bekleyebilir.
+
+### WP8 — pencere (`wish_window`) ve `wen view`
+
+- **Karar: renderer ekran dışına çizer, pencere hazır resmi gösterir.** `winit` 0.30 pencereyi ve girdiyi, `softbuffer` 0.4 resmi ekrana koyar (ikisi de MIT/Apache-2.0; `cargo metadata` taramasında izinli listenin dışında lisans yok, `same-file`/`walkdir` "Unlicense OR MIT"). Gerekçe: (1) değişmez 6 — wgpu yalnızca `wish_render`'da; yüzey/sunum wgpu örneğine bağlı olduğundan pencere kodu GPU'ya dokunmak zorunda kalırdı; (2) pencerede görülen, `wen capture`ın ve testlerin gördüğüyle **aynı** yol; (3) yazılım bağdaştırıcılarında da çalışır. Bedel: her kare GPU→CPU okuma (geliştirici görüntüleyicisi için kabul edilebilir); oyun çalıştırıcısı M5/M6'da doğrudan sunum yolunu kuracak (planlı iş, 1.0 kapsamını büyütmez). `winit` 0.31 beta yerine kararlı 0.30 seçildi.
+- **`wish_window`** (bağımlılık: `wish_render`, `wish_core`, `winit`, `softbuffer`; sahne dosyalarını bilmez): `FlyCamera` (saf aritmetik, birim testli), `Content` özelliği (`load`, `name_of`, `fingerprint`), `run(ViewerOptions, &mut dyn Content) -> Report`, `fingerprint_dir` (uzantıya göre dosya boyutu + değişim zamanı parmak izi, 400 ms'de bir yoklanır; `target`, `.git`, gizli klasörler atlanır).
+- **Kontroller:** sağ fare tuşu + fare bakar, W A S D hareket, Q/E aşağı/yukarı, Shift hızlı, F sahnenin kendi kamerası, 1–5 görünüm (lit/ids/depth/normals/wireframe), **sol tık** kimlik tamponundan varlığı adlandırır (başlıkta ve mesajda), Esc kapatır. Resim yalnızca değişince çizilir (boştayken CPU yakmaz).
+- **Sıcak yükleme canlı pencerede denendi** (yazılım bağdaştırıcısı): `--shaders` klasöründeki dosya değişince "shaders reloaded", sahne dosyası değişince "scene reloaded", bozuk sahne "scene not reloaded, showing the last good one" + konumlu tanı; `--exit-after 4` kare sonra kendiliğinden kapandı, rapor doğru saydı. Yükleme hatası pencereyi kapatmaz; kamerasız sahne mesaj verir ve değişikliği bekler.
+- **`wen view --example E --scene S [--root R] [--size WxH] [--view V] [--software] [--shaders D] [--exit-after N] [--json]`.** Bu makinede gerçek pencere açıldı, 3 kare çizildi, kapandı.
+- **Gözlem:** pencere resminin *içeriğine* gözle bakılmadı (pencere hızla kapanıyor, ekran görüntüsü alınmadı); içerik `wen capture` ile aynı `render_view` çağrısından geliyor, tek ek adım RGBA → 0x00RRGGBB dönüşümü. M3 kapanış incelemesinde ya da ilk elle kullanımda gözle doğrulanmalı.
+- **CI'da test edilemeyen kısım (bilinçli):** pencere döngüsü masaüstü oturumu ister; CI'da yalnızca saf kısımlar (kamera, parmak izi, argüman denetimi — pencere açılmadan `unknown_view`) test edilir. Pencere yolunu yerelde `wen view ... --exit-after 3` ile sürmek elle kontrol adımıdır.
+
+### M3 kapanışı — bağımsız inceleme ve çıkış ölçütleri (15 Kasım 2026)
+
+**İnceleme.** WP8 sonunda ayrı bir Opus 5.5 ajanı (yalnızca okuma, repo dışı sonda crate'iyle yeniden üretim) `m3-render`i incelendi. 4'ü doğrulanmış hata olmak üzere bulgular ve ne yapıldığı:
+
+| # | Bulgu | Durum |
+|---|---|---|
+| 1 (yüksek) | Hostile glTF süreci çökertiyor: `convert` ve erişimci okuyucuları `guarded` dışındaydı (`byteStride` < eleman boyutu, `count: 0`, boş sparse) | **Düzeltildi.** `convert` de `guarded` içinde; regresyon testi üç dosyayı da dener (paniklerin yakalandığı `--nocapture` ile görüldü). Konum + ipucu: `gltf_invalid` |
+| 2 (yüksek) | Hostile glTF süreci donduruyor: `"children":[1,1]` zinciri 2^40 ziyaret | **Düzeltildi.** `check_node_forest`: bir düğümün birden çok ebeveyni (ya da kökün iki kez listelenmesi) `gltf_invalid`; `placed()` ayrıca 2^20 ziyaret bütçesiyle sınırlı. Eski "döngü" testi yanlış nedenle geçiyordu (`if let Ok`); artık reddi doğrular |
+| 3 (orta) | `ids`/`describe`/`depth`/`normals`, lit geçişin aksine arka yüz ayıklamıyor ve alfa MASK'i kesmiyor | **Düzeltildi.** Hata ayıklama boru hatları çift (ayıklayan / ayıklamayan) ve çizim başına seçilir; `debug_pass.wgsl` taban renk dokusuyla `cut_out` yapar. Testler: aşağıdan bakılan tek yüzlü düzlem (tüm görünümlerde yok, `describe`'da `hidden`), maskeli model (delik "hiçbir şey") |
+| 4 (orta) | Görüntüleyicide F tuşu hareketten sonra çalışmıyor (kamera üzerine yazılıyor) | **Düzeltildi:** `base_camera` yalnızca yüklemede atanır, F ondan döner |
+| 5 | `--exit-after` her çizim başarısızsa hiç çıkmıyor | **Düzeltildi:** çizim *denemeleri* sayılır |
+| 6 | Doku/arabellek sınırları yüklemeden önce denetlenmiyor | **Düzeltildi (kısmen):** `texture_too_large_for_gpu`, `mesh_too_large_for_gpu` gerçek nedenle. Açık: `image` kütüphanesinin 512 MiB ayırma sınırı `gltf_image` "PNG/JPEG olmalı" ipucuyla yanlış anlatılıyor; görsel sayısı sınırsız |
+| 7 | Her *yerleşim* kendi GPU kopyasını alıyor (örneklenmiş ağlar bellek katlıyor) | **Açık → M6** (performans/örnekleme işi); #2'nin düzeltmesi ve ziyaret bütçesi patlamayı sınırlıyor |
+| 8 | Dosyadan gelen sıfır normal NaN üretir; sıfır ölçekli kamera NaN görünüm | **Düzeltildi:** normaller içe aktarmada birim yapılır (sıfır → +Y), sonlu olmayan konumlu primitif atlanır, ters çevrilemeyen kamera `invalid_camera` |
+| 9 | `extract(&mut World)` yalnızca `&World` ister | **Düzeltildi:** imza `&World`; çizimin ECS'e yazmadığı artık türle güvence altında |
+| 10 | `Gpu::shared` süreç boyu önbelleklenir (sürücü sıfırlamasından kurtarma yok); kapsam dışı hatalar sonraki `checked` adıyla bildirilir | **Açık → M5** (oyun çalıştırıcısı aygıt kaybı kurtarmasını kuracak) |
+| 11 | Doc yorumunda PowerShell kaçışı; kullanılmayan `bytemuck` | **Düzeltildi:** kaçış temizlendi, kullanılmayan `bytemuck` bağımlılığı kaldırıldı |
+
+**Çıkış ölçütleri ve kanıtları.**
+
+| Ölçüt | Kanıt |
+|---|---|
+| Standart glTF modelleri doğru görünür | Beş Khronos modeli gözle (`khronos.rs`, `#[ignore]`, depoda yok); bitanjant hatasını buldu ve düzeltildi. **CI'da otomatik karşılığı yok** (lisanslar nedeniyle modeller depoda değil) — dürüstçe "gözle doğrulandı" |
+| `wen capture` penceresiz; altın görüntü CI'da (WARP + lavapipe) | `render.rs`, `debug_views.rs` altınları; CI Windows + Linux yeşil; RTX ↔ WARP ↔ lavapipe ≤ 1/255 |
+| Kimlik tamponundan "bu pikselde hangi varlık" | `debug_views.rs`: bilinen piksel → varlık, gökyüzü/görüntü dışı `None`, örtülme, kısmi görünürlük, arka yüz, maskeli delik; `describe` piksel toplamı kimlik tamponuna eşit |
+| Gölgelendirici hatası dosya/satır/ipucu ile | `shader.rs`: sözdizimi, doğrulama, UTF-8, **eksik/döngüsel/bozuk `#import`** (kapanışta eklendi); `wen shaders`, `reload_shaders` hatası konumlu |
+| Render ECS'e yazmaz, hash'i değiştirmez | Hash testi + `extract(&World)` imzası |
+| GPU yokken çökme yok | `project.rs`: `WGPU_BACKEND=metal` ile (Windows/Linux'ta var olmayan backend) `no_gpu_adapter`, çıkış kodu ≠ 0, dosya yazılmaz (macOS geliştirme makinesinde bu test başarısız olur: orada metal var) |
+| (ek) Pencere | `wen view` gerçek pencerede açılıp kapandı ve sıcak yükleme canlı denendi; **pencere resminin içeriğine gözle bakılmadı**, döngü CI'da çalışmıyor |
+
+**Sapmalar.** Pencere sunumu GPU yüzeyi yerine ekran dışı çizim + `softbuffer` (WP8, gerekçeli). WESL yerine kendi `#import` ön işlemcimiz (ADR-013, WP1). Ağ `tangent` üretimi MikkTSpace değil (WP4).
+
+**M4'e devredilenler.** `wen watch` boş/yarım dosyayı bildirmeden önce kısa bir kararlılık beklesin; `double_sided_materials_show_their_back` eşiği sınırda (`c[0] > 2*c[1]`): CI'da kırılırsa parlak renk/ışık; `wish_control` `capture`/`describe`/`shaders`/`view` komutlarını sarmalı (aynı `Diagnostic`ler).
+
+## 13. Açık sorular
+
+1. `Transform.rotation` için `euler_deg` kısa yazımı (ajan/insan kolaylığı) M4'te sorulacak.
+2. ~~Normal tamponu biçimi~~ — WP6'da kapandı: ayrı tampon yok (bkz. §14 WP6).
+3. Teğet üretimi için kütüphane seçimi (WP4).

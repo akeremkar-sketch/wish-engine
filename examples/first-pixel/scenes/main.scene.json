@@ -1,0 +1,86 @@
+{
+  "entities": {
+    "camera": {
+      "components": {
+        "Camera": {
+          "fov_y_deg": 45.0
+        },
+        "Transform": {
+          "rotation": [-0.0871557, 0.0, 0.0, 0.9961947],
+          "translation": [0.0, 1.6, 6.0]
+        }
+      }
+    },
+    "cube": {
+      "components": {
+        "Material": {
+          "base_color": [0.8, 0.1, 0.08, 1.0],
+          "roughness": 0.6
+        },
+        "Primitive": {
+          "shape": "Cube"
+        },
+        "Transform": {
+          "rotation": [0.0, 0.3826834, 0.0, 0.9238795],
+          "translation": [-1.1, 0.5, 0.0]
+        }
+      }
+    },
+    "ground": {
+      "components": {
+        "Material": {
+          "base_color": [0.45, 0.45, 0.42, 1.0],
+          "roughness": 0.9
+        },
+        "Primitive": {
+          "shape": "Plane"
+        },
+        "Transform": {
+          "scale": [30.0, 1.0, 30.0]
+        }
+      }
+    },
+    "lamp": {
+      "components": {
+        "Material": {
+          "base_color": [0.1, 0.1, 0.1, 1.0],
+          "emissive": [0.2, 0.9, 0.3]
+        },
+        "Primitive": {
+          "shape": "Sphere"
+        },
+        "Transform": {
+          "scale": [0.5, 0.5, 0.5],
+          "translation": [0.0, 0.25, 1.5]
+        }
+      }
+    },
+    "orb": {
+      "components": {
+        "Material": {
+          "base_color": [0.95, 0.75, 0.35, 1.0],
+          "metallic": 1.0,
+          "roughness": 0.25
+        },
+        "Primitive": {
+          "shape": "Sphere"
+        },
+        "Transform": {
+          "scale": [1.2, 1.2, 1.2],
+          "translation": [1.1, 0.6, 0.0]
+        }
+      }
+    },
+    "sun": {
+      "components": {
+        "DirectionalLight": {
+          "illuminance_lux": 100000.0
+        },
+        "Transform": {
+          "rotation": [-0.4545195, 0.3304543, 0.1786597, 0.8067046]
+        }
+      }
+    }
+  },
+  "format": 1
+}

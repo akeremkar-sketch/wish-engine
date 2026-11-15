@@ -1,0 +1,27 @@
+[package]
+name = "wish_render"
+description = "Rendering for Wish Engine: wgpu device, render graph, PBR, headless capture and debug views."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+naga.workspace = true
+png.workspace = true
+pollster.workspace = true
+wgpu.workspace = true
+wish_core.workspace = true
+wish_ecs.workspace = true
+wish_import.workspace = true
+wish_schema.workspace = true
+wish_transform.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+wish_scene.workspace = true
+
+[lints]
+workspace = true
+

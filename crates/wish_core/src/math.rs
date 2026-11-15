@@ -17,7 +17,7 @@
 //! Conventions (ADR-021): right-handed, +Y up, cameras look along -Z; meters,
 //! seconds, kilograms; angles in radians.
 
-pub use glam::{Mat4, Quat, Vec2, Vec3, Vec4};
+pub use glam::{Mat4, Quat, Vec2, Vec3, Vec4, camera};
 
 #[cfg(test)]
 mod tests {

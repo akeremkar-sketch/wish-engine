@@ -16,8 +16,12 @@ wish_asset = { path = "crates/wish_asset" }
 wish_core = { path = "crates/wish_core" }
 wish_ecs = { path = "crates/wish_ecs" }
 wish_examples = { path = "crates/wish_examples" }
+wish_import = { path = "crates/wish_import" }
+wish_render = { path = "crates/wish_render" }
 wish_scene = { path = "crates/wish_scene" }
 wish_schema = { path = "crates/wish_schema" }
+wish_transform = { path = "crates/wish_transform" }
+wish_window = { path = "crates/wish_window" }
 wish_schema_macros = { path = "crates/wish_schema_macros" }
 
 # External crates. Check the license before adding one (see deny.toml).
@@ -32,6 +36,21 @@ serde = { version = "1", features = ["derive"] }
 # in the last place off, which would break bit-exact save/load of f64 fields.
 serde_json = { version = "1", features = ["float_roundtrip"] }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
+
+# Rendering (wish_render only, ADR-012). `wgpu` is the only graphics API the
+# engine talks to; `naga` turns shader errors into positioned diagnostics.
+# glTF reading (wish_import only). Supported extensions are the features
+# named here; any other extension a file requires is reported as a warning.
+gltf = { version = "1.4", features = ["KHR_materials_emissive_strength"] }
+naga = { version = "30", features = ["wgsl-in"] }
+png = "0.18"
+pollster = "1"
+wgpu = "30"
+
+# Window (wish_window only). winit opens the window and delivers input;
+# softbuffer puts the finished picture on it (the renderer draws offscreen).
+softbuffer = "0.4"
+winit = "0.30"
 
 # Procedural macros. syn 3, the same major version serde_derive uses, so the
 # build compiles one syn.

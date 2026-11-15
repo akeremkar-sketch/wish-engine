@@ -19,8 +19,7 @@ pub struct Outcome {
 
 fn registry_app(example: &str) -> Result<App> {
     let mut app = App::new(AppConfig::default());
-    wish_examples::register_types(example, app.world_mut())?;
-    wish_scene::instantiate::register(app.world_mut())?;
+    crate::types::register_scene_types(example, app.world_mut())?;
     Ok(app)
 }
 

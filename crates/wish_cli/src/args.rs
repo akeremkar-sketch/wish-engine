@@ -9,8 +9,8 @@ use wish_core::{Diagnostic, Result};
 
 /// The commands `wen` understands.
 pub const COMMANDS: &[&str] = &[
-    "run", "bench", "schema", "mv", "check", "fmt", "migrate", "watch", "examples", "help",
-    "version",
+    "run", "bench", "schema", "mv", "check", "fmt", "migrate", "watch", "capture", "describe",
+    "shaders", "view", "examples", "help", "version",
 ];
 
 /// A parsed command line.
@@ -101,6 +101,17 @@ pub enum Command {
         /// Stop after this many seconds (0: run until interrupted).
         seconds: u64,
     },
+    /// Draw a scene into a PNG without a window.
+    Capture(CaptureArgs),
+    /// List what a camera sees: which entities are on screen and how much.
+    Describe(DescribeArgs),
+    /// Open a window onto a scene.
+    View(ViewArgs),
+    /// Check the engine's shaders (or a developer's copies of them).
+    Shaders {
+        /// A folder of `<name>.wgsl` files that replace the built-in shaders.
+        dir: Option<String>,
+    },
     /// Print the JSON Schemas of the registered types.
     Schema {
         /// Load the types of this example; only built-in types without it.
@@ -112,6 +123,69 @@ pub enum Command {
     Help,
     /// Print the version.
     Version,
+}
+
+/// The options of `wen capture`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CaptureArgs {
+    /// The example whose component types the scene uses.
+    pub example: String,
+    /// The scene file, relative to the root.
+    pub scene: String,
+    /// The project folder (default: the current folder).
+    pub root: Option<String>,
+    /// The scene id of the camera to draw from (default: the first camera).
+    pub camera: Option<String>,
+    /// Image width and height in pixels.
+    pub size: (u32, u32),
+    /// What to draw: `lit`, `ids`, `depth`, `normals` or `wireframe`.
+    pub view: String,
+    /// Use the software adapter.
+    pub software: bool,
+    /// A folder of `<name>.wgsl` files that replace the built-in shaders.
+    pub shaders: Option<String>,
+    /// Where to write the PNG.
+    pub out: String,
+}
+
+/// The options of `wen view`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ViewArgs {
+    /// The example whose component types the scene uses.
+    pub example: String,
+    /// The scene file, relative to the root.
+    pub scene: String,
+    /// The project folder (default: the current folder).
+    pub root: Option<String>,
+    /// The window's size in pixels.
+    pub size: (u32, u32),
+    /// The view to start in.
+    pub view: String,
+    /// Use the software adapter.
+    pub software: bool,
+    /// A folder of `<name>.wgsl` files that replace the built-in shaders.
+    pub shaders: Option<String>,
+    /// Close after this many frames (for scripts).
+    pub exit_after: Option<u64>,
+}
+
+/// The options of `wen describe`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DescribeArgs {
+    /// The example whose component types the scene uses.
+    pub example: String,
+    /// The scene file, relative to the root.
+    pub scene: String,
+    /// The project folder (default: the current folder).
+    pub root: Option<String>,
+    /// The scene id of the camera to look from (default: the first camera).
+    pub camera: Option<String>,
+    /// The size of the picture it measures in, in pixels.
+    pub size: (u32, u32),
+    /// Use the software adapter.
+    pub software: bool,
+    /// A folder of `<name>.wgsl` files that replace the built-in shaders.
+    pub shaders: Option<String>,
 }
 
 fn usage_error(message: String, hint: String) -> Diagnostic {
@@ -159,8 +233,55 @@ fn flags_of(command: &str) -> &'static [(&'static str, bool)] {
             ("--seconds", true),
             ("--json", false),
         ],
+        "capture" => &[
+            ("--example", true),
+            ("--scene", true),
+            ("--root", true),
+            ("--camera", true),
+            ("--size", true),
+            ("--view", true),
+            ("--software", false),
+            ("--shaders", true),
+            ("--out", true),
+            ("--json", false),
+        ],
+        "shaders" => &[("--dir", true), ("--json", false)],
+        "view" => &[
+            ("--example", true),
+            ("--scene", true),
+            ("--root", true),
+            ("--size", true),
+            ("--view", true),
+            ("--software", false),
+            ("--shaders", true),
+            ("--exit-after", true),
+            ("--json", false),
+        ],
+        "describe" => &[
+            ("--example", true),
+            ("--scene", true),
+            ("--root", true),
+            ("--camera", true),
+            ("--size", true),
+            ("--software", false),
+            ("--shaders", true),
+            ("--json", false),
+        ],
         _ => &[("--json", false)],
     }
+}
+
+/// Parses `WIDTHxHEIGHT`, such as `1280x720`.
+fn parse_size(value: &str) -> Result<(u32, u32)> {
+    let parsed = value
+        .split_once(['x', 'X'])
+        .and_then(|(w, h)| Some((w.trim().parse().ok()?, h.trim().parse().ok()?)));
+    parsed.ok_or_else(|| {
+        usage_error(
+            format!("--size expects WIDTHxHEIGHT, but got '{value}'."),
+            "Write it like --size 1280x720.".to_owned(),
+        )
+    })
 }
 
 fn parse_number(flag: &str, value: &str) -> Result<u64> {
@@ -358,6 +479,80 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
         "migrate" => Command::Migrate {
             paths: positional.iter().map(|path| (*path).to_owned()).collect(),
             root: value_of("--root").map(str::to_owned),
+        },
+        "capture" => {
+            let required = |flag: &str, what: &str| {
+                value_of(flag).map(str::to_owned).ok_or_else(|| {
+                    usage_error(
+                        format!("'wen capture' needs {flag}: {what}."),
+                        format!(
+                            "Write it like: wen capture --example stress --scene scenes/main.scene.json --out shot.png (built-in examples: {})",
+                            wish_examples::NAMES.join(", ")
+                        ),
+                    )
+                })
+            };
+            Command::Capture(CaptureArgs {
+                example: required("--example", "the example whose component types the scene uses")?,
+                scene: required("--scene", "the scene file to draw")?,
+                root: value_of("--root").map(str::to_owned),
+                camera: value_of("--camera").map(str::to_owned),
+                size: value_of("--size").map_or(Ok((1280, 720)), parse_size)?,
+                view: value_of("--view").unwrap_or("lit").to_owned(),
+                software: values.iter().any(|(flag, _)| *flag == "--software"),
+                shaders: value_of("--shaders").map(str::to_owned),
+                out: required("--out", "the PNG file to write")?,
+            })
+        }
+        "describe" => {
+            let required = |flag: &str, what: &str| {
+                value_of(flag).map(str::to_owned).ok_or_else(|| {
+                    usage_error(
+                        format!("'wen describe' needs {flag}: {what}."),
+                        format!(
+                            "Write it like: wen describe --example stress --scene scenes/main.scene.json (built-in examples: {})",
+                            wish_examples::NAMES.join(", ")
+                        ),
+                    )
+                })
+            };
+            Command::Describe(DescribeArgs {
+                example: required("--example", "the example whose component types the scene uses")?,
+                scene: required("--scene", "the scene file to look at")?,
+                root: value_of("--root").map(str::to_owned),
+                camera: value_of("--camera").map(str::to_owned),
+                size: value_of("--size").map_or(Ok((640, 360)), parse_size)?,
+                software: values.iter().any(|(flag, _)| *flag == "--software"),
+                shaders: value_of("--shaders").map(str::to_owned),
+            })
+        }
+        "view" => {
+            let required = |flag: &str, what: &str| {
+                value_of(flag).map(str::to_owned).ok_or_else(|| {
+                    usage_error(
+                        format!("'wen view' needs {flag}: {what}."),
+                        format!(
+                            "Write it like: wen view --example stress --scene scenes/main.scene.json (built-in examples: {})",
+                            wish_examples::NAMES.join(", ")
+                        ),
+                    )
+                })
+            };
+            Command::View(ViewArgs {
+                example: required("--example", "the example whose component types the scene uses")?,
+                scene: required("--scene", "the scene file to look at")?,
+                root: value_of("--root").map(str::to_owned),
+                size: value_of("--size").map_or(Ok((1280, 720)), parse_size)?,
+                view: value_of("--view").unwrap_or("lit").to_owned(),
+                software: values.iter().any(|(flag, _)| *flag == "--software"),
+                shaders: value_of("--shaders").map(str::to_owned),
+                exit_after: value_of("--exit-after")
+                    .map(|value| parse_number("--exit-after", value))
+                    .transpose()?,
+            })
+        }
+        "shaders" => Command::Shaders {
+            dir: value_of("--dir").map(str::to_owned),
         },
         "examples" => Command::Examples,
         "version" => Command::Version,
