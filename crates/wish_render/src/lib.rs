@@ -36,7 +36,8 @@ pub use extract::{CameraView, Draw, LightView, MaterialData, Mesh, RenderScene, 
 pub use gpu::{AdapterSummary, Gpu, GpuOptions};
 pub use image::{ImageDiff, RgbaImage, Tolerance};
 pub use renderer::{
-    Description, Frame, IdBuffer, MAX_VISIBILITY_MEASUREMENTS, Renderer, View, VisibleEntity,
-    engine_shaders, exposure_multiplier, project_to_pixel,
+    Description, ENTRY_SHADERS, Frame, IdBuffer, MAX_VISIBILITY_MEASUREMENTS, Renderer, View,
+    VisibleEntity, check_shaders, engine_shaders, engine_shaders_from_dir, exposure_multiplier,
+    project_to_pixel,
 };
 pub use shader::{CheckedShader, ComposedShader, ShaderLibrary, SourceLine, check_wgsl};

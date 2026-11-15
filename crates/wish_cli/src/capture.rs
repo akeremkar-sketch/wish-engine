@@ -11,6 +11,7 @@ use wish_render::{Gpu, GpuOptions, RenderScene, Renderer, View, extract};
 use wish_scene::SceneId;
 
 use crate::args::{CaptureArgs, DescribeArgs};
+use crate::project_cmds::Outcome;
 use crate::scene::{SceneApp, load_scene_app};
 
 /// The entity whose scene id is `id`.
@@ -101,6 +102,7 @@ struct Source<'a> {
     root: Option<&'a str>,
     camera: Option<&'a str>,
     software: bool,
+    shaders: Option<&'a str>,
 }
 
 fn prepare(source: &Source<'_>) -> Result<Prepared> {
@@ -116,7 +118,11 @@ fn prepare(source: &Source<'_>) -> Result<Prepared> {
     let gpu = Gpu::shared(GpuOptions {
         software: source.software,
     })?;
-    let mut renderer = Renderer::new(&gpu)?;
+    let library = match source.shaders {
+        Some(dir) => wish_render::engine_shaders_from_dir(Path::new(dir))?.0,
+        None => wish_render::engine_shaders(),
+    };
+    let mut renderer = Renderer::with_shaders(&gpu, &library)?;
     let mut warnings = std::mem::take(&mut loaded.warnings);
     warnings.extend(load_models(&scene, root, &gpu, &mut renderer));
     Ok(Prepared {
@@ -159,6 +165,7 @@ pub fn capture(args: &CaptureArgs, as_json: bool) -> Result<String> {
         root: args.root.as_deref(),
         camera: args.camera.as_deref(),
         software: args.software,
+        shaders: args.shaders.as_deref(),
     })?;
     let (width, height) = args.size;
     let frame = prepared.renderer.render_view(
@@ -219,6 +226,7 @@ pub fn describe(args: &DescribeArgs, as_json: bool) -> Result<String> {
         root: args.root.as_deref(),
         camera: args.camera.as_deref(),
         software: args.software,
+        shaders: args.shaders.as_deref(),
     })?;
     let (width, height) = args.size;
     let description = prepared.renderer.describe(
@@ -294,4 +302,44 @@ pub fn describe(args: &DescribeArgs, as_json: bool) -> Result<String> {
         text.push_str(&format!("\n{warning}"));
     }
     Ok(text)
+}
+
+/// Runs `wen shaders`: checks every shader of the engine (with the files of
+/// `dir` in place of the built-in ones) without a GPU.
+pub fn shaders(dir: Option<&str>, as_json: bool) -> Result<Outcome> {
+    let (library, replaced) = match dir {
+        Some(dir) => wish_render::engine_shaders_from_dir(Path::new(dir))?,
+        None => (wish_render::engine_shaders(), Vec::new()),
+    };
+    let problems = wish_render::check_shaders(&library);
+    let success = problems.is_empty();
+    let text = if as_json {
+        json!({
+            "ok": success,
+            "checked": wish_render::ENTRY_SHADERS,
+            "replaced": replaced,
+            "problems": problems,
+        })
+        .to_string()
+    } else {
+        let mut text = format!(
+            "Checked {} shader(s){}: {} problem(s).",
+            wish_render::ENTRY_SHADERS.len(),
+            if replaced.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " ({} replaced from {})",
+                    replaced.join(", "),
+                    dir.unwrap_or(".")
+                )
+            },
+            problems.len()
+        );
+        for problem in &problems {
+            text.push_str(&format!("\n{problem}"));
+        }
+        text
+    };
+    Ok(Outcome { text, success })
 }

@@ -41,7 +41,11 @@ impl Dir {
     }
 
     fn write(&self, file: &str, text: &str) {
-        std::fs::write(self.0.join(file), text).unwrap();
+        // Atomic, like an editor's save: a watcher must never see a half-written file.
+        let path = self.0.join(file);
+        let part = self.0.join(format!("{file}.part"));
+        std::fs::write(&part, text).unwrap();
+        std::fs::rename(&part, &path).unwrap();
     }
 
     fn read(&self, file: &str) -> String {
@@ -552,4 +556,59 @@ fn watch_reloads_a_valid_change_and_keeps_the_scene_on_an_invalid_one() {
         (last["reloads"].as_u64(), last["rejected"].as_u64()),
         (Some(1), Some(1))
     );
+}
+
+#[test]
+fn shaders_are_checked_and_a_folder_of_edits_can_be_drawn_with() {
+    let dir = Dir::new("shaders");
+    let (ok, report) = wen_json(&["shaders", "--json"]);
+    assert!(ok, "{report}");
+    assert_eq!(report["problems"].as_array().unwrap().len(), 0);
+    assert!(report["checked"].as_array().unwrap().len() >= 5);
+
+    // A developer's copy with a missing semicolon.
+    std::fs::write(
+        dir.0.join("sky_pass.wgsl"),
+        "@fragment\nfn fs_main() -> @location(0) vec4<f32> {\n    let x = 1.0\n    return vec4<f32>(x);\n}\n",
+    )
+    .unwrap();
+    let (ok, report) = wen_json(&["shaders", "--dir", dir.arg(), "--json"]);
+    assert!(!ok);
+    assert_eq!(report["replaced"][0], "sky_pass");
+    let problem = &report["problems"][0];
+    assert_eq!(problem["code"], "shader_syntax");
+    assert!(
+        problem["location"]["file"]
+            .as_str()
+            .unwrap()
+            .ends_with("sky_pass.wgsl")
+    );
+    assert!(problem["location"]["line"].as_u64().unwrap() >= 3);
+    assert!(!problem["hint"].as_str().unwrap().is_empty());
+
+    // Capture refuses to draw with it and says why.
+    dir.write(
+        "main.scene.json",
+        r#"{ "format": 1, "entities": { "cam": { "components": { "Camera": {} } } } }"#,
+    );
+    let out = dir.0.join("x.png");
+    let (ok, report) = wen_json(&[
+        "capture",
+        "--example",
+        "stress",
+        "--scene",
+        "main.scene.json",
+        "--root",
+        dir.arg(),
+        "--shaders",
+        dir.arg(),
+        "--software",
+        "--size",
+        "32x24",
+        "--out",
+        out.to_str().unwrap(),
+        "--json",
+    ]);
+    assert!(!ok);
+    assert_eq!(report["error"]["code"], "shader_syntax");
 }

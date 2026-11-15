@@ -10,7 +10,7 @@ use wish_core::{Diagnostic, Result};
 /// The commands `wen` understands.
 pub const COMMANDS: &[&str] = &[
     "run", "bench", "schema", "mv", "check", "fmt", "migrate", "watch", "capture", "describe",
-    "examples", "help", "version",
+    "shaders", "examples", "help", "version",
 ];
 
 /// A parsed command line.
@@ -105,6 +105,11 @@ pub enum Command {
     Capture(CaptureArgs),
     /// List what a camera sees: which entities are on screen and how much.
     Describe(DescribeArgs),
+    /// Check the engine's shaders (or a developer's copies of them).
+    Shaders {
+        /// A folder of `<name>.wgsl` files that replace the built-in shaders.
+        dir: Option<String>,
+    },
     /// Print the JSON Schemas of the registered types.
     Schema {
         /// Load the types of this example; only built-in types without it.
@@ -135,6 +140,8 @@ pub struct CaptureArgs {
     pub view: String,
     /// Use the software adapter.
     pub software: bool,
+    /// A folder of `<name>.wgsl` files that replace the built-in shaders.
+    pub shaders: Option<String>,
     /// Where to write the PNG.
     pub out: String,
 }
@@ -154,6 +161,8 @@ pub struct DescribeArgs {
     pub size: (u32, u32),
     /// Use the software adapter.
     pub software: bool,
+    /// A folder of `<name>.wgsl` files that replace the built-in shaders.
+    pub shaders: Option<String>,
 }
 
 fn usage_error(message: String, hint: String) -> Diagnostic {
@@ -209,9 +218,11 @@ fn flags_of(command: &str) -> &'static [(&'static str, bool)] {
             ("--size", true),
             ("--view", true),
             ("--software", false),
+            ("--shaders", true),
             ("--out", true),
             ("--json", false),
         ],
+        "shaders" => &[("--dir", true), ("--json", false)],
         "describe" => &[
             ("--example", true),
             ("--scene", true),
@@ -219,6 +230,7 @@ fn flags_of(command: &str) -> &'static [(&'static str, bool)] {
             ("--camera", true),
             ("--size", true),
             ("--software", false),
+            ("--shaders", true),
             ("--json", false),
         ],
         _ => &[("--json", false)],
@@ -454,6 +466,7 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
                 size: value_of("--size").map_or(Ok((1280, 720)), parse_size)?,
                 view: value_of("--view").unwrap_or("lit").to_owned(),
                 software: values.iter().any(|(flag, _)| *flag == "--software"),
+                shaders: value_of("--shaders").map(str::to_owned),
                 out: required("--out", "the PNG file to write")?,
             })
         }
@@ -476,8 +489,12 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
                 camera: value_of("--camera").map(str::to_owned),
                 size: value_of("--size").map_or(Ok((640, 360)), parse_size)?,
                 software: values.iter().any(|(flag, _)| *flag == "--software"),
+                shaders: value_of("--shaders").map(str::to_owned),
             })
         }
+        "shaders" => Command::Shaders {
+            dir: value_of("--dir").map(str::to_owned),
+        },
         "examples" => Command::Examples,
         "version" => Command::Version,
         _ => Command::Help,

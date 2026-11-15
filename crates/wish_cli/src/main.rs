@@ -41,9 +41,10 @@ USAGE:
     wen migrate [files...] [--root <folder>] [--json]
     wen watch --example <name> --scene <file> [--root <folder>] [--seconds <n>] [--json]
     wen capture --example <name> --scene <file> --out <png> [--root <folder>] [--camera <id>]
-                [--size <w>x<h>] [--view lit|ids|depth|normals|wireframe] [--software] [--json]
+                [--size <w>x<h>] [--view lit|ids|depth|normals|wireframe] [--software] [--shaders <folder>] [--json]
     wen describe --example <name> --scene <file> [--root <folder>] [--camera <id>]
-                 [--size <w>x<h>] [--software] [--json]
+                 [--size <w>x<h>] [--software] [--shaders <folder>] [--json]
+    wen shaders [--dir <folder>] [--json]
     wen mv <from> <to> --example <name> [--root <folder>] [--dry-run] [--json]
     wen schema [--example <name>] [--json]
     wen examples [--json]
@@ -76,6 +77,9 @@ COMMANDS:
                its pixel count, how much of it is not hidden by other things, its screen
                box and its distance; and the entities that are drawn but not visible
                (default size 640x360; each entity costs one extra render).
+    shaders    Check every shader of the engine (syntax and validation, no GPU needed); --dir checks
+               a folder of <name>.wgsl files in place of the built-in ones. Pass the same folder
+               as --shaders to capture/describe to draw with them. Fails if there is any problem.
     mv        Move an asset file or folder (paths relative to --root) and update every
                asset reference to it in scenes and prefabs, all or nothing. The example
                supplies the component types that tell where references are.
@@ -124,6 +128,7 @@ fn execute_any(args: Args) -> Result<Outcome> {
             root,
             check,
         } => project_cmds::format(paths, example, &root_of(root), *check, args.json),
+        Command::Shaders { dir } => capture::shaders(dir.as_deref(), args.json),
         Command::Migrate { paths, root } => project_cmds::migrate(paths, &root_of(root), args.json),
         Command::Watch {
             example,
@@ -174,6 +179,7 @@ fn execute(args: Args) -> Result<String> {
         Command::Check { .. }
         | Command::Format { .. }
         | Command::Migrate { .. }
+        | Command::Shaders { .. }
         | Command::Watch { .. } => Err(Diagnostic::error(
             "internal_error",
             "A project command was run through the simple path.",

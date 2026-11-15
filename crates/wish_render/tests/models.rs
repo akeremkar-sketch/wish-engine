@@ -283,3 +283,66 @@ fn a_normal_map_changes_the_lighting() {
         "the tilted normal gets less direct light: {bent:?} vs {plain:?}"
     );
 }
+
+#[test]
+fn shaders_can_be_reloaded_from_files_and_a_mistake_changes_nothing() {
+    let gpu = Gpu::shared(GpuOptions { software: true }).unwrap();
+    let model = quad_model(
+        json!({ "pbrMetallicRoughness": { "baseColorTexture": { "index": 0 }, "metallicFactor": 0.0, "roughnessFactor": 1.0 } }),
+        Some([[230, 20, 20, 255], [20, 230, 20, 255]]),
+    );
+    let mut renderer = Renderer::new(&gpu).unwrap();
+    renderer
+        .upload_model(&gpu, "assets/quad.glb", &model)
+        .unwrap();
+    let scene = scene_with_model();
+    let before = renderer.render(&gpu, &scene, None, 160, 120).unwrap().image;
+
+    // A developer's copy of the sky pass that paints it pure blue.
+    let dir = std::env::temp_dir().join(format!("wish-shader-reload-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let original = include_str!("../src/shaders/sky_pass.wgsl");
+    let edited = original.replace(
+        "return vec4<f32>(sky_radiance(direction) * frame.exposure.x, 1.0);",
+        "return vec4<f32>(0.0, 0.0, 10000.0 * frame.exposure.x, 1.0);",
+    );
+    assert_ne!(original, edited);
+    std::fs::write(dir.join("sky_pass.wgsl"), &edited).unwrap();
+    let (library, replaced) = wish_render::engine_shaders_from_dir(&dir).unwrap();
+    assert_eq!(replaced, ["sky_pass"]);
+    renderer.reload_shaders(&gpu, &library).unwrap();
+    assert!(renderer.has_model("assets/quad.glb"), "models survive");
+    let after = renderer.render(&gpu, &scene, None, 160, 120).unwrap().image;
+    let (old, new) = (sky(&before), sky(&after));
+    assert!(
+        new[2] > 150 && new[0] < 20,
+        "the sky is now blue: {old:?} -> {new:?}"
+    );
+    assert_ne!(old, new);
+    // The model is still drawn, with its texture.
+    let l = left(&after);
+    assert!(l[0] > 2 * l[1] && l[0] > 80, "left {l:?}");
+
+    // A mistake is reported with its file and line, and nothing changes.
+    std::fs::write(
+        dir.join("sky_pass.wgsl"),
+        edited.replace("1.0);\n}", "1.0)\n}"),
+    )
+    .unwrap();
+    let (broken, _) = wish_render::engine_shaders_from_dir(&dir).unwrap();
+    let problem = renderer.reload_shaders(&gpu, &broken).unwrap_err();
+    assert_eq!(problem.code, "shader_syntax");
+    assert!(
+        problem
+            .location
+            .file
+            .as_deref()
+            .unwrap_or("")
+            .ends_with("sky_pass.wgsl"),
+        "{problem}"
+    );
+    assert!(!problem.hint.is_empty());
+    let still = renderer.render(&gpu, &scene, None, 160, 120).unwrap().image;
+    assert_eq!(sky(&still), new);
+    std::fs::remove_dir_all(&dir).unwrap();
+}

@@ -109,6 +109,53 @@ pub fn engine_shaders() -> ShaderLibrary {
     library
 }
 
+/// The shader modules that make up a pipeline (the others are imported by
+/// them).
+pub const ENTRY_SHADERS: &[&str] = &[
+    "sky_pass",
+    "opaque",
+    "tonemap_pass",
+    "shadow_pass",
+    "debug_pass",
+];
+
+/// Checks every pipeline shader of `library` and returns every problem found
+/// (one per shader at most), without needing a GPU.
+pub fn check_shaders(library: &ShaderLibrary) -> Vec<Diagnostic> {
+    ENTRY_SHADERS
+        .iter()
+        .filter_map(|entry| library.check(entry).err())
+        .collect()
+}
+
+/// The engine's shaders, with any `<name>.wgsl` found in `dir` taking the
+/// place of the built-in module of that name (for developing shaders: edit
+/// the file, then [`Renderer::reload_shaders`]). Returns the library and the
+/// names that were replaced. A file that cannot be read is an error.
+pub fn engine_shaders_from_dir(dir: &std::path::Path) -> Result<(ShaderLibrary, Vec<String>)> {
+    let mut library = ShaderLibrary::new();
+    let mut replaced = Vec::new();
+    for (name, file, source) in SHADERS {
+        let path = dir.join(format!("{name}.wgsl"));
+        if path.is_file() {
+            let shown = path.display().to_string();
+            let text = std::fs::read_to_string(&path).map_err(|error| {
+                Diagnostic::error(
+                    "file_unreadable",
+                    format!("Could not read the shader '{shown}': {error}."),
+                    "Check that the file can be read and is UTF-8 text.",
+                )
+                .at_file(shown.clone())
+            })?;
+            library.add(name, &shown, &text);
+            replaced.push((*name).to_owned());
+        } else {
+            library.add(name, file, source);
+        }
+    }
+    Ok((library, replaced))
+}
+
 /// The exposure multiplier for an exposure value at ISO 100 (the standard
 /// "saturation-based" relation: 1 / (1.2 · 2^EV100)).
 pub fn exposure_multiplier(ev100: f32) -> f32 {
@@ -576,15 +623,14 @@ impl Renderer {
     /// Checks the engine's shaders and builds the pipelines. A shader mistake
     /// comes back as a positioned diagnostic in the shader's own file.
     pub fn new(gpu: &Gpu) -> Result<Self> {
-        let library = engine_shaders();
+        Self::with_shaders(gpu, &engine_shaders())
+    }
+
+    /// Builds the pipelines from `library` instead of the built-in shaders
+    /// (see [`engine_shaders_from_dir`]).
+    pub fn with_shaders(gpu: &Gpu, library: &ShaderLibrary) -> Result<Self> {
         let mut modules = Vec::new();
-        for entry in [
-            "sky_pass",
-            "opaque",
-            "tonemap_pass",
-            "shadow_pass",
-            "debug_pass",
-        ] {
+        for entry in ENTRY_SHADERS.iter().copied() {
             modules.push((entry, library.check(entry)?.source));
         }
         let debug_source = modules
@@ -911,6 +957,17 @@ impl Renderer {
             shapes,
             models: BTreeMap::new(),
         })
+    }
+
+    /// Rebuilds every pipeline from `library` and swaps them in; uploaded
+    /// models stay. If a shader has a mistake the error is returned and the
+    /// renderer keeps drawing with the shaders it had.
+    pub fn reload_shaders(&mut self, gpu: &Gpu, library: &ShaderLibrary) -> Result<()> {
+        let fresh = Self::with_shaders(gpu, library)?;
+        let models = std::mem::take(&mut self.models);
+        *self = fresh;
+        self.models = models;
+        Ok(())
     }
 
     /// Whether a model has been uploaded under `path`.
