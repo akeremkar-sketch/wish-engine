@@ -1,0 +1,4 @@
+# The "no panics in library code" lints do not apply to tests.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true

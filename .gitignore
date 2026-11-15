@@ -1,0 +1,15 @@
+# Build output (normally redirected elsewhere by a local .cargo/config.toml).
+/target/
+
+# Local, machine-specific cargo settings (e.g. target-dir).
+/.cargo/config.toml
+
+# Engine caches, snapshots and replays inside game projects.
+.wish/
+
+# Editors and OS noise.
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+.DS_Store

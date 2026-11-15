@@ -1,0 +1,5 @@
+# The exact compiler version is pinned: determinism guarantees (ADR-005) are
+# stated for "the same build", and that includes the compiler.
+[toolchain]
+channel = "1.100.0"
+components = ["rustfmt", "clippy"]

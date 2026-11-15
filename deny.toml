@@ -1,0 +1,25 @@
+# cargo-deny configuration.
+#
+# Wish Engine is distributed free of charge under MIT OR Apache-2.0 (ADR-023).
+# Only permissive licenses may enter the dependency tree.
+
+[graph]
+all-features = true
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.9
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

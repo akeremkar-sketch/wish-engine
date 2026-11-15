@@ -83,6 +83,20 @@ M1'in ilk iş paketinde yapılacak tek ortam işi: derleme çıktılarını OneD
 
 **Model · efor.** İlk oturum (şema ve depolama yerleşiminin ayrıntılı tasarım notu): **Fable 5.2 · high**. Uygulama: **Opus 5.5 · high**. İskelet/CI gibi mekanik işler: Sonnet 5.5 · medium.
 
+**İlerleme.** Ayrıntılı tasarım: [design/M1-cekirdek.md](design/M1-cekirdek.md).
+
+| İş paketi | Durum |
+|---|---|
+| Tasarım notu | Tamamlandı (15 Kasım 2026) |
+| 1. Çalışma alanı | Tamamlandı (15 Kasım 2026). CI dosyası yazıldı ama uzak depo olmadığı için henüz çalıştırılmadı |
+| 2. `wish_core` | Tamamlandı (15 Kasım 2026): 26 test, biçim ve clippy temiz |
+| 3. `wish_schema` | **Sıradaki** — Opus 5.5 · high |
+| 4. `wish_ecs` | Bekliyor |
+| 5. Zamanlayıcı | Bekliyor |
+| 6. Anlık görüntü / hash | Bekliyor |
+| 7. `wish_cli` | Bekliyor |
+| 8. Test altyapısı, kıyaslama | Bekliyor |
+
 ## M2 — Veri katmanı
 
 **Çıktı.** `wish_scene` (sahne/prefab belge modeli, kanonik biçimlendirici, kimlik adresli yamalar, atomik işlemler, geri al/yinele, revizyonlar), `wish_asset` (varlık sunucusu, dosya izleme, önbellek, `*.meta.json`), `wen check`, `wen fmt`, `wen mv`, `wen migrate`.

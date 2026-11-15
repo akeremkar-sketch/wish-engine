@@ -1,0 +1,12 @@
+# Text files are stored and checked out with LF line endings on every platform.
+# Scene and asset files have a canonical byte-exact form, so this is not cosmetic.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ktx2 binary
+*.glb binary
+*.ogg binary
+*.wav binary
+*.wasm binary

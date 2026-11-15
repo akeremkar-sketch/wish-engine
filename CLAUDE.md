@@ -5,9 +5,13 @@ Wish Engine: yapay zekâya tamamen entegre ama yapay zekâsız da eksiksiz kulla
 ## Şu anki durum
 
 - **Tamamlanan:** M0 (tasarım).
-- **Sıradaki:** M1 (çekirdek) — bkz. [docs/ROADMAP.md](docs/ROADMAP.md). Henüz kod yok.
-- **Ortam hazır (15 Kasım 2026'da doğrulandı):** Rust 1.100.0 (`stable-x86_64-pc-windows-msvc`) ve Visual Studio 2022 Build Tools 17.14.45 kurulu; deneme projesinde `cargo run` ve `cargo test` başarılı. Bu oturumun kabuğunda `cargo` PATH'te olmayabilir; bulunamazsa `%USERPROFILE%\.cargo\bin\cargo.exe` tam yolunu kullan.
-- **Proje klasörü OneDrive altında** (`Masaüstü\wish-engine`). Derleme çıktıları OneDrive'a yazılmamalı: M1'in ilk iş paketinde git'e girmeyen yerel `.cargo/config.toml` ile `target-dir = "C:/wish-build/target"` ayarla. `target/` klasörünü asla proje klasörünün içinde bırakma.
+- **Süren:** M1 (çekirdek). Tasarım notu: [docs/design/M1-cekirdek.md](docs/design/M1-cekirdek.md) — M1'de kod yazmadan önce oku.
+  - Biten: WP1 (çalışma alanı, lint'ler, lisanslar, CI dosyası, git), WP2 (`wish_core`: `Entity`, `Diagnostic`, kararlı hash, öneri yardımcıları; 26 test).
+  - **Sıradaki: WP3 (`wish_schema` + makro).** Önerilen model · efor: Opus 5.5 · high.
+- **Git:** `main` yalnızca M0 belgelerini taşır; M1 çalışması `m1-core` dalındadır. Uzak depo (remote) yok. Commit kimliği depoya özel proje kimliğidir (kullanıcı kararı); kişisel e-posta kullanma.
+- **Ortam (15 Kasım 2026'da doğrulandı):** Rust 1.100.0 (`rust-toolchain.toml` ile sabit) ve Visual Studio 2022 Build Tools 17.14.45 kurulu. Bu oturumun kabuğunda `cargo` PATH'te olmayabilir; her komuttan önce `$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"` çalıştır.
+- **Proje klasörü OneDrive altında** (`Masaüstü\wish-engine`). Derleme çıktıları git'e girmeyen yerel `.cargo/config.toml` ile `C:/wish-build/target` klasörüne yönlendirildi. Bu dosyayı silme; `target/` klasörünü asla proje klasörünün içinde bırakma.
+- **CI henüz çalıştırılmadı:** `.github/workflows/ci.yml` ve `deny.toml` yazıldı ama uzak depo olmadığı için sınanmadı. Depo GitHub'a ilk gönderildiğinde doğrula.
 
 ## Önce oku
 
@@ -55,12 +59,25 @@ Bir değişiklik bunlardan birini bozuyorsa değişiklik yanlıştır. Gerekçel
 - Crate öneki `wish_`; komut satırı aracı `wen` (`wish` değil: o ad Tcl/Tk'nin komutudur ve çakışır).
 - Lisans: MIT + Apache-2.0 (açık kaynak). Her crate'in `Cargo.toml` dosyasında `license = "MIT OR Apache-2.0"`.
 - `cargo fmt` ve uyarısız `cargo clippy` zorunlu.
-- `unsafe` yalnızca `wish_ecs` ve `wish_script` içinde; her blokta neden güvenli olduğunu açıklayan `// SAFETY:` yorumu; Miri ile test.
-- Kütüphane kodunda `unwrap`/`expect`/`panic!` yok (testler hariç); hatalar `Diagnostic` olarak döner.
+- `unsafe` yalnızca `wish_ecs` ve `wish_script` içinde, bir de `wish_schema`'daki `Plain` sözleşmesinin bildiriminde (ve makronun ürettiği `unsafe impl Plain`'de); her blokta neden güvenli olduğunu açıklayan `// SAFETY:` yorumu; Miri ile test. Diğer her yerde çalışma alanı lint'i `unsafe_code = "deny"`.
+- Kütüphane kodunda `unwrap`/`expect`/`panic!` yok (testler hariç); hatalar `Diagnostic` olarak döner. Bunu clippy zorlar (`Cargo.toml` içindeki `[workspace.lints]`).
+- Simülasyon kodunda `HashMap`/`HashSet` üzerinde gezinme yasak (clippy `iter_over_hash_type`); sıralı gezinme gerekiyorsa `BTreeMap` ya da `Vec` kullan.
+- Kararlı hash gereken her yerde (dünya hash'i, parmak izi, diske yazılan her şey) `wish_core::StableHasher` kullan; standart kitaplığın hash'leyicilerini asla.
 - Herkese açık her öge belge yorumu taşır (bunlar şemaya ve MCP belgelerine akar).
 - Koordinat sistemi: sağ el, +Y yukarı, kamera −Z'ye bakar. Birimler: metre, saniye, kilogram; API'de radyan.
 - Bağımlılık eklemeden önce lisansını denetle (yalnızca MIT/Apache-2.0/BSD benzeri serbest lisanslar).
 
 ## Doğrulama komutları
 
-M1'de çalışma alanı kurulunca buraya yazılacak (derleme, test, Miri, determinizm testi, kıyaslama).
+Her commit'ten önce üçü de temiz olmalı (proje kökünde, PowerShell):
+
+```powershell
+$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
+
+Bağımlılık eklediysen lisansını gör: `cargo metadata --format-version 1 | ConvertFrom-Json` çıktısındaki `packages[].license` alanı; izinli liste `deny.toml` içinde.
+
+Henüz yok, ilgili iş paketinde eklenecek: Miri (WP4), determinizm testi (WP8), kıyaslama (WP8).

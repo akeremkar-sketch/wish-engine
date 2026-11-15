@@ -2,16 +2,25 @@
 
 *Dile, olsun.*
 
-Yapay zekâya tamamen entegre, arayüzü yapay zekâyı yönetmek üzerine kurulu, ücretsiz ve komisyonsuz bir 3D oyun motoru.
+Yapay zekâya tamamen entegre ama yapay zekâsız da eksiksiz kullanılabilen, açık kaynak, ücretsiz ve komisyonsuz bir 3D oyun motoru.
 
-**Durum:** M0 (tasarım) tamamlandı · sırada M1 (çekirdek) · henüz kod yok.
+**Durum:** geliştirmenin çok başında; henüz çalıştırılabilir bir motor yok. M0 (tasarım) tamamlandı, M1 (çekirdek) sürüyor: çalışma alanı ve `wish_core` hazır, sırada `wish_schema`.
+
+## Derleme
+
+Rust 1.100.0 gerekir (`rust-toolchain.toml` ile sabit; `rustup` kendiliğinden kurar). Windows'ta ayrıca Visual Studio Build Tools (C++ iş yükü) gerekir.
+
+```bash
+cargo test --workspace
+```
 
 ## Belgeler
 
 | Belge | İçerik |
 |---|---|
 | [docs/VISION.md](docs/VISION.md) | Ne yapıyoruz, neden, kapsam, başarı ölçütleri |
-| [docs/DECISIONS.md](docs/DECISIONS.md) | 24 mimari karar ve gerekçeleri; size kalan 3 karar |
+| [docs/DECISIONS.md](docs/DECISIONS.md) | 24 mimari karar ve gerekçeleri |
+| [docs/design/M1-cekirdek.md](docs/design/M1-cekirdek.md) | M1 tasarım notu: veri yerleşimi, şema, ECS, anlık görüntü, hash |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Katmanlar, crate'ler, veri akışları, proje düzeni |
 | [docs/MCP_API.md](docs/MCP_API.md) | Yapay zekâ arayüzü: 23 araçlık taslak |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Kilometre taşları, çıkış ölçütleri, model · efor önerileri, riskler |
