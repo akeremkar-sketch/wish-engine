@@ -78,6 +78,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
+Commit iletisini her zaman dosyadan ver (`git commit -F <dosya>`): PowerShell, `-m` ile verilen iletideki çift tırnakları bozar ve commit yarıda kalır.
+
 Bağımlılık eklediysen lisansını gör: `cargo metadata --format-version 1 | ConvertFrom-Json` çıktısındaki `packages[].license` alanı; izinli liste `deny.toml` içinde.
 
 Henüz yok, ilgili iş paketinde eklenecek: Miri (WP4), determinizm testi (WP8), kıyaslama (WP8).
