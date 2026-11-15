@@ -1,7 +1,7 @@
 //! Every diagnostic code the engine's source creates has a page in the
 //! catalogue (`wish://docs/diagnostics/<code>`), so the `docs` link in an
-//! error never leads nowhere; and the catalogue lists nothing that no longer
-//! exists.
+//! error never leads nowhere. (Codes made in other ways are covered by the
+//! fuzz test, which checks every code an answer carries.)
 
 #![allow(missing_docs)]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

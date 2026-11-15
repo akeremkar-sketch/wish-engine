@@ -55,6 +55,22 @@ impl Drawing {
         paths.sort_unstable();
         paths.dedup();
         for path in paths {
+            // A reference that is not a project-relative path (absolute, or
+            // climbing out with ..) is never read: the project is the
+            // boundary (M4 closing review).
+            if wish_core::asset::validate_asset_ref(path).is_err() {
+                warnings.push(
+                    Diagnostic::warning(
+                        "model_not_loaded",
+                        format!(
+                            "The model '{path}' was not drawn: it is not a path inside the project."
+                        ),
+                        "Model assets are project-relative paths such as \"assets/crate.glb\".",
+                    )
+                    .at_file(path),
+                );
+                continue;
+            }
             let meta = std::fs::metadata(root.join(path)).ok();
             let stamp = (
                 meta.as_ref().map_or(0, std::fs::Metadata::len),

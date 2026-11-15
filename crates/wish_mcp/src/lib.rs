@@ -7,10 +7,13 @@
 //!
 //! Protocol version 2025-06-18 (older versions the client asks for are
 //! accepted and answered with the same behaviour). Requests are handled one
-//! at a time, in order; a cancellation arrives after its request has already
-//! been answered, so `notifications/cancelled` is accepted and ignored.
+//! at a time, in order. `notifications/cancelled` for the request being
+//! worked on (or one still waiting) stops a running `sim_step` at the next
+//! tick, which then answers with `stopped_by: "cancelled"` (see [`serve`]).
 
 use std::io::{BufRead, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
 
 use serde_json::{Map, Value, json};
 use wish_control::{Workspace, catalog, docs};
@@ -29,6 +32,9 @@ const INVALID_PARAMS: i64 = -32602;
 const RESOURCE_NOT_FOUND: i64 = -32002;
 
 /// Tools that never change files or state.
+/// Tools whose effect cannot be undone through `edit_history`.
+const DESTRUCTIVE: &[&str] = &["capture_frame", "sim_stop"];
+
 const READ_ONLY: &[&str] = &[
     "project_info",
     "schema_get",
@@ -110,8 +116,11 @@ fn tool_list() -> Value {
                 "annotations": {
                     "title": tool.title,
                     "readOnlyHint": read_only,
-                    "destructiveHint": false,
-                    "idempotentHint": read_only,
+                    // What cannot be undone: a picture replacing a file
+                    // (`overwrite`), a play session thrown away.
+                    "destructiveHint": DESTRUCTIVE.contains(&tool.name),
+                    // scene_get also marks what the caller has seen.
+                    "idempotentHint": read_only && tool.name != "scene_get",
                     "openWorldHint": false
                 }
             })
@@ -188,11 +197,12 @@ impl Server {
         if line.is_empty() {
             return None;
         }
+        let id = request_id(line).unwrap_or(Value::Null);
         let answer =
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.handle_value(line)))
                 .unwrap_or_else(|_| {
                     Some(error(
-                        &Value::Null,
+                        &id,
                         -32603,
                         "The server failed on this message; nothing was changed.",
                         None,
@@ -279,6 +289,18 @@ impl Server {
                 let Some(name) = params.get("name").and_then(Value::as_str) else {
                     return error(id, INVALID_PARAMS, "tools/call needs params.name.", None);
                 };
+                // An unknown tool is a protocol error in MCP 2025-06-18
+                // (-32602), with the same hint and candidates as elsewhere.
+                if let Err(problem) = wish_control::find_tool(name) {
+                    return error(
+                        id,
+                        INVALID_PARAMS,
+                        &format!("{} {}", problem.message, problem.hint),
+                        Some(
+                            json!({ "code": problem.code, "hint": problem.hint, "candidates": problem.candidates }),
+                        ),
+                    );
+                }
                 let arguments = params.get("arguments").cloned().unwrap_or(Value::Null);
                 let answer = self.workspace.call(name, &arguments, &self.actor);
                 response(id, tool_result(answer))
@@ -412,19 +434,86 @@ impl Server {
     }
 }
 
+/// The id of a request line (`None` for notifications and unreadable lines).
+fn request_id(line: &str) -> Option<Value> {
+    serde_json::from_str::<Value>(line).ok()?.get("id").cloned()
+}
+
 /// Serves MCP over `input` / `output` until the input ends.
+///
+/// Input is read on its own thread, so that a `notifications/cancelled` for
+/// the call being worked on reaches it while it runs: the cancel flag stops
+/// a long `sim_step` at the next tick boundary. Lines are read as bytes
+/// (invalid UTF-8 becomes a parse error for that line, not the end of the
+/// server) and a leading byte-order mark is dropped.
 pub fn serve(
     server: &mut Server,
-    input: impl BufRead,
+    mut input: impl BufRead + Send + 'static,
     mut output: impl Write,
 ) -> std::io::Result<()> {
-    for line in input.lines() {
-        let line = line?;
-        if let Some(answer) = server.handle(&line) {
+    let cancel = Arc::new(AtomicBool::new(false));
+    server.workspace.set_cancel_flag(Arc::clone(&cancel));
+    // The id being worked on, and the ids the client has cancelled.
+    type Busy = (Option<Value>, std::collections::BTreeSet<String>);
+    let current: Arc<Mutex<Busy>> = Arc::new(Mutex::new((None, std::collections::BTreeSet::new())));
+    let (lines, received) = mpsc::channel::<String>();
+    let reader_cancel = Arc::clone(&cancel);
+    let reader_current = Arc::clone(&current);
+    let reader = std::thread::spawn(move || -> std::io::Result<()> {
+        let mut first = true;
+        loop {
+            let mut bytes = Vec::new();
+            if input.read_until(b'\n', &mut bytes)? == 0 {
+                return Ok(());
+            }
+            let mut line = String::from_utf8_lossy(&bytes).into_owned();
+            if first {
+                line = line.trim_start_matches('\u{feff}').to_owned();
+                first = false;
+            }
+            if let Ok(message) = serde_json::from_str::<Value>(&line)
+                && message.get("method").and_then(Value::as_str) == Some("notifications/cancelled")
+            {
+                let wanted = message
+                    .get("params")
+                    .and_then(|p| p.get("requestId"))
+                    .cloned();
+                if let (Some(wanted), Ok(mut state)) = (wanted, reader_current.lock()) {
+                    if state.0.as_ref() == Some(&wanted) {
+                        reader_cancel.store(true, Ordering::Relaxed);
+                    }
+                    state.1.insert(wanted.to_string());
+                }
+            }
+            if lines.send(line).is_err() {
+                return Ok(());
+            }
+        }
+    });
+    for line in received {
+        let id = request_id(&line);
+        cancel.store(false, Ordering::Relaxed);
+        // The current id is set and the cancelled list checked under one
+        // lock, so a cancellation read just before or while the call starts
+        // is never missed.
+        if let Ok(mut state) = current.lock() {
+            state.0.clone_from(&id);
+            if id
+                .as_ref()
+                .is_some_and(|id| state.1.contains(&id.to_string()))
+            {
+                cancel.store(true, Ordering::Relaxed);
+            }
+        }
+        let answer = server.handle(&line);
+        if let Ok(mut busy) = current.lock() {
+            busy.0 = None;
+        }
+        if let Some(answer) = answer {
             output.write_all(answer.as_bytes())?;
             output.write_all(b"\n")?;
             output.flush()?;
         }
     }
-    Ok(())
+    reader.join().unwrap_or(Ok(()))
 }

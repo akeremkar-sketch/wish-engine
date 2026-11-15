@@ -63,7 +63,12 @@ pub(crate) const CAPTURE_FRAME: Tool = Tool {
         Param::optional(
             "out",
             Kind::String,
-            "Also write the PNG to this project-relative file (then image.data is left out).",
+            "Also write the PNG to this project-relative .png file (then image.data is left out). An existing file is not replaced unless overwrite is true.",
+        ),
+        Param::optional(
+            "overwrite",
+            Kind::Boolean,
+            "Replace the out file if it already exists.",
         ),
         SHADERS,
     ],
@@ -192,6 +197,24 @@ fn drawing<'a>(
             workspace.root().join(dir)
         }
     });
+    // Shader files are read only from inside the project (M4 closing review).
+    if let Some(dir) = &shaders {
+        let inside = std::fs::canonicalize(dir)
+            .ok()
+            .zip(std::fs::canonicalize(workspace.root()).ok())
+            .is_some_and(|(dir, root)| dir.starts_with(root));
+        if !inside {
+            return Err(Diagnostic::error(
+                "invalid_parameter",
+                format!(
+                    "The shaders folder '{}' is not a folder inside the project.",
+                    dir.display()
+                ),
+                "Give a project-relative folder such as \"shaders\" that holds <name>.wgsl files.",
+            )
+            .at_path("/shaders"));
+        }
+    }
     let software = workspace.software;
     let reopen = workspace
         .renderer
@@ -248,9 +271,14 @@ fn capture_frame(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
         json!({ "mime": "image/png", "width": width, "height": height, "bytes": png.len() });
     match &out_path {
         Some(path) => {
-            let target = workspace.root().join(path);
-            if let Some(folder) = target.parent() {
-                std::fs::create_dir_all(folder).ok();
+            let target = crate::documents::inside_project(workspace.root(), path)?;
+            if target.exists() && !args.flag("overwrite") {
+                return Err(Diagnostic::error(
+                    "output_exists",
+                    format!("'{path}' already exists; it was not replaced."),
+                    "Choose a new name, or pass \"overwrite\": true to replace it (for example a capture you took before).",
+                )
+                .at_path("/out"));
             }
             std::fs::write(&target, &png).map_err(|error| {
                 Diagnostic::error(

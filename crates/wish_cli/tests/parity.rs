@@ -127,7 +127,7 @@ fn examples() -> Vec<(&'static str, Value)> {
         ("capture_frame", json!({ "width": 64, "height": 36 })),
         (
             "capture_frame",
-            json!({ "width": 64, "height": 36, "view": "ids", "out": "captures/ids.png" }),
+            json!({ "width": 64, "height": 36, "view": "ids", "out": "captures/ids.png", "overwrite": true }),
         ),
         ("capture_frame", json!({ "camera": "box" })),
         ("capture_frame", json!({ "out": "scenes/main.scene.json" })),

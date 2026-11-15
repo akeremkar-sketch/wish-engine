@@ -134,6 +134,16 @@ fn every_catalogue_tool_is_listed_with_its_schema() {
         .map(|t| t["name"].as_str().unwrap())
         .collect();
     assert!(read_only.contains(&"entity_query") && !read_only.contains(&"edit_apply"));
+    let destructive: Vec<&str> = tools
+        .iter()
+        .filter(|t| t["annotations"]["destructiveHint"] == true)
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        destructive,
+        ["sim_stop", "capture_frame"],
+        "catalogue order"
+    );
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -157,11 +167,15 @@ fn a_tool_answer_is_structured_and_a_picture_is_an_image_block() {
         wrong["result"]["structuredContent"]["error"]["hint"],
         "Did you mean 'names'?"
     );
+    // An unknown tool is a protocol error (MCP 2025-06-18), still with the
+    // hint and the valid names.
     let unknown = call(&mut server, 3, "scene_gte", json!({}));
+    assert_eq!(unknown["error"]["code"], -32602);
     assert_eq!(
-        unknown["result"]["structuredContent"]["error"]["code"],
-        "unknown_tool"
+        unknown["error"]["data"]["hint"],
+        "Did you mean 'scene_get'?"
     );
+    assert_eq!(unknown["error"]["data"]["code"], "unknown_tool");
     // A picture: an image block, and no base64 in the JSON.
     let picture = call(
         &mut server,

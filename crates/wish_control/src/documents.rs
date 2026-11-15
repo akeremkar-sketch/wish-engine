@@ -98,7 +98,9 @@ pub(crate) fn normalize_scene_path(path: &str) -> Result<String> {
     }
     let outside = path.starts_with('/')
         || path.contains(':')
-        || path.split('/').any(|part| part == ".." || part.is_empty());
+        || path
+            .split('/')
+            .any(|part| part.is_empty() || part.starts_with('.'));
     if outside || !(path.ends_with(".scene.json") || path.ends_with(".prefab.json")) {
         return Err(Diagnostic::error(
             "invalid_scene_path",
@@ -324,9 +326,67 @@ pub(crate) fn touched(changes: &[String]) -> BTreeSet<String> {
 impl Workspace {
     /// The scene a tool works on: `scene` if given, else the project's
     /// default.
+    /// The paths of the open documents.
+    pub(crate) fn open_scene_paths(&self) -> Vec<String> {
+        self.docs.open.keys().cloned().collect()
+    }
+
+    /// After files moved (an asset move by `actor`): open documents that
+    /// moved are closed (they reopen at their new path), the others take
+    /// the rewritten references in as `actor`'s change, not as a stranger's
+    /// file edit, and the default scene follows its file.
+    pub(crate) fn after_move(
+        &mut self,
+        moved: &[(String, String)],
+        actor: &Actor,
+    ) -> Result<Vec<Diagnostic>> {
+        let mut notes = Vec::new();
+        for (from, to) in moved {
+            if self.docs.open.remove(from).is_some() {
+                self.seen.retain(|(path, _), _| path != from);
+            }
+            let default = self.config().map(|config| config.scene.clone());
+            if default.as_deref() == Some(from.as_str()) {
+                self.set_default_scene(to)?;
+                notes.push(Diagnostic::info(
+                    "default_scene_moved",
+                    format!("The project's default scene moved to '{to}'; wish.json now names it."),
+                    "Nothing to do.",
+                ));
+            }
+        }
+        let open: Vec<String> = self.docs.open.keys().cloned().collect();
+        for path in open {
+            notes.extend(self.open_document_as(&path, false, actor)?);
+        }
+        Ok(notes)
+    }
+
+    /// Refuses a path that names an existing document with other letter
+    /// case: on Windows it would be the same file opened as a second,
+    /// separate document (found by the M4 closing review).
+    fn exact_case(&self, path: String) -> Result<String> {
+        let documents = wish_asset::index::documents(self.root())?;
+        if documents.iter().any(|(name, _)| *name == path) {
+            return Ok(path);
+        }
+        match documents
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(&path))
+        {
+            Some((real, _)) => Err(Diagnostic::error(
+                "path_case_mismatch",
+                format!("'{path}' differs only in letter case from the existing '{real}'."),
+                format!("Write it exactly as '{real}': paths are case-sensitive."),
+            )
+            .at_path("/scene")),
+            None => Ok(path),
+        }
+    }
+
     pub(crate) fn scene_path(&self, scene: Option<&str>) -> Result<String> {
         match scene {
-            Some(path) => normalize_scene_path(path),
+            Some(path) => self.exact_case(normalize_scene_path(path)?),
             None => match self.config() {
                 Some(config) => normalize_scene_path(&config.scene),
                 None => Err(Diagnostic::error(
@@ -388,6 +448,17 @@ impl Workspace {
     /// notes about what happened (a reload, a rejected file change).
     /// `create` makes a missing scene a new, empty document.
     pub(crate) fn open_document(&mut self, path: &str, create: bool) -> Result<Vec<Diagnostic>> {
+        self.open_document_as(path, create, &Actor::File)
+    }
+
+    /// [`Self::open_document`], recording a file change as `actor`'s (for
+    /// changes the engine made itself, such as an asset move).
+    pub(crate) fn open_document_as(
+        &mut self,
+        path: &str,
+        create: bool,
+        actor: &Actor,
+    ) -> Result<Vec<Diagnostic>> {
         self.refresh_prefabs()?;
         let root = self.root().to_path_buf();
         let mut notes = Vec::new();
@@ -473,16 +544,15 @@ impl Workspace {
                 if !ops.is_empty() {
                     let applied = open
                         .doc
-                        .apply(&Transaction::new(Actor::File, ops), registry);
+                        .apply(&Transaction::new(actor.clone(), ops), registry);
                     let matches = applied.is_ok() && open.doc.to_value() == new_doc.to_value();
                     if !matches {
                         // Could not express the change as edits (a rare
                         // reshuffle): take the file as it is.
-                        let revision = open.doc.revision();
-                        open.doc = new_doc;
+                        open.doc.replace_content(&new_doc, actor.clone());
                         notes.push(Diagnostic::info(
                             "history_reset",
-                            format!("'{path}' changed outside the engine in a way that could not be recorded as edits; its undo history starts again (was at revision {revision})."),
+                            format!("'{path}' changed outside the engine in a way that could not be recorded as separate edits; it is recorded as one change by the file, and earlier changes can no longer be undone."),
                             "Nothing to do; the scene matches the file.",
                         ).at_file(path));
                     }
@@ -539,12 +609,26 @@ impl Workspace {
         })
     }
 
-    /// Writes the document at `path` to disk in canonical form.
-    pub(crate) fn save_document(&mut self, path: &str) -> Result<()> {
+    /// Makes `doc` the document at `path`: written to disk first, kept in
+    /// memory only if the write worked. So a change whose write failed
+    /// changes nothing (all or nothing, also on disk), and the file is
+    /// checked once more right before it is replaced: if someone saved it in
+    /// the meantime, their save is not overwritten.
+    pub(crate) fn commit_document(&mut self, path: &str, doc: SceneDocument) -> Result<()> {
         let root = self.root().to_path_buf();
+        let text = doc.to_canonical()?;
+        let on_disk = read_text(&root, path)?;
         let open = self.document_mut(path)?;
-        let text = open.doc.to_canonical()?;
+        if on_disk != open.disk_text {
+            return Err(Diagnostic::error(
+                "file_changed_during_edit",
+                format!("'{path}' was changed on disk while this change was being made; nothing was written."),
+                "Call again: the file's new content is read first and the change is applied on top of it.",
+            )
+            .at_file(path));
+        }
         atomic_write(&root, path, &text)?;
+        open.doc = doc;
         open.disk_text = Some(text);
         open.view = None;
         Ok(())
@@ -576,12 +660,24 @@ impl Workspace {
     /// What other actors changed in `path` since `actor` last looked, and
     /// marks everything up to now as seen by `actor`.
     pub(crate) fn changes_by_others(&mut self, path: &str, actor: &Actor) -> Option<Value> {
-        let key = (path.to_owned(), actor.label());
-        let since = self.seen.get(&key).copied();
+        let others = self.others_since(path, actor);
+        self.mark_seen(path, actor);
+        others
+    }
+
+    /// Marks everything in `path` up to now as seen by `actor`.
+    pub(crate) fn mark_seen(&mut self, path: &str, actor: &Actor) {
+        if let Some(open) = self.docs.open.get(path) {
+            let now = open.doc.revision();
+            self.seen.insert((path.to_owned(), actor.label()), now);
+        }
+    }
+
+    /// What other actors changed in `path` since `actor` last looked,
+    /// without marking it seen (a failed call must not use it up).
+    pub(crate) fn others_since(&self, path: &str, actor: &Actor) -> Option<Value> {
+        let since = self.seen.get(&(path.to_owned(), actor.label())).copied()?;
         let open = self.docs.open.get(path)?;
-        let now = open.doc.revision();
-        self.seen.insert(key, now);
-        let since = since?;
         let mut entities = BTreeSet::new();
         let mut by = BTreeSet::new();
         for entry in open
@@ -605,32 +701,67 @@ impl Workspace {
     }
 }
 
-/// A file path a tool may write to: project-relative, forward slashes, no
-/// `..`, not a hidden or engine document (a picture must never overwrite a
-/// scene).
+/// Windows device names, which are not files whatever the extension.
+const DEVICE_NAMES: &[&str] = &[
+    "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
+    "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+];
+
+/// A picture file a tool may write: project-relative, forward slashes, no
+/// `..`, `.` or hidden folders, no Windows device names or trailing dots and
+/// spaces (Windows drops those, so `main.scene.json.` *is* the scene), and a
+/// `.png` name. A picture can therefore never replace a scene, a prefab, a
+/// meta file or `wish.json` (found by the M4 closing review).
 pub(crate) fn normalize_output_path(path: &str) -> Result<String> {
     let mut path = path.trim().replace('\\', "/");
     while let Some(rest) = path.strip_prefix("./") {
         path = rest.to_owned();
     }
+    let segment_bad = |part: &str| {
+        let stem = part.split('.').next().unwrap_or(part).to_ascii_lowercase();
+        part.is_empty()
+            || part == ".."
+            || part.starts_with('.')
+            || part.ends_with('.')
+            || part.ends_with(' ')
+            || DEVICE_NAMES.contains(&stem.as_str())
+    };
     let bad = path.is_empty()
         || path.starts_with('/')
         || path.contains(':')
-        || path
-            .split('/')
-            .any(|part| part.is_empty() || part == ".." || part.starts_with('.'))
-        || wish_asset::is_document(&path)
-        || path == crate::project::PROJECT_FILE;
+        || path.split('/').any(segment_bad)
+        || !path.to_ascii_lowercase().ends_with(".png");
     if bad {
         return Err(Diagnostic::error(
             "invalid_output_path",
-            format!("'{path}' is not a file the tool may write."),
-            "Give a project-relative path such as \"captures/shot.png\" (not a scene, prefab, meta or project file).",
+            format!("'{path}' is not a picture file the tool may write."),
+            "Give a project-relative .png path such as \"captures/shot.png\" (no '..', hidden folders or device names).",
         )
         .at_path("/out"));
     }
     Ok(path)
 }
+
+/// Checks that writing `relative` under `root` really lands inside the
+/// project (a linked folder could lead elsewhere), creating its folder.
+pub(crate) fn inside_project(root: &Path, relative: &str) -> Result<std::path::PathBuf> {
+    let target = root.join(relative);
+    let folder = target.parent().unwrap_or(root);
+    std::fs::create_dir_all(folder).map_err(|error| unwritable(relative, &error))?;
+    let real_root = std::fs::canonicalize(root).map_err(|error| unwritable(relative, &error))?;
+    let real_folder =
+        std::fs::canonicalize(folder).map_err(|error| unwritable(relative, &error))?;
+    if !real_folder.starts_with(&real_root) {
+        return Err(Diagnostic::error(
+            "invalid_output_path",
+            format!("'{relative}' leads outside the project (through a linked folder)."),
+            "Write inside the project folder itself, such as \"captures/shot.png\".",
+        )
+        .at_path("/out"));
+    }
+    Ok(target)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

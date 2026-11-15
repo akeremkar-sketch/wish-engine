@@ -14,6 +14,8 @@ use crate::workspace::Workspace;
 
 /// The most sessions open at once (each holds a whole world).
 pub const MAX_SESSIONS: usize = 8;
+/// The most snapshots one session keeps (each holds a whole world).
+pub const MAX_SNAPSHOTS: usize = 32;
 /// The most ticks one `sim_step` may run.
 pub const MAX_FRAMES: i64 = 1_000_000;
 /// How many log entries are kept.
@@ -229,7 +231,12 @@ fn until_holds(world: &World, until: &Expr) -> Vec<String> {
 }
 
 /// Simulates up to `frames` ticks, stopping early when `until` holds.
-fn step_app(session: &mut Session, frames: u64, until: Option<&Expr>) -> Result<Stepped> {
+fn step_app(
+    session: &mut Session,
+    frames: u64,
+    until: Option<&Expr>,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+) -> Result<Stepped> {
     let before = event_totals(session.app.world());
     let mut diagnostics = Vec::new();
     let mut ticks_run = 0;
@@ -240,6 +247,12 @@ fn step_app(session: &mut Session, frames: u64, until: Option<&Expr>) -> Result<
         "frames"
     };
     while ticks_run < frames {
+        // The client may cancel a long run; it is checked at tick
+        // boundaries, so the world is always whole (and the tick reported).
+        if cancel.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed)) {
+            stopped_by = "cancelled";
+            break;
+        }
         let report = session.app.step()?;
         ticks_run += 1;
         diagnostics.extend(report.failures);
@@ -251,7 +264,7 @@ fn step_app(session: &mut Session, frames: u64, until: Option<&Expr>) -> Result<
             }
         }
     }
-    if until.is_some() && stopped_by != "until" {
+    if until.is_some() && stopped_by != "until" && stopped_by != "cancelled" {
         stopped_by = "max_frames";
         diagnostics.push(Diagnostic::warning(
             "until_not_reached",
@@ -459,8 +472,9 @@ impl Workspace {
         frames: u64,
         until: Option<&Expr>,
     ) -> Result<(Stepped, u64, String, usize)> {
+        let cancel = self.cancel.clone();
         let session = self.session_mut(id)?;
-        let mut stepped = step_app(session, frames, until)?;
+        let mut stepped = step_app(session, frames, until, cancel.as_deref())?;
         stepped.diagnostics.extend(inspect(session));
         let tick = session.app.tick();
         let hash = session.app.hash().to_string();

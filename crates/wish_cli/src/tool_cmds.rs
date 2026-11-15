@@ -438,7 +438,7 @@ pub fn serve_mcp(context: &ToolContext) -> std::process::ExitCode {
     let mut server = wish_mcp::Server::new(workspace);
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
-    match wish_mcp::serve(&mut server, stdin.lock(), stdout.lock()) {
+    match wish_mcp::serve(&mut server, std::io::BufReader::new(stdin), stdout.lock()) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("The MCP connection failed: {error}.");

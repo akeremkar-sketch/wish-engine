@@ -245,7 +245,6 @@ fn invalid(tool: &str, param: &Param, got: &Value) -> Diagnostic {
     .at_path(format!("/{}", param.name))
 }
 
-/// A JSON number that is a whole number (`3` or `3.0`), as an integer.fn whole(value: &Value) -> Option<i64> {    value.as_i64().or_else(|| {        value            .as_f64()            .filter(|n| n.fract() == 0.0 && n.abs() < 9.0e15)            .map(|n| n as i64)    })}
 /// A JSON number that is a whole number (`3` or `3.0`), as an integer.
 fn whole(value: &Value) -> Option<i64> {
     value.as_i64().or_else(|| {

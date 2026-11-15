@@ -132,7 +132,7 @@ M1'in ilk iş paketinde yapılacak tek ortam işi: derleme çıktılarını OneD
 
 ## M4 — Kontrol düzlemi ve MCP
 
-**Durum:** tasarım notu yazıldı (15 Kasım 2026): [design/M4-kontrol-duzlemi.md](design/M4-kontrol-duzlemi.md). Uygulama `m4-control` dalında. **Plan değişikliği:** Streamable HTTP taşıması M8a'ya (editörle birlikte) kaydırıldı; gerekçe notun §1'inde.
+**Durum: tamamlandı (16 Kasım 2026).** Tasarım ve sonuç: [design/M4-kontrol-duzlemi.md](design/M4-kontrol-duzlemi.md) (§15 çıkış ölçütü kanıtları). 20 araç, MCP stdio sunucusu, komut satırı eşliği bayt bayt, ilk 10 değerlendirme görevi Sonnet 5.5 · medium ile **30/30** (iki koşu). **Plan değişikliği:** Streamable HTTP taşıması M8a'ya (editörle birlikte) kaydırıldı; gerekçe notun §1'inde.
 
 **Çıktı.** `wish_control`, `wish_mcp` (stdio; HTTP M8a'da), tüm araçların komut satırı eşleri, `wen new` (proje iskeleti + `.mcp.json` + proje `CLAUDE.md`), MCP belge kaynakları, dünya denetçisi, `evals/` altında ilk 10 görev.
 

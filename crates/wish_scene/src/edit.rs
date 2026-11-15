@@ -441,6 +441,37 @@ impl SceneDocument {
         self.history.log.iter()
     }
 
+    /// Replaces the whole content with `other`'s: for a change made outside
+    /// the engine that the operations cannot express. It is recorded as one
+    /// entry by `actor` touching every entity and resource that differs, and
+    /// the revision goes on counting (so `base_revision` checks and "what
+    /// changed since" stay right). Earlier changes can no longer be undone:
+    /// their inverses do not fit the new content.
+    pub fn replace_content(&mut self, other: &SceneDocument, actor: Actor) -> Applied {
+        let mut changes = Vec::new();
+        let ids: BTreeSet<&String> = self.entities.keys().chain(other.entities.keys()).collect();
+        for id in ids {
+            if self.entities.get(id) != other.entities.get(id) {
+                changes.push(entity_pointer(id));
+            }
+        }
+        let names: BTreeSet<&String> = self
+            .resources
+            .keys()
+            .chain(other.resources.keys())
+            .collect();
+        for name in names {
+            if self.resources.get(name) != other.resources.get(name) {
+                changes.push(resource_pointer(name));
+            }
+        }
+        self.entities = other.entities.clone();
+        self.resources = other.resources.clone();
+        self.history.undo.clear();
+        self.history.redo.clear();
+        self.record(actor, Action::Edit, changes)
+    }
+
     fn commit(&mut self, content: SceneDocument) {
         self.entities = content.entities;
         self.resources = content.resources;

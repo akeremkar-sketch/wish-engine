@@ -261,6 +261,16 @@ fn sim_snapshot(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map
             format!("snap{number}")
         }
     };
+    if session.saved.len() >= crate::sessions::MAX_SNAPSHOTS {
+        return Err(Diagnostic::error(
+            "too_many_snapshots",
+            format!(
+                "The session already holds {} snapshots.",
+                crate::sessions::MAX_SNAPSHOTS
+            ),
+            "Restore or fork from one you have, or start a new session (sim_stop frees them).",
+        ));
+    }
     if session.saved.iter().any(|s| s.label == label) {
         return Err(Diagnostic::error(
             "snapshot_exists",
@@ -301,6 +311,9 @@ fn sim_restore(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<
             .map(|s| s.snapshot.clone())
             .ok_or_else(|| unknown_snapshot(&label, &session.saved))?;
         session.app.restore(&snapshot)?;
+        // Same state, same reports: what the inspector already said after
+        // the snapshot is forgotten with the rest.
+        session.reported.clear();
         id
     };
     let session = workspace.session(&target)?;

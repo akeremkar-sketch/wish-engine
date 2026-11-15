@@ -33,6 +33,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "A system asked for the same component both to read and to write in one query. Split the query or read the value first.",
     ),
     (
+        "default_scene_moved",
+        "The project's default scene was moved, and wish.json was updated to name its new path (a note, not a problem).",
+    ),
+    (
         "degenerate_transform",
         "An entity was not drawn because its scale is zero or not a finite number. Give its Transform (and its parents') a non-zero, finite scale.",
     ),
@@ -67,6 +71,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "external_change_rejected",
         "A scene file was changed outside the engine and is now invalid. The last valid scene is kept and changes are refused until the file is fixed.",
+    ),
+    (
+        "file_changed_during_edit",
+        "A file was saved by someone else at the very moment a change was being written, so nothing was written (their save is kept). Call again: the change is applied on top of their version.",
     ),
     (
         "file_not_found",
@@ -130,7 +138,7 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     ),
     (
         "history_reset",
-        "A scene file changed outside the engine in a way that could not be recorded as edits, so its undo history starts again. The scene matches the file.",
+        "A scene file changed outside the engine in a way that could not be recorded as separate edits. It is recorded as one change by the file (revisions keep counting), and earlier changes can no longer be undone.",
     ),
     (
         "internal_error",
@@ -314,6 +322,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "The file or folder to move does not exist.",
     ),
     (
+        "output_exists",
+        "A picture would replace a file that already exists. Choose a new name, or pass overwrite: true to replace an earlier capture.",
+    ),
+    (
         "override_not_found",
         "The prefab instance has no override for that entity and component.",
     ),
@@ -324,6 +336,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "overrides_without_prefab",
         "An entity has overrides but is not a prefab instance. Remove the overrides or make it an instance.",
+    ),
+    (
+        "path_case_mismatch",
+        "A path differs only in letter case from an existing file. Paths are case-sensitive: write the existing name exactly, or the same file would be opened twice under two names.",
     ),
     ("png_decode", "An image could not be decoded as PNG."),
     ("png_encode", "A picture could not be encoded as PNG."),
@@ -455,6 +471,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "too_many_sessions",
         "The most sessions are already open. Close one with sim_stop.",
+    ),
+    (
+        "too_many_snapshots",
+        "A session holds the most snapshots it may (each is a whole world). Restore or fork from one you have, or start a new session.",
     ),
     (
         "too_many_texts",

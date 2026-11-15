@@ -227,14 +227,39 @@ fn asset_info(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<S
     Ok(out)
 }
 
-fn asset_move(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<String, Value>> {
+fn asset_move(workspace: &mut Workspace, args: &Args, actor: &Actor) -> Result<Map<String, Value>> {
     let root = workspace.root().to_path_buf();
     let from = args.str("from").unwrap_or_default();
     let to = args.str("to").unwrap_or_default();
     let dry_run = args.flag("dry_run");
     let plan = wish_asset::plan_move(&root, from, to, workspace.registry())?;
+    let mut notes = Vec::new();
     if !dry_run {
+        // Open scenes first take in anything changed on disk before the move,
+        // so the move is the only thing recorded as this actor's.
+        let open: Vec<String> = workspace.open_scene_paths();
+        for path in &open {
+            notes.extend(workspace.open_document(path, false)?);
+        }
         wish_asset::apply_move(&root, &plan)?;
+        // Documents (open ones, the default scene) that the move took along.
+        let mut known = open;
+        if let Some(config) = workspace.config() {
+            known.push(config.scene.clone());
+        }
+        let moved: Vec<(String, String)> = known
+            .into_iter()
+            .filter_map(|path| {
+                let rest = if path == plan.from {
+                    Some(String::new())
+                } else {
+                    path.strip_prefix(&format!("{}/", plan.from))
+                        .map(|rest| format!("/{rest}"))
+                }?;
+                Some((path, format!("{}{rest}", plan.to)))
+            })
+            .collect();
+        notes.extend(workspace.after_move(&moved, actor)?);
     }
     let documents: Vec<Value> = plan
         .documents
@@ -254,5 +279,8 @@ fn asset_move(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<S
         ),
     );
     out.insert("documents".to_owned(), json!(documents));
+    if !notes.is_empty() {
+        out.insert("diagnostics".to_owned(), json!(notes));
+    }
     Ok(out)
 }

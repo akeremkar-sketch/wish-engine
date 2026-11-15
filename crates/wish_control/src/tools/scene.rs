@@ -674,29 +674,27 @@ fn edit_apply(workspace: &mut Workspace, args: &Args, actor: &Actor) -> Result<M
             .and_then(|r| u64::try_from(r).ok()),
         ops,
     };
-    let others = workspace.changes_by_others(&path, actor);
+    // Not marked as seen until the change has worked: a refused edit (a
+    // stale base_revision above all) must still tell what others did.
+    let others = workspace.others_since(&path, actor);
     let registry = workspace.registry().clone();
     let dry_run = args.flag("dry_run");
-    let applied = {
-        let open = workspace.document_mut(&path)?;
-        if dry_run {
-            if let Some(base) = transaction.base_revision
-                && base != open.doc.revision()
-            {
-                // Same refusal as a real apply.
-                let mut copy = open.doc.clone();
-                copy.apply(&transaction, &registry)?;
-            }
-            open.doc.preview(&transaction, &registry)?
-        } else {
-            open.doc.apply(&transaction, &registry)?
+    let mut working = workspace.document(&path)?.doc.clone();
+    let applied = if dry_run {
+        if let Some(base) = transaction.base_revision
+            && base != working.revision()
+        {
+            // Same refusal as a real apply.
+            working.apply(&transaction, &registry)?;
         }
+        working.preview(&transaction, &registry)?
+    } else {
+        working.apply(&transaction, &registry)?
     };
     if !dry_run {
-        workspace.save_document(&path)?;
-        workspace
-            .seen
-            .insert((path.clone(), actor.label()), applied.revision);
+        // Written first, kept only if the write worked.
+        workspace.commit_document(&path, working)?;
+        workspace.mark_seen(&path, actor);
     }
     let mut out = Map::new();
     out.insert("scene".to_owned(), json!(path));
@@ -758,53 +756,40 @@ fn edit_history(
     let steps = args.int("steps").unwrap_or(1);
     let dry_run = args.flag("dry_run");
     let registry = workspace.registry().clone();
-    let others = workspace.changes_by_others(&path, actor);
+    let others = workspace.others_since(&path, actor);
     let mut changes: Vec<String> = Vec::new();
     let mut done = 0;
-    {
-        let open = workspace.document_mut(&path)?;
-        let mut working = if dry_run {
-            open.doc.clone()
+    // Worked on a copy, written, and only then kept (as edit_apply does).
+    let mut working = workspace.document(&path)?.doc.clone();
+    let before = working.revision();
+    let mut failure = None;
+    for _ in 0..steps {
+        let step = if action == "undo" {
+            working.undo(actor.clone(), &registry)
         } else {
-            std::mem::take(&mut open.doc)
+            working.redo(actor.clone(), &registry)
         };
-        let mut failure = None;
-        for _ in 0..steps {
-            let step = if action == "undo" {
-                working.undo(actor.clone(), &registry)
-            } else {
-                working.redo(actor.clone(), &registry)
-            };
-            match step {
-                Ok(Some(applied)) => {
-                    changes.extend(applied.changes);
-                    done += 1;
-                }
-                Ok(None) => break,
-                Err(problem) => {
-                    failure = Some(problem);
-                    break;
-                }
+        match step {
+            Ok(Some(applied)) => {
+                changes.extend(applied.changes);
+                done += 1;
+            }
+            Ok(None) => break,
+            Err(problem) => {
+                failure = Some(problem);
+                break;
             }
         }
-        if dry_run {
-            out.insert("revision".to_owned(), json!(open.doc.revision() + done));
-        } else {
-            out.insert("revision".to_owned(), json!(working.revision()));
-            open.doc = working;
-        }
-        if let Some(problem) = failure
-            && done == 0
-        {
-            return Err(problem);
-        }
     }
+    if let Some(problem) = failure
+        && done == 0
+    {
+        return Err(problem);
+    }
+    out.insert("revision".to_owned(), json!(before + done));
     if done > 0 && !dry_run {
-        workspace.save_document(&path)?;
-        let revision = workspace.document(&path)?.doc.revision();
-        workspace
-            .seen
-            .insert((path.clone(), actor.label()), revision);
+        workspace.commit_document(&path, working)?;
+        workspace.mark_seen(&path, actor);
     }
     changes.sort();
     changes.dedup();

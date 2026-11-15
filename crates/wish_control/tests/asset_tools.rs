@@ -170,9 +170,16 @@ fn assets_are_listed_described_and_moved_with_their_references() {
         "assets/models/tri.glb"
     );
     assert_eq!(ws.call("check", &json!({}), &actor)["passed"], true);
-    // The move shows up in the scene's history as the file's doing.
+    // The move is in the scene's history as the agent's own change, and is
+    // not reported back to it as someone else's (M4 closing review).
     let history = ws.call("edit_history", &json!({}), &actor);
-    assert_eq!(history["entries"][0]["actor"], "file");
+    assert_eq!(history["entries"][0]["actor"], "agent:claude-code");
+    let next = ws.call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "spawn", "id": "after_move" }] }),
+        &actor,
+    );
+    assert!(next.get("changed_by_others").is_none(), "{next}");
     let bad = ws.call(
         "asset_move",
         &json!({ "from": "assets/gone.glb", "to": "assets/x.glb" }),

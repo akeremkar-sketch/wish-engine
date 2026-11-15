@@ -42,6 +42,8 @@ pub struct Workspace {
     pub(crate) renderer: Option<crate::render::Drawing>,
     /// Use the software (CPU) adapter for drawing.
     pub(crate) software: bool,
+    /// Raised by the MCP server when the client cancels the running call.
+    pub(crate) cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl std::fmt::Debug for Workspace {
@@ -96,6 +98,7 @@ impl Workspace {
             seen: std::collections::BTreeMap::new(),
             renderer: None,
             software: std::env::var_os("WISH_SOFTWARE").is_some(),
+            cancel: None,
         })
     }
 
@@ -107,6 +110,26 @@ impl Workspace {
     /// What `wish.json` says, if the project has a readable one.
     pub fn config(&self) -> Option<&ProjectConfig> {
         self.config.as_ref()
+    }
+
+    /// Points `wish.json`'s default scene somewhere else (after it moved),
+    /// writing the file.
+    pub(crate) fn set_default_scene(&mut self, scene: &str) -> Result<()> {
+        let Some(config) = self.config.as_mut() else {
+            return Ok(());
+        };
+        config.scene = scene.to_owned();
+        let text = config.to_canonical()?;
+        std::fs::write(self.root.join(crate::project::PROJECT_FILE), text).map_err(|error| {
+            Diagnostic::error(
+                "file_unwritable",
+                format!(
+                    "Could not update '{}': {error}.",
+                    crate::project::PROJECT_FILE
+                ),
+                "Check that the project folder can be written to.",
+            )
+        })
     }
 
     /// Why `wish.json` could not be read.
@@ -214,5 +237,14 @@ impl Workspace {
             self.software = software;
             self.renderer = None;
         }
+    }
+}
+
+impl Workspace {
+    /// A flag that, once raised, stops a long-running call (`sim_step`) at
+    /// the next tick boundary with `stopped_by: "cancelled"`. The MCP server
+    /// raises it when the client sends `notifications/cancelled`.
+    pub fn set_cancel_flag(&mut self, flag: std::sync::Arc<std::sync::atomic::AtomicBool>) {
+        self.cancel = Some(flag);
     }
 }
