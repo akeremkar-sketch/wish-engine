@@ -102,6 +102,8 @@ M1'in ilk iş paketinde yapılacak tek ortam işi: derleme çıktılarını OneD
 
 ## M2 — Veri katmanı
 
+**Durum:** tasarım notu yazıldı (15 Kasım 2026): [design/M2-veri-katmani.md](design/M2-veri-katmani.md). Uygulama `m2-data` dalında, WP1'den başlayacak.
+
 **Çıktı.** `wish_scene` (sahne/prefab belge modeli, kanonik biçimlendirici, kimlik adresli yamalar, atomik işlemler, geri al/yinele, revizyonlar), `wish_asset` (varlık sunucusu, dosya izleme, önbellek, `*.meta.json`), `wen check`, `wen fmt`, `wen mv`, `wen migrate`.
 
 **Çıkış ölçütü.**
