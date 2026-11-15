@@ -146,6 +146,8 @@ M1'in ilk iş paketinde yapılacak tek ortam işi: derleme çıktılarını OneD
 
 ## M5 — Oyun mantığı
 
+**Durum:** tasarım notu yazıldı (16 Kasım 2026): [design/M5-oyun-mantigi.md](design/M5-oyun-mantigi.md). Uygulama `m5-logic` dalında. İlk iş paketi kanıt işi: wasmtime ev sahibi ve oyun kodu derleme yolu (ADR-025 adayı: cargo'suz, bağlayıcısız `rustc` + önceden derlenmiş SDK).
+
 **Çıktı.** `wish_script` (wasmtime ev sahibi, ABI, yakıt/süre sınırı, tuzak yalıtımı), `wish_sdk` (konuk SDK'sı ve makrolar), kayıpsız sıcak yükleme, `wish_input` (eylem haritaları, enjeksiyon, kayıt/tekrar), `wish_test` (senaryo testleri), `script_build` ve `test_run` araçları.
 
 **Çıkış ölçütü.**
