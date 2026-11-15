@@ -171,6 +171,7 @@ M1'in ilk iş paketinde yapılacak tek ortam işi: derleme çıktılarını OneD
 - Vitrin oyunu baştan sona oynanabilir, senaryo testleri geçer.
 - Değerlendirme takımı: Sonnet 5.5 · medium ≥ %90. Haiku 5.5 sonuçları kaydedilir.
 - Claude dışında en az bir MCP istemcisiyle temel görevler doğrulanır.
+- **Karşılaştırmalı ölçüm (kullanıcı kararı, 15 Kasım 2026):** değerlendirme takımının motordan bağımsız bir alt kümesi aynı modelle Unity ve Unreal'ın MCP bağlantılarında da koşulur; görev başarısı, adım sayısı, token ve hata sayısı yan yana raporlanır. Amaç "Claude ile daha sorunsuz" iddiasını ölçerek kanıtlamak; sonuç kötü çıkan alanlar sürtünme giderme listesine girer. Unity/Unreal kurulumu o sırada ayrıca onaya sunulur. (Bir ölçümdür, 1.0 özellik kapsamını büyütmez.)
 
 ## M8 — Hibrit arayüz
 
