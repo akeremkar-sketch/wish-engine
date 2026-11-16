@@ -36,6 +36,7 @@ wish_particles = { path = "crates/wish_particles" }
 wish_physics = { path = "crates/wish_physics" }
 wish_text = { path = "crates/wish_text" }
 wish_ui = { path = "crates/wish_ui" }
+wish_editor = { path = "crates/wish_editor" }
 
 # External crates. Check the license before adding one (see deny.toml).
 #

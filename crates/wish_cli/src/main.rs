@@ -13,6 +13,7 @@
 mod args;
 mod bench_script;
 mod capture;
+mod edit;
 mod play;
 mod project_cmds;
 mod scene;
@@ -55,6 +56,8 @@ USAGE:
     wen build [--root <folder>] [--dry-run] [--json]
     wen test [files...] [--root <folder>] [--update-golden] [--json]
     wen replay <name> [--root <folder>] [--json]
+    wen edit [--root <folder>] [--size <w>x<h>] [--software] [--exit-after <frames>]
+             [--headless-frame <script.json> --out <picture.png>]
     wen play [--root <folder>] [--scene <file>] [--size <w>x<h>] [--software] [--exit-after <frames>]
     wen sdk [--out <folder>] [--json]
     wen package [--out <folder>] [--json]
@@ -353,6 +356,7 @@ fn execute(args: Args) -> Result<String> {
         )),
         Command::View(view) => view::view(&view, args.json),
         Command::Play(play) => play::play(&play, args.json),
+        Command::Edit(edit) => edit::edit(&edit, args.json),
         Command::Schema { example } => schema(example.as_deref(), args.json),
         Command::Examples => Ok(if args.json {
             json!({ "ok": true, "examples": wish_examples::NAMES }).to_string()

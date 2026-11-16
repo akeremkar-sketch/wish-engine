@@ -14,6 +14,7 @@ mod testing;
 mod view;
 
 pub(crate) use sim::parse_input;
+pub use view::{Picture, PictureSource};
 
 /// How much a tool tells: `summary` (the default, cheapest), `normal`, `full`.
 pub(crate) const DETAIL: Param = Param::optional(

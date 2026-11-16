@@ -4506,6 +4506,7 @@ dependencies = [
  "wish_control",
  "wish_core",
  "wish_ecs",
+ "wish_editor",
  "wish_examples",
  "wish_import",
  "wish_mcp",
@@ -4569,8 +4570,12 @@ version = "0.1.0"
 dependencies = [
  "egui",
  "png",
+ "serde_json",
+ "wish_control",
  "wish_core",
+ "wish_render",
  "wish_text",
+ "wish_window",
 ]
 
 [[package]]

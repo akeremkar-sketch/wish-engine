@@ -4,7 +4,11 @@
 //! given input and [`raster`] draws the result into a [`raster::Canvas`] with
 //! no GPU, the same on every machine (see the M8a design note, §2).
 
+mod app;
 pub mod raster;
+pub mod script;
+
+pub use app::{EditorApp, Row, ids};
 
 use std::sync::Arc;
 

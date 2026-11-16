@@ -118,7 +118,17 @@ struct Prepared {
 }
 
 fn prepare(workspace: &mut Workspace, args: &Args) -> Result<Prepared> {
-    let session = match args.str("session") {
+    prepare_source(workspace, args.str("session"), args.str("scene"))
+}
+
+/// [`prepare`] without the tool's arguments: a session's live world, or a
+/// scene file's (the project's by default).
+fn prepare_source(
+    workspace: &mut Workspace,
+    session: Option<&str>,
+    scene: Option<&str>,
+) -> Result<Prepared> {
+    let session = match session {
         Some(id) => Some(workspace.session_id(Some(id))?),
         None => None,
     };
@@ -134,7 +144,7 @@ fn prepare(workspace: &mut Workspace, args: &Args) -> Result<Prepared> {
             )
         }
         None => {
-            let path = workspace.scene_path(args.str("scene"))?;
+            let path = workspace.scene_path(scene)?;
             let notes = workspace.open_document(&path, false)?;
             let revision = workspace.document(&path)?.doc.revision();
             let view = workspace.view(&path)?;
@@ -189,7 +199,15 @@ fn drawing<'a>(
     args: &Args,
     scene: &RenderScene,
 ) -> Result<(&'a mut Drawing, Vec<Diagnostic>)> {
-    let shaders = args.str("shaders").map(std::path::PathBuf::from);
+    drawing_with(workspace, args.str("shaders"), scene)
+}
+
+fn drawing_with<'a>(
+    workspace: &'a mut Workspace,
+    shaders: Option<&str>,
+    scene: &RenderScene,
+) -> Result<(&'a mut Drawing, Vec<Diagnostic>)> {
+    let shaders = shaders.map(std::path::PathBuf::from);
     let shaders = shaders.map(|dir| {
         if dir.is_absolute() {
             dir
@@ -428,4 +446,62 @@ fn describe_view(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
         out.insert("diagnostics".to_owned(), json!(warnings));
     }
     Ok(out)
+}
+
+/// Where a picture comes from.
+#[derive(Clone, Copy, Debug)]
+pub enum PictureSource<'a> {
+    /// A scene file (`None`: the project's scene).
+    Scene(Option<&'a str>),
+    /// A play session's live world.
+    Session(&'a str),
+}
+
+/// A picture of a scene or session, as the editor's view shows it.
+pub struct Picture {
+    /// The pixels (sRGB, 8-bit RGBA).
+    pub image: wish_render::RgbaImage,
+    /// Entity names of what could be drawn, by entity.
+    pub names: BTreeMap<Entity, String>,
+    /// What is worth telling the person looking (a model that did not load).
+    pub warnings: Vec<Diagnostic>,
+}
+
+impl Workspace {
+    /// Draws the scene or session the way `capture_frame` does, but takes
+    /// the camera as a function of the scene's own first camera (a fly
+    /// camera moves it) and returns the picture itself instead of a PNG:
+    /// for the editor's view, which draws many pictures a second.
+    ///
+    /// `camera` is applied to the scene's first camera (a scene without one
+    /// is an error, as for `capture_frame`).
+    pub fn render_picture(
+        &mut self,
+        source: PictureSource<'_>,
+        camera: Option<&dyn Fn(&wish_render::CameraView) -> wish_render::CameraView>,
+        width: u32,
+        height: u32,
+        view: View,
+    ) -> Result<Picture> {
+        let (session, scene) = match source {
+            PictureSource::Scene(scene) => (None, scene),
+            PictureSource::Session(id) => (Some(id), None),
+        };
+        let mut prepared = prepare_source(self, session, scene)?;
+        if let (Some(camera), Some(first)) = (camera, prepared.scene.cameras.first_mut()) {
+            *first = camera(first);
+        }
+        let (open, model_warnings) = drawing_with(self, None, &prepared.scene)?;
+        let frame =
+            open.renderer
+                .render_view(&open.gpu, &prepared.scene, None, width, height, view)?;
+        let mut warnings = prepared.notes;
+        warnings.extend(model_warnings);
+        warnings.extend(frame.warnings);
+        Ok(Picture {
+            image: frame.image,
+            names: prepared.names,
+            warnings: without_repeats(warnings),
+        })
+    }
 }

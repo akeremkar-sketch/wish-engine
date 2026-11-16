@@ -10,8 +10,8 @@ use wish_core::{Diagnostic, Result};
 /// The commands `wen` understands.
 pub const COMMANDS: &[&str] = &[
     "run", "bench", "schema", "mv", "check", "fmt", "migrate", "watch", "capture", "describe",
-    "shaders", "view", "call", "do", "new", "build", "play", "replay", "test", "sdk", "package",
-    "mcp", "examples", "help", "version",
+    "shaders", "view", "edit", "call", "do", "new", "build", "play", "replay", "test", "sdk",
+    "package", "mcp", "examples", "help", "version",
 ];
 
 /// A parsed command line.
@@ -108,6 +108,7 @@ pub enum Command {
     },
     /// Play the project's game in a window.
     Play(PlayArgs),
+    Edit(EditArgs),
     /// Run the project's scenario tests (the `test_run` tool).
     Test {
         /// Only these test files (all when empty).
@@ -199,6 +200,24 @@ pub struct CaptureArgs {
     pub shaders: Option<String>,
     /// Where to write the PNG.
     pub out: String,
+}
+
+/// The options of `wen edit`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EditArgs {
+    /// The project folder (default: the current folder).
+    pub root: Option<String>,
+    /// The window's size in pixels.
+    pub size: (u32, u32),
+    /// Use the software adapter.
+    pub software: bool,
+    /// Close after this many frames (for scripts).
+    pub exit_after: Option<u64>,
+    /// Instead of a window: run this input script and write the last
+    /// picture to `out`.
+    pub headless_frame: Option<String>,
+    /// Where `--headless-frame` writes its PNG.
+    pub out: Option<String>,
 }
 
 /// The options of `wen play`.
@@ -484,6 +503,15 @@ fn flags_of(command: &str) -> &'static [(&'static str, bool)] {
             ("--exit-after", true),
             ("--json", false),
         ],
+        "edit" => &[
+            ("--root", true),
+            ("--size", true),
+            ("--software", false),
+            ("--exit-after", true),
+            ("--headless-frame", true),
+            ("--out", true),
+            ("--json", false),
+        ],
         "sdk" => &[("--out", true), ("--json", false)],
         "package" => &[("--out", true), ("--json", false)],
         "view" => &[
@@ -748,6 +776,16 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
                 root: value_of("--root").map(str::to_owned),
             }
         }
+        "edit" => Command::Edit(EditArgs {
+            root: value_of("--root").map(str::to_owned),
+            size: value_of("--size").map_or(Ok((1280, 720)), parse_size)?,
+            software: values.iter().any(|(flag, _)| *flag == "--software"),
+            exit_after: value_of("--exit-after")
+                .map(|value| parse_number("--exit-after", value))
+                .transpose()?,
+            headless_frame: value_of("--headless-frame").map(str::to_owned),
+            out: value_of("--out").map(str::to_owned),
+        }),
         "play" => Command::Play(PlayArgs {
             root: value_of("--root").map(str::to_owned),
             scene: value_of("--scene").map(str::to_owned),

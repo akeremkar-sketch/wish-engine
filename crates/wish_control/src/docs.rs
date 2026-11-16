@@ -217,6 +217,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "A paging cursor does not belong to the query. Pass the previous answer's next_cursor unchanged, with the same other parameters.",
     ),
     (
+        "invalid_editor_script",
+        "An editor input script (wen edit --headless-frame) is malformed: an event or step the editor does not know, or a size out of range. The hint shows the format.",
+    ),
+    (
         "invalid_entity_id",
         "A runtime entity id is malformed or refers to an entity that no longer exists.",
     ),
