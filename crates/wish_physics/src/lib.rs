@@ -531,6 +531,29 @@ fn run(world: &mut World, state: &mut PhysicsState, since: ChangeTick) -> Result
         }
     }
 
+    // Where the moving (kinematic, not character) bodies are before the
+    // step: what they carry is how far they really went (M7 friction log).
+    let before: Vec<(rp::RigidBodyHandle, Mat4)> = state
+        .links
+        .iter()
+        .filter(|(entity, link)| {
+            link.body_desc.map(|d| d.kind) == Some(BodyKind::Kinematic)
+                && !world.has::<CharacterController>(**entity)
+        })
+        .filter_map(|(_, link)| {
+            let body = state.bodies.get(link.body)?;
+            let at = body.position();
+            Some((
+                link.body,
+                Mat4::from_rotation_translation(wq(at.rotation), wv(at.translation)),
+            ))
+        })
+        .collect();
+
+    // Who stands on one of them, and where, found now: the query tree
+    // still knows where everything was last tick (M7 closing review).
+    let standing = standing_on(world, state, &before);
+
     // 4. Step.
     let substeps = settings.substeps.clamp(1, 8);
     let params = rp::IntegrationParameters {
@@ -564,7 +587,7 @@ fn run(world: &mut World, state: &mut PhysicsState, since: ChangeTick) -> Result
     // 5. Characters, against the stepped world: the query tree only knows
     // colliders after a step, and moving first would let a character fall
     // through a floor added this tick.
-    move_characters(world, state, delta)?;
+    move_characters(world, state, delta, &before, &standing)?;
 
     // 6. Write back.
     for &entity in &present {
@@ -600,6 +623,18 @@ fn run(world: &mut World, state: &mut PhysicsState, since: ChangeTick) -> Result
     Ok(())
 }
 
+/// How far from a character contacts count: twice the controller's skin.
+/// The controller keeps the character a skin away from what it stands on,
+/// so walking does not start and end the contact with the ground every tick
+/// (M7 friction log). Set from the first tick, so the contacts found when
+/// the state is prepared agree with later ones (M7 closing review). A side
+/// effect: bodies resting against a character keep that gap from it.
+fn contact_skin(world: &World, entity: Entity) -> f32 {
+    world
+        .get::<CharacterController>(entity)
+        .map_or(0.0, |controller| controller.skin.clamp(0.001, 0.5) * 2.0)
+}
+
 fn sync_entity(world: &World, state: &mut PhysicsState, entity: Entity) -> Result<()> {
     let Some(collider_desc) = world.get::<Collider>(entity).copied() else {
         return Ok(());
@@ -624,6 +659,7 @@ fn sync_entity(world: &World, state: &mut PhysicsState, entity: Entity) -> Resul
                 .user_data(u128::from(entity.to_bits()))
                 .build();
             apply_collider(&mut collider, &collider_desc, scale);
+            collider.set_contact_skin(contact_skin(world, entity));
             let collider = state
                 .colliders
                 .insert_with_parent(collider, handle, &mut state.bodies);
@@ -699,6 +735,12 @@ fn sync_entity(world: &World, state: &mut PhysicsState, entity: Entity) -> Resul
             body.wake_up(true);
         }
     }
+    let skin = contact_skin(world, entity);
+    if let Some(collider) = colliders.get_mut(link.collider)
+        && (collider.contact_skin() - skin).abs() > f32::EPSILON
+    {
+        collider.set_contact_skin(skin);
+    }
     if let Some(stored) = state.links.get_mut(&entity) {
         stored.body_desc = body_desc;
         stored.collider_desc = collider_desc;
@@ -707,7 +749,117 @@ fn sync_entity(world: &World, state: &mut PhysicsState, entity: Entity) -> Resul
     Ok(())
 }
 
-fn move_characters(world: &mut World, state: &mut PhysicsState, delta: f32) -> Result<()> {
+/// A character standing on a moving body last tick: the body, and the point
+/// under its feet.
+type Standing = (Entity, rp::RigidBodyHandle, Vec3);
+
+/// Characters that stood on a moving (kinematic) body last tick, found
+/// before the step: the query tree then still has every collider where it
+/// was, so the ray meets the platform where the character stood on it, not
+/// where it went (a fast or sinking platform would leave the ray's reach).
+fn standing_on(
+    world: &World,
+    state: &PhysicsState,
+    platforms: &[(rp::RigidBodyHandle, Mat4)],
+) -> Vec<Standing> {
+    let mut standing = Vec::new();
+    if platforms.is_empty() {
+        return standing;
+    }
+    for (entity, link) in &state.links {
+        if link.body_desc.map(|d| d.kind) != Some(BodyKind::Kinematic)
+            || !world.has::<CharacterController>(*entity)
+            || !world
+                .get::<CharacterState>(*entity)
+                .is_some_and(|state| state.grounded)
+        {
+            continue;
+        }
+        let (Some(body), Some(collider)) = (
+            state.bodies.get(link.body),
+            state.colliders.get(link.collider),
+        ) else {
+            continue;
+        };
+        // The body is where the character was put last tick; the collider
+        // follows it only at the next step.
+        let at = *body.position() * collider.position_wrt_parent().copied().unwrap_or_default();
+        let feet = -collider.shape().compute_local_aabb().mins.y;
+        let filter = rp::QueryFilter::default()
+            .exclude_rigid_body(link.body)
+            .exclude_sensors();
+        let queries = state.broad.as_query_pipeline(
+            state.narrow.query_dispatcher(),
+            &state.bodies,
+            &state.colliders,
+            filter,
+        );
+        let ray = rp::Ray::new(at.translation, rp::Vector::new(0.0, -1.0, 0.0));
+        let Some((hit, distance)) = queries.cast_ray(&ray, feet + 0.2, true) else {
+            continue;
+        };
+        let Some(platform) = state.colliders.get(hit).and_then(|c| c.parent()) else {
+            continue;
+        };
+        if platforms.iter().any(|(handle, _)| *handle == platform) {
+            let point = wv(at.translation) - Vec3::new(0.0, distance, 0.0);
+            standing.push((*entity, platform, point));
+        }
+    }
+    standing
+}
+
+fn move_characters(
+    world: &mut World,
+    state: &mut PhysicsState,
+    delta: f32,
+    platforms: &[(rp::RigidBodyHandle, Mat4)],
+    standing: &[Standing],
+) -> Result<()> {
+    // Without characters there is nothing to carry, and kinematic bodies
+    // are left alone (switching their type keeps them from sleeping).
+    if !state
+        .links
+        .keys()
+        .any(|entity| world.has::<CharacterController>(*entity))
+    {
+        return Ok(());
+    }
+    // Rapier's controller follows a kinematic body it stands on by that
+    // body's velocity, and only partly: a character on an accelerating
+    // platform falls behind and off (M7 friction log, F8). Platforms are
+    // still while characters move, and each character is carried by exactly
+    // how far the platform under it went; their speeds come back after
+    // (dynamic bodies on them are carried by the solver as before).
+    // (Rapier ignores speeds written to a position-driven kinematic body, so
+    // it is driven by speed for the moment.)
+    let mut speeds: Vec<(rp::RigidBodyHandle, rp::Vector, rp::AngVector)> = Vec::new();
+    for (handle, _) in platforms {
+        if let Some(body) = state.bodies.get_mut(*handle) {
+            speeds.push((*handle, body.linvel(), body.angvel()));
+            body.set_body_type(rp::RigidBodyType::KinematicVelocityBased, false);
+            body.set_linvel(rp::Vector::ZERO, false);
+            body.set_angvel(rp::AngVector::ZERO, false);
+        }
+    }
+    let moved = move_each_character(world, state, delta, platforms, standing);
+    for (handle, linvel, angvel) in speeds {
+        if let Some(body) = state.bodies.get_mut(handle) {
+            body.set_linvel(linvel, false);
+            body.set_angvel(angvel, false);
+            body.set_body_type(rp::RigidBodyType::KinematicPositionBased, false);
+        }
+    }
+    moved
+}
+
+fn move_each_character(
+    world: &mut World,
+    state: &mut PhysicsState,
+    delta: f32,
+    platforms: &[(rp::RigidBodyHandle, Mat4)],
+    standing: &[Standing],
+) -> Result<()> {
     let characters: Vec<(Entity, CharacterController, Vec3)> = state
         .links
         .iter()
@@ -762,6 +914,50 @@ fn move_characters(world: &mut World, state: &mut PhysicsState, delta: f32) -> R
             &state.colliders,
             filter,
         );
+        // When it stood last tick on a body that moved this step (a moving
+        // platform), it goes along by as much: the point under its feet,
+        // moved as the platform moved (a turning platform turns it too).
+        let carry = standing
+            .iter()
+            .find(|(standing, _, _)| *standing == entity)
+            .and_then(|(_, platform, point)| {
+                let (_, was) = platforms.iter().find(|(h, _)| h == platform)?;
+                let now = state.bodies.get(*platform)?.position();
+                let now = Mat4::from_rotation_translation(wq(now.rotation), wv(now.translation));
+                let carried = now.transform_point3(was.inverse().transform_point3(*point)) - *point;
+                if !carried.is_finite() || carried == Vec3::ZERO {
+                    return None;
+                }
+                // Not into a wall or a ceiling the platform passes: the shape
+                // goes along only as far as it is free to (the platform itself
+                // is left out: it moved under the feet).
+                let not_platform = |_: rp::ColliderHandle, collider: &rp::Collider| {
+                    collider.parent() != Some(*platform)
+                };
+                let blockers = state.broad.as_query_pipeline(
+                    state.narrow.query_dispatcher(),
+                    &state.bodies,
+                    &state.colliders,
+                    rp::QueryFilter::default()
+                        .exclude_rigid_body(link.body)
+                        .exclude_sensors()
+                        .predicate(&not_platform),
+                );
+                let options = rapier3d::parry::query::ShapeCastOptions {
+                    max_time_of_impact: 1.0,
+                    target_distance: 0.0,
+                    stop_at_penetration: false,
+                    compute_impact_geometry_on_penetration: false,
+                };
+                let free = blockers
+                    .cast_shape(&position, rv(carried), shape.as_ref(), options)
+                    .map_or(1.0, |(_, hit)| hit.time_of_impact.clamp(0.0, 1.0));
+                Some(carried * free)
+            })
+            .unwrap_or(Vec3::ZERO);
+        // The character rides along rigidly (as if it were part of the
+        // platform), then makes its own move from there.
+        let position = rp::Pose::from_parts(position.translation + rv(carry), position.rotation);
         // Two moves: along the ground first (sliding, stepping up), then
         // up or down. One combined move with gravity in it presses the shape
         // into the floor and Rapier then refuses the sideways part.
@@ -802,7 +998,7 @@ fn move_characters(world: &mut World, state: &mut PhysicsState, delta: f32) -> R
             rv(Vec3::new(0.0, down, 0.0)),
             |_| {},
         );
-        let total = across.translation + along.translation;
+        let total = rv(carry) + across.translation + along.translation;
         let moved = wv(total);
         if let Some(body) = state.bodies.get_mut(link.body) {
             let current = *body.position();

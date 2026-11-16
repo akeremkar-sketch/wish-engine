@@ -525,6 +525,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "No scene file has that path. To create a new scene, use edit_apply with create: true.",
     ),
     (
+        "scene_not_session",
+        "A scene tool (entity_get, entity_query) read the scene file while a play session was open. The answer is the file's values; pass session to read the live world.",
+    ),
+    (
         "script_abi_mismatch",
         "The game module was built for a different game ABI version than this engine speaks. Rebuild it with this engine's SDK (script_build).",
     ),
@@ -1038,6 +1042,15 @@ Tests: `tests/*.test.json` (`{{ \"format\": 1, \"scene\": ..., \"seed\": 1, \"st
 \nReplays: `replay` records a session from tick 0, saves it, and `run` plays it back checking the world after every tick; run them after changing the code to see whether the game still plays the same.
 \nInput is actions (`input.json`: `move`, `jump`, ...); systems take `actions: Actions`. Play with `sim_step` `input`: `{{ \"move\": [0, 1], \"jump\": true }}` is held for the ticks of that call.\n\
 \n\
+## Game systems\n\
+\n\
+Physics (`Collider`, `RigidBody`, `CharacterController`, `CollisionStarted`, `physics_query`), sound (`AudioSource`,\n\
+`PlaySound`; `logs_get` kinds [\"audio\"]), lights (`PointLight`, `SpotLight`), animation (`AnimationPlayer`), the in-game\n\
+interface (`UiNode`, `UiText`, `UiButton`; `describe_view` lists it; `sim_step` input `pointer` and `click`), particles\n\
+(`ParticleEmitter`), 2D (orthographic `Camera`, `Sprite`). `asset_create` makes placeholder sounds and pictures.\n\
+**`wish://docs/recipes` has working pieces of games** (a platformer character, a follow camera, pickups with a score,\n\
+checkpoints, moving platforms, a win screen and a button, a 2D scene, tests): start from them.\n\
+\n\
 ## Rules\n\
 \n\
 - Units: meters, seconds, kilograms; radians in data, but `Transform` also takes `\"euler_deg\": [x, y, z]` in edits.\n\
@@ -1047,7 +1060,7 @@ Tests: `tests/*.test.json` (`{{ \"format\": 1, \"scene\": ..., \"seed\": 1, \"st
 - A person may edit at the same time: mind `changed_by_others`, and use `base_revision` for changes prepared earlier.\n\
 - Sessions never change files. To keep something found in a session, make the change with `edit_apply`.\n\
 \n\
-More: `wish://docs/sdk` for the game code SDK, `wish://docs/components/<Name>` for any type, `wish://docs/diagnostics/<code>` for any error code, `docs_search` to search.\n"
+More: `wish://docs/recipes` for working pieces of games, `wish://docs/sdk` for the game code SDK, `wish://docs/components/<Name>` for any type, `wish://docs/diagnostics/<code>` for any error code, `docs_search` to search.\n"
     )
 }
 
@@ -1092,6 +1105,14 @@ pub fn search(registry: &Registry, query: &str, limit: usize) -> Vec<Value> {
         pages.push((
             "wish://docs/sdk".to_owned(),
             format!("SDK: {title}"),
+            section.to_owned(),
+        ));
+    }
+    for section in recipes_page().split("\n## ").skip(1) {
+        let title = section.lines().next().unwrap_or_default().to_owned();
+        pages.push((
+            "wish://docs/recipes".to_owned(),
+            format!("Recipe: {title}"),
             section.to_owned(),
         ));
     }
@@ -1152,6 +1173,13 @@ pub fn search(registry: &Registry, query: &str, limit: usize) -> Vec<Value> {
         .take(limit)
         .map(|hit| json!({ "uri": hit.uri, "title": hit.title, "snippet": hit.snippet.trim() }))
         .collect()
+}
+
+/// Working pieces of games (`wish://docs/recipes`): each a complete game
+/// module and the scene operations that go with it, compiled and applied by
+/// `tests/recipes.rs` so that they stay true (M7 WP4).
+pub fn recipes_page() -> &'static str {
+    include_str!("recipes.md")
 }
 
 /// The game code SDK reference (`wish://docs/sdk`): everything a system in
@@ -1260,8 +1288,9 @@ sent.send(BodyImpulse { entity: crate_, linear: Vec3::new(0.0, 5000.0, 0.0), ang
 
 A sound is an entity with an `AudioSource` (clip: a `.wav` or `.ogg` path in the project, `playing`, `looping`,
 `spatial`, `volume`, `pitch`, `min_distance`, `max_distance`) and an `AudioListener` somewhere (usually the camera).
-A one-off sound is an event: `sent.send(PlaySound { clip, bus: AudioBus::Sfx, volume: 1.0, pitch: 1.0,
-spatial: true, position })`. The engine writes `AudioPlayback { position, gain, pan, started }` and sends
+A one-off sound is an event: `sent.send(PlaySound { clip: asset("assets/sounds/jump.wav"), bus: AudioBus::Sfx, volume: 1.0, pitch: 1.0,
+spatial: true, position })` (`asset(path)` makes the `AssetRef` of a project file; `asset_create` makes placeholder
+`.wav` files). The engine writes `AudioPlayback { position, gain, pan, started }` and sends
 `SoundStarted` / `SoundEnded` events. Nothing is played in a session: an agent reads what played with
 `logs_get kinds: ["audio"]` ("started on 'door': -12.0 dB at the listener, right 100%").
 

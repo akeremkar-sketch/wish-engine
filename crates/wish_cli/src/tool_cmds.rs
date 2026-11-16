@@ -94,7 +94,8 @@ fn read_call(entry: &Value, index: usize) -> Result<(String, Value)> {
     ))
 }
 
-/// Reads the calls: a JSON array, or one JSON object per line.
+/// Reads the calls: a JSON array, or JSON objects one after another (one
+/// per line, or spread over lines as written by hand).
 fn read_calls(text: &str) -> Result<Vec<Value>> {
     let trimmed = text.trim_start();
     if trimmed.starts_with('[') {
@@ -107,17 +108,16 @@ fn read_calls(text: &str) -> Result<Vec<Value>> {
             )),
         };
     }
-    text.lines()
-        .enumerate()
-        .filter(|(_, line)| !line.trim().is_empty())
-        .map(|(number, line)| {
-            serde_json::from_str(line).map_err(|error| {
+    serde_json::Deserializer::from_str(text)
+        .into_iter::<Value>()
+        .map(|item| {
+            item.map_err(|error| {
                 Diagnostic::error(
                     "invalid_arguments",
-                    format!("Line {} is not valid JSON: {error}.", number + 1),
-                    "Write one call object per line, such as { \"tool\": \"project_info\" }.",
+                    format!("Line {} is not valid JSON: {error}.", error.line()),
+                    "Write call objects one after another, such as { \"tool\": \"project_info\" }, or a JSON array of them.",
                 )
-                .at_line(u32::try_from(number + 1).unwrap_or(u32::MAX), None)
+                .at_line(u32::try_from(error.line()).unwrap_or(u32::MAX), None)
             })
         })
         .collect()

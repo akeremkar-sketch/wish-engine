@@ -1,0 +1,320 @@
+{
+  "entities": {
+    "again_button": {
+      "components": {
+        "StartButton": {},
+        "UiButton": {},
+        "UiNode": {
+          "background": [0.1, 0.35, 0.9, 1],
+          "padding": [16, 48, 16, 48]
+        }
+      },
+      "order": 1,
+      "parent": "done"
+    },
+    "again_label": {
+      "components": {
+        "UiNode": {},
+        "UiText": {
+          "align": "Center",
+          "size": 40,
+          "text": "Tekrar oyna"
+        }
+      },
+      "parent": "again_button"
+    },
+    "answer_0": {
+      "components": {
+        "Answer": {
+          "index": 0
+        },
+        "UiButton": {},
+        "UiNode": {
+          "align": "Center",
+          "background": [0.15, 0.2, 0.4, 1],
+          "padding": [14, 24, 14, 24],
+          "width": {
+            "unit": "Px",
+            "value": 720
+          }
+        }
+      },
+      "order": 1,
+      "parent": "quiz"
+    },
+    "answer_0_label": {
+      "components": {
+        "UiLabel": {
+          "slot": 1
+        },
+        "UiNode": {},
+        "UiText": {
+          "align": "Center",
+          "size": 34,
+          "text": ""
+        }
+      },
+      "parent": "answer_0"
+    },
+    "answer_1": {
+      "components": {
+        "Answer": {
+          "index": 1
+        },
+        "UiButton": {},
+        "UiNode": {
+          "align": "Center",
+          "background": [0.15, 0.2, 0.4, 1],
+          "padding": [14, 24, 14, 24],
+          "width": {
+            "unit": "Px",
+            "value": 720
+          }
+        }
+      },
+      "order": 2,
+      "parent": "quiz"
+    },
+    "answer_1_label": {
+      "components": {
+        "UiLabel": {
+          "slot": 2
+        },
+        "UiNode": {},
+        "UiText": {
+          "align": "Center",
+          "size": 34,
+          "text": ""
+        }
+      },
+      "parent": "answer_1"
+    },
+    "answer_2": {
+      "components": {
+        "Answer": {
+          "index": 2
+        },
+        "UiButton": {},
+        "UiNode": {
+          "align": "Center",
+          "background": [0.15, 0.2, 0.4, 1],
+          "padding": [14, 24, 14, 24],
+          "width": {
+            "unit": "Px",
+            "value": 720
+          }
+        }
+      },
+      "order": 3,
+      "parent": "quiz"
+    },
+    "answer_2_label": {
+      "components": {
+        "UiLabel": {
+          "slot": 3
+        },
+        "UiNode": {},
+        "UiText": {
+          "align": "Center",
+          "size": 34,
+          "text": ""
+        }
+      },
+      "parent": "answer_2"
+    },
+    "answer_3": {
+      "components": {
+        "Answer": {
+          "index": 3
+        },
+        "UiButton": {},
+        "UiNode": {
+          "align": "Center",
+          "background": [0.15, 0.2, 0.4, 1],
+          "padding": [14, 24, 14, 24],
+          "width": {
+            "unit": "Px",
+            "value": 720
+          }
+        }
+      },
+      "order": 4,
+      "parent": "quiz"
+    },
+    "answer_3_label": {
+      "components": {
+        "UiLabel": {
+          "slot": 4
+        },
+        "UiNode": {},
+        "UiText": {
+          "align": "Center",
+          "size": 34,
+          "text": ""
+        }
+      },
+      "parent": "answer_3"
+    },
+    "camera": {
+      "components": {
+        "Camera": {
+          "fov_y_deg": 50
+        },
+        "Transform": {
+          "rotation": [-0.0871557, 0, 0, 0.9961947],
+          "translation": [0, 2, 7]
+        }
+      }
+    },
+    "done": {
+      "components": {
+        "Screen": {
+          "kind": 2
+        },
+        "UiNode": {
+          "align": "Center",
+          "background": [0.06, 0.08, 0.18, 1],
+          "gap": 18,
+          "height": {
+            "unit": "Percent",
+            "value": 100
+          },
+          "justify": "Center",
+          "position": "Absolute",
+          "visible": false,
+          "width": {
+            "unit": "Percent",
+            "value": 100
+          }
+        }
+      }
+    },
+    "menu": {
+      "components": {
+        "Screen": {
+          "kind": 0
+        },
+        "UiNode": {
+          "align": "Center",
+          "background": [0.06, 0.08, 0.18, 1],
+          "gap": 18,
+          "height": {
+            "unit": "Percent",
+            "value": 100
+          },
+          "justify": "Center",
+          "position": "Absolute",
+          "visible": true,
+          "width": {
+            "unit": "Percent",
+            "value": 100
+          }
+        }
+      }
+    },
+    "progress": {
+      "components": {
+        "UiLabel": {
+          "slot": 5
+        },
+        "UiNode": {},
+        "UiText": {
+          "align": "Center",
+          "color": [0.7, 0.8, 1, 1],
+          "size": 30,
+          "text": ""
+        }
+      },
+      "order": 5,
+      "parent": "quiz"
+    },
+    "question": {
+      "components": {
+        "UiLabel": {
+          "slot": 0
+        },
+        "UiNode": {},
+        "UiText": {
+          "align": "Center",
+          "size": 44,
+          "text": ""
+        }
+      },
+      "parent": "quiz"
+    },
+    "quiz": {
+      "components": {
+        "Screen": {
+          "kind": 1
+        },
+        "UiNode": {
+          "align": "Center",
+          "background": [0.06, 0.08, 0.18, 1],
+          "gap": 18,
+          "height": {
+            "unit": "Percent",
+            "value": 100
+          },
+          "justify": "Center",
+          "position": "Absolute",
+          "visible": false,
+          "width": {
+            "unit": "Percent",
+            "value": 100
+          }
+        }
+      }
+    },
+    "result": {
+      "components": {
+        "UiLabel": {
+          "slot": 6
+        },
+        "UiNode": {},
+        "UiText": {
+          "align": "Center",
+          "color": [1, 0.85, 0.35, 1],
+          "size": 56,
+          "text": ""
+        }
+      },
+      "parent": "done"
+    },
+    "start_button": {
+      "components": {
+        "StartButton": {},
+        "UiButton": {},
+        "UiNode": {
+          "background": [0.1, 0.35, 0.9, 1],
+          "padding": [16, 48, 16, 48]
+        }
+      },
+      "order": 1,
+      "parent": "menu"
+    },
+    "start_label": {
+      "components": {
+        "UiNode": {},
+        "UiText": {
+          "align": "Center",
+          "size": 44,
+          "text": "Başla"
+        }
+      },
+      "parent": "start_button"
+    },
+    "title": {
+      "components": {
+        "UiNode": {},
+        "UiText": {
+          "align": "Center",
+          "color": [1, 0.85, 0.35, 1],
+          "size": 64,
+          "text": "Motor Bilgi Yarışması"
+        }
+      },
+      "parent": "menu"
+    }
+  },
+  "format": 1
+}

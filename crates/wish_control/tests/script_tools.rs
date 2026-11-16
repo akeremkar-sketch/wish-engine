@@ -938,3 +938,156 @@ fn the_hop_example_builds_is_won_by_its_test_and_replays() {
     let replayed = ws.call("replay", &json!({ "action": "run", "name": "hop" }), &agent);
     assert_eq!(replayed["passed"], true, "{replayed}");
 }
+
+/// The showcase game `examples/islands` (M7): built with the engine's own
+/// tools; its tests play the whole level (lift, checkpoint, every crystal,
+/// the goal, a golden picture of the win screen), and a recorded run
+/// replays bit for bit.
+#[test]
+fn the_islands_showcase_is_won_by_its_tests_and_replays() {
+    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/islands");
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("example-islands");
+    let _ = std::fs::remove_dir_all(&dir);
+    copy_dir(&source, &dir);
+    let mut ws = open(&dir);
+    let agent = parse_actor("agent");
+    let built = ws.call("script_build", &json!({}), &agent);
+    assert_eq!(built["passed"], true, "{built}");
+    assert_eq!(built["warnings"], 0, "no warnings: {built}");
+    let checked = ws.call("check", &json!({}), &agent);
+    assert_eq!(checked["diagnostics"], json!([]), "{checked}");
+    let tests = ws.call("test_run", &json!({}), &agent);
+    assert_eq!(tests["passed"], true, "{tests}");
+    assert_eq!(tests["tests"], 4);
+
+    let started = ws.call("sim_start", &json!({}), &agent);
+    let id = started["session"].as_str().unwrap().to_owned();
+    ws.call(
+        "replay",
+        &json!({ "action": "record", "session": id }),
+        &agent,
+    );
+    for (input, frames) in [
+        (json!({}), 20),
+        (json!({ "move": [0, 1] }), 40),
+        (json!({ "move": [0, 1], "jump": true }), 1),
+        (json!({ "move": [0, 1] }), 45),
+        (json!({ "move": [0.7, 0.7] }), 10),
+        (json!({ "move": [0.7, 0.7], "jump": true }), 1),
+        (json!({ "move": [0.7, 0.7] }), 50),
+        (json!({}), 300),
+    ] {
+        ws.call(
+            "sim_step",
+            &json!({ "session": id, "frames": frames, "input": input }),
+            &agent,
+        );
+    }
+    ws.call(
+        "replay",
+        &json!({ "action": "save", "session": id, "name": "islands" }),
+        &agent,
+    );
+    let replayed = ws.call(
+        "replay",
+        &json!({ "action": "run", "name": "islands" }),
+        &agent,
+    );
+    assert_eq!(replayed["passed"], true, "{replayed}");
+}
+
+/// The brick breaker `examples/bricks` (M7): a 2D game with an orthographic
+/// camera, sprites and 2D physics; its test clears every brick, and a
+/// recorded run replays bit for bit.
+#[test]
+fn the_bricks_example_is_won_by_its_tests_and_replays() {
+    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/bricks");
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("example-bricks");
+    let _ = std::fs::remove_dir_all(&dir);
+    copy_dir(&source, &dir);
+    let mut ws = open(&dir);
+    let agent = parse_actor("agent");
+    let built = ws.call("script_build", &json!({}), &agent);
+    assert_eq!(built["passed"], true, "{built}");
+    assert_eq!(built["warnings"], 0, "no warnings: {built}");
+    let checked = ws.call("check", &json!({}), &agent);
+    assert_eq!(checked["diagnostics"], json!([]), "{checked}");
+    let tests = ws.call("test_run", &json!({}), &agent);
+    assert_eq!(tests["passed"], true, "{tests}");
+    assert_eq!(tests["tests"], 4);
+
+    let started = ws.call("sim_start", &json!({}), &agent);
+    let id = started["session"].as_str().unwrap().to_owned();
+    ws.call(
+        "replay",
+        &json!({ "action": "record", "session": id }),
+        &agent,
+    );
+    ws.call("sim_step", &json!({ "session": id, "frames": 900 }), &agent);
+    ws.call(
+        "replay",
+        &json!({ "action": "save", "session": id, "name": "bricks" }),
+        &agent,
+    );
+    let replayed = ws.call(
+        "replay",
+        &json!({ "action": "run", "name": "bricks" }),
+        &agent,
+    );
+    assert_eq!(replayed["passed"], true, "{replayed}");
+}
+
+/// The quiz `examples/quiz` (M7): a game made almost only of interface;
+/// its tests click through the menu and the questions with the pointer, and
+/// a recorded run of clicks replays bit for bit.
+#[test]
+fn the_quiz_example_is_played_by_clicks_and_replays() {
+    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/quiz");
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("example-quiz");
+    let _ = std::fs::remove_dir_all(&dir);
+    copy_dir(&source, &dir);
+    let mut ws = open(&dir);
+    let agent = parse_actor("agent");
+    let built = ws.call("script_build", &json!({}), &agent);
+    assert_eq!(built["passed"], true, "{built}");
+    assert_eq!(built["warnings"], 0, "no warnings: {built}");
+    let checked = ws.call("check", &json!({}), &agent);
+    assert_eq!(checked["diagnostics"], json!([]), "{checked}");
+    let tests = ws.call("test_run", &json!({}), &agent);
+    assert_eq!(tests["passed"], true, "{tests}");
+    assert_eq!(tests["tests"], 3);
+
+    let started = ws.call("sim_start", &json!({}), &agent);
+    let id = started["session"].as_str().unwrap().to_owned();
+    ws.call(
+        "replay",
+        &json!({ "action": "record", "session": id }),
+        &agent,
+    );
+    for (input, frames) in [
+        (json!({}), 2),
+        (json!({ "pointer": [640, 400], "click": true }), 1),
+        (json!({ "pointer": [640, 400] }), 2),
+        (json!({ "pointer": [640, 247], "click": true }), 1),
+        (json!({ "pointer": [640, 247] }), 2),
+        (json!({ "pointer": [640, 327], "click": true }), 1),
+        (json!({ "pointer": [640, 327] }), 2),
+    ] {
+        ws.call(
+            "sim_step",
+            &json!({ "session": id, "frames": frames, "input": input }),
+            &agent,
+        );
+    }
+    ws.call(
+        "replay",
+        &json!({ "action": "save", "session": id, "name": "quiz" }),
+        &agent,
+    );
+    let replayed = ws.call(
+        "replay",
+        &json!({ "action": "run", "name": "quiz" }),
+        &agent,
+    );
+    assert_eq!(replayed["passed"], true, "{replayed}");
+}

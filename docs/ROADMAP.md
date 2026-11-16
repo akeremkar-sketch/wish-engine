@@ -171,6 +171,8 @@ M1'in ilk iş paketinde yapılacak tek ortam işi: derleme çıktılarını OneD
 
 ## M7 — Kendi motorumuzla oyun
 
+**Durum: tamamlandı (16 Kasım 2026).** Tasarım ve sonuç: [design/M7-vitrin-oyunu.md](design/M7-vitrin-oyunu.md) (§11 "M7 sonucu"); sürtünme günlüğü: [friction.md](friction.md) (F1–F10, hepsi motorda düzeltildi). Vitrin oyunu ve iki örnek yalnızca motorun araçlarıyla kuruldu. **Sonnet 5.5 · medium 41/41 (%100)**; MCP Inspector ile 11/11. Haiku koşumu ve Unity karşılaştırma koşumu düzenekleri hazır, kullanıcı seçimiyle koşulmadı (bekleyen adım); Unreal yok (disk).
+
 **Çıktı.** Vitrin oyunu (kararlaştırıldı: küçük bir 3D platform oyunu), iki ek küçük örnek, 40+ görevlik değerlendirme takımı, sürtünme günlüğü ve düzeltmeleri, kısa motor kılavuzu (`wish://docs/guide`).
 
 **Yöntem.** Oyunları bilinçli olarak orta ve küçük modellerle yaptırın. Ajanın takıldığı her yer bir motor hatasıdır: ya araç eksik, ya hata mesajı yetersiz, ya belge yanlış. Çözüm oyunda değil motorda yapılır.

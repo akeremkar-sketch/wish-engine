@@ -271,7 +271,7 @@ fn capture_frame(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
         json!({ "mime": "image/png", "width": width, "height": height, "bytes": png.len() });
     match &out_path {
         Some(path) => {
-            let target = crate::documents::inside_project(workspace.root(), path)?;
+            let target = crate::documents::prepare_output(workspace.root(), path)?;
             if target.exists() && !args.flag("overwrite") {
                 return Err(Diagnostic::error(
                     "output_exists",

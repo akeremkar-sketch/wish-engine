@@ -533,3 +533,325 @@ fn removing_a_touching_collider_says_they_stopped_touching() {
     );
     let _ = ground;
 }
+
+#[test]
+fn a_walking_character_touches_the_ground_once() {
+    // The controller keeps a skin of air under the character; walking must
+    // not start and end the contact with the floor every tick (M7 friction
+    // log, F4).
+    let mut app = app();
+    floor(&mut app);
+    let world = app.world_mut();
+    let hero = world.spawn().unwrap();
+    world
+        .insert(hero, Transform::from_translation(Vec3::new(0.0, 0.92, 0.0)))
+        .unwrap();
+    world
+        .insert(
+            hero,
+            Collider {
+                shape: ColliderShape::Capsule,
+                size: Vec3::new(0.6, 1.8, 0.6),
+                ..Collider::default()
+            },
+        )
+        .unwrap();
+    world
+        .insert(
+            hero,
+            RigidBody {
+                kind: BodyKind::Kinematic,
+                ..RigidBody::default()
+            },
+        )
+        .unwrap();
+    world.insert(hero, CharacterController::default()).unwrap();
+    world
+        .insert(
+            hero,
+            CharacterMotion {
+                velocity: Vec3::new(3.0, -1.0, 0.0),
+            },
+        )
+        .unwrap();
+    run(&mut app, 120);
+    let world = app.world();
+    assert!(world.get::<CharacterState>(hero).unwrap().grounded);
+    assert_eq!(world.events_sent("CollisionStarted").unwrap(), 1);
+    assert_eq!(world.events_sent("CollisionEnded").unwrap(), 0);
+}
+
+#[test]
+fn a_moving_platform_carries_the_character_standing_on_it() {
+    // A kinematic platform slides 6.5 m along +X in 3 s, starting and
+    // stopping smoothly, moved by a system the way game code moves
+    // platforms; the character on it asks for no motion of its own and goes
+    // along exactly (M7 friction log, F8: Rapier's own following fell
+    // behind and off).
+    let mut app = app();
+    app.add_system(
+        System::new("mover", |world, _| {
+            let now = world
+                .resource::<wish_types::time::Time>()
+                .map_or(0.0, |t| t.elapsed as f32);
+            let a = ((now - 1.0) / 3.0).clamp(0.0, 1.0);
+            let x = 6.5 * a * a * (3.0 - 2.0 * a);
+            let platforms: Vec<Entity> = world
+                .entities()
+                .filter(|e| {
+                    world
+                        .get::<RigidBody>(*e)
+                        .is_some_and(|b| b.kind == BodyKind::Kinematic)
+                })
+                .filter(|e| !world.has::<CharacterController>(*e))
+                .collect();
+            for platform in platforms {
+                world.insert(
+                    platform,
+                    Transform::from_translation(Vec3::new(x, -0.25, 0.0)),
+                )?;
+            }
+            Ok(())
+        })
+        .before(wish_physics::SYSTEM),
+    )
+    .unwrap();
+    let world = app.world_mut();
+    let platform = world.spawn().unwrap();
+    world
+        .insert(
+            platform,
+            Transform::from_translation(Vec3::new(0.0, -0.25, 0.0)),
+        )
+        .unwrap();
+    world
+        .insert(
+            platform,
+            Collider {
+                size: Vec3::new(30.0, 0.5, 3.0),
+                ..Collider::default()
+            },
+        )
+        .unwrap();
+    world
+        .insert(
+            platform,
+            RigidBody {
+                kind: BodyKind::Kinematic,
+                ..RigidBody::default()
+            },
+        )
+        .unwrap();
+    let hero = world.spawn().unwrap();
+    world
+        .insert(hero, Transform::from_translation(Vec3::new(0.0, 0.92, 0.0)))
+        .unwrap();
+    world
+        .insert(
+            hero,
+            Collider {
+                shape: ColliderShape::Capsule,
+                size: Vec3::new(0.6, 1.8, 0.6),
+                ..Collider::default()
+            },
+        )
+        .unwrap();
+    world
+        .insert(
+            hero,
+            RigidBody {
+                kind: BodyKind::Kinematic,
+                ..RigidBody::default()
+            },
+        )
+        .unwrap();
+    world.insert(hero, CharacterController::default()).unwrap();
+    world
+        .insert(
+            hero,
+            CharacterMotion {
+                velocity: Vec3::new(0.0, -1.0, 0.0),
+            },
+        )
+        .unwrap();
+    run(&mut app, 60);
+    assert!(app.world().get::<CharacterState>(hero).unwrap().grounded);
+    run(&mut app, 200);
+    let at = app.world().get::<Transform>(hero).unwrap().translation;
+    assert!((at.x - 6.5).abs() < 0.01, "carried to {at:?}");
+    assert!(app.world().get::<CharacterState>(hero).unwrap().grounded);
+}
+
+thread_local! {
+    /// Where the carrying tests' platform is at a time (systems are plain
+    /// functions; each test runs on its own thread).
+    static PLACE: std::cell::Cell<fn(f32) -> Vec3> = const { std::cell::Cell::new(|_| Vec3::ZERO) };
+}
+
+/// A platform moved by a system to `place(t)`, and a capsule
+/// character standing on it, for the carrying tests.
+fn platform_and_hero(app: &mut App, place: fn(f32) -> Vec3) -> Entity {
+    PLACE.with(|p| p.set(place));
+    app.add_system(
+        System::new("mover", |world, _| {
+            let place = PLACE.with(std::cell::Cell::get);
+            let now = world
+                .resource::<wish_types::time::Time>()
+                .map_or(0.0, |t| t.elapsed as f32);
+            let platforms: Vec<Entity> = world
+                .entities()
+                .filter(|e| {
+                    world
+                        .get::<RigidBody>(*e)
+                        .is_some_and(|b| b.kind == BodyKind::Kinematic)
+                })
+                .filter(|e| !world.has::<CharacterController>(*e))
+                .collect();
+            for platform in platforms {
+                world.insert(platform, Transform::from_translation(place(now)))?;
+            }
+            Ok(())
+        })
+        .before(wish_physics::SYSTEM),
+    )
+    .unwrap();
+    let world = app.world_mut();
+    let platform = world.spawn().unwrap();
+    world
+        .insert(platform, Transform::from_translation(place(0.0)))
+        .unwrap();
+    world
+        .insert(
+            platform,
+            Collider {
+                size: Vec3::new(30.0, 0.5, 3.0),
+                ..Collider::default()
+            },
+        )
+        .unwrap();
+    world
+        .insert(
+            platform,
+            RigidBody {
+                kind: BodyKind::Kinematic,
+                ..RigidBody::default()
+            },
+        )
+        .unwrap();
+    let hero = world.spawn().unwrap();
+    world
+        .insert(
+            hero,
+            Transform::from_translation(place(0.0) + Vec3::new(0.0, 1.17, 0.0)),
+        )
+        .unwrap();
+    world
+        .insert(
+            hero,
+            Collider {
+                shape: ColliderShape::Capsule,
+                size: Vec3::new(0.6, 1.8, 0.6),
+                ..Collider::default()
+            },
+        )
+        .unwrap();
+    world
+        .insert(
+            hero,
+            RigidBody {
+                kind: BodyKind::Kinematic,
+                ..RigidBody::default()
+            },
+        )
+        .unwrap();
+    world.insert(hero, CharacterController::default()).unwrap();
+    world
+        .insert(
+            hero,
+            CharacterMotion {
+                velocity: Vec3::new(0.0, -1.0, 0.0),
+            },
+        )
+        .unwrap();
+    hero
+}
+
+fn wall(app: &mut App, at: Vec3, size: Vec3) {
+    let world = app.world_mut();
+    let wall = world.spawn().unwrap();
+    world.insert(wall, Transform::from_translation(at)).unwrap();
+    world
+        .insert(
+            wall,
+            Collider {
+                size,
+                ..Collider::default()
+            },
+        )
+        .unwrap();
+}
+
+#[test]
+fn a_moving_platform_does_not_carry_its_character_through_a_wall() {
+    // The platform slides under a wall that starts above its top; the
+    // character on it is stopped by the wall and stays on the platform,
+    // which goes on under it (M7 closing review: the carry ignored walls).
+    let mut app = app();
+    let hero = platform_and_hero(&mut app, |t| {
+        Vec3::new((t - 1.0).clamp(0.0, 3.0) * 2.0, -0.25, 0.0)
+    });
+    // The wall's face is at x = 3, its bottom 0.3 m above the platform.
+    wall(
+        &mut app,
+        Vec3::new(3.5, 1.65, 0.0),
+        Vec3::new(1.0, 2.7, 3.0),
+    );
+    run(&mut app, 60);
+    assert!(app.world().get::<CharacterState>(hero).unwrap().grounded);
+    run(&mut app, 240);
+    let at = app.world().get::<Transform>(hero).unwrap().translation;
+    assert!(at.x < 2.75, "pushed into the wall: {at:?}");
+    assert!(at.x > 2.4, "stopped too early: {at:?}");
+    assert!(app.world().get::<CharacterState>(hero).unwrap().grounded);
+}
+
+#[test]
+fn a_lift_does_not_carry_its_character_into_a_ceiling() {
+    // A lift rises 2 m, to 1.5 m under a ceiling: less than the character's
+    // height, so the character is squeezed (the lift is moved by the game and
+    // goes where it is told). The character stops with its head at the
+    // ceiling, within the contact tolerance; before the M7 closing review it
+    // was carried into the ceiling and then pushed out above it.
+    let mut app = app();
+    let hero = platform_and_hero(&mut app, |t| {
+        Vec3::new(0.0, -0.25 + (t - 1.0).clamp(0.0, 1.0) * 2.0, 0.0)
+    });
+    // The ceiling's underside is at y = 3.5.
+    wall(&mut app, Vec3::new(0.0, 4.0, 0.0), Vec3::new(4.0, 1.0, 4.0));
+    run(&mut app, 60);
+    assert!(app.world().get::<CharacterState>(hero).unwrap().grounded);
+    run(&mut app, 120);
+    let at = app.world().get::<Transform>(hero).unwrap().translation;
+    // The capsule's top is 0.9 above its centre.
+    assert!(at.y + 0.9 <= 3.5 + 0.1, "lifted into the ceiling: {at:?}");
+}
+
+#[test]
+fn a_sinking_platform_keeps_its_character() {
+    // A platform going down at 15 m/s from the first tick: the character was
+    // found on it before the step (where it stood), so it is carried down
+    // rather than left in the air by a ray that cannot reach the platform.
+    let mut app = app();
+    let hero = platform_and_hero(&mut app, |t| {
+        Vec3::new(0.0, -0.25 - (t - 1.0).clamp(0.0, 1.0) * 15.0, 0.0)
+    });
+    run(&mut app, 60);
+    assert!(app.world().get::<CharacterState>(hero).unwrap().grounded);
+    run(&mut app, 30);
+    let world = app.world();
+    let at = world.get::<Transform>(hero).unwrap().translation;
+    // Free, the character would have sunk 0.5 m (it asks for 1 m/s down);
+    // carried, it stands on the platform, 7 m down by now.
+    assert!(at.y < -6.0, "not carried down: {at:?}");
+    assert!(world.get::<CharacterState>(hero).unwrap().grounded);
+}

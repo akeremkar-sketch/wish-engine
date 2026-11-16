@@ -93,7 +93,7 @@ pub mod prelude {
         CollisionEnded, CollisionStarted, Color, Commands, DirectionalLight, Entity, EventReader,
         EventWriter, Exposure, GlobalTransform, Material, Model, PhysicsSettings, PlaySound,
         PointLight, Primitive, Query, Ray, RayHit, Res, ResMut, RigidBody, Shape, Sky, SoundEnded,
-        SoundStarted, SpotLight, Text, Time, Transform, With, Without, component, event,
+        SoundStarted, SpotLight, Text, Time, Transform, With, Without, asset, component, event,
         random_f32, random_range, random_u64, raycast, resource, schema, system, text, text_of,
         world_position,
     };
@@ -122,6 +122,12 @@ pub fn text(text: &str) -> Text {
             Text::EMPTY
         }
     }
+}
+
+/// A reference to a project file, for a field of type `AssetRef` (such as
+/// `PlaySound.clip` or `UiImage.image`): `asset("assets/sounds/jump.wav")`.
+pub fn asset(path: &str) -> AssetRef {
+    AssetRef::from_text(text(path))
 }
 
 /// The string a `Text` handle stands for (empty for an unknown handle).

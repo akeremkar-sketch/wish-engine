@@ -26,8 +26,10 @@ use wish_types::transform::{GlobalTransform, Transform};
 pub mod clip;
 #[cfg(feature = "output")]
 pub mod output;
+pub mod synth;
 
 pub use clip::{Clip, MAX_DECODED_SAMPLES, MAX_FILE_BYTES, decode, sine_wav};
+pub use synth::{MAX_SYNTH_SECONDS, SYNTH_RATE, Synth, Wave, synth_wav};
 
 /// The name of the audio system in an app.
 pub const SYSTEM: &str = "audio";

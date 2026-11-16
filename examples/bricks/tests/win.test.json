@@ -1,0 +1,16 @@
+{
+  "format": 1,
+  "scene": "scenes/main.scene.json",
+  "seed": 1,
+  "steps": [
+    { "frames": 2 },
+    { "until": "Game.score >= 100", "max_frames": 3000 },
+    { "expect": "Game.bricks == 30", "message": "ten bricks gone for 100 points" },
+    { "until": "Game.won == true", "max_frames": 9000 },
+    { "expect": "Game.score == 400 && count(Brick) == 0", "message": "every brick gone" },
+    { "frames": 5 },
+    { "expect": "UiNode.visible == true", "entity": "end_panel", "message": "the end panel is shown" },
+    { "expect": "UiText.text == \"Kazandın!\"", "entity": "end_text", "message": "it says the player won" },
+    { "capture": { "golden": "tests/golden/won.png", "width": 320, "height": 180 } }
+  ]
+}

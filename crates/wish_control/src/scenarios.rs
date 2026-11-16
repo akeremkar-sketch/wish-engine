@@ -348,7 +348,11 @@ impl Workspace {
                 Diagnostic::error(
                     "file_unreadable",
                     format!("Could not read '{file}': {error}."),
-                    "Check that the file can be read.",
+                    if error.kind() == std::io::ErrorKind::InvalidData {
+                        "The file is not UTF-8 text (a tool wrote it in a local code page?). Save it as UTF-8, without a byte order mark."
+                    } else {
+                        "Check that the file can be read."
+                    },
                 )
                 .at_file(file)
             })?;
@@ -608,7 +612,7 @@ impl Workspace {
                 |_| golden.clone(),
                 |p| p.to_string_lossy().replace('\\', "/"),
             );
-            let real = crate::documents::inside_project(self.root(), &relative)?;
+            let real = crate::documents::prepare_output(self.root(), &relative)?;
             std::fs::write(real, png).map_err(|error| {
                 Diagnostic::error(
                     "file_unwritable",

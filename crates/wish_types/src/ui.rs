@@ -91,7 +91,10 @@ pub enum UiPosition {
 }
 
 /// A box of the interface. Its children (in the entity hierarchy) with a
-/// `UiNode` are laid out inside it.
+/// `UiNode` are laid out inside it, **in sibling order**: in a scene file
+/// that is the children's `order` (a spawn or reparent operation takes
+/// `order`), and by id where none is given, so give `order` to put a
+/// title above its buttons.
 #[component]
 pub struct UiNode {
     /// The box's width.

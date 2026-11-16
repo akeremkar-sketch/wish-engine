@@ -59,6 +59,7 @@ fn examples() -> Vec<(&'static str, Value)> {
         ("scene_get", json!({ "detail": "full" })),
         ("entity_get", json!({ "ids": ["box", "cam"] })),
         ("entity_get", json!({ "ids": ["bx"] })),
+        ("entity_get", json!({ "resources": ["Sky"] })),
         (
             "entity_query",
             json!({ "with": ["Primitive"], "components": ["Primitive"] }),
@@ -105,6 +106,15 @@ fn examples() -> Vec<(&'static str, Value)> {
             "asset_move",
             json!({ "from": "assets/gone.glb", "to": "assets/x.glb" }),
         ),
+        (
+            "asset_create",
+            json!({ "path": "assets/sounds/blip.wav", "sound": { "wave": "square", "frequency": 300, "end_frequency": 700, "seconds": 0.1 } }),
+        ),
+        (
+            "asset_create",
+            json!({ "path": "assets/dot.png", "picture": { "shape": "circle", "width": 16, "height": 16, "color": [1, 0, 0, 1] } }),
+        ),
+        ("asset_create", json!({ "path": "assets/music.mp3" })),
         ("scene_get", json!({ "detail": "normal" })),
         ("asset_info", json!({ "path": "assets/models/tri.glb" })),
         ("sim_step", json!({})),

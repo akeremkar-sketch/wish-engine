@@ -1,0 +1,852 @@
+{
+  "entities": {
+    "ball": {
+      "components": {
+        "Ball": {
+          "speed": 10
+        },
+        "BodyVelocity": {
+          "linear": [3, 5, 0]
+        },
+        "Collider": {
+          "friction": 0,
+          "restitution": 1,
+          "shape": "Sphere",
+          "size": [0.3, 0.3, 0.3]
+        },
+        "RigidBody": {
+          "angular_damping": 0,
+          "ccd": true,
+          "gravity_scale": 0,
+          "kind": "Dynamic",
+          "linear_damping": 0,
+          "lock_rotation": [
+            true,
+            true,
+            true
+          ],
+          "lock_translation": [
+            false,
+            false,
+            true
+          ]
+        },
+        "Sprite": {
+          "image": "assets/ball.png",
+          "pixels_per_unit": 106.67
+        },
+        "Transform": {
+          "translation": [0, -4.6, 0]
+        }
+      }
+    },
+    "brick_0_0": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.95, 0.3, 0.3, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [-6.75, 4.5, 0]
+        }
+      }
+    },
+    "brick_0_1": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.95, 0.3, 0.3, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [-5.25, 4.5, 0]
+        }
+      }
+    },
+    "brick_0_2": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.95, 0.3, 0.3, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [-3.75, 4.5, 0]
+        }
+      }
+    },
+    "brick_0_3": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.95, 0.3, 0.3, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [-2.25, 4.5, 0]
+        }
+      }
+    },
+    "brick_0_4": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.95, 0.3, 0.3, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [-0.75, 4.5, 0]
+        }
+      }
+    },
+    "brick_0_5": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.95, 0.3, 0.3, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [0.75, 4.5, 0]
+        }
+      }
+    },
+    "brick_0_6": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.95, 0.3, 0.3, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [2.25, 4.5, 0]
+        }
+      }
+    },
+    "brick_0_7": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.95, 0.3, 0.3, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [3.75, 4.5, 0]
+        }
+      }
+    },
+    "brick_0_8": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.95, 0.3, 0.3, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [5.25, 4.5, 0]
+        }
+      }
+    },
+    "brick_0_9": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.95, 0.3, 0.3, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [6.75, 4.5, 0]
+        }
+      }
+    },
+    "brick_1_0": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.95, 0.6, 0.2, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [-6.75, 4.0, 0]
+        }
+      }
+    },
+    "brick_1_1": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.95, 0.6, 0.2, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [-5.25, 4.0, 0]
+        }
+      }
+    },
+    "brick_1_2": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.95, 0.6, 0.2, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [-3.75, 4.0, 0]
+        }
+      }
+    },
+    "brick_1_3": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.95, 0.6, 0.2, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [-2.25, 4.0, 0]
+        }
+      }
+    },
+    "brick_1_4": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.95, 0.6, 0.2, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [-0.75, 4.0, 0]
+        }
+      }
+    },
+    "brick_1_5": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.95, 0.6, 0.2, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [0.75, 4.0, 0]
+        }
+      }
+    },
+    "brick_1_6": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.95, 0.6, 0.2, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [2.25, 4.0, 0]
+        }
+      }
+    },
+    "brick_1_7": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.95, 0.6, 0.2, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [3.75, 4.0, 0]
+        }
+      }
+    },
+    "brick_1_8": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.95, 0.6, 0.2, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [5.25, 4.0, 0]
+        }
+      }
+    },
+    "brick_1_9": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.95, 0.6, 0.2, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [6.75, 4.0, 0]
+        }
+      }
+    },
+    "brick_2_0": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.95, 0.85, 0.25, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [-6.75, 3.5, 0]
+        }
+      }
+    },
+    "brick_2_1": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.95, 0.85, 0.25, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [-5.25, 3.5, 0]
+        }
+      }
+    },
+    "brick_2_2": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.95, 0.85, 0.25, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [-3.75, 3.5, 0]
+        }
+      }
+    },
+    "brick_2_3": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.95, 0.85, 0.25, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [-2.25, 3.5, 0]
+        }
+      }
+    },
+    "brick_2_4": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.95, 0.85, 0.25, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [-0.75, 3.5, 0]
+        }
+      }
+    },
+    "brick_2_5": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.95, 0.85, 0.25, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [0.75, 3.5, 0]
+        }
+      }
+    },
+    "brick_2_6": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.95, 0.85, 0.25, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [2.25, 3.5, 0]
+        }
+      }
+    },
+    "brick_2_7": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.95, 0.85, 0.25, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [3.75, 3.5, 0]
+        }
+      }
+    },
+    "brick_2_8": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.95, 0.85, 0.25, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [5.25, 3.5, 0]
+        }
+      }
+    },
+    "brick_2_9": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.95, 0.85, 0.25, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [6.75, 3.5, 0]
+        }
+      }
+    },
+    "brick_3_0": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.35, 0.85, 0.4, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [-6.75, 3.0, 0]
+        }
+      }
+    },
+    "brick_3_1": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.35, 0.85, 0.4, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [-5.25, 3.0, 0]
+        }
+      }
+    },
+    "brick_3_2": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.35, 0.85, 0.4, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [-3.75, 3.0, 0]
+        }
+      }
+    },
+    "brick_3_3": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.35, 0.85, 0.4, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [-2.25, 3.0, 0]
+        }
+      }
+    },
+    "brick_3_4": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.35, 0.85, 0.4, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [-0.75, 3.0, 0]
+        }
+      }
+    },
+    "brick_3_5": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.35, 0.85, 0.4, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [0.75, 3.0, 0]
+        }
+      }
+    },
+    "brick_3_6": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.35, 0.85, 0.4, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [2.25, 3.0, 0]
+        }
+      }
+    },
+    "brick_3_7": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.35, 0.85, 0.4, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [3.75, 3.0, 0]
+        }
+      }
+    },
+    "brick_3_8": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.35, 0.85, 0.4, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [5.25, 3.0, 0]
+        }
+      }
+    },
+    "brick_3_9": {
+      "components": {
+        "Brick": {},
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [1.4, 0.4, 1]
+        },
+        "Sprite": {
+          "color": [0.35, 0.85, 0.4, 1],
+          "rect": [0, 0, 140, 40]
+        },
+        "Transform": {
+          "translation": [6.75, 3.0, 0]
+        }
+      }
+    },
+    "camera": {
+      "components": {
+        "Camera": {
+          "ortho_height": 12.5,
+          "projection": "Orthographic"
+        },
+        "Transform": {
+          "translation": [0, 0, 10]
+        }
+      }
+    },
+    "end_panel": {
+      "components": {
+        "EndPanel": {},
+        "UiNode": {
+          "background": [0.05, 0.1, 0.25, 0.9],
+          "offset": [440, 300],
+          "padding": [24, 48, 24, 48],
+          "position": "Absolute",
+          "visible": false
+        }
+      }
+    },
+    "end_text": {
+      "components": {
+        "EndText": {},
+        "UiNode": {},
+        "UiText": {
+          "align": "Center",
+          "color": [1, 0.85, 0.35, 1],
+          "size": 52,
+          "text": ""
+        }
+      },
+      "parent": "end_panel"
+    },
+    "hud": {
+      "components": {
+        "Hud": {},
+        "UiNode": {
+          "offset": [24, 16],
+          "position": "Absolute"
+        },
+        "UiText": {
+          "size": 32,
+          "text": "Puan: 0   Can: 3"
+        }
+      }
+    },
+    "paddle": {
+      "components": {
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [2.2, 0.3, 1]
+        },
+        "Paddle": {
+          "auto": true
+        },
+        "RigidBody": {
+          "kind": "Kinematic"
+        },
+        "Sprite": {
+          "color": [0.9, 0.9, 0.95, 1],
+          "rect": [0, 0, 220, 30]
+        },
+        "Transform": {
+          "translation": [0, -5.2, 0]
+        }
+      }
+    },
+    "wall_left": {
+      "components": {
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [0.5, 13, 1]
+        },
+        "Sprite": {
+          "color": [0.35, 0.38, 0.45, 1],
+          "rect": [0, 0, 50.0, 1300]
+        },
+        "Transform": {
+          "translation": [-8.25, 0, 0]
+        }
+      }
+    },
+    "wall_right": {
+      "components": {
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [0.5, 13, 1]
+        },
+        "Sprite": {
+          "color": [0.35, 0.38, 0.45, 1],
+          "rect": [0, 0, 50.0, 1300]
+        },
+        "Transform": {
+          "translation": [8.25, 0, 0]
+        }
+      }
+    },
+    "wall_top": {
+      "components": {
+        "Collider": {
+          "friction": 0,
+          "shape": "Box",
+          "size": [17, 0.5, 1]
+        },
+        "Sprite": {
+          "color": [0.35, 0.38, 0.45, 1],
+          "rect": [0, 0, 1700, 50.0]
+        },
+        "Transform": {
+          "translation": [0, 6.25, 0]
+        }
+      }
+    }
+  },
+  "format": 1,
+  "resources": {
+    "Sky": {
+      "ground": [0.02, 0.02, 0.05, 1],
+      "horizon": [0.05, 0.05, 0.1, 1],
+      "luminance": 2000,
+      "zenith": [0.02, 0.02, 0.05, 1]
+    }
+  }
+}
