@@ -12,7 +12,7 @@ use std::path::Path;
 
 use crate::i18n::{t, tf};
 use egui::{ColorImage, Sense, TextureHandle, TextureOptions, Ui, vec2};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 /// A file being dragged out of the browser: its project-relative path. A
 /// drop target takes it (the view places it; an asset field uses it).
@@ -84,6 +84,8 @@ pub(crate) struct BrowserActions {
     pub rename: Option<(String, String)>,
     /// Open a file in an outside program.
     pub open: Option<String>,
+    /// Make a placeholder file (`asset_create`): its path and arguments.
+    pub create: Option<(String, Value)>,
 }
 
 impl BrowserActions {
@@ -92,6 +94,7 @@ impl BrowserActions {
             || self.place.is_some()
             || self.rename.is_some()
             || self.open.is_some()
+            || self.create.is_some()
     }
 }
 
@@ -157,11 +160,11 @@ fn thumbnail(root: &Path, path: &str) -> Option<ColorImage> {
 
 fn badge(ui: &mut Ui, kind: &str) {
     let (text, color) = match kind {
-        "image" => ("img", egui::Color32::from_rgb(70, 140, 200)),
-        "model" => ("3d", egui::Color32::from_rgb(200, 140, 70)),
-        "sound" => ("snd", egui::Color32::from_rgb(110, 180, 110)),
-        "prefab" => ("pfb", egui::Color32::from_rgb(190, 110, 190)),
-        _ => ("file", egui::Color32::from_rgb(130, 130, 130)),
+        "image" => (t("img"), egui::Color32::from_rgb(70, 140, 200)),
+        "model" => (t("3d"), egui::Color32::from_rgb(200, 140, 70)),
+        "sound" => (t("snd"), egui::Color32::from_rgb(110, 180, 110)),
+        "prefab" => (t("pfb"), egui::Color32::from_rgb(190, 110, 190)),
+        _ => (t("file"), egui::Color32::from_rgb(130, 130, 130)),
     };
     let (rect, _) =
         ui.allocate_exact_size(vec2(THUMBNAIL as f32, THUMBNAIL as f32), Sense::hover());
@@ -183,6 +186,54 @@ fn size_text(bytes: u64) -> String {
         b if b < 10_000_000 => format!("{:.0} KB", b as f64 / 1000.0),
         b => format!("{:.1} MB", b as f64 / 1_000_000.0),
     }
+}
+
+/// A free name for a new file: `<base>.<ext>`, `<base>_2.<ext>`...
+fn free_name(view: &BrowserView<'_>, folder: &str, base: &str, ext: &str) -> String {
+    (1..1000)
+        .map(|n| {
+            if n == 1 {
+                format!("{folder}/{base}.{ext}")
+            } else {
+                format!("{folder}/{base}_{n}.{ext}")
+            }
+        })
+        .find(|path| !view.assets.iter().any(|a| a.path == *path) && !view.root.join(path).exists())
+        .unwrap_or_else(|| format!("{folder}/{base}_new.{ext}"))
+}
+
+/// "New...": a placeholder sound or picture, made from a few numbers (the
+/// `asset_create` tool, as an agent makes them).
+fn create_menu(ui: &mut Ui, view: &BrowserView<'_>, actions: &mut BrowserActions) {
+    ui.menu_button(t("New..."), |ui| {
+        ui.weak(t("A placeholder until the real file exists:"));
+        let sounds: [(&str, Value); 4] = [
+            (t("Jump sound"), json!({ "wave": "square", "frequency": 300, "end_frequency": 700, "seconds": 0.15, "release": 0.1 })),
+            (t("Coin sound"), json!({ "wave": "sine", "frequency": 900, "end_frequency": 1400, "seconds": 0.12 })),
+            (t("Thud sound"), json!({ "wave": "noise", "seconds": 0.25, "release": 0.2 })),
+            (t("Beep sound"), json!({ "wave": "sine", "frequency": 440, "seconds": 0.2, "release": 0.05 })),
+        ];
+        for (label, sound) in sounds {
+            if ui.button(label).clicked() {
+                let path = free_name(view, "assets/sounds", "sound", "wav");
+                actions.create = Some((path, json!({ "sound": sound })));
+                ui.close();
+            }
+        }
+        ui.separator();
+        let pictures: [(&str, Value); 3] = [
+            (t("Circle picture"), json!({ "width": 64, "height": 64, "shape": "circle", "color": [1.0, 0.8, 0.2, 1.0], "background": [0, 0, 0, 0] })),
+            (t("Square picture"), json!({ "width": 64, "height": 64, "shape": "fill", "color": [0.3, 0.6, 1.0, 1.0] })),
+            (t("Diamond picture"), json!({ "width": 64, "height": 64, "shape": "diamond", "color": [0.9, 0.3, 0.4, 1.0], "background": [0, 0, 0, 0] })),
+        ];
+        for (label, picture) in pictures {
+            if ui.button(label).clicked() {
+                let path = free_name(view, "assets/images", "picture", "png");
+                actions.create = Some((path, json!({ "picture": picture })));
+                ui.close();
+            }
+        }
+    });
 }
 
 /// The browser panel's contents.
@@ -207,6 +258,8 @@ pub(crate) fn panel(ui: &mut Ui, view: &BrowserView<'_>, actions: &mut BrowserAc
             }
         }
         ui.weak(tf("{count} files", &[("count", &view.assets.len())]));
+        drop(state);
+        create_menu(ui, view, actions);
     });
     ui.separator();
     let (filter, kind) = {

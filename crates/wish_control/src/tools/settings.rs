@@ -87,7 +87,9 @@ fn project_settings(
         }
         let scene = match args.str("scene") {
             Some(scene) => {
-                let path = crate::documents::normalize_scene_path(scene)
+                // Spelled exactly as on disk (one file, one document).
+                let path = workspace
+                    .scene_path(Some(scene))
                     .map_err(|problem| problem.at_path("/scene"))?;
                 if !path.ends_with(".scene.json") || !workspace.root().join(&path).is_file() {
                     return Err(Diagnostic::error(
@@ -104,26 +106,63 @@ fn project_settings(
         let input_text = match args.value("input") {
             Some(input) => {
                 let text = wish_scene::json::to_canonical(input)?;
-                // Checked as the engine will read it.
-                wish_input::InputMap::parse(&text, wish_input::INPUT_FILE)
+                // Checked as the engine will read it, and written in the
+                // input map's own canonical form (as `wen new` writes it).
+                let map = wish_input::InputMap::parse(&text, wish_input::INPUT_FILE)
                     .map_err(|problem| problem.at_path("/input"))?;
-                Some(text)
+                Some(map.to_canonical()?)
             }
             None => None,
         };
-        if args.str("name").is_some() || scene.is_some() {
-            if workspace.config().is_none() {
-                return Err(Diagnostic::error(
-                    "no_project_file",
-                    format!(
-                        "The project has no {} to keep a name and a default scene in.",
-                        crate::project::PROJECT_FILE
-                    ),
-                    "Make the project with `wen new`, which writes it.",
-                ));
+        let config_change = args.str("name").is_some() || scene.is_some();
+        if config_change && workspace.config().is_none() {
+            if let Some(problem) = workspace.config_problem() {
+                return Err(problem.clone());
             }
+            return Err(Diagnostic::error(
+                "no_project_file",
+                format!(
+                    "The project has no {} to keep a name and a default scene in.",
+                    crate::project::PROJECT_FILE
+                ),
+                "Make the project with `wen new`, which writes it.",
+            ));
+        }
+        // Both files or neither: the input map first, put back if the
+        // project file cannot be written.
+        let input_before =
+            std::fs::read_to_string(workspace.root().join(wish_input::INPUT_FILE)).ok();
+        if let Some(text) = &input_text {
             if !dry_run {
-                workspace.write_config(args.str("name").map(str::trim), scene.as_deref())?;
+                crate::documents::write_project_file(
+                    workspace.root(),
+                    wish_input::INPUT_FILE,
+                    text,
+                )?;
+            }
+            changed.push("input");
+        }
+        if config_change {
+            if !dry_run
+                && let Err(problem) =
+                    workspace.write_config(args.str("name").map(str::trim), scene.as_deref())
+            {
+                if input_text.is_some() {
+                    let root = workspace.root().to_path_buf();
+                    match &input_before {
+                        Some(before) => {
+                            let _ = crate::documents::write_project_file(
+                                &root,
+                                wish_input::INPUT_FILE,
+                                before,
+                            );
+                        }
+                        None => {
+                            let _ = std::fs::remove_file(root.join(wish_input::INPUT_FILE));
+                        }
+                    }
+                }
+                return Err(problem);
             }
             if args.str("name").is_some() {
                 changed.push("name");
@@ -131,16 +170,6 @@ fn project_settings(
             if scene.is_some() {
                 changed.push("scene");
             }
-        }
-        if let Some(text) = input_text {
-            if !dry_run {
-                crate::documents::write_project_file(
-                    workspace.root(),
-                    wish_input::INPUT_FILE,
-                    &text,
-                )?;
-            }
-            changed.push("input");
         }
         if dry_run {
             let mut out = Map::new();
@@ -158,7 +187,16 @@ fn project_settings(
             "scene": config.map(|c| c.scene.clone()),
         }),
     );
-    out.insert("input".to_owned(), input_json(workspace)?);
+    // A broken input.json does not hide the rest: its problem is a note.
+    match input_json(workspace) {
+        Ok(input) => {
+            out.insert("input".to_owned(), input);
+        }
+        Err(problem) => {
+            out.insert("input".to_owned(), Value::Null);
+            out.insert("input_problem".to_owned(), json!(problem));
+        }
+    }
     if set {
         out.insert("changed".to_owned(), json!(changed));
     }

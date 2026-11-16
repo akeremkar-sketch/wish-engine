@@ -393,7 +393,7 @@ impl Workspace {
         match scene {
             Some(path) => self.exact_case(normalize_scene_path(path)?),
             None => match self.config() {
-                Some(config) => normalize_scene_path(&config.scene),
+                Some(config) => self.exact_case(normalize_scene_path(&config.scene)?),
                 None => Err(Diagnostic::error(
                     "no_default_scene",
                     "No scene was named and the project has no default scene (no wish.json).",
@@ -494,10 +494,12 @@ impl Workspace {
             );
             return Ok(notes);
         }
-        let Some(open) = self.docs.open.get(path) else {
+        let Some(open) = self.docs.open.get_mut(path) else {
             return Ok(notes);
         };
         if text == open.disk_text {
+            // Back to what the engine wrote (a bad save undone by hand).
+            open.disk_problem = None;
             return Ok(notes);
         }
         let Some(text) = text else {
@@ -620,6 +622,7 @@ impl Workspace {
     /// checked once more right before it is replaced: if someone saved it in
     /// the meantime, their save is not overwritten.
     pub(crate) fn commit_document(&mut self, path: &str, doc: SceneDocument) -> Result<()> {
+        self.check_prefab_edit(path, &doc)?;
         let root = self.root().to_path_buf();
         let text = doc.to_canonical()?;
         let on_disk = read_text(&root, path)?;
@@ -641,6 +644,67 @@ impl Workspace {
             // built again, now (a file's size and time alone could miss a
             // change made within the same clock tick).
             self.docs.prefab_stamp = None;
+        }
+        Ok(())
+    }
+
+    /// A prefab file's new content must still be a prefab (one `root`, the
+    /// rest below it, no resources, no instances), and no scene may keep an
+    /// override of an entity the change removes or renames: either would
+    /// leave files that no longer load.
+    pub(crate) fn check_prefab_edit(&mut self, path: &str, doc: &SceneDocument) -> Result<()> {
+        if !path.ends_with(".prefab.json") {
+            return Ok(());
+        }
+        let text = doc.to_canonical()?;
+        let checked = wish_scene::load_prefab(&text, path, self.registry());
+        if let Some(first) = checked.diagnostics.iter().find(|d| d.is_error()) {
+            return Err(Diagnostic::error(
+                "prefab_edit_invalid",
+                format!(
+                    "This change would leave '{path}' no longer a prefab: {}",
+                    first.message
+                ),
+                format!(
+                    "A prefab keeps one entity 'root' with no parent, every other entity below it, no resources and no prefab instances. {}",
+                    first.hint
+                ),
+            )
+            .at_file(path));
+        }
+        let kept: std::collections::BTreeSet<String> =
+            doc.entities().map(|(id, _)| id.to_owned()).collect();
+        let scenes: Vec<String> = wish_asset::index::documents(self.root())?
+            .into_iter()
+            .map(|(name, _)| name)
+            .filter(|name| name.ends_with(".scene.json"))
+            .collect();
+        let mut orphaned = Vec::new();
+        for scene in scenes {
+            let Ok(open) = self.document(&scene) else {
+                continue;
+            };
+            for (id, entity) in open.doc.entities() {
+                if entity.prefab() != Some(path) {
+                    continue;
+                }
+                for inner in entity.overrides().keys() {
+                    if !kept.contains(inner) {
+                        orphaned.push(format!("{scene}: {id}/{inner}"));
+                    }
+                }
+            }
+        }
+        if !orphaned.is_empty() {
+            return Err(Diagnostic::error(
+                "prefab_override_orphaned",
+                format!(
+                    "Scenes change prefab entities this edit removes or renames: {}.",
+                    orphaned.join(", ")
+                ),
+                "Drop those overrides first (edit_apply remove_override on each scene; Revert to prefab in the editor), then change the prefab.",
+            )
+            .at_file(path));
         }
         Ok(())
     }

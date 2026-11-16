@@ -106,7 +106,7 @@ pub(crate) const ENTITY_QUERY: Tool = Tool {
 pub(crate) const ENTITY_GET: Tool = Tool {
     name: "entity_get",
     title: "Entity values",
-    description: "The component values of entities, by id: the effective values (prefab parts expanded, defaults filled in), plus parent, prefab and notes. Engine-internal components (SceneId, Hierarchy, GlobalTransform) are left out unless named. Also the values of resources (world-wide data such as a game's Score or Time), by name. Pass session to read a running game.",
+    description: "The component values of entities, by id: the effective values (prefab parts expanded, defaults filled in), plus parent, prefab and notes; for a part of a prefab instance (id instance/part), from_prefab and the components the instance overrides (overridden). Engine-internal components (SceneId, Hierarchy, GlobalTransform) are left out unless named. Also the values of resources (world-wide data such as a game's Score or Time), by name. Pass session to read a running game.",
     params: &[
         SCENE,
         SESSION,
@@ -625,8 +625,20 @@ fn entity_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<S
             if let Some(notes) = described.notes() {
                 item.insert("notes".to_owned(), json!(notes));
             }
-        } else if doc.is_some() {
+        } else if let Some(doc) = &doc {
             item.insert("from_prefab".to_owned(), json!(true));
+            // Which of its components the instance changes (overrides).
+            if let Some((instance, inner)) = id.split_once('/')
+                && let Some(changed) = doc
+                    .entity(instance)
+                    .and_then(|owner| owner.overrides().get(inner))
+                && !changed.is_empty()
+            {
+                item.insert(
+                    "overridden".to_owned(),
+                    json!(changed.keys().collect::<Vec<_>>()),
+                );
+            }
         }
         let mut components = Map::new();
         if let Value::Object(all) = world.entity_json(entity)? {

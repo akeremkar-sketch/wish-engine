@@ -10,6 +10,11 @@
 //! at a time, in order. `notifications/cancelled` for the request being
 //! worked on (or one still waiting) stops a running `sim_step` at the next
 //! tick, which then answers with `stopped_by: "cancelled"` (see [`serve`]).
+//!
+//! The same server also speaks Streamable HTTP ([`http::serve_http`]), for
+//! clients that connect to a running engine.
+
+pub mod http;
 
 use std::io::{BufRead, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -56,6 +61,104 @@ pub struct Server {
     workspace: Workspace,
     actor: Actor,
     protocol: Option<String>,
+    /// The call being worked on, for cancellations.
+    busy: Arc<Busy>,
+}
+
+/// A call, as cancellations name it: the session it came from (`""` on
+/// stdio) and its JSON-RPC id (ids are per session: two clients may both
+/// send request 1).
+type CallKey = (String, String);
+
+/// How many cancellations and finished calls are remembered.
+const REMEMBERED: usize = 1024;
+
+/// The call being worked on, cancellations that came before their call,
+/// and calls that finished, shared by the threads that read messages and
+/// the one that runs calls.
+pub(crate) struct Busy {
+    /// Set to stop the running call at its next tick.
+    pub(crate) flag: Arc<AtomicBool>,
+    state: Mutex<BusyState>,
+}
+
+#[derive(Default)]
+struct BusyState {
+    current: Option<CallKey>,
+    /// Cancelled before they started.
+    pending: std::collections::VecDeque<CallKey>,
+    /// Finished: a cancellation arriving late for one of these is dropped,
+    /// so it cannot stop a later call that reuses the id.
+    done: std::collections::VecDeque<CallKey>,
+}
+
+fn key(session: &str, id: &Value) -> CallKey {
+    (session.to_owned(), id.to_string())
+}
+
+fn remember(list: &mut std::collections::VecDeque<CallKey>, key: CallKey) {
+    if list.len() >= REMEMBERED {
+        list.pop_front();
+    }
+    list.push_back(key);
+}
+
+impl Busy {
+    fn new() -> Self {
+        Self {
+            flag: Arc::new(AtomicBool::new(false)),
+            state: Mutex::new(BusyState::default()),
+        }
+    }
+
+    /// The client of `session` cancelled `wanted`: stop it if it runs, or
+    /// before it starts; nothing if it already finished.
+    pub(crate) fn cancel(&self, session: &str, wanted: &Value) {
+        let wanted = key(session, wanted);
+        if let Ok(mut state) = self.state.lock() {
+            if state.current.as_ref() == Some(&wanted) {
+                self.flag.store(true, Ordering::Relaxed);
+            } else if !state.done.contains(&wanted) && !state.pending.contains(&wanted) {
+                remember(&mut state.pending, wanted);
+            }
+        }
+    }
+
+    /// The call `id` of `session` starts. The current call is set and the
+    /// pending cancellations checked under one lock, so a cancellation read
+    /// just before or while the call starts is never missed.
+    pub(crate) fn start(&self, session: &str, id: Option<&Value>) {
+        self.flag.store(false, Ordering::Relaxed);
+        if let Ok(mut state) = self.state.lock() {
+            let started = id.map(|id| key(session, id));
+            let cancelled = started.as_ref().is_some_and(|started| {
+                let before = state.pending.len();
+                state.pending.retain(|k| k != started);
+                state.pending.len() != before
+            });
+            state.current = started;
+            if cancelled {
+                self.flag.store(true, Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// The call is done.
+    pub(crate) fn finish(&self) {
+        if let Ok(mut state) = self.state.lock()
+            && let Some(done) = state.current.take()
+        {
+            remember(&mut state.done, done);
+        }
+    }
+
+    /// A session ended: its cancellations and finished calls are dropped.
+    pub(crate) fn forget(&self, session: &str) {
+        if let Ok(mut state) = self.state.lock() {
+            state.pending.retain(|(s, _)| s != session);
+            state.done.retain(|(s, _)| s != session);
+        }
+    }
 }
 
 impl std::fmt::Debug for Server {
@@ -182,6 +285,7 @@ impl Server {
             workspace,
             actor: Actor::Agent("mcp-client".to_owned()),
             protocol: None,
+            busy: Arc::new(Busy::new()),
         }
     }
 
@@ -459,14 +563,11 @@ pub fn serve(
     mut input: impl BufRead + Send + 'static,
     mut output: impl Write,
 ) -> std::io::Result<()> {
-    let cancel = Arc::new(AtomicBool::new(false));
-    server.workspace.set_cancel_flag(Arc::clone(&cancel));
-    // The id being worked on, and the ids the client has cancelled.
-    type Busy = (Option<Value>, std::collections::BTreeSet<String>);
-    let current: Arc<Mutex<Busy>> = Arc::new(Mutex::new((None, std::collections::BTreeSet::new())));
+    server
+        .workspace
+        .set_cancel_flag(Arc::clone(&server.busy.flag));
     let (lines, received) = mpsc::channel::<String>();
-    let reader_cancel = Arc::clone(&cancel);
-    let reader_current = Arc::clone(&current);
+    let busy = Arc::clone(&server.busy);
     let reader = std::thread::spawn(move || -> std::io::Result<()> {
         let mut first = true;
         loop {
@@ -481,17 +582,9 @@ pub fn serve(
             }
             if let Ok(message) = serde_json::from_str::<Value>(&line)
                 && message.get("method").and_then(Value::as_str) == Some("notifications/cancelled")
+                && let Some(wanted) = message.get("params").and_then(|p| p.get("requestId"))
             {
-                let wanted = message
-                    .get("params")
-                    .and_then(|p| p.get("requestId"))
-                    .cloned();
-                if let (Some(wanted), Ok(mut state)) = (wanted, reader_current.lock()) {
-                    if state.0.as_ref() == Some(&wanted) {
-                        reader_cancel.store(true, Ordering::Relaxed);
-                    }
-                    state.1.insert(wanted.to_string());
-                }
+                busy.cancel("", wanted);
             }
             if lines.send(line).is_err() {
                 return Ok(());
@@ -499,24 +592,9 @@ pub fn serve(
         }
     });
     for line in received {
-        let id = request_id(&line);
-        cancel.store(false, Ordering::Relaxed);
-        // The current id is set and the cancelled list checked under one
-        // lock, so a cancellation read just before or while the call starts
-        // is never missed.
-        if let Ok(mut state) = current.lock() {
-            state.0.clone_from(&id);
-            if id
-                .as_ref()
-                .is_some_and(|id| state.1.contains(&id.to_string()))
-            {
-                cancel.store(true, Ordering::Relaxed);
-            }
-        }
+        server.busy.start("", request_id(&line).as_ref());
         let answer = server.handle(&line);
-        if let Ok(mut busy) = current.lock() {
-            busy.0 = None;
-        }
+        server.busy.finish();
         if let Some(answer) = answer {
             output.write_all(answer.as_bytes())?;
             output.write_all(b"\n")?;

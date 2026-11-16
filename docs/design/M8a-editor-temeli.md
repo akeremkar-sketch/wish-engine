@@ -148,3 +148,89 @@ Yok (teknoloji kararı §2'de gerekçeli). Kullanıcıdan istenecek tek şey, WP
 - **Oynarken düzenleme:** denetçi oturumun canlı değerlerini gösterir (0,25 sn'de bir okur) ve değişiklikler `edit_apply`+`session` olur (durum çubuğu "live: not kept" der); hiyerarşide ekle/sil de canlı. Tutamaçlar oynarken kapalı (önizleme sahne içindi).
 - **Girdi haritası düzenleyici WP8'e taşındı:** `input.json`'u elle düzenlemek bir kontrol düzlemi yeteneği ister (değişmez 4); proje ayarları (`wish.json`) ile birlikte tek bir ayar aracında yapılacak.
 - **Testler:** `wish_control/tests/m7_tools.rs` (canlı düzenleme: set/spawn/rename, dünya sürer, dosya ve geçmiş dokunulmaz, günlük, hep-ya-hiç, dry_run, desteklenmeyen işlem, kayıt reddi); `wish_editor/tests/play.rs` (5: oynat → kutu düşer → durdur dosya aynı; duraklat + adım; zaman çizelgesiyle başa dönüş + kutu yerinde; oynarken denetçiden canlı düzenleme, durdurunca yok; Space ve işaretçi oyuna gider). Editörde toplam 46 test, release+debug.
+
+### WP8 — ayarlar, konsol/sorunlar/performans, kod düğmeleri, çok dilli arayüz, cila, Streamable HTTP
+
+- **`project_settings` (26. araç):** projenin adı ve varsayılan sahnesi (`wish.json`) ile girdi haritası (`input.json`) okunur/değiştirilir; ad 1–80 karakter (`invalid_project_name`), sahne var olmalı, girdi haritası motorun kendi ayrıştırıcısıyla denetlenir (yanlış tuş adına en yakın gerçek ad ipucu olur), `dry_run` (`would_change`). Eşlik örnekleri 4. Böylece girdi haritası düzenleyici değişmez 4'e uyar (ajan da aynı aracı kullanır).
+- **Editör:** proje menüsü (projenin adı: Ayarlar..., Denetle, Kodu düzenle, Kodu derle, Dil, Çık) — kalabalık çubuk taşıyordu. Ayarlar penceresi (ad, varsayılan sahne, eylemler/türler/tuşlar; ekle/kaldır; kaydet = araç çağrısı). Alt panel sekmeleri: Varlıklar, **Konsol** (`logs_get`, sırayla, Temizle), **Sorunlar** (`check`; tıklayınca sorunun varlığı seçilir; sayı projenin hata sayısını izler), **Performans** (kare başına arayüz/sahne resmi/oyun süreleri; 16,7 ms çizgisi — editörün kendi süresi, simülasyon değil). **Kodu düzenle** `scripts/src/lib.rs`'i dışarıda açar (`WISH_EDITOR` ya da sistemin programı; testte değiştirilebilir `Opener`), **Kodu derle** `script_build` çağırır ve sorunlarını Sorunlar'da gösterir; varlık tarayıcısında "Dışarıda aç".
+- **Çok dilli arayüz (`wish_editor::i18n`):** koddaki her metin `t("...")`/`tf("...", adlar)`'dan geçer, anahtar İngilizce metnin kendisi; her dil bir dosya (`crates/wish_editor/lang/<kod>.json`, çevirmen Rust bilmeden çalışır, `lang/README.md`). 12 dil: İngilizce, Türkçe, Almanca, Fransızca, İspanyolca, Portekizce, İtalyanca, Felemenkçe, Lehçe, Rusça, Ukraynaca, Yunanca. Eksik metin İngilizce görünür; `tests/languages.rs` her dosyanın eksiğini/fazlasını, `{ad}`ların eşleşmesini, yazı tipinde her harfin olduğunu ve menü çubuğunun her dilde 1280 px'e sığdığını denetler. Dil iş parçacığı başına (yan yana koşan testler birbirini bozmaz). Seçim: proje menüsü → Dil; kişinin tercihlerinde saklanır (`WISH_CONFIG_DIR`, `%APPDATA%\Wish\editor.json`, `~/.config/wish/editor.json`); ayrıca `WISH_LANG`, sistemin `LANG`'i, `wen edit --lang` (`unknown_language`). Başsız resim (`--headless-frame`) yalnızca argümanlarına bağlıdır (tercih dosyası okunmaz). Motorun tanı iletileri İngilizce kalır (M10 notu).
+- **Cila:** gösterilemeyen sahne (ör. yeni klonlanmış projede derlenmemiş oyun kodunun türleri) görünümde bir kartla nedenini, ipucunu ve "Kodu derle"/"Sorunları göster" düğmelerini gösterir — eskiden görünüm boş, Sorunlar (0) idi (vitrin oyununun kopyasında bulundu). Durum çubuğu tek satır (tamamı üstüne gelince). Kısayollar: Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z, Ctrl+P (yazarken değil). **Hata düzeltildi:** pencere yeniden boyutlanınca başka bir şey olana dek yeniden çizilmiyordu. Dar pencerede menü çubuğu ikinci satıra geçer. Görünüm adları çevrilir (araç adı üstüne gelince).
+- **Streamable HTTP (`wish_mcp::http`, M4'ten devir):** `wen mcp --http <port ya da adres>`; tek uç `/mcp`, `POST` (istek → `200` JSON, bildirim/yanıt → `202`), `DELETE` oturumu bitirir, `GET` → `405` (sunucu akışı M10). `initialize` yanıtında `Mcp-Session-Id`; sonra yoksa `400`, bilinmiyorsa/bittiyse `404`. Güvenlik (spesifikasyonun önerileri): varsayılan `127.0.0.1`; döngü dışı adres jetonsuz reddedilir (`http_needs_token`; `WISH_MCP_TOKEN` → `Authorization: Bearer`); `Origin` başka sitedense `403` (DNS rebinding; `WISH_MCP_ORIGINS`), `MCP-Protocol-Version` denetimi, gövde 8 MiB / başlık 64 KiB, 30 sn zaman aşımı, en çok 64 bağlantı, parçalı aktarım `501`. tokio yok: `std::net`, bağlantı başına iş parçacığı; çağrılar çalışma alanının iş parçacığında sırayla; `notifications/cancelled` bağlantı iş parçacığında hemen işler (stdio ile ortak `Busy`). Testler `wish_mcp/tests/http.rs` (4: oturum yaşam döngüsü, gerekçeli retler, başka bağlantıdan iptal, jeton) + birim testleri; curl ile `wen mcp --http` denendi. MCP Inspector'ın HTTP denemesi yapılmadı (Inspector disk için silinmişti; yeniden kurulum indirme ister).
+- **Testler:** editörde `settings.rs` (2), `panels.rs` (5), `languages.rs` (4), `polish.rs` (3) + i18n birim testleri; toplam editör testi 70 (release).
+
+### WP9 — eşlik denetimi, "yalnızca elle" çıkış senaryosu, kapanış incelemesi
+
+- **Eşlik tablosu (`wish_editor::parity::PARITY`) ve testi (`tests/parity.rs`):** kataloğun her aracı, `edit_apply`'ın her işlemi (`wish_control::ops::OPS`), `edit_apply` + `session` ve `edit_history`'nin list/undo/redo eylemleri için bir satır: kişinin editörde bunu nerede yaptığı ve bunu elle yapan testin adı (`dosya::işlev`). Test yeni bir araç ya da işlem satırsız eklenirse kırılır; her satırın testi gerçekten var mı diye kaynağa bakar. 30 işlem + 12 soru (sorular — `scene_get`, `describe_view`, `physics_query`... — editörün gösterdiği şeyle karşılanır).
+- **Denetimde bulunan açıklar ve kapatılması** (değişmez 9): prefab üzerine yazımını kaldırma (`remove_override` → denetçide "Prefab'a geri döndür"; `entity_get` artık bir parçanın `overridden` bileşenlerini söyler), parçada `replace_override` ("Değerleri yapıştır" artık bileşeni değiştirir, parçada "Varsayılanlara döndür" yok), varlık notları (`set_notes` → denetçinin üstünde "Notlar"), **sahne kaynakları** (`set/replace/remove_resource` → hiçbir şey seçili değilken denetçi sahnenin kaynaklarını gösterir; "Kaynak ekle...", oynarken canlı), yer tutucu dosyalar (`asset_create` → tarayıcıda "Yeni...": zıplama/jeton/gümleme/bip sesi, daire/kare/elmas resmi), geçmiş listesi (`edit_history list` → alt panelde **Geçmiş** sekmesi: kim, ne, kaç değişiklik; Geri al/Yinele), `test_run` (proje menüsünde "Testleri çalıştır" — başarısızlar Sorunlar'da — ve "Altın resimleri güncelle"), `replay` (menü çubuğunda **Kaydet** anahtarı → oynat/durdur kaydı `replays/take_N` olarak saklar; proje menüsünde "Tekrar kayıtları" listesi → geri oynatır ve "oyun aynı oynuyor" ya da ilk sapan tick'i söyler), `capture_frame` ("Resmi kaydet" → `captures/<sahne>_N.png`). Testleri `tests/parity_ops.rs` (8).
+- **Çıkış ölçütü 1, uçtan uca (`tests/manual_only.rs`):** vitrin oyununun kopyası yeni klonlanmış gibi açılır (derlenmiş kod yok); görünümdeki karttan **Kodu derle**; yeni bir ada eklenir (+, F2 ile ad, "Bileşen ekle" ile Primitive ve Collider, denetçiden ölçek ve konum), ondan **prefab** yapılır ve tarayıcıdan ikinci bir örnek konup taşınır; **Ctrl+Z / Ctrl+Y**; **Kaydet** + Ctrl+P ile oynanır, durdurulur, kayıt **geri oynatılır** ("aynı oynuyor"); **Testleri çalıştır**: yeni ada sahneyi büyüttüğü için güneşin gölge haritası daha geniş alanı kapsar ve kazanma resminin gölgeleri biraz kayar (1 test kalır, ipucu "resme bak") → kişi **Altın resimleri güncelle** → 4/4 geçer; **Resmi kaydet**; **Denetle** → sorun yok; geçmişteki her kayıt `human`. Testin kendisi hiçbir değiştiren araç çağırmaz (yalnızca okumak için). Release'te ~11 sn.
+- **Bulgu (motor davranışı, belgelendi):** tek gölge haritası sahneye oturtulduğu için uzaktaki bir nesne eklemek görünür gölgelerin keskinliğini değiştirir (M3 WP5 kararı). Kademeli gölge haritaları M10'daki gelişmiş render işinde.
+- **Bağımsız kapanış incelemesi (3 ajan: editör, kontrol düzlemi, HTTP) — 35 bulgu, hepsi ele alındı.** Regresyon testleri: `wish_control/tests/review_m8a.rs` (5), `wish_editor/tests/review_m8a.rs` (7), `wish_mcp/tests/http.rs` (+5).
+  - *Kontrol düzlemi:*
+    - Prefab düzenlemesi artık prefab kurallarıyla denetlenir (`prefab_edit_invalid`): kök silinemez ya da yeniden adlandırılamaz; ebeveynsiz varlık, kaynak ve örnek eklenemez.
+    - Bir sahnenin üzerine yazdığı prefab varlığı silinemez ya da yeniden adlandırılamaz (`prefab_override_orphaned`; hangi sahne ve örnek olduğunu söyler). Geri al/yinele de aynı denetimden geçer (`commit_document`).
+    - Canlı düzenleme `SceneId` ve `GlobalTransform`'u ve verilen `order`'ı reddeder.
+    - `project_settings` varsayılan sahneyi diskteki yazımıyla saklar (`path_case_mismatch`; varsayılan sahne de `exact_case`'ten geçer).
+    - `project_settings` önce `input.json`'u yazar, `wish.json` yazılamazsa onu geri koyar. Girdi haritasını kendi kanonik biçiminde yazar. Bozuk `input.json`'da `get` projenin adını yine gösterir (`input_problem`).
+    - Dışarıda bozulup elle geri alınan sahne artık her düzenlemeyi reddetmez.
+  - *Editör:*
+    - Dosya adından üretilen kimlikler sahne kuralına uyar: küçük harf, harfle başlar, en çok 56 karakter + `_N`.
+    - Oynarken Geri al/Yinele, sahne değiştirme ve "Prefab yap" kapalı (dosyalarla ilgilidirler).
+    - Sahne değişince denetçi ve tutamaç önbelleği sıfırlanır; başka sahnenin kaynakları gösterilmez.
+    - Notlar yazıldıkları varlığa gider.
+    - Tutamaç sürüklemesi, başladığı revizyonu `base_revision` olarak gönderir; arada ajanın yaptığı değişiklik ezilmez.
+    - Geri sarınca zaman çizelgesinin terk edilen kısmı silinir; etiketler tekrarlanmaz.
+    - Tuş listesine virgül yazılabilir.
+    - Başka dosyadaki bir sorun tıklanınca o dosya açılır.
+    - Prefab parçasında F2 ve Sil bir şey yapmaz.
+    - Başarısız taşımada seçim yerinde kalır.
+    - Düzenlenmeyen geçişlerin doku serbest bırakmaları kaybolmaz.
+    - Rozetler, derece ve yuva adları çevrilir.
+    - Durdur'dan sonra oyunda yaratılan varlık seçili kalmaz.
+    - Sonraya kalan: denetçide sayı sürüklemesinin başlangıç revizyonu.
+  - *HTTP:*
+    - Her oturum kendi istemci adıyla (`actor`) ve protokol sürümüyle çalışır; iki istemci bağlıyken geçmiş artık doğru kişiyi yazar.
+    - İptaller (oturum, kimlik) ile anahtarlanır ve bayatlamaz: bitmiş bir çağrının geç gelen iptali, aynı kimlikli sonraki çağrıyı durdurmaz; bir oturum diğerinin çağrısını durduramaz.
+    - Süre istek başınadır; yavaş gönderen istemciler 64 yuvayı tutamaz.
+    - Başlıklar gövde okunmadan denetlenir; gövde kopyalanmaz.
+    - Bekleyen çağrı sınırı 16; iptaller ve bildirimler her zaman geçer, bildirimler hemen `202` alır.
+    - `Host` denetimi (DNS rebinding).
+    - Jeton sabit zamanlı karşılaştırılır; `Bearer` büyük/küçük harfe duyarsız.
+    - Çift `Content-Length` ya da `Host` reddedilir; başlık taraması doğrusal.
+    - Bağlantı yuvası panikte de geri verilir.
+    - Oturum kimlikleri rastgele; en çok 32 oturum.
+    - Toplu ileti `400` alır; `--http` yalnızca `wen mcp` için.
+    - **ADR-022'ye uyum:** `wen mcp --http` artık her zaman jeton ister; `WISH_MCP_TOKEN` yoksa rastgele bir jeton üretip başlarken gösterir.
+    - Tarayıcıdan doğrudan bağlanma (CORS) yok: M10 notu.
+
+## 9. M8a sonucu (17 Kasım 2026)
+
+**Çıkış ölçütleri:**
+1. *Yapay zekâsız, yalnızca elle: vitrin oyununun bir bölümü kurulur, oynanır, dışa aktarıma hazırlanır.* ✅ Kanıt `wish_editor/tests/manual_only.rs` (WP9):
+   1. derlenmemiş kopya açılır, Kodu derle;
+   2. yeni bir ada, prefab'ı ve ikinci bir örneği eklenir;
+   3. Ctrl+Z / Ctrl+Y;
+   4. kaydederek oynanır ve kayıt tekrar oynatılır ("aynı oynuyor");
+   5. testler çalışır, altın resim güncellenir: 4/4;
+   6. resim kaydedilir; Denetle: "sorun yok".
+
+   Geçmişin tamamı `human`. Dışa aktarımın kendisi (`wen export`) M9'da.
+2. *Eşlik denetimi (otomatik liste, test).* ✅ `wish_editor::parity::PARITY` + `tests/parity.rs`: kataloğun 26 aracı, 15 düzenleme işlemi, canlı düzenleme ve geçmiş eylemleri. Her satırın onu elle yapan bir testi var; yeni bir araç ya da işlem satırsız eklenemez.
+3. *Her eylem bir kontrol düzlemi işlemidir; geri al/yinele her eylemde çalışır.* ✅
+   - Her editör eylemi bir `Workspace::call` çağrısıdır (`human`).
+   - Doğrudan dosya okuma yalnızca gösterim içindir: tekrar listesi, küçük resimler, boş ad denetimleri, tercih dosyası.
+   - Bir sürükleme geçmişte tek kayıttır.
+   - Geri al/yinele menüde, kısayolla ve Geçmiş sekmesinde çalışır (oynarken kapalı).
+4. *Wasm'da yeni tanımlanan bir bileşen, ek arayüz kodu olmadan denetçide düzenlenir.* ✅ `tests/inspector.rs::a_component_defined_in_game_code_is_edited_without_editor_code` (WP4).
+
+**Sayılar:**
+- Editör testleri: 22 dosya, release ve debug.
+- Tam kapı temiz: fmt, clippy `-D warnings`, `cargo test --workspace`.
+- 12 dilli arayüz.
+- MCP: 26 araç; stdio + Streamable HTTP.
+
+**Açık kalanlar (kullanıcı ya da sonraki iş):**
+- CI, GitHub faturalandırma sorunu yüzünden çalışmıyor: yalnızca yerelde doğrulandı, Linux'ta M8a doğrulanmadı.
+- MCP Inspector ile HTTP denemesi yapılmadı (Inspector yeniden kurulmalı; indirme ister).
+- Pencere döngüsünde elle deneme (`wen edit`).
+- Denetçide sayı sürüklemesinin başlangıç revizyonu.
+- Tarayıcıdan doğrudan HTTP (CORS) ve sunucu akışı (M10).

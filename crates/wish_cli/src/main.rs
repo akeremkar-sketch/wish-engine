@@ -61,7 +61,7 @@ USAGE:
     wen play [--root <folder>] [--scene <file>] [--size <w>x<h>] [--software] [--exit-after <frames>]
     wen sdk [--out <folder>] [--json]
     wen package [--out <folder>] [--json]
-    wen mcp [--root <folder>] [--software]
+    wen mcp [--root <folder>] [--software] [--http <port or address>]
     wen call <tool> ['{json args}' | --<param> <value> ...] [--root <folder>] [--actor <name>]
     wen do [<file> | -] [--root <folder>] [--actor <name>]
     wen mv <from> <to> --example <name> [--root <folder>] [--dry-run] [--json]
@@ -196,6 +196,7 @@ fn execute_any(args: Args) -> Result<Outcome> {
                 example: example.clone(),
                 actor: None,
                 software: false,
+                http: None,
             },
             args.json,
             tool_cmds::check_text,
@@ -214,6 +215,7 @@ fn execute_any(args: Args) -> Result<Outcome> {
                 example: Some(example.clone()),
                 actor: None,
                 software: false,
+                http: None,
             },
             args.json,
             tool_cmds::move_text,
@@ -241,6 +243,7 @@ fn execute_any(args: Args) -> Result<Outcome> {
                 example: None,
                 actor: None,
                 software: false,
+                http: None,
             },
             args.json,
             tool_cmds::build_text,
@@ -257,6 +260,7 @@ fn execute_any(args: Args) -> Result<Outcome> {
                 example: None,
                 actor: None,
                 software: true,
+                http: None,
             },
             args.json,
             tool_cmds::test_text,
@@ -269,6 +273,7 @@ fn execute_any(args: Args) -> Result<Outcome> {
                 example: None,
                 actor: None,
                 software: false,
+                http: None,
             },
             args.json,
             tool_cmds::replay_text,

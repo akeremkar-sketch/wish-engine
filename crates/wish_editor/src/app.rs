@@ -80,6 +80,10 @@ struct Play {
     tick: u64,
     /// Real time since the inspector last read the live values.
     since_read: f64,
+    /// The run is being recorded as a replay (saved when it stops).
+    recording: bool,
+    /// Snapshots made so far (labels are never reused).
+    made: u64,
 }
 
 /// The game's name for a key, from egui's (the same, but arrows are short).
@@ -144,6 +148,17 @@ pub struct EditorApp {
     problems: (u64, u64),
     /// Why the scene cannot be shown (message, hint), if it cannot.
     scene_error: Option<(String, String)>,
+    /// The revision the next edit is based on, if not the latest seen (a
+    /// drag: the one it began on).
+    edit_base: Option<u64>,
+    /// Resource schemas, by name (the ones a scene may hold).
+    resource_schemas: BTreeMap<String, Value>,
+    /// Nothing is selected: the inspector shows the scene's resources.
+    inspecting_resources: bool,
+    /// The scene's history, newest first.
+    history: Vec<Value>,
+    /// Record the next run as a replay.
+    record: bool,
     /// The project has game code that is not built yet.
     unbuilt: bool,
     view: View,
@@ -238,6 +253,9 @@ struct ActiveDrag {
     now: Target,
     /// The change as edit operations, for the preview and the release.
     ops: Option<Value>,
+    /// The scene's revision when the drag began: a change made by someone
+    /// else meanwhile is not overwritten.
+    revision: u64,
 }
 
 /// What the layout decided, handed back out of egui's closure.
@@ -254,6 +272,13 @@ struct Actions {
     language: Option<&'static str>,
     /// Look for problems and show them.
     show_problems: bool,
+    run_tests: bool,
+    /// Run the tests and keep their pictures as the golden ones.
+    update_golden: bool,
+    /// Play a saved replay back.
+    replay: Option<String>,
+    save_picture: bool,
+    toggle_record: bool,
     /// An entity was clicked in the hierarchy: its id, and whether to toggle.
     select: Option<(String, bool)>,
     /// The empty part of the hierarchy was clicked.
@@ -304,6 +329,11 @@ impl Actions {
             || self.quit
             || self.language.is_some()
             || self.show_problems
+            || self.run_tests
+            || self.update_golden
+            || self.replay.is_some()
+            || self.save_picture
+            || self.toggle_record
             || self.deselect
             || self.delete
             || self.scene.is_some()
@@ -399,6 +429,11 @@ impl EditorApp {
             since_project_poll: 0.0,
             scripts: String::new(),
             scene_error: None,
+            edit_base: None,
+            resource_schemas: BTreeMap::new(),
+            inspecting_resources: false,
+            history: Vec::new(),
+            record: false,
             unbuilt: false,
             frames: 0,
             exit: false,
@@ -468,6 +503,26 @@ impl EditorApp {
             .flatten()
             .filter_map(|t| Some((t["name"].as_str()?.to_owned(), t["schema"].clone())))
             .collect();
+        // Resources a scene may hold: not the ones the engine writes every
+        // tick (time, input, the pointer).
+        let resources: Vec<String> = listed["types"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|t| t["kind"] == "resource")
+            .filter_map(|t| t["name"].as_str().map(str::to_owned))
+            .filter(|name| !["Time", "ActionState", "Pointer"].contains(&name.as_str()))
+            .collect();
+        let full = self.call(
+            "schema_get",
+            &json!({ "names": resources, "detail": "full" }),
+        );
+        self.resource_schemas = full["types"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|t| Some((t["name"].as_str()?.to_owned(), t["schema"].clone())))
+            .collect();
         let assets = self.call("asset_list", &json!({}));
         self.assets = assets["assets"]
             .as_array()
@@ -486,7 +541,9 @@ impl EditorApp {
         }
         self.inspected_for = key;
         self.inspected.clear();
+        self.inspecting_resources = self.selected.is_empty();
         if self.selected.is_empty() {
+            self.read_resources();
             return;
         }
         let args = match &self.play {
@@ -506,6 +563,13 @@ impl EditorApp {
                     .unwrap_or_default(),
                 prefab: entity["prefab"].as_str().map(str::to_owned),
                 part: entity["from_prefab"] == true,
+                overridden: entity["overridden"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|c| c.as_str().map(str::to_owned))
+                    .collect(),
+                notes: entity["notes"].as_str().map(str::to_owned),
             });
         }
         // A component the schemas do not know yet: game code was rebuilt.
@@ -517,6 +581,56 @@ impl EditorApp {
         if unknown {
             self.load_schemas();
         }
+    }
+
+    /// The scene's resources (or the running game's), as one pseudo-entity
+    /// for the inspector: their effective values.
+    fn read_resources(&mut self) {
+        let names: Vec<String> = match &self.play {
+            Some(_) => self.resource_schemas.keys().cloned().collect(),
+            None => {
+                let got = self.call(
+                    "scene_get",
+                    &json!({ "scene": self.scene.clone(), "detail": "summary" }),
+                );
+                got["resources"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|n| n.as_str().map(str::to_owned))
+                    .collect()
+            }
+        };
+        let names: Vec<String> = names
+            .into_iter()
+            .filter(|name| self.resource_schemas.contains_key(name))
+            .collect();
+        let mut values = serde_json::Map::new();
+        if !names.is_empty() {
+            let args = match &self.play {
+                Some(play) => {
+                    json!({ "session": play.session.clone(), "ids": [], "resources": names })
+                }
+                None => json!({ "scene": self.scene.clone(), "ids": [], "resources": names }),
+            };
+            let got = self.call("entity_get", &args);
+            if let Some(all) = got["resources"].as_object() {
+                values.clone_from(all);
+            }
+            // While playing, only the ones the game holds.
+            if self.play.is_some()
+                && let Some(defaulted) = got["resources_defaulted"].as_array()
+            {
+                for name in defaulted.iter().filter_map(Value::as_str) {
+                    values.remove(name);
+                }
+            }
+        }
+        self.inspected.push(Inspected {
+            id: String::new(),
+            components: values,
+            ..Inspected::default()
+        });
     }
 
     /// The camera as last drawn, over the picture's place on the window.
@@ -661,6 +775,7 @@ impl EditorApp {
                         start: target,
                         now: target,
                         ops: None,
+                        revision: self.revision,
                     });
                     return true;
                 }
@@ -681,6 +796,7 @@ impl EditorApp {
                         let Value::Array(ops) = ops else {
                             return true;
                         };
+                        self.edit_base = Some(active.revision);
                         self.edit(&what, ops);
                     }
                     return true;
@@ -710,6 +826,44 @@ impl EditorApp {
     /// The inspector's changes, as one `edit_apply` on every selected entity
     /// (a part of a prefab instance gets an override).
     fn inspector_act(&mut self, asked: InspectorActions) {
+        if self.inspecting_resources {
+            self.resource_act(asked);
+            self.inspected_for = (Vec::new(), u64::MAX);
+            return;
+        }
+        if let Some((id, text)) = asked.notes {
+            {
+                let op = if text.trim().is_empty() {
+                    json!({ "op": "set_notes", "id": id })
+                } else {
+                    json!({ "op": "set_notes", "id": id, "notes": text })
+                };
+                self.edit(&tf("notes of {id}", &[("id", &id)]), vec![op]);
+            }
+            self.inspected_for = (Vec::new(), u64::MAX);
+            return;
+        }
+        if let Some(component) = asked.revert {
+            let ops: Vec<Value> = self
+                .inspected
+                .iter()
+                .filter(|entity| entity.overridden.contains(&component))
+                .filter_map(|entity| entity.id.split_once('/'))
+                .map(|(instance, inner)| {
+                    json!({ "op": "remove_override", "id": instance, "entity": inner,
+                            "component": component })
+                })
+                .collect();
+            self.edit(
+                &tf(
+                    "{component} back to the prefab's",
+                    &[("component", &component)],
+                ),
+                ops,
+            );
+            self.inspected_for = (Vec::new(), u64::MAX);
+            return;
+        }
         let targets: Vec<(String, bool)> = self
             .inspected
             .iter()
@@ -762,9 +916,17 @@ impl EditorApp {
                 .clone()
                 .filter(|(name, _)| *name == component)
             {
+                // Pasted values replace the component (a part's override
+                // too), as Reset does.
                 let ops = targets
                     .iter()
-                    .map(|(id, part)| op_for(id, *part, &name, value.clone()))
+                    .map(|(id, part)| match (part, id.split_once('/')) {
+                        (true, Some((instance, inner))) => json!({
+                            "op": "replace_override", "id": instance, "entity": inner,
+                            "component": name, "value": value.clone()
+                        }),
+                        _ => json!({ "op": "replace", "id": id, "component": name, "value": value.clone() }),
+                    })
                     .collect();
                 self.edit(&tf("pasted {name}", &[("name", &name)]), ops);
             }
@@ -804,6 +966,51 @@ impl EditorApp {
             );
         }
         self.inspected_for = (Vec::new(), u64::MAX);
+    }
+
+    /// The inspector's changes to the scene's resources.
+    fn resource_act(&mut self, asked: InspectorActions) {
+        if let Some((name, field, value)) = asked.set {
+            let op =
+                json!({ "op": "set_resource", "name": name, "value": { field.clone(): value } });
+            self.edit(
+                &tf(
+                    "set {component}.{field}",
+                    &[("component", &name), ("field", &field)],
+                ),
+                vec![op],
+            );
+        }
+        if let Some(name) = asked.copy
+            && let Some(value) = self
+                .inspected
+                .first()
+                .and_then(|entity| entity.components.get(&name))
+        {
+            self.clipboard = Some((name.clone(), value.clone()));
+            self.status = tf("copied {component}", &[("component", &name)]);
+        }
+        if let Some(name) = asked.paste
+            && let Some((_, value)) = self.clipboard.clone().filter(|(copied, _)| *copied == name)
+        {
+            let op = json!({ "op": "replace_resource", "name": name, "value": value });
+            self.edit(&tf("pasted {name}", &[("name", &name)]), vec![op]);
+        }
+        if let Some(name) = asked.reset {
+            let op = json!({ "op": "replace_resource", "name": name, "value": {} });
+            self.edit(&tf("reset {component}", &[("component", &name)]), vec![op]);
+        }
+        if let Some(name) = asked.add {
+            let op = json!({ "op": "set_resource", "name": name, "value": {} });
+            self.edit(&tf("added {component}", &[("component", &name)]), vec![op]);
+        }
+        if let Some(name) = asked.remove {
+            let op = json!({ "op": "remove_resource", "name": name });
+            self.edit(
+                &tf("removed {component}", &[("component", &name)]),
+                vec![op],
+            );
+        }
     }
 
     /// One control-plane call as the person at the keyboard (actor `human`).
@@ -1084,6 +1291,7 @@ impl EditorApp {
         );
         self.can_undo = history["can_undo"] == true;
         self.can_redo = history["can_redo"] == true;
+        self.history = history["entries"].as_array().cloned().unwrap_or_default();
         self.picture_stale = true;
         true
     }
@@ -1097,8 +1305,9 @@ impl EditorApp {
             Some(play) => json!({ "session": play.session.clone(), "ops": ops }),
             None => json!({ "scene": self.scene.clone(), "ops": ops }),
         };
-        if self.play.is_none() && self.revision != u64::MAX {
-            args["base_revision"] = json!(self.revision);
+        let base = self.edit_base.take().unwrap_or(self.revision);
+        if self.play.is_none() && base != u64::MAX {
+            args["base_revision"] = json!(base);
         }
         let done = self.call("edit_apply", &args);
         let applied = done["ok"] == true;
@@ -1273,7 +1482,18 @@ impl EditorApp {
             cursor: 0,
             tick: 0,
             since_read: 0.0,
+            recording: false,
+            made: 0,
         });
+        if self.record {
+            let recorded = self.call(
+                "replay",
+                &json!({ "action": "record", "session": started["session"].clone() }),
+            );
+            if let Some(play) = self.play.as_mut() {
+                play.recording = recorded["ok"] == true;
+            }
+        }
         self.snapshot();
         self.status = t("playing").to_owned();
         self.inspected_for = (Vec::new(), u64::MAX);
@@ -1284,12 +1504,169 @@ impl EditorApp {
     /// (live changes are gone with it).
     fn stop_play(&mut self) {
         if let Some(play) = self.play.take() {
+            let saved = if play.recording {
+                let name = self.free_replay_name();
+                let saved = self.call(
+                    "replay",
+                    &json!({ "action": "save", "session": play.session.clone(), "name": name.clone() }),
+                );
+                Some(if saved["ok"] == true {
+                    tf("replay {name} saved", &[("name", &name)])
+                } else {
+                    let message = saved["error"]["message"]
+                        .as_str()
+                        .unwrap_or(t("it did not work"));
+                    tf("replay not saved: {message}", &[("message", &message)])
+                })
+            } else {
+                None
+            };
             self.call("sim_stop", &json!({ "session": play.session }));
             self.status = t("stopped (live changes were not kept)").to_owned();
+            // Entities made while playing are gone with the game.
+            self.revision = u64::MAX;
+            self.refresh_scene();
+            if let Some(saved) = saved {
+                self.status = format!("{}; {saved}", self.status);
+            }
             self.inspected_for = (Vec::new(), u64::MAX);
             self.target_for = (Vec::new(), u64::MAX);
             self.picture_stale = true;
         }
+    }
+
+    /// The project's saved replays (their names).
+    pub fn replays(&self) -> Vec<String> {
+        let folder = self.workspace.root().join("replays");
+        let mut names: Vec<String> = std::fs::read_dir(folder)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|entry| {
+                entry
+                    .file_name()
+                    .to_str()?
+                    .strip_suffix(".replay.jsonl")
+                    .map(str::to_owned)
+            })
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// A replay name not used yet: `take_1`, `take_2`...
+    fn free_replay_name(&self) -> String {
+        let used = self.replays();
+        (1..10_000)
+            .map(|n| format!("take_{n}"))
+            .find(|name| !used.contains(name))
+            .unwrap_or_else(|| "take".to_owned())
+    }
+
+    /// Plays a saved replay back and says whether the game still plays the
+    /// same.
+    fn run_replay(&mut self, name: &str) {
+        let ran = self.call("replay", &json!({ "action": "run", "name": name }));
+        if let Some(session) = ran["session"].as_str() {
+            self.call("sim_stop", &json!({ "session": session }));
+        }
+        self.status = if ran["ok"] != true {
+            let message = ran["error"]["message"]
+                .as_str()
+                .unwrap_or(t("it did not work"));
+            tf(
+                "replay {name} did not run: {message}",
+                &[("name", &name), ("message", &message)],
+            )
+        } else if ran["passed"] == true {
+            tf(
+                "replay {name}: the game plays the same ({ticks} ticks)",
+                &[
+                    ("name", &name),
+                    ("ticks", &ran["ticks_run"].as_u64().unwrap_or(0)),
+                ],
+            )
+        } else {
+            tf(
+                "replay {name}: the game plays differently from tick {tick}",
+                &[
+                    ("name", &name),
+                    ("tick", &ran["diverged_at"].as_u64().unwrap_or(0)),
+                ],
+            )
+        };
+    }
+
+    /// Runs the project's scenario tests (keeping their pictures as the
+    /// golden ones if `update`); failures go to the problems tab.
+    fn run_tests(&mut self, update: bool) {
+        let ran = self.call("test_run", &json!({ "update_golden": update }));
+        if ran["ok"] != true {
+            let message = ran["error"]["message"]
+                .as_str()
+                .unwrap_or(t("it did not work"));
+            self.status = tf("tests did not run: {message}", &[("message", &message)]);
+            return;
+        }
+        let results = ran["results"].as_array().cloned().unwrap_or_default();
+        let failed: Vec<Value> = results
+            .iter()
+            .filter(|result| result["passed"] != true)
+            .map(|result| {
+                let failure = &result["failure"];
+                json!({
+                    "code": "test_failed",
+                    "severity": "error",
+                    "message": format!("{}: {}", result["file"].as_str().unwrap_or("?"),
+                        failure["message"].as_str().unwrap_or("failed")),
+                    "hint": failure["hint"].as_str().unwrap_or(""),
+                })
+            })
+            .collect();
+        self.status = tf(
+            "tests: {passed} passed, {failed} failed",
+            &[
+                ("passed", &(results.len() - failed.len())),
+                ("failed", &failed.len()),
+            ],
+        );
+        if update {
+            self.status = format!("{}; {}", self.status, t("golden pictures updated"));
+        }
+        if !failed.is_empty() {
+            self.found = failed;
+            self.tab = Tab::Problems;
+        }
+    }
+
+    /// Saves the view's picture as a file of the project (`captures/`).
+    fn save_picture(&mut self) {
+        let stem = self
+            .scene
+            .rsplit('/')
+            .next()
+            .unwrap_or("scene")
+            .split('.')
+            .next()
+            .unwrap_or("scene")
+            .to_owned();
+        let out = (1..10_000)
+            .map(|n| format!("captures/{stem}_{n}.png"))
+            .find(|path| !self.workspace.root().join(path).exists())
+            .unwrap_or_else(|| format!("captures/{stem}.png"));
+        let args = match &self.play {
+            Some(play) => json!({ "session": play.session.clone(), "out": out.clone() }),
+            None => json!({ "scene": self.scene.clone(), "out": out.clone() }),
+        };
+        let saved = self.call("capture_frame", &args);
+        self.status = if saved["ok"] == true {
+            tf("picture saved as {path}", &[("path", &out)])
+        } else {
+            let message = saved["error"]["message"]
+                .as_str()
+                .unwrap_or(t("it did not work"));
+            tf("picture not saved: {message}", &[("message", &message)])
+        };
     }
 
     /// Saves a timeline snapshot of the running game (while there is room).
@@ -1300,7 +1677,7 @@ impl EditorApp {
         if play.snapshots.len() >= MAX_TIMELINE {
             return;
         }
-        let label = format!("t{}", play.tick);
+        let label = format!("t{}_{}", play.tick, play.made);
         let session = play.session.clone();
         let saved = self.call(
             "sim_snapshot",
@@ -1310,6 +1687,7 @@ impl EditorApp {
             && saved["ok"] == true
         {
             play.snapshots.push((label, play.tick));
+            play.made += 1;
             play.cursor = play.snapshots.len() - 1;
         }
     }
@@ -1412,6 +1790,8 @@ impl EditorApp {
                 play.paused = true;
                 play.tick = tick;
                 play.cursor = index;
+                // What came after belongs to the run left behind.
+                play.snapshots.truncate(index + 1);
                 play.owed = 0.0;
                 play.since_snapshot = 0.0;
             }
@@ -1430,17 +1810,25 @@ impl EditorApp {
     fn id_from_path(&self, path: &str) -> String {
         let name = path.rsplit('/').next().unwrap_or(path);
         let stem = name.split('.').next().unwrap_or(name);
-        let clean: String = stem
+        // A scene id: [a-z][a-z0-9_]*, at most 64 characters (room left for
+        // the `_N` that makes it unique).
+        let mut clean: String = stem
             .chars()
             .map(|c| {
+                let c = c.to_ascii_lowercase();
                 if c.is_ascii_alphanumeric() || c == '_' {
                     c
                 } else {
                     '_'
                 }
             })
+            .take(56)
             .collect();
-        self.unused_id(if clean.is_empty() { "entity" } else { &clean })
+        if !clean.starts_with(|c: char| c.is_ascii_lowercase()) {
+            clean = format!("e_{clean}");
+            clean.truncate(56);
+        }
+        self.unused_id(&clean)
     }
 
     /// Where a window pixel is on the ground (y = 0), or six metres along
@@ -1605,13 +1993,56 @@ impl EditorApp {
     }
 
     /// Runs what the layout asked for, as calls.
-    fn act(&mut self, actions: Actions) {
+    fn act(&mut self, mut actions: Actions) {
+        // The history tab's buttons are the menu bar's.
+        actions.undo |= actions.panels.undo;
+        actions.redo |= actions.panels.redo;
+        // Undo, redo and another scene are about the files: not while a
+        // game runs (its changes are live and go with it).
+        if self.play.is_some() {
+            actions.undo = false;
+            actions.redo = false;
+            actions.scene = None;
+        }
         if actions.quit {
             self.exit = true;
         }
         if actions.show_problems {
             self.run_check();
             self.tab = Tab::Problems;
+        }
+        if actions.run_tests {
+            self.run_tests(false);
+        }
+        if actions.update_golden {
+            self.run_tests(true);
+        }
+        if let Some(name) = actions.replay {
+            self.run_replay(&name);
+        }
+        if actions.save_picture {
+            self.save_picture();
+        }
+        if actions.toggle_record {
+            self.record = !self.record;
+        }
+        if let Some((path, mut args)) = actions.browser.create.take() {
+            args["path"] = json!(path);
+            let made = self.call("asset_create", &args);
+            self.status = if made["ok"] == true {
+                tf("made {path}", &[("path", &path)])
+            } else {
+                let message = made["error"]["message"]
+                    .as_str()
+                    .unwrap_or(t("it did not work"));
+                tf(
+                    "could not make {path}: {message}",
+                    &[("path", &path), ("message", &message)],
+                )
+            };
+            self.refresh_project();
+            self.load_assets();
+            self.select_asset(&path);
         }
         if let Some(code) = actions.language {
             self.set_language(code);
@@ -1623,6 +2054,8 @@ impl EditorApp {
             self.scene = scene;
             self.revision = u64::MAX;
             self.selected.clear();
+            self.inspected_for = (Vec::new(), u64::MAX);
+            self.target_for = (Vec::new(), u64::MAX);
             *self.eye.borrow_mut() = None;
             self.refresh_scene();
         }
@@ -1670,7 +2103,7 @@ impl EditorApp {
                     &[("message", &message), ("hint", &hint)],
                 )
             };
-            if self.asset_selected.as_deref() == Some(from.as_str()) {
+            if moved["ok"] == true && self.asset_selected.as_deref() == Some(from.as_str()) {
                 self.asset_selected = Some(to);
             }
             self.asset_count = u64::MAX;
@@ -1696,8 +2129,20 @@ impl EditorApp {
         if actions.panels.check {
             self.run_check();
         }
-        if let Some(id) = actions.panels.select {
-            self.click_entity(&id, false);
+        if let Some((file, id)) = actions.panels.select {
+            let document = file.ends_with(".scene.json") || file.ends_with(".prefab.json");
+            if document && file != self.scene && self.play.is_none() {
+                self.scene.clone_from(&file);
+                self.revision = u64::MAX;
+                self.selected.clear();
+                self.inspected_for = (Vec::new(), u64::MAX);
+                self.target_for = (Vec::new(), u64::MAX);
+                *self.eye.borrow_mut() = None;
+                self.refresh_scene();
+            }
+            if file.is_empty() || file == self.scene {
+                self.click_entity(&id, false);
+            }
         }
         if actions.edit_code {
             self.open_file("scripts/src/lib.rs");
@@ -1834,8 +2279,14 @@ impl EditorApp {
                 self.selected = vec![id];
             }
         }
-        if actions.delete && !self.selected.is_empty() {
-            let doomed = self.selected.clone();
+        // A part of a prefab instance is the prefab's: not deleted here.
+        let doomed: Vec<String> = self
+            .selected
+            .iter()
+            .filter(|id| !id.contains('/'))
+            .cloned()
+            .collect();
+        if actions.delete && !doomed.is_empty() {
             let ops = doomed
                 .iter()
                 .map(|id| json!({ "op": "despawn", "id": id }))
@@ -2236,7 +2687,7 @@ impl EditorApp {
         }
         if !typing
             && ui.input(|input| input.key_pressed(egui::Key::F2))
-            && let Some(first) = self.selected.first()
+            && let Some(first) = self.selected.first().filter(|id| !id.contains('/'))
         {
             self.ui_state.borrow_mut().rename = Some((first.clone(), first.clone()));
         }
@@ -2300,6 +2751,7 @@ impl EditorApp {
                             ui.close();
                         }
                         if !self.scene.ends_with(".prefab.json")
+                            && self.play.is_none()
                             && ui
                                 .button(t("Make prefab"))
                                 .on_hover_text(t("Saves it and its children as a prefab and puts an instance in its place"))
@@ -2348,9 +2800,9 @@ impl EditorApp {
                 if pressed(ui, command | egui::Modifiers::SHIFT, egui::Key::Z)
                     || pressed(ui, command, egui::Key::Y)
                 {
-                    actions.redo |= self.can_redo;
+                    actions.redo |= self.can_redo && self.play.is_none();
                 } else if pressed(ui, command, egui::Key::Z) {
-                    actions.undo |= self.can_undo;
+                    actions.undo |= self.can_undo && self.play.is_none();
                 }
                 if pressed(ui, command, egui::Key::P) {
                     if self.play.is_some() {
@@ -2393,6 +2845,49 @@ impl EditorApp {
                         ui.close();
                     }
                     ui.separator();
+                    if ui
+                        .button(t("Run tests"))
+                        .on_hover_text(t("The project's scenario tests (tests/*.test.json)"))
+                        .clicked()
+                    {
+                        actions.run_tests = true;
+                        ui.close();
+                    }
+                    if ui
+                        .button(t("Update golden pictures"))
+                        .on_hover_text(t(
+                            "Run the tests and keep the pictures they take as the golden ones (look at them first)",
+                        ))
+                        .clicked()
+                    {
+                        actions.update_golden = true;
+                        ui.close();
+                    }
+                    ui.menu_button(t("Replays"), |ui| {
+                        let replays = self.replays();
+                        if replays.is_empty() {
+                            ui.weak(t("No replays yet: turn on Record, then Play."));
+                        }
+                        for name in replays {
+                            if ui
+                                .button(&name)
+                                .on_hover_text(t("Play it back: does the game still play the same?"))
+                                .clicked()
+                            {
+                                actions.replay = Some(name);
+                                ui.close();
+                            }
+                        }
+                    });
+                    if ui
+                        .button(t("Save picture"))
+                        .on_hover_text(t("The view's picture, as a PNG under captures/"))
+                        .clicked()
+                    {
+                        actions.save_picture = true;
+                        ui.close();
+                    }
+                    ui.separator();
                     ui.menu_button(t("Language"), |ui| {
                         for language in crate::i18n::LANGUAGES {
                             if ui
@@ -2430,14 +2925,20 @@ impl EditorApp {
                     });
                 ui.separator();
                 if ui
-                    .add_enabled(self.can_undo, egui::Button::new(t("Undo")))
+                    .add_enabled(
+                        self.can_undo && self.play.is_none(),
+                        egui::Button::new(t("Undo")),
+                    )
                     .on_hover_text("Ctrl+Z")
                     .clicked()
                 {
                     actions.undo = true;
                 }
                 if ui
-                    .add_enabled(self.can_redo, egui::Button::new(t("Redo")))
+                    .add_enabled(
+                        self.can_redo && self.play.is_none(),
+                        egui::Button::new(t("Redo")),
+                    )
                     .on_hover_text("Ctrl+Y")
                     .clicked()
                 {
@@ -2475,8 +2976,24 @@ impl EditorApp {
                         {
                             actions.play_start = true;
                         }
+                        if ui
+                            .selectable_label(self.record, t("Record"))
+                            .on_hover_text(t(
+                                "Record the next run as a replay (saved under replays/ when it stops)",
+                            ))
+                            .clicked()
+                        {
+                            actions.toggle_record = true;
+                        }
                     }
                     Some(play) => {
+                        if play.recording {
+                            ui.label(
+                                egui::RichText::new(t("REC"))
+                                    .color(egui::Color32::from_rgb(235, 90, 80)),
+                            )
+                            .on_hover_text(t("This run is being recorded as a replay"));
+                        }
                         let pause = if play.paused { t("Resume") } else { t("Pause") };
                         if ui.button(pause).clicked() {
                             actions.play_pause = true;
@@ -2586,6 +3103,12 @@ impl EditorApp {
                     Tab::Performance => {
                         crate::panels::performance(ui, &self.timings, self.play.is_some());
                     }
+                    Tab::History => crate::panels::history(
+                        ui,
+                        &self.history,
+                        (self.can_undo, self.can_redo),
+                        &mut actions.panels,
+                    ),
                 }
             });
         egui::Panel::left("hierarchy")
@@ -2596,7 +3119,12 @@ impl EditorApp {
             .show(ui, |ui| {
                 let view = InspectorView {
                     inspected: &self.inspected,
-                    schemas: &self.schemas,
+                    schemas: if self.inspecting_resources {
+                        &self.resource_schemas
+                    } else {
+                        &self.schemas
+                    },
+                    resources: self.inspecting_resources,
                     entities: self.rows.iter().map(|row| row.id.as_str()).collect(),
                     assets: &self.assets,
                     copied: self.clipboard.as_ref().map(|(name, _)| name.as_str()),

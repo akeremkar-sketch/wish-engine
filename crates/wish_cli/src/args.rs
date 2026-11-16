@@ -289,6 +289,9 @@ pub struct ToolContext {
     pub actor: Option<String>,
     /// Draw with the software (CPU) adapter.
     pub software: bool,
+    /// `wen mcp` only: serve Streamable HTTP on this address instead of
+    /// standard input and output.
+    pub http: Option<String>,
 }
 
 /// The options of `wen call`.
@@ -362,7 +365,14 @@ fn parse_tool_command(command: &str, rest: &[String]) -> Result<Args> {
             "--root" if !value.is_empty() => context.root = Some(value),
             "--example" if !value.is_empty() => context.example = Some(value),
             "--actor" if !value.is_empty() => context.actor = Some(value),
-            "--root" | "--example" | "--actor" => return Err(missing(&name)),
+            "--http" if command != "mcp" => {
+                return Err(usage_error(
+                    "--http is only for 'wen mcp'.".to_owned(),
+                    "Write it like: wen mcp --http 7878.".to_owned(),
+                ));
+            }
+            "--http" if !value.is_empty() => context.http = Some(value),
+            "--root" | "--example" | "--actor" | "--http" => return Err(missing(&name)),
             _ if command == "do" || command == "mcp" => {
                 let names = ["--root", "--example", "--actor", "--json"];
                 return Err(usage_error(
@@ -378,7 +388,7 @@ fn parse_tool_command(command: &str, rest: &[String]) -> Result<Args> {
         if let Some(extra) = positional.first() {
             return Err(usage_error(
                 format!("'wen mcp' takes no argument '{extra}'."),
-                "Write it like: wen mcp [--root <folder>] [--software]. MCP clients start it themselves (see .mcp.json).".to_owned(),
+                "Write it like: wen mcp [--root <folder>] [--software] [--http <port or address>]. MCP clients start it themselves (see .mcp.json).".to_owned(),
             ));
         }
         return Ok(Args {

@@ -16,6 +16,7 @@ pub(crate) enum Tab {
     Console,
     Problems,
     Performance,
+    History,
 }
 
 /// How many log entries are kept for the console.
@@ -42,13 +43,20 @@ pub(crate) struct PanelActions {
     pub tab: Option<Tab>,
     pub clear_console: bool,
     pub check: bool,
-    /// Select the entity a problem is about.
-    pub select: Option<String>,
+    /// Select the entity a problem is about: its file, its id.
+    pub select: Option<(String, String)>,
+    pub undo: bool,
+    pub redo: bool,
 }
 
 impl PanelActions {
     pub fn any(&self) -> bool {
-        self.tab.is_some() || self.clear_console || self.check || self.select.is_some()
+        self.tab.is_some()
+            || self.clear_console
+            || self.check
+            || self.select.is_some()
+            || self.undo
+            || self.redo
     }
 }
 
@@ -71,6 +79,7 @@ pub(crate) fn tabs(ui: &mut Ui, current: Tab, problems: usize, actions: &mut Pan
                 tf("Problems ({problems})", &[("problems", &problems)]),
             ),
             (Tab::Performance, t("Performance").to_owned()),
+            (Tab::History, t("History").to_owned()),
         ] {
             if ui.selectable_label(current == tab, name).clicked() && current != tab {
                 actions.tab = Some(tab);
@@ -158,7 +167,7 @@ pub(crate) fn problems(ui: &mut Ui, found: &[Value], actions: &mut PanelActions)
                             .strip_prefix("/entities/")
                             .map(|rest| rest.split('/').next().unwrap_or(rest))
                     {
-                        actions.select = Some(id.to_owned());
+                        actions.select = Some((file.to_owned(), id.to_owned()));
                     }
                     if let Some(hint) = problem["hint"].as_str() {
                         ui.weak(format!("    {hint}"));
@@ -226,4 +235,61 @@ pub(crate) fn performance(ui: &mut Ui, history: &VecDeque<Timing>, playing: bool
             }
         }
     }
+}
+
+/// The scene's history (`edit_history list`): who changed what, newest
+/// first, with undo and redo.
+pub(crate) fn history(
+    ui: &mut Ui,
+    entries: &[Value],
+    can: (bool, bool),
+    actions: &mut PanelActions,
+) {
+    ui.horizontal(|ui| {
+        if ui
+            .add_enabled(can.0, egui::Button::new(t("Undo")).small())
+            .clicked()
+        {
+            actions.undo = true;
+        }
+        if ui
+            .add_enabled(can.1, egui::Button::new(t("Redo")).small())
+            .clicked()
+        {
+            actions.redo = true;
+        }
+        ui.weak(t(
+            "Every change to the scene, by anyone (you, an agent, a text editor): newest first.",
+        ));
+    });
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            if entries.is_empty() {
+                ui.weak(t("No changes yet."));
+            }
+            for entry in entries {
+                let touched: Vec<&str> = entry["entities"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .collect();
+                let action = match entry["action"].as_str() {
+                    Some("undo") => t("undo"),
+                    Some("redo") => t("redo"),
+                    _ => t("edit"),
+                };
+                ui.label(tf(
+                    "r{revision}  {actor}  {action}  {entities} ({changes} change(s))",
+                    &[
+                        ("revision", &entry["revision"].as_u64().unwrap_or(0)),
+                        ("actor", &entry["actor"].as_str().unwrap_or("?")),
+                        ("action", &action),
+                        ("entities", &touched.join(", ")),
+                        ("changes", &entry["changes"].as_u64().unwrap_or(0)),
+                    ],
+                ));
+            }
+        });
 }

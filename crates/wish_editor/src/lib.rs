@@ -10,6 +10,7 @@ mod gizmo;
 pub mod i18n;
 mod inspector;
 mod panels;
+pub mod parity;
 pub mod raster;
 pub mod script;
 mod settings;
@@ -54,6 +55,9 @@ pub struct Editor {
     /// Whether egui asked for another frame right away (a menu opening, an
     /// animation).
     repaint: bool,
+    /// Textures egui no longer needs, freed when the next frame is painted
+    /// (a frame laid out but not painted keeps its list here).
+    to_free: Vec<egui::TextureId>,
 }
 
 /// A widget on screen, as the accessibility tree describes it: what a
@@ -101,6 +105,7 @@ impl Editor {
             time: 0.0,
             widgets: Vec::new(),
             repaint: false,
+            to_free: Vec::new(),
         }
     }
 
@@ -170,16 +175,18 @@ impl Editor {
         let primitives = self
             .context
             .tessellate(std::mem::take(&mut output.shapes), 1.0);
-        let free = output.textures_delta.free.iter().copied().collect();
+        self.to_free
+            .extend(output.textures_delta.free.iter().copied());
         // Handled: egui asserts that no change is dropped unapplied.
         output.textures_delta.clear();
-        Frame { primitives, free }
+        Frame { primitives }
     }
 
     /// Draws a frame's triangles onto the canvas.
     pub fn paint(&mut self, frame: &Frame, canvas: &mut Canvas) {
         raster::paint(canvas, &self.textures, &frame.primitives, 1.0);
-        self.textures.free_ids(&frame.free);
+        let free = std::mem::take(&mut self.to_free);
+        self.textures.free_ids(&free);
     }
 
     /// [`Editor::layout`] and [`Editor::paint`] in one: one frame of the
@@ -199,7 +206,6 @@ impl Editor {
 /// One frame's triangles, ready to draw.
 pub struct Frame {
     primitives: Vec<egui::ClippedPrimitive>,
-    free: Vec<egui::TextureId>,
 }
 
 impl Frame {

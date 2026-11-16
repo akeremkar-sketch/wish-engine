@@ -278,6 +278,7 @@ fn context_of(root: &Option<String>, example: &str, software: bool) -> ToolConte
         example: Some(example.to_owned()),
         actor: None,
         software,
+        http: None,
     }
 }
 
@@ -436,12 +437,75 @@ pub fn serve_mcp(context: &ToolContext) -> std::process::ExitCode {
         }
     };
     let mut server = wish_mcp::Server::new(workspace);
+    if let Some(address) = &context.http {
+        return serve_mcp_http(&mut server, address);
+    }
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     match wish_mcp::serve(&mut server, std::io::BufReader::new(stdin), stdout.lock()) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("The MCP connection failed: {error}.");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+/// `wen mcp --http`: MCP over Streamable HTTP until the process is stopped.
+/// Clients always send a token (ADR-022): `WISH_MCP_TOKEN`, or one made up
+/// now and shown. Beyond this machine only with `WISH_MCP_TOKEN` set.
+/// `WISH_MCP_ORIGINS` (comma-separated) allows more browser origins than
+/// this machine's own.
+fn serve_mcp_http(server: &mut wish_mcp::Server, address: &str) -> std::process::ExitCode {
+    let chosen = std::env::var("WISH_MCP_TOKEN")
+        .ok()
+        .map(|token| token.trim().to_owned())
+        .filter(|token| !token.is_empty());
+    let mut options = wish_mcp::http::HttpOptions {
+        token: chosen.clone(),
+        allowed_origins: std::env::var("WISH_MCP_ORIGINS")
+            .map(|all| {
+                all.split(',')
+                    .map(|origin| origin.trim().to_owned())
+                    .filter(|origin| !origin.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default(),
+        request_time: None,
+    };
+    let bound = wish_mcp::http::listen_address(address, &options).and_then(|at| {
+        std::net::TcpListener::bind(at).map_err(|error| {
+            wish_core::Diagnostic::error(
+                "invalid_http_address",
+                format!("Could not listen on {at}: {error}."),
+                "Pick another port (or 0 for a free one), or stop what uses this one.",
+            )
+        })
+    });
+    let listener = match bound {
+        Ok(listener) => listener,
+        Err(problem) => {
+            eprintln!("{problem}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+    let token = chosen.unwrap_or_else(wish_mcp::http::random_token);
+    options.token = Some(token.clone());
+    if let Ok(at) = listener.local_addr() {
+        eprintln!(
+            "Wish Engine MCP on http://{at}{} (Streamable HTTP, protocol {}). Stop with Ctrl+C.",
+            wish_mcp::http::ENDPOINT,
+            wish_mcp::PROTOCOL_VERSION
+        );
+        eprintln!(
+            "Clients send the header 'Authorization: Bearer {token}' (set WISH_MCP_TOKEN to choose it)."
+        );
+    }
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    match wish_mcp::http::serve_http(server, listener, options, stop) {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("The MCP server failed: {error}.");
             std::process::ExitCode::FAILURE
         }
     }

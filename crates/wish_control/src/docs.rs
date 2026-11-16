@@ -181,6 +181,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "A scene file changed outside the engine in a way that could not be recorded as separate edits. It is recorded as one change by the file (revisions keep counting), and earlier changes can no longer be undone.",
     ),
     (
+        "http_needs_token",
+        "wen mcp --http was asked to listen beyond this machine without a token. Set WISH_MCP_TOKEN (clients send it as Authorization: Bearer <token>) or listen on 127.0.0.1.",
+    ),
+    (
         "image_invalid",
         "A picture for the interface cannot be read: it is not a PNG, is damaged, or is larger than 4096x4096 pixels. Re-export it as an 8- or 16-bit PNG.",
     ),
@@ -227,6 +231,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "invalid_hash",
         "A hash string is not 32 hexadecimal digits.",
+    ),
+    (
+        "invalid_http_address",
+        "wen mcp --http got an address it cannot listen on: write a port (7878) or an address and port (127.0.0.1:7878; port 0 picks a free one).",
     ),
     (
         "invalid_input_file",
@@ -432,12 +440,20 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     ("png_decode", "An image could not be decoded as PNG."),
     ("png_encode", "A picture could not be encoded as PNG."),
     (
+        "prefab_edit_invalid",
+        "An edit of a prefab file would leave it no longer a prefab (an entity without a parent besides root, root removed or renamed, a resource, a prefab instance inside). The message says which rule.",
+    ),
+    (
         "prefab_entity_outside_root",
         "Every entity of a prefab must be below its root entity.",
     ),
     (
         "prefab_not_found",
         "No prefab file has that path. Prefabs are project-relative .prefab.json files.",
+    ),
+    (
+        "prefab_override_orphaned",
+        "An edit of a prefab removes or renames an entity that instances in scenes override. Drop those overrides first (remove_override, or Revert to prefab in the editor).",
     ),
     (
         "prefab_root_with_parent",

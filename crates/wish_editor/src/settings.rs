@@ -20,6 +20,9 @@ pub(crate) struct Draft {
     pub new_action: String,
     /// The new action's kind.
     pub new_kind: String,
+    /// The key lists as typed, by action and slot (so that "Space," keeps
+    /// its comma while the next key is typed).
+    pub typed: std::collections::BTreeMap<(String, String), String>,
 }
 
 impl Draft {
@@ -40,12 +43,26 @@ impl Draft {
                 .unwrap_or_default(),
             new_action: String::new(),
             new_kind: "button".to_owned(),
+            typed: std::collections::BTreeMap::new(),
         }
     }
 
     /// The whole input map, as `input.json` holds it.
     pub fn input(&self) -> Value {
         json!({ "format": 1, "actions": self.actions })
+    }
+}
+
+/// A key list's name as shown (the file's own name is `slot`).
+fn slot_label(slot: &str) -> &'static str {
+    match slot {
+        "positive" => t("positive"),
+        "negative" => t("negative"),
+        "up" => t("up"),
+        "down" => t("down"),
+        "left" => t("left"),
+        "right" => t("right"),
+        _ => t("keys"),
     }
 }
 
@@ -114,6 +131,7 @@ pub(crate) fn window(
             ui.heading(t("Input map"));
             ui.weak(t("Actions the game code reads (actions.pressed(\"jump\"), actions.axis2(\"move\")) and the keys that drive them. Several keys: separate them with commas."));
             let mut remove = None;
+            let typed = &mut draft.typed;
             egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
                 egui::Grid::new("input_grid").num_columns(3).striped(true).show(ui, |ui| {
                     for (name, binding) in &mut draft.actions {
@@ -124,23 +142,27 @@ pub(crate) fn window(
                             for slot in slots(&kind) {
                                 ui.horizontal(|ui| {
                                     if slots(&kind).len() > 1 {
-                                        ui.weak(*slot);
+                                        ui.weak(slot_label(slot));
                                     }
-                                    let mut text = binding[*slot]
-                                        .as_array()
-                                        .map(|keys| {
-                                            keys.iter()
-                                                .filter_map(Value::as_str)
-                                                .collect::<Vec<_>>()
-                                                .join(", ")
-                                        })
-                                        .unwrap_or_default();
+                                    let typed_key = (name.clone(), (*slot).to_owned());
+                                    let mut text = typed.get(&typed_key).cloned().unwrap_or_else(|| {
+                                        binding[*slot]
+                                            .as_array()
+                                            .map(|keys| {
+                                                keys.iter()
+                                                    .filter_map(Value::as_str)
+                                                    .collect::<Vec<_>>()
+                                                    .join(", ")
+                                            })
+                                            .unwrap_or_default()
+                                    });
                                     let response = ui.add(
                                         egui::TextEdit::singleline(&mut text)
                                             .desired_width(200.0)
                                             .hint_text(t("Space, W, Up...")),
                                     );
                                     if response.changed() {
+                                        typed.insert(typed_key.clone(), text.clone());
                                         let keys: Vec<Value> = text
                                             .split(',')
                                             .map(str::trim)

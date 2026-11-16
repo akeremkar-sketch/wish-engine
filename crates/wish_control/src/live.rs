@@ -76,6 +76,49 @@ fn apply_live(world: &mut World, op: &EditOp, changes: &mut Vec<String>) -> Resu
         }
         Ok(())
     };
+    // What the engine writes itself cannot be set in a running game either
+    // (a SceneId is how tools find an entity; GlobalTransform comes from
+    // Transform).
+    let engine_written = |component: &str| -> Result<()> {
+        if component == SCENE_ID || component == "GlobalTransform" {
+            return Err(Diagnostic::error(
+                "managed_component",
+                format!(
+                    "'{component}' is written by the engine and cannot be set in a running game."
+                ),
+                if component == SCENE_ID {
+                    "Rename an entity with the rename operation.".to_owned()
+                } else {
+                    "Set \"Transform\" instead: the engine computes GlobalTransform from it."
+                        .to_owned()
+                },
+            ));
+        }
+        Ok(())
+    };
+    match op {
+        EditOp::Set { component, .. }
+        | EditOp::Replace { component, .. }
+        | EditOp::Remove { component, .. } => engine_written(component)?,
+        EditOp::Spawn { components, .. } => {
+            for name in components.keys() {
+                engine_written(name)?;
+            }
+        }
+        _ => {}
+    }
+    let order_refused = || {
+        Diagnostic::error(
+            "live_edit_unsupported",
+            "A sibling order cannot be given to a running game's entity.",
+            "Leave out \"order\" (the entity goes last among its siblings), or set the order in the scene and play again.",
+        )
+    };
+    match op {
+        EditOp::Spawn { order, .. } if *order != 0 => return Err(order_refused()),
+        EditOp::Reparent { order: Some(_), .. } => return Err(order_refused()),
+        _ => {}
+    }
     match op {
         EditOp::Spawn {
             id,

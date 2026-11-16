@@ -304,7 +304,7 @@ Tüm değişiklikler (elle ya da ajanla) kontrol düzleminden geçer; arayüzün
 
 ## ADR-022 — Güvenlik
 
-**Karar.** MCP sunucusu yalnızca proje klasörüne yazar. HTTP taşıması yalnızca yerel makineye bağlanır ve oturum belirteci ister. `--read-only` kipi vardır. Wasm konukları yakıt, bellek ve süre sınırlıdır. Yıkıcı işlemler (dosya silme) geri alınabilir işlem olarak yürür.
+**Karar.** MCP sunucusu yalnızca proje klasörüne yazar. HTTP taşıması yalnızca yerel makineye bağlanır ve oturum belirteci ister. *(Uygulama, M8a: `wen mcp --http` her zaman bir taşıyıcı jeton ister — `WISH_MCP_TOKEN` ya da başlarken üretilip gösterilen rastgele bir jeton; döngü dışı adres yalnızca `WISH_MCP_TOKEN` ile; `Origin` ve `Host` denetimi; MCP oturum kimliği ayrıca, her istemci kendi kimliğiyle.)* `--read-only` kipi vardır. Wasm konukları yakıt, bellek ve süre sınırlıdır. Yıkıcı işlemler (dosya silme) geri alınabilir işlem olarak yürür.
 
 ## ADR-023 — Ürün ve dağıtım
 

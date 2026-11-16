@@ -52,6 +52,10 @@ pub(crate) struct Inspected {
     pub prefab: Option<String>,
     /// Whether it is a part of a prefab instance (changes are overrides).
     pub part: bool,
+    /// For a part: the components its instance overrides.
+    pub overridden: Vec<String>,
+    /// Its notes (for people and agents; not in the game).
+    pub notes: Option<String>,
 }
 
 /// What the inspector asks for.
@@ -69,6 +73,10 @@ pub(crate) struct InspectorActions {
     pub paste: Option<String>,
     /// Put a component back to its default values.
     pub reset: Option<String>,
+    /// Drop the instance's override of a component (back to the prefab's).
+    pub revert: Option<String>,
+    /// New notes for an entity (its id, the text; empty: none).
+    pub notes: Option<(String, String)>,
 }
 
 impl InspectorActions {
@@ -79,6 +87,8 @@ impl InspectorActions {
             || self.copy.is_some()
             || self.paste.is_some()
             || self.reset.is_some()
+            || self.revert.is_some()
+            || self.notes.is_some()
     }
 }
 
@@ -95,6 +105,8 @@ pub(crate) struct InspectorView<'a> {
     /// it fits.
     pub copied: Option<&'a str>,
     pub state: &'a RefCell<InspectorState>,
+    /// Nothing is selected: the scene's resources are shown instead.
+    pub resources: bool,
 }
 
 /// The components every inspected entity has, in the first one's order.
@@ -122,7 +134,12 @@ pub(crate) fn panel(ui: &mut Ui, view: &InspectorView<'_>, actions: &mut Inspect
         ui.weak(t("Select an entity to edit its components."));
         return;
     };
-    if view.inspected.len() == 1 {
+    if view.resources {
+        ui.strong(t("Scene resources"));
+        ui.weak(t(
+            "Nothing is selected: these are the scene's own settings (sky, light, physics, the game's resources).",
+        ));
+    } else if view.inspected.len() == 1 {
         ui.strong(&first.id);
     } else {
         ui.strong(tf("{count} entities", &[("count", &view.inspected.len())]));
@@ -134,6 +151,9 @@ pub(crate) fn panel(ui: &mut Ui, view: &InspectorView<'_>, actions: &mut Inspect
         ui.weak(tf("Instance of {prefab}", &[("prefab", &prefab)]));
     }
     let part = view.inspected.iter().any(|entity| entity.part);
+    if !part && !view.resources && view.inspected.len() == 1 {
+        notes(ui, view, first, actions);
+    }
     if part {
         ui.weak(t(
             "Part of a prefab instance: changes are kept as overrides of the instance.",
@@ -157,9 +177,14 @@ pub(crate) fn panel(ui: &mut Ui, view: &InspectorView<'_>, actions: &mut Inspect
                         if let Some((field, new)) = fields(ui, view, &name, schema, value) {
                             actions.set = Some((name.clone(), field, new));
                         }
+                        let remove = if view.resources {
+                            t("Remove resource")
+                        } else {
+                            t("Remove component")
+                        };
                         if !part
                             && ui
-                                .small_button(t("Remove component"))
+                                .small_button(remove)
                                 .on_hover_text(tf(
                                     "Takes {name} off the selection.",
                                     &[("name", &name)],
@@ -167,6 +192,21 @@ pub(crate) fn panel(ui: &mut Ui, view: &InspectorView<'_>, actions: &mut Inspect
                                 .clicked()
                         {
                             actions.remove = Some(name.clone());
+                        }
+                        let overridden = view
+                            .inspected
+                            .iter()
+                            .any(|entity| entity.overridden.contains(&name));
+                        if part
+                            && overridden
+                            && ui
+                                .small_button(t("Revert to prefab"))
+                                .on_hover_text(t(
+                                    "Drops this instance's changes to the component: the prefab's values again",
+                                ))
+                                .clicked()
+                        {
+                            actions.revert = Some(name.clone());
                         }
                     });
                 let header_response = header.header_response;
@@ -185,7 +225,8 @@ pub(crate) fn panel(ui: &mut Ui, view: &InspectorView<'_>, actions: &mut Inspect
                         actions.paste = Some(name.clone());
                         ui.close();
                     }
-                    if ui.button(t("Reset to defaults")).clicked() {
+                    // A part goes back to its prefab with "Revert to prefab".
+                    if !part && ui.button(t("Reset to defaults")).clicked() {
                         actions.reset = Some(name.clone());
                         ui.close();
                     }
@@ -197,7 +238,12 @@ pub(crate) fn panel(ui: &mut Ui, view: &InspectorView<'_>, actions: &mut Inspect
             if !part {
                 ui.separator();
                 let present = common(view.inspected);
-                ui.menu_button(t("Add component..."), |ui| {
+                let add = if view.resources {
+                    t("Add resource...")
+                } else {
+                    t("Add component...")
+                };
+                ui.menu_button(add, |ui| {
                     let mut filter = view.state.borrow().add_filter.clone();
                     let search = ui.add(
                         egui::TextEdit::singleline(&mut filter)
@@ -228,6 +274,45 @@ pub(crate) fn panel(ui: &mut Ui, view: &InspectorView<'_>, actions: &mut Inspect
                 });
             }
         });
+}
+
+/// The entity's notes: a text box, sent when it loses focus.
+fn notes(
+    ui: &mut Ui,
+    view: &InspectorView<'_>,
+    entity: &Inspected,
+    actions: &mut InspectorActions,
+) {
+    ui.label(t("Notes")).on_hover_text(t(
+        "For people and agents working on the scene; the game does not see them",
+    ));
+    let key = format!("notes/{}", entity.id);
+    let stored = entity.notes.clone().unwrap_or_default();
+    let mut text = view
+        .state
+        .borrow()
+        .texts
+        .get(&key)
+        .cloned()
+        .unwrap_or_else(|| stored.clone());
+    let response = ui.add(
+        egui::TextEdit::multiline(&mut text)
+            .desired_rows(1)
+            .desired_width(f32::INFINITY)
+            .hint_text(t("What this is for, what to keep in mind...")),
+    );
+    if response.changed() {
+        view.state
+            .borrow_mut()
+            .texts
+            .insert(key.clone(), text.clone());
+    }
+    if response.lost_focus() {
+        view.state.borrow_mut().texts.remove(&key);
+        if text != stored {
+            actions.notes = Some((entity.id.clone(), text));
+        }
+    }
 }
 
 /// The fields of a component: a grid of labels and widgets. Returns the
@@ -486,7 +571,7 @@ fn quaternion(ui: &mut Ui, view: &InspectorView<'_>, key: &str, value: &Value) -
                 .add(
                     DragValue::new(degree)
                         .speed(0.5)
-                        .suffix(" deg")
+                        .suffix(format!(" {}", t("deg")))
                         .prefix(prefix),
                 )
                 .changed()
