@@ -17,6 +17,7 @@
 //!
 //! Design: `docs/design/M4-kontrol-duzlemi.md`.
 
+mod audio;
 mod concepts;
 pub mod docs;
 mod documents;

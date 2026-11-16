@@ -12,12 +12,17 @@
 //! Nothing here may depend on anything that does not build for
 //! `wasm32-unknown-unknown`.
 
+pub mod audio;
 pub mod input;
 pub mod physics;
 pub mod render;
 pub mod time;
 pub mod transform;
 
+pub use audio::{
+    AudioBus, AudioListener, AudioOneShot, AudioPlayback, AudioSettings, AudioSource, PlaySound,
+    SoundEnded, SoundStarted,
+};
 pub use input::{ActionSlot, ActionState, MAX_ACTIONS, action_id};
 pub use physics::{
     BodyForce, BodyImpulse, BodyKind, BodyVelocity, CharacterController, CharacterMotion,

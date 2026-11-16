@@ -16,6 +16,7 @@ serde_json.workspace = true
 wish_app.workspace = true
 wish_asset.workspace = true
 wish_control.workspace = true
+wish_audio.workspace = true
 wish_mcp.workspace = true
 wish_core.workspace = true
 wish_ecs.workspace = true
@@ -30,6 +31,11 @@ wish_window.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
+
+# Sound out of the speakers (`wen play`): Windows for now; ALSA and CoreAudio
+# come with the Linux and macOS packages (M9).
+[target.'cfg(windows)'.dependencies]
+wish_audio = { workspace = true, features = ["output"] }
 
 [lints]
 workspace = true

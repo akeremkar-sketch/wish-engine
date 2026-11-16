@@ -30,6 +30,7 @@ wish_sdk = { path = "crates/wish_sdk" }
 wish_sdk_macros = { path = "crates/wish_sdk_macros" }
 wish_script = { path = "crates/wish_script" }
 wish_input = { path = "crates/wish_input" }
+wish_audio = { path = "crates/wish_audio" }
 wish_physics = { path = "crates/wish_physics" }
 
 # External crates. Check the license before adding one (see deny.toml).
@@ -79,6 +80,13 @@ wat = "1"
 # Physics (wish_physics only, ADR-014). Apache-2.0. Features: only the 3D f32
 # engine with `enhanced-determinism` (no SIMD, no threads).
 rapier3d = { version = "0.36", default-features = false, features = ["dim3", "f32", "std", "enhanced-determinism"] }
+
+# Sound (wish_audio only, ADR-015). `hound` (WAV, Apache-2.0) and `lewton`
+# (Ogg Vorbis, MIT/Apache-2.0) decode clips; `kira` (MIT/Apache-2.0) plays
+# them, with its default decoder (`symphonia`, MPL-2.0) switched off.
+kira = { version = "0.12", default-features = false, features = ["cpal"] }
+hound = "3.5"
+lewton = "0.10"
 
 # Procedural macros. syn 3, the same major version serde_derive uses, so the
 # build compiles one syn.

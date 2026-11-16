@@ -108,6 +108,8 @@ impl LogEntry {
 /// Every session, and the log they share.
 #[derive(Default)]
 pub(crate) struct Sessions {
+    /// The lengths of the project's sound clips, kept until the file changes.
+    pub clips: crate::audio::Clips,
     pub open: BTreeMap<String, Session>,
     next_id: u32,
     next_seq: u64,
@@ -225,6 +227,7 @@ fn build_app(
     // Physics knows the scene before the first tick, so that questions
     // asked during it (game code's ray casts) see it.
     wish_physics::prepare(app.world_mut())?;
+    wish_audio::install(app.world_mut(), workspace.audio_clips());
     Ok((app, runtime))
 }
 
@@ -590,6 +593,15 @@ impl Workspace {
             };
             self.sessions
                 .record(Some(id), Some(log.tick), "script", &entry);
+        }
+        let lines = wish_audio::drain_log(self.session_mut(id)?.app.world_mut());
+        let session = self.session(id)?;
+        let entries: Vec<(u64, Diagnostic)> = lines
+            .iter()
+            .map(|line| crate::audio::entry(session.app.world(), line))
+            .collect();
+        for (at, entry) in &entries {
+            self.sessions.record(Some(id), Some(*at), "audio", entry);
         }
         for diagnostic in &stepped.diagnostics {
             let kind = if diagnostic.code == "system_failed" {

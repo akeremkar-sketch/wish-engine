@@ -25,7 +25,14 @@ const TICK_RATE: f64 = 60.0;
 /// game race to make up the time).
 const MAX_CATCH_UP: u64 = 5;
 
+/// The sound card, where there is one to open (Windows for now).
+#[cfg(windows)]
+type Speaker = Option<wish_audio::output::Speaker>;
+#[cfg(not(windows))]
+type Speaker = ();
+
 struct Game {
+    speaker: Speaker,
     workspace: Workspace,
     root: PathBuf,
     scene: Option<String>,
@@ -37,6 +44,21 @@ struct Game {
 }
 
 impl Game {
+    /// Makes the speakers match the sounds the game says are playing.
+    #[cfg(windows)]
+    fn hear(&mut self, id: &str) {
+        let Some(speaker) = self.speaker.as_mut() else {
+            return;
+        };
+        if let Ok(voices) = self.workspace.play_voices(id) {
+            let root = self.root.clone();
+            speaker.sync(&voices, &|path| std::fs::read(root.join(path)).ok());
+        }
+    }
+
+    #[cfg(not(windows))]
+    fn hear(&mut self, _id: &str) {}
+
     fn run_tool(&mut self, tool: &str, args: &serde_json::Value) -> serde_json::Value {
         self.workspace.call(tool, args, &parse_actor("human"))
     }
@@ -127,7 +149,9 @@ impl Content for Game {
         self.owed -= whole;
         let ticks = (whole as u64).min(MAX_CATCH_UP);
         if ticks > 0 {
-            match self.workspace.play_step(&id, ticks, keys) {
+            let stepped = self.workspace.play_step(&id, ticks, keys);
+            self.hear(&id);
+            match stepped {
                 Ok(problems) => {
                     for problem in problems {
                         self.messages.push(format!("{problem}"));
@@ -148,7 +172,20 @@ pub fn play(args: &PlayArgs, as_json: bool) -> Result<String> {
         example: None,
     })?;
     workspace.set_software(args.software);
+    #[cfg(windows)]
+    let speaker = match wish_audio::output::Speaker::open() {
+        Ok(speaker) => Some(speaker),
+        Err(problem) => {
+            if !as_json {
+                eprintln!("{problem}");
+            }
+            None
+        }
+    };
+    #[cfg(not(windows))]
+    let speaker = ();
     let mut game = Game {
+        speaker,
         workspace,
         root,
         scene: args.scene.clone(),

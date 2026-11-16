@@ -35,6 +35,13 @@ pub fn explain(name: &str) -> Option<&'static str> {
         "force" | "addforce" | "impulse" | "addimpulse" | "applyimpulse" => {
             "Push a dynamic body with BodyForce (a component: applied every tick while present) or kick it once with a BodyImpulse event (entity, linear, angular)."
         }
+        "audiosource" | "audioclip" | "sound" | "sfx" | "music" | "audiosource3d"
+        | "soundeffect" | "audioplayer" | "speaker" => {
+            "Sound: put an AudioSource on an entity (clip \"assets/sounds/x.wav\" or .ogg, playing, looping, spatial) and an AudioListener on the camera; one-off sounds are PlaySound events. Sessions do not play sound: logs_get with kinds [\"audio\"] says what started and ended, how loud and where."
+        }
+        "audiolistener" | "listener" | "ears" => {
+            "The listener is the AudioListener component (put it on the camera); the first one in entity order is heard from. Loudness and left/right are worked out from its position and orientation."
+        }
         "light" | "pointlight" | "spotlight" | "arealight" | "sunlight" => {
             "The light component is DirectionalLight (parallel rays like the sun, along the entity's -Z axis); point and spot lights come later. Fill light is the Ambient resource."
         }

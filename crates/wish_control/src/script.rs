@@ -195,7 +195,11 @@ impl Workspace {
 /// the project example's): it would replace that system, or be replaced
 /// by it, without a word (M5 closing review).
 pub(crate) fn check_system_names(example: Option<&str>, module: &GameModule) -> Result<()> {
-    let mut reserved = vec![PROPAGATION.to_owned(), wish_physics::SYSTEM.to_owned()];
+    let mut reserved = vec![
+        PROPAGATION.to_owned(),
+        wish_physics::SYSTEM.to_owned(),
+        wish_audio::SYSTEM.to_owned(),
+    ];
     if let Some(example) = example {
         let mut app = wish_app::App::new(wish_app::AppConfig::default());
         if wish_examples::add_systems(example, &mut app).is_ok() {
@@ -267,7 +271,9 @@ pub(crate) fn propagation_after_all(app: &mut wish_app::App) -> Result<()> {
     let mut names: Vec<String> = app
         .system_states()
         .map(|(name, _)| name.to_owned())
-        .filter(|name| name != PROPAGATION && name != wish_physics::SYSTEM)
+        .filter(|name| {
+            name != PROPAGATION && name != wish_physics::SYSTEM && name != wish_audio::SYSTEM
+        })
         .collect();
     names.sort();
     let mut physics = wish_physics::system();
@@ -282,7 +288,9 @@ pub(crate) fn propagation_after_all(app: &mut wish_app::App) -> Result<()> {
     for name in &names {
         propagation = propagation.after(name);
     }
-    app.replace_system(propagation)
+    app.replace_system(propagation)?;
+    // Sound last: it hears where things are after they moved.
+    app.replace_system(wish_audio::system().after(PROPAGATION))
 }
 
 /// Puts `module` into a session; returns what happened to changed types.
@@ -372,6 +380,11 @@ impl Workspace {
         let values = self.session(id)?.input.evaluate(keys);
         let (stepped, ..) = self.step_session(id, frames, None, &values)?;
         Ok(stepped.diagnostics)
+    }
+
+    /// The sounds playing in session `id` now, for a speaker (`wen play`).
+    pub fn play_voices(&self, id: &str) -> Result<Vec<wish_audio::Voice>> {
+        Ok(wish_audio::voices(self.session(id)?.app.world()))
     }
 
     /// What session `id` looks like now, for drawing.

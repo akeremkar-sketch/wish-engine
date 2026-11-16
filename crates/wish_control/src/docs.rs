@@ -25,6 +25,26 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "No asset file has that path. Paths are project-relative with '/' between folders; asset_list shows what exists.",
     ),
     (
+        "audio_clip_unknown",
+        "A sound source wants a clip that is not a readable .wav or .ogg file of the project (wrong path, missing file, or unreadable). The source is switched off. Check the path, and start a new session so the engine reads the project's clips again.",
+    ),
+    (
+        "audio_decode",
+        "A sound file could not be decoded (damaged, an unsupported format, or too long). Use .wav (8, 16, 24 or 32-bit integer, or 32-bit float) or .ogg (Vorbis) of at most an hour and 128 MiB.",
+    ),
+    (
+        "audio_device",
+        "No sound device could be opened for `wen play`, so the game runs without sound. Check that speakers or headphones are connected and not held by an exclusive-mode program.",
+    ),
+    (
+        "audio_ended",
+        "Log line (logs_get kind audio): a sound stopped because its clip finished, it was switched off, or its entity is gone.",
+    ),
+    (
+        "audio_started",
+        "Log line (logs_get kind audio): a sound started, with how loud it is at the listener (dB, 0 dB is the clip as recorded) and where (left, centre, right). Sounds are described in a session, not played.",
+    ),
+    (
         "bench_failed",
         "`wen bench --script` could not prepare its measurement (a temporary folder, or the measured game code did not build). Check that `wen sdk` was run with this engine.",
     ),
@@ -1191,6 +1211,15 @@ sent.send(BodyImpulse { entity: crate_, linear: Vec3::new(0.0, 5000.0, 0.0), ang
   `wish_sdk::physics::cast(Ray { from, dir, max, mask, ignore: Some(me) })`. They see the physics world as it was at
   the start of the tick (the same for every system); each costs a fixed amount of fuel.
 - A game may still declare its own `Velocity` for things it moves itself; physics uses `BodyVelocity`.
+
+## Sound
+
+A sound is an entity with an `AudioSource` (clip: a `.wav` or `.ogg` path in the project, `playing`, `looping`,
+`spatial`, `volume`, `pitch`, `min_distance`, `max_distance`) and an `AudioListener` somewhere (usually the camera).
+A one-off sound is an event: `sent.send(PlaySound { clip, bus: AudioBus::Sfx, volume: 1.0, pitch: 1.0,
+spatial: true, position })`. The engine writes `AudioPlayback { position, gain, pan, started }` and sends
+`SoundStarted` / `SoundEnded` events. Nothing is played in a session: an agent reads what played with
+`logs_get kinds: ["audio"]` ("started on 'door': -12.0 dB at the listener, right 100%").
 
 ## Rules
 

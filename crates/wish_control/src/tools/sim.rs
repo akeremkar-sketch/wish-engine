@@ -395,7 +395,7 @@ fn logs_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<Str
         _ => 0,
     };
     let kinds = args.strings("kinds");
-    const KNOWN: &[&str] = &["session", "system", "inspector", "script"];
+    const KNOWN: &[&str] = &["session", "system", "inspector", "script", "audio"];
     for kind in &kinds {
         if !KNOWN.contains(&kind.as_str()) {
             return Err(Diagnostic::error(

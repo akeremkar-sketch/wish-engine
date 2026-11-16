@@ -11,6 +11,7 @@ publish.workspace = true
 serde_json.workspace = true
 wish_app.workspace = true
 wish_asset.workspace = true
+wish_audio.workspace = true
 wish_core.workspace = true
 wish_ecs.workspace = true
 wish_examples.workspace = true
