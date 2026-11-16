@@ -46,6 +46,53 @@ fn differing(a: &Canvas, b: &Canvas) -> usize {
         .count()
 }
 
+/// Clicks an item of the project menu (the menu bar's first button, named
+/// after the project).
+#[allow(dead_code)]
+fn project_menu(app: &mut EditorApp, item: &str) {
+    let menu = app
+        .widgets()
+        .iter()
+        .find(|w| w.role == "Button" && w.label.as_deref() == Some("Editor Test"))
+        .map(|w| w.rect)
+        .expect("the project menu");
+    run_script(
+        app,
+        &json!({ "size": [1280, 720], "steps": [
+            { "events": [{ "click": [menu.center().x, menu.center().y] }] }, { "idle": 2 }] }),
+    )
+    .unwrap();
+    let entry = app
+        .widgets()
+        .iter()
+        .find(|w| w.role == "Button" && w.label.as_deref() == Some(item))
+        .map(|w| w.rect)
+        .unwrap_or_else(|| panic!("no '{item}' in the project menu"));
+    run_script(
+        app,
+        &json!({ "size": [1280, 720], "steps": [
+            { "events": [{ "click": [entry.center().x, entry.center().y] }] }, { "idle": 2 }] }),
+    )
+    .unwrap();
+}
+
+/// Clicks a button of the menu bar by its label.
+#[allow(dead_code)]
+fn menu_bar(app: &mut EditorApp, label: &str) {
+    let rect = app
+        .widgets()
+        .iter()
+        .find(|w| w.role == "Button" && w.label.as_deref() == Some(label) && w.rect.max.y < 30.0)
+        .map(|w| w.rect)
+        .unwrap_or_else(|| panic!("no '{label}' in the menu bar"));
+    run_script(
+        app,
+        &json!({ "size": [1280, 720], "steps": [
+            { "events": [{ "click": [rect.center().x, rect.center().y] }] }, { "idle": 2 }] }),
+    )
+    .unwrap();
+}
+
 #[test]
 fn the_hierarchy_and_the_scene_picture_show_the_project() {
     let (mut app, _dir) = app("shows");
@@ -111,10 +158,7 @@ fn the_undo_button_is_a_control_plane_call_by_a_human() {
     play(&mut app, json!([{ "seconds": 0.5 }, { "idle": 2 }]));
     assert!(ids(app.rows()).contains("pillar"));
     // Undo is the second button of the menu bar.
-    play(
-        &mut app,
-        json!([{ "events": [{ "click": [366, 13] }] }, { "idle": 2 }]),
-    );
+    menu_bar(&mut app, "Undo");
     assert!(
         !ids(app.rows()).contains("pillar"),
         "undone: {:?}",
@@ -168,10 +212,8 @@ fn right_drag_and_keys_move_the_view_camera() {
     );
     assert!(differing(&looked, &moved) > 5000, "the view moved forward");
     // Reset camera goes back to the scene's own camera.
-    let reset = play(
-        &mut app,
-        json!([{ "events": [{ "click": [620, 13] }] }, { "idle": 2 }]),
-    );
+    menu_bar(&mut app, "Reset camera");
+    let reset = play(&mut app, json!([{ "idle": 1 }]));
     assert!(differing(&moved, &reset) > 5000);
     assert!(differing(&start, &reset) < differing(&start, &moved));
 }

@@ -57,6 +57,53 @@ fn history(app: &mut EditorApp) -> Value {
     app.call("edit_history", &json!({ "action": "list" }))
 }
 
+/// Clicks an item of the project menu (the menu bar's first button, named
+/// after the project).
+#[allow(dead_code)]
+fn project_menu(app: &mut EditorApp, item: &str) {
+    let menu = app
+        .widgets()
+        .iter()
+        .find(|w| w.role == "Button" && w.label.as_deref() == Some("Editor Test"))
+        .map(|w| w.rect)
+        .expect("the project menu");
+    run_script(
+        app,
+        &json!({ "size": [1280, 720], "steps": [
+            { "events": [{ "click": [menu.center().x, menu.center().y] }] }, { "idle": 2 }] }),
+    )
+    .unwrap();
+    let entry = app
+        .widgets()
+        .iter()
+        .find(|w| w.role == "Button" && w.label.as_deref() == Some(item))
+        .map(|w| w.rect)
+        .unwrap_or_else(|| panic!("no '{item}' in the project menu"));
+    run_script(
+        app,
+        &json!({ "size": [1280, 720], "steps": [
+            { "events": [{ "click": [entry.center().x, entry.center().y] }] }, { "idle": 2 }] }),
+    )
+    .unwrap();
+}
+
+/// Clicks a button of the menu bar by its label.
+#[allow(dead_code)]
+fn menu_bar(app: &mut EditorApp, label: &str) {
+    let rect = app
+        .widgets()
+        .iter()
+        .find(|w| w.role == "Button" && w.label.as_deref() == Some(label) && w.rect.max.y < 30.0)
+        .map(|w| w.rect)
+        .unwrap_or_else(|| panic!("no '{label}' in the menu bar"));
+    run_script(
+        app,
+        &json!({ "size": [1280, 720], "steps": [
+            { "events": [{ "click": [rect.center().x, rect.center().y] }] }, { "idle": 2 }] }),
+    )
+    .unwrap();
+}
+
 #[test]
 fn clicking_rows_selects_and_ctrl_adds() {
     let (mut app, _dir) = app("select");
@@ -105,10 +152,7 @@ fn add_and_delete_are_single_undoable_calls_by_a_human() {
         entries.iter().all(|e| e.to_string().contains("human")),
         "{list}"
     );
-    play(
-        &mut app,
-        json!([{ "events": [{ "click": [366, 13] }] }, { "idle": 1 }]),
-    );
+    menu_bar(&mut app, "Undo");
     assert!(ids(app.rows()).contains("entity_2"), "undo brought it back");
 }
 

@@ -54,6 +54,11 @@ pub(crate) struct Documents {
     prefab_stamp: Option<Vec<(String, u64, Option<SystemTime>)>>,
 }
 
+/// Writes a project file (settings) atomically: all of it or nothing.
+pub(crate) fn write_project_file(root: &Path, path: &str, text: &str) -> Result<()> {
+    atomic_write(root, path, text)
+}
+
 fn atomic_write(root: &Path, path: &str, text: &str) -> Result<()> {
     let target = root.join(path);
     if let Some(folder) = target.parent() {

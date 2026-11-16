@@ -9,6 +9,7 @@ mod project;
 mod replay;
 mod scene;
 mod script;
+mod settings;
 mod sim;
 mod testing;
 mod view;
@@ -51,4 +52,5 @@ pub(crate) const CATALOG: &[Tool] = &[
     script::SCRIPT_BUILD,
     replay::REPLAY,
     testing::TEST_RUN,
+    settings::PROJECT_SETTINGS,
 ];

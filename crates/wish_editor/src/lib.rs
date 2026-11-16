@@ -8,10 +8,12 @@ mod app;
 mod browser;
 mod gizmo;
 mod inspector;
+mod panels;
 pub mod raster;
 pub mod script;
+mod settings;
 
-pub use app::{EditorApp, Row, ids};
+pub use app::{EditorApp, Opener, Row, ids};
 pub use inspector::has_widget;
 
 use std::sync::Arc;

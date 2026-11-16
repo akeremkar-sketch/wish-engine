@@ -81,11 +81,16 @@ pub(crate) struct BrowserActions {
     pub place: Option<String>,
     /// Move a file: from, to.
     pub rename: Option<(String, String)>,
+    /// Open a file in an outside program.
+    pub open: Option<String>,
 }
 
 impl BrowserActions {
     pub fn any(&self) -> bool {
-        self.select.is_some() || self.place.is_some() || self.rename.is_some()
+        self.select.is_some()
+            || self.place.is_some()
+            || self.rename.is_some()
+            || self.open.is_some()
     }
 }
 
@@ -182,7 +187,7 @@ fn size_text(bytes: u64) -> String {
 /// The browser panel's contents.
 pub(crate) fn panel(ui: &mut Ui, view: &BrowserView<'_>, actions: &mut BrowserActions) {
     ui.horizontal(|ui| {
-        ui.strong("Assets");
+        ui.weak("Filter:");
         let mut state = view.state.borrow_mut();
         ui.add(
             egui::TextEdit::singleline(&mut state.filter)
@@ -302,6 +307,10 @@ fn row(ui: &mut Ui, view: &BrowserView<'_>, asset: &Asset, actions: &mut Browser
         response.context_menu(|ui| {
             if asset.placeable() && ui.button("Add to scene").clicked() {
                 actions.place = Some(asset.path.clone());
+                ui.close();
+            }
+            if ui.button("Open outside").clicked() {
+                actions.open = Some(asset.path.clone());
                 ui.close();
             }
             if asset.kind != "prefab" && ui.button("Rename / move...").clicked() {

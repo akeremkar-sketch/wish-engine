@@ -82,6 +82,19 @@ fn combo(app: &EditorApp, text: &str) -> Rect {
         .unwrap_or_else(|| panic!("no list showing '{text}'"))
 }
 
+/// The entry `text` of the list that opened under `list` (not a widget of
+/// the same name elsewhere, such as a row of the browser).
+fn popup_entry(app: &EditorApp, text: &str, list: Rect) -> Rect {
+    app.widgets()
+        .iter()
+        .filter(|w| w.role != "TextRun" && w.role != "Label")
+        .filter(|w| w.label.as_deref() == Some(text) || w.value.as_deref() == Some(text))
+        .filter(|w| w.rect.min.y >= list.max.y && w.rect.min.y < list.max.y + 300.0)
+        .map(|w| w.rect)
+        .next()
+        .unwrap_or_else(|| panic!("no '{text}' under the list"))
+}
+
 fn has(app: &EditorApp, text: &str) -> bool {
     app.widgets().iter().any(|w| {
         w.role != "TextRun"
@@ -399,7 +412,7 @@ fn a_prefab_is_edited_in_the_editor_and_its_instances_follow() {
     // Open the prefab from the scene picker.
     let picker = combo(&app, "scenes/main.scene.json");
     play(&mut app, json!([click_at(picker), { "idle": 2 }]));
-    let prefab_entry = named(&app, "prefabs/lamp.prefab.json");
+    let prefab_entry = popup_entry(&app, "prefabs/lamp.prefab.json", picker);
     play(&mut app, json!([click_at(prefab_entry), { "idle": 3 }]));
     assert_eq!(app.scene(), "prefabs/lamp.prefab.json");
     let ids: Vec<_> = app.rows().iter().map(|r| r.id.as_str()).collect();
@@ -444,7 +457,7 @@ fn a_prefab_is_edited_in_the_editor_and_its_instances_follow() {
     // Back in the scene, the instance has it.
     let picker = combo(&app, "prefabs/lamp.prefab.json");
     play(&mut app, json!([click_at(picker), { "idle": 2 }]));
-    let main = named(&app, "scenes/main.scene.json");
+    let main = popup_entry(&app, "scenes/main.scene.json", picker);
     play(&mut app, json!([click_at(main), { "idle": 3 }]));
     assert_eq!(app.scene(), "scenes/main.scene.json");
     let got = app.call(

@@ -12,7 +12,7 @@
 //! instead of overwriting their work.
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use egui::{Align, Layout, Pos2, Rect, Sense, Ui, pos2, vec2};
 use glam::{Quat, Vec3};
@@ -25,7 +25,9 @@ use crate::Editor;
 use crate::browser::{Asset, AssetDrag, BrowserActions, BrowserState, BrowserView};
 use crate::gizmo::{self, Drag, Eye, Handle, Mode, Space, Target};
 use crate::inspector::{self, Inspected, InspectorActions, InspectorState, InspectorView};
+use crate::panels::{PanelActions, Tab, Timing};
 use crate::raster::Canvas;
+use crate::settings::{Draft, SettingsActions};
 
 /// How often the scene is looked at for changes made elsewhere.
 const POLL_SECONDS: f64 = 0.4;
@@ -40,6 +42,25 @@ const MAX_CATCH_UP: u64 = 8;
 const SNAPSHOT_SECONDS: f64 = 2.0;
 /// At most this many timeline snapshots (a session holds 32).
 const MAX_TIMELINE: usize = 30;
+
+/// Opens a project file in an editor outside the engine.
+pub type Opener = Box<dyn FnMut(&std::path::Path) -> Result<(), String>>;
+
+/// The default way to open a file: the program named by the `WISH_EDITOR`
+/// environment variable (such as `code`), or the system's own choice.
+fn open_with_system(path: &std::path::Path) -> Result<(), String> {
+    use std::process::Command;
+    let spawned = match std::env::var("WISH_EDITOR") {
+        Ok(program) if !program.trim().is_empty() => Command::new(program.trim()).arg(path).spawn(),
+        _ if cfg!(windows) => Command::new("cmd")
+            .args(["/C", "start", ""])
+            .arg(path)
+            .spawn(),
+        _ if cfg!(target_os = "macos") => Command::new("open").arg(path).spawn(),
+        _ => Command::new("xdg-open").arg(path).spawn(),
+    };
+    spawned.map(|_| ()).map_err(|error| error.to_string())
+}
 
 /// The game running in the editor.
 struct Play {
@@ -150,6 +171,23 @@ pub struct EditorApp {
     browser_state: RefCell<BrowserState>,
     /// A component's values copied in the inspector.
     clipboard: Option<(String, Value)>,
+    /// The settings window's draft, while it is open.
+    settings: RefCell<Option<Draft>>,
+    /// The bottom panel's tab.
+    tab: Tab,
+    /// The console's entries (from `logs_get`), and the last one read.
+    log: VecDeque<Value>,
+    log_seq: u64,
+    since_log: f64,
+    /// What `check` found last.
+    found: Vec<Value>,
+    /// Frame times, for the performance tab. (Measured with the wall clock:
+    /// the editor's own speed, never the simulation's.)
+    timings: VecDeque<Timing>,
+    /// The game's share of the frame being drawn.
+    game_time: (f32, u32),
+    /// How a file is opened outside the engine.
+    opener: Opener,
     /// What the handles do, along which axes, and whether they snap.
     mode: Mode,
     space: Space,
@@ -224,6 +262,16 @@ struct Actions {
     drop: Option<(String, Pos2)>,
     /// Make a prefab of this entity and its children.
     make_prefab: Option<String>,
+    /// Open the settings window.
+    open_settings: bool,
+    /// Open the game code in an outside editor.
+    edit_code: bool,
+    /// Build the game code.
+    build_code: bool,
+    /// What the settings window asked for.
+    settings: SettingsActions,
+    /// What the bottom panel's tabs asked for.
+    panels: PanelActions,
     play_start: bool,
     play_pause: bool,
     play_step: bool,
@@ -255,6 +303,11 @@ impl Actions {
             || self.browser.any()
             || self.drop.is_some()
             || self.make_prefab.is_some()
+            || self.open_settings
+            || self.edit_code
+            || self.build_code
+            || self.settings.any()
+            || self.panels.any()
             || self.play_start
             || self.play_pause
             || self.play_step
@@ -300,6 +353,15 @@ impl EditorApp {
             asset_detail: None,
             browser_state: RefCell::new(BrowserState::default()),
             clipboard: None,
+            settings: RefCell::new(None),
+            tab: Tab::Assets,
+            log: VecDeque::new(),
+            log_seq: 0,
+            since_log: 0.0,
+            found: Vec::new(),
+            timings: VecDeque::new(),
+            game_time: (0.0, 0),
+            opener: Box::new(open_with_system),
             mode: Mode::Translate,
             space: Space::World,
             snap: false,
@@ -1017,6 +1079,63 @@ impl EditorApp {
         applied
     }
 
+    /// Replaces the way files are opened outside the engine (tests record
+    /// instead of starting a program).
+    pub fn set_opener(&mut self, opener: Opener) {
+        self.opener = opener;
+    }
+
+    /// Opens a project file in an outside editor.
+    fn open_file(&mut self, relative: &str) {
+        let path = self.workspace.root().join(relative);
+        if !path.exists() {
+            self.status = format!("{relative} does not exist");
+            return;
+        }
+        self.status = match (self.opener)(&path) {
+            Ok(()) => format!("opened {relative}"),
+            Err(error) => format!(
+                "could not open {relative}: {error} (set WISH_EDITOR to your editor, such as code)"
+            ),
+        };
+    }
+
+    /// Reads what was logged since the console last looked.
+    fn read_log(&mut self) {
+        let got = self.call("logs_get", &json!({ "since": self.log_seq }));
+        if got["ok"] != true {
+            return;
+        }
+        for entry in got["entries"].as_array().into_iter().flatten() {
+            self.log.push_back(entry.clone());
+            if self.log.len() > crate::panels::MAX_LOG {
+                self.log.pop_front();
+            }
+        }
+        if let Some(seq) = got["last_seq"].as_u64() {
+            self.log_seq = self.log_seq.max(seq);
+        }
+    }
+
+    /// Runs `check` for the problems tab.
+    fn run_check(&mut self) {
+        let checked = self.call("check", &json!({}));
+        self.found = checked["diagnostics"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+    }
+
+    /// The console's entries, oldest first.
+    pub fn console(&self) -> Vec<Value> {
+        self.log.iter().cloned().collect()
+    }
+
+    /// The problems `check` found last.
+    pub fn problems(&self) -> &[Value] {
+        &self.found
+    }
+
     /// Starts the game from the scene being edited.
     fn start_play(&mut self) {
         if self.scene.ends_with(".prefab.json") {
@@ -1100,7 +1219,11 @@ impl EditorApp {
                 width: self.viewport.width(),
                 height: self.viewport.height(),
             });
-        match self.workspace.play_step(&session, ticks, &held, pointer) {
+        let started = std::time::Instant::now();
+        let stepped = self.workspace.play_step(&session, ticks, &held, pointer);
+        self.game_time.0 += started.elapsed().as_secs_f32() * 1000.0;
+        self.game_time.1 += u32::try_from(ticks).unwrap_or(u32::MAX);
+        match stepped {
             Ok(problems) => {
                 if let Some(problem) = problems.first() {
                     self.status = format!("{problem}");
@@ -1386,6 +1509,9 @@ impl EditorApp {
         if let Some(path) = actions.browser.select {
             self.select_asset(&path);
         }
+        if let Some(path) = actions.browser.open {
+            self.open_file(&path);
+        }
         if let Some(path) = actions.browser.place {
             self.place_asset(&path, None);
         }
@@ -1420,6 +1546,98 @@ impl EditorApp {
         }
         if let Some(id) = actions.make_prefab {
             self.make_prefab(&id);
+        }
+        if let Some(tab) = actions.panels.tab {
+            self.tab = tab;
+            if tab == Tab::Problems {
+                self.run_check();
+            }
+            if tab == Tab::Console {
+                self.read_log();
+            }
+        }
+        if actions.panels.clear_console {
+            self.log.clear();
+        }
+        if actions.panels.check {
+            self.run_check();
+        }
+        if let Some(id) = actions.panels.select {
+            self.click_entity(&id, false);
+        }
+        if actions.edit_code {
+            self.open_file("scripts/src/lib.rs");
+        }
+        if actions.build_code {
+            let built = self.call("script_build", &json!({}));
+            // A build that could not even start answers with an error.
+            let problems = if built["ok"] == true {
+                built["diagnostics"].as_array().cloned().unwrap_or_default()
+            } else {
+                vec![built["error"].clone()]
+            };
+            self.status = if built["passed"] == true {
+                format!(
+                    "game code built ({} warning(s))",
+                    built["warnings"].as_u64().unwrap_or(0)
+                )
+            } else {
+                let first = problems
+                    .first()
+                    .and_then(|p| p["message"].as_str())
+                    .unwrap_or("it did not build");
+                format!("game code not built: {first}")
+            };
+            if built["passed"] != true {
+                self.found = problems;
+                self.tab = Tab::Problems;
+            }
+            self.refresh_project();
+        }
+        if actions.open_settings {
+            let got = self.call("project_settings", &json!({}));
+            if got["ok"] == true {
+                *self.settings.borrow_mut() = Some(Draft::from_answer(&got));
+            } else {
+                self.status = got["error"]["message"]
+                    .as_str()
+                    .unwrap_or("the settings could not be read")
+                    .to_owned();
+            }
+        }
+        if actions.settings.close {
+            *self.settings.borrow_mut() = None;
+        }
+        let draft = self.settings.borrow().clone();
+        if let Some(draft) = draft {
+            let mut args = None;
+            if actions.settings.save_project {
+                args = Some(json!({ "action": "set", "name": draft.name, "scene": draft.scene }));
+            } else if actions.settings.save_input {
+                args = Some(json!({ "action": "set", "input": draft.input() }));
+            }
+            if let Some(args) = args {
+                let saved = self.call("project_settings", &args);
+                self.status = if saved["ok"] == true {
+                    let what = saved["changed"]
+                        .as_array()
+                        .map(|c| {
+                            c.iter()
+                                .filter_map(Value::as_str)
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        })
+                        .unwrap_or_default();
+                    format!("settings saved ({what})")
+                } else {
+                    let message = saved["error"]["message"]
+                        .as_str()
+                        .unwrap_or("it did not work");
+                    let hint = saved["error"]["hint"].as_str().unwrap_or("");
+                    format!("settings not saved: {message} {hint}")
+                };
+                self.refresh_project();
+            }
         }
         if actions.play_start && self.play.is_none() {
             self.start_play();
@@ -1537,7 +1755,11 @@ impl EditorApp {
         }
         if actions.check {
             let checked = self.call("check", &json!({}));
-            let found = checked["diagnostics"].as_array().map_or(0, Vec::len);
+            self.found = checked["diagnostics"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            let found = self.found.len();
             self.status = format!(
                 "check: {}",
                 if checked["passed"] == true {
@@ -1969,8 +2191,42 @@ impl EditorApp {
         let mut actions = Actions::default();
         egui::Panel::top("menu").show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.strong(format!("Wish Editor - {}", self.project));
-                ui.separator();
+                ui.menu_button(self.project.as_str(), |ui| {
+                    if ui
+                        .button("Settings...")
+                        .on_hover_text("The project's name, default scene and input map")
+                        .clicked()
+                    {
+                        actions.open_settings = true;
+                        ui.close();
+                    }
+                    if ui.button("Check").on_hover_text("Look for problems in the whole project").clicked() {
+                        actions.check = true;
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui
+                        .button("Edit code")
+                        .on_hover_text("Open scripts/src/lib.rs in your code editor (WISH_EDITOR, or the system's)")
+                        .clicked()
+                    {
+                        actions.edit_code = true;
+                        ui.close();
+                    }
+                    if ui
+                        .button("Build code")
+                        .on_hover_text("Build the game code; a running game switches to it")
+                        .clicked()
+                    {
+                        actions.build_code = true;
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button("Quit").clicked() {
+                        actions.quit = true;
+                        ui.close();
+                    }
+                });
                 egui::ComboBox::from_id_salt("scene")
                     .selected_text(&self.scene)
                     .show_ui(ui, |ui| {
@@ -2104,14 +2360,6 @@ impl EditorApp {
                 {
                     actions.toggle_snap = true;
                 }
-                if ui.button("Check").clicked() {
-                    actions.check = true;
-                }
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui.button("Quit").clicked() {
-                        actions.quit = true;
-                    }
-                });
             });
         });
         egui::Panel::bottom("status").show(ui, |ui| {
@@ -2127,14 +2375,25 @@ impl EditorApp {
             .default_size(190.0)
             .size_range(110.0..=420.0)
             .show(ui, |ui| {
-                let view = BrowserView {
-                    assets: &self.files,
-                    selected: self.asset_selected.as_deref(),
-                    detail: self.asset_detail.as_ref(),
-                    root: self.workspace.root(),
-                    state: &self.browser_state,
-                };
-                crate::browser::panel(ui, &view, &mut actions.browser);
+                crate::panels::tabs(ui, self.tab, self.found.len(), &mut actions.panels);
+                ui.separator();
+                match self.tab {
+                    Tab::Assets => {
+                        let view = BrowserView {
+                            assets: &self.files,
+                            selected: self.asset_selected.as_deref(),
+                            detail: self.asset_detail.as_ref(),
+                            root: self.workspace.root(),
+                            state: &self.browser_state,
+                        };
+                        crate::browser::panel(ui, &view, &mut actions.browser);
+                    }
+                    Tab::Console => crate::panels::console(ui, &self.log, &mut actions.panels),
+                    Tab::Problems => crate::panels::problems(ui, &self.found, &mut actions.panels),
+                    Tab::Performance => {
+                        crate::panels::performance(ui, &self.timings, self.play.is_some());
+                    }
+                }
             });
         egui::Panel::left("hierarchy")
             .default_size(220.0)
@@ -2152,6 +2411,7 @@ impl EditorApp {
                 };
                 inspector::panel(ui, &view, &mut actions.inspector);
             });
+        crate::settings::window(ui, &self.settings, &self.scenes, &mut actions.settings);
         // The middle is not painted: the scene's picture shows through.
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
@@ -2180,6 +2440,14 @@ impl EditorApp {
     ) -> bool {
         self.since_poll += seconds;
         self.since_project_poll += seconds;
+        self.since_log += seconds;
+        let mut log_changed = false;
+        if (self.tab == Tab::Console || self.play.is_some()) && self.since_log >= 0.5 {
+            self.since_log = 0.0;
+            let before = self.log_seq;
+            self.read_log();
+            log_changed = self.log_seq != before && self.tab == Tab::Console;
+        }
         let mut project_changed = false;
         if self.since_project_poll >= PROJECT_POLL_SECONDS {
             self.since_project_poll = 0.0;
@@ -2187,6 +2455,7 @@ impl EditorApp {
         }
         let mut changed = !events.is_empty()
             || project_changed
+            || log_changed
             || self.play.as_ref().is_some_and(|play| !play.paused)
             || self.frames < 3
             || self.movement.any()
@@ -2207,6 +2476,8 @@ impl EditorApp {
             let Some(mut editor) = self.editor.take() else {
                 return false;
             };
+            let frame_started = std::time::Instant::now();
+            let mut scene_ms = 0.0f32;
             let mut egui_events = Some(egui_events);
             let mut seconds = seconds;
             let mut passes = 0;
@@ -2224,7 +2495,9 @@ impl EditorApp {
                 self.viewport = viewport;
                 let acted = actions.any();
                 self.act(actions);
+                let render_started = std::time::Instant::now();
                 let picked = self.render_viewport(seconds);
+                scene_ms += render_started.elapsed().as_secs_f32() * 1000.0;
                 self.refresh_inspected();
                 self.refresh_target();
                 passes += 1;
@@ -2265,6 +2538,17 @@ impl EditorApp {
             editor.paint(&frame, &mut self.canvas);
             self.editor = Some(editor);
             self.frames += 1;
+            let total = frame_started.elapsed().as_secs_f32() * 1000.0;
+            let (game, ticks) = std::mem::take(&mut self.game_time);
+            self.timings.push_back(Timing {
+                interface: (total - scene_ms).max(0.0),
+                scene: scene_ms,
+                game,
+                ticks,
+            });
+            if self.timings.len() > crate::panels::HISTORY {
+                self.timings.pop_front();
+            }
             return true;
         }
         false
