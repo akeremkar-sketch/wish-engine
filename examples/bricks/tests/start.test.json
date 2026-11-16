@@ -1,0 +1,11 @@
+{
+  "format": 1,
+  "scene": "scenes/main.scene.json",
+  "seed": 1,
+  "steps": [
+    { "frames": 2 },
+    { "expect": "Game.lives == 3 && Game.bricks == 40", "message": "three lives, forty bricks" },
+    { "expect": "Paddle.auto == true", "entity": "paddle", "message": "the paddle plays by itself in the scene" },
+    { "frames": 1 }
+  ]
+}

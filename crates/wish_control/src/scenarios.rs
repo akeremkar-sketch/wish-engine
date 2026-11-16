@@ -348,7 +348,11 @@ impl Workspace {
                 Diagnostic::error(
                     "file_unreadable",
                     format!("Could not read '{file}': {error}."),
-                    "Check that the file can be read.",
+                    if error.kind() == std::io::ErrorKind::InvalidData {
+                        "The file is not UTF-8 text (a tool wrote it in a local code page?). Save it as UTF-8, without a byte order mark."
+                    } else {
+                        "Check that the file can be read."
+                    },
                 )
                 .at_file(file)
             })?;

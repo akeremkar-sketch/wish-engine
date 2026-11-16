@@ -91,3 +91,10 @@ Görevler 26–40+: platform oyunu yapı taşları (takip kamerası, hareketli p
 - **`wish://docs/recipes`** (`crates/wish_control/src/recipes.md`): sekiz çalışan parça — platform karakteri, takip kamerası, toplanabilirler + puan yazısı + ses + parıltı, düşme ve denetim noktaları, hareketli platform, kazanma ekranı ve başla düğmesi, 2D sahne, senaryo testleri ve tekrarlar. Her biri tam bir `scripts/src/lib.rs` ve sahne işlemleri; kod vitrin oyununda kanıtlanmış parçalardan.
 - **Tarifler çürümez:** `wish_control/tests/recipes.rs` her tarifin kodunu boş bir projede derler (uyarısız), işlemlerini uygular, projeyi denetler ve bir oturum koşar; test örneklerinin biçimini sınar. İlk koşuda 2D tarifindeki gerçek bir hatayı yakaladı (yeni projede `ground` zaten var).
 - **Bulunabilirlik:** MCP kaynak listesinde, `docs_search`'te (bölüm bölüm), kılavuzda kısa "Game systems" bölümüyle, yeni projenin `CLAUDE.md`'sinde ve MCP sunucu yönergelerinde; başka motorların adları (`FollowCamera`, `MovingPlatform`, `Checkpoint`, `Cinemachine`…) kavram ipucuyla tariflere yönlendirir.
+
+### WP5 — iki küçük örnek
+
+- **`examples/bricks` (2D tuğla kırma):** ortografik kamera, sprite'lar, 2D fizik kilitleri (Z ötelemesi, tüm dönmeler), `ccd`'li sekme katsayısı 1 olan top, sabit hızlı top ve raketin çarpma yerine göre yön vermesi (oyun kodu), puan/can arayüzü, sesler (`asset_create`), kazanma/kaybetme paneli. Testler: açılış, ve **otomatik pilotla tam oyun** (40 tuğla, ~5.000 tick). İlk denemede otomatik pilot sonsuz döngüye girdi (düz raket topu hep aynı açıyla yansıtır) → klasik çözüm; bu oyun tasarımıydı, motor değil.
+- **`examples/quiz` (arayüz ağırlıklı):** menü → beş soru × dört şık düğmesi → sonuç; her şey `UiNode`; oyun kodu yalnızca `ButtonClicked`'e tepki verir ve metin yazar. Testler işaretçiyle tıklayarak oynar (tam doğru 5/5 ve bir yanlış 4/5).
+- **CI:** her ikisi de derlenir, testleri koşar, kaydedilen koşu bit düzeyinde tekrar oynatılır (`script_tools.rs`).
+- **Sürtünme F9–F10 (düzeltildi):** arayüz çocuklarının sırası belgesizdi (`order`); geçersiz UTF-8 dosyada ipucu kodlamayı söylemiyordu.

@@ -1,0 +1,9 @@
+{
+  "format": 1,
+  "scene": "scenes/main.scene.json",
+  "seed": 1,
+  "steps": [
+    { "frames": 60 },
+    { "expect": "has(Camera)", "message": "the scene has a camera to look through" }
+  ]
+}

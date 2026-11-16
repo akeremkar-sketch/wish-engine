@@ -346,6 +346,9 @@ wish_sdk::export! {
 
 ## A win screen and a start button
 
+Boxes lay their children out in sibling order: give `order` to `spawn` (0, 1, 2...) where it matters (without it
+siblings go by id, alphabetically).
+
 A hidden interface panel that game code shows, and a button: `ButtonClicked { entity }` arrives the tick after a click
 (press and release over it). Interface positions are pixels of a 1280 x 720 screen; `describe_view` lists the
 interface, and `sim_step` input `{ "pointer": [640, 360], "click": true }` then `{ "pointer": [640, 360] }` clicks.

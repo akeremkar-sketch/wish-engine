@@ -1,0 +1,176 @@
+{
+  "format": 1,
+  "scene": "scenes/main.scene.json",
+  "seed": 1,
+  "steps": [
+    {
+      "frames": 2
+    },
+    {
+      "expect": "Game.screen == 0",
+      "message": "the game opens on the menu"
+    },
+    {
+      "input": {
+        "pointer": [
+          640,
+          400
+        ],
+        "click": true
+      },
+      "frames": 1
+    },
+    {
+      "input": {
+        "pointer": [
+          640,
+          400
+        ]
+      },
+      "frames": 2
+    },
+    {
+      "expect": "Game.screen == 1 && Game.question == 0",
+      "message": "Başla starts the questions"
+    },
+    {
+      "expect": "UiText.text == \"Wish Engine hangi dille yazıldı?\"",
+      "entity": "question",
+      "message": "the first question is asked"
+    },
+    {
+      "input": {
+        "pointer": [
+          640,
+          247
+        ],
+        "click": true
+      },
+      "frames": 1
+    },
+    {
+      "input": {
+        "pointer": [
+          640,
+          247
+        ]
+      },
+      "frames": 2
+    },
+    {
+      "expect": "Game.question == 1",
+      "message": "answer 1 moves on"
+    },
+    {
+      "input": {
+        "pointer": [
+          640,
+          327
+        ],
+        "click": true
+      },
+      "frames": 1
+    },
+    {
+      "input": {
+        "pointer": [
+          640,
+          327
+        ]
+      },
+      "frames": 2
+    },
+    {
+      "expect": "Game.question == 2",
+      "message": "answer 2 moves on"
+    },
+    {
+      "input": {
+        "pointer": [
+          640,
+          407
+        ],
+        "click": true
+      },
+      "frames": 1
+    },
+    {
+      "input": {
+        "pointer": [
+          640,
+          407
+        ]
+      },
+      "frames": 2
+    },
+    {
+      "expect": "Game.question == 3",
+      "message": "answer 3 moves on"
+    },
+    {
+      "input": {
+        "pointer": [
+          640,
+          247
+        ],
+        "click": true
+      },
+      "frames": 1
+    },
+    {
+      "input": {
+        "pointer": [
+          640,
+          247
+        ]
+      },
+      "frames": 2
+    },
+    {
+      "expect": "Game.question == 4",
+      "message": "answer 4 moves on"
+    },
+    {
+      "input": {
+        "pointer": [
+          640,
+          487
+        ],
+        "click": true
+      },
+      "frames": 1
+    },
+    {
+      "input": {
+        "pointer": [
+          640,
+          487
+        ]
+      },
+      "frames": 2
+    },
+    {
+      "expect": "Game.question == 5",
+      "message": "answer 5 moves on"
+    },
+    {
+      "expect": "Game.screen == 2 && Game.score == 5",
+      "message": "every answer right: 5 points"
+    },
+    {
+      "expect": "UiText.text == \"5 sorudan 5 doğru!\"",
+      "entity": "result",
+      "message": "the result screen says so"
+    },
+    {
+      "expect": "UiNode.visible == true",
+      "entity": "done",
+      "message": "the result screen is shown"
+    },
+    {
+      "expect": "UiNode.visible == false",
+      "entity": "quiz",
+      "message": "the questions are gone"
+    }
+  ]
+}
