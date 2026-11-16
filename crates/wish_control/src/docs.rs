@@ -1162,6 +1162,25 @@ wish_sdk::export! {
 }
 ```
 
+## Physics
+
+Physics runs after the game's systems every tick. An entity with a `Collider` takes part; with a `RigidBody`
+it moves. Physics writes `Transform` and `BodyVelocity` back; writing them yourself teleports or sets the speed.
+
+```rust
+// Kick a crate: the event is applied at the next physics step.
+sent.send(BodyImpulse { entity: crate_, linear: Vec3::new(0.0, 5000.0, 0.0), angular: Vec3::ZERO });
+// Touches: EventReader<CollisionStarted> / <CollisionEnded> give { a, b, sensor }.
+```
+
+- Shapes: `ColliderShape::{Box, Sphere, Capsule, Cylinder}`, sized by `size` times the entity's scale.
+- `RigidBody { kind: BodyKind::Dynamic | Kinematic | Fixed, gravity_scale, lock_translation, lock_rotation, .. }`.
+- Characters: a Kinematic body with `CharacterController`; each tick write `CharacterMotion.velocity` (m/s,
+  gravity included) and read `CharacterState { grounded, blocked, moved }`:
+  `vy = if state.grounded { if actions.pressed("jump") { 5.0 } else { -1.0 } } else { vy - 9.81 * time.delta }`.
+- `BodyForce` pushes every tick while present; `PhysicsSettings` holds gravity and substeps.
+- A game may still declare its own `Velocity` for things it moves itself; physics uses `BodyVelocity`.
+
 ## Rules
 
 - All state lives in components and resources. The module starts fresh every tick: a `static` keeps nothing.

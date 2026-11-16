@@ -66,8 +66,10 @@ pub use wish_core::{AssetRef, Color, Entity, Text, math};
 pub use wish_schema::{component, event, resource, schema};
 pub use wish_sdk_macros::system;
 pub use wish_types::{
-    ActionSlot, ActionState, Ambient, Camera, DirectionalLight, Exposure, GlobalTransform,
-    Material, Model, Primitive, Shape, Sky, Time, Transform, world_position,
+    ActionSlot, ActionState, Ambient, BodyForce, BodyImpulse, BodyKind, BodyVelocity, Camera,
+    CharacterController, CharacterMotion, CharacterState, Collider, ColliderShape, CollisionEnded,
+    CollisionStarted, DirectionalLight, Exposure, GlobalTransform, Material, Model,
+    PhysicsSettings, Primitive, RigidBody, Shape, Sky, Time, Transform, world_position,
 };
 
 /// The ABI version this SDK speaks.
@@ -77,10 +79,12 @@ pub const ABI_VERSION: i32 = 1;
 pub mod prelude {
     pub use crate::math::{Mat4, Quat, Vec2, Vec3, Vec4};
     pub use crate::{
-        Actions, Ambient, AssetRef, Camera, Color, Commands, DirectionalLight, Entity, EventReader,
-        EventWriter, Exposure, GlobalTransform, Material, Model, Primitive, Query, Res, ResMut,
-        Shape, Sky, Text, Time, Transform, With, Without, component, event, random_f32,
-        random_range, random_u64, resource, schema, system, world_position,
+        Actions, Ambient, AssetRef, BodyForce, BodyImpulse, BodyKind, BodyVelocity, Camera,
+        CharacterController, CharacterMotion, CharacterState, Collider, ColliderShape,
+        CollisionEnded, CollisionStarted, Color, Commands, DirectionalLight, Entity, EventReader,
+        EventWriter, Exposure, GlobalTransform, Material, Model, PhysicsSettings, Primitive, Query,
+        Res, ResMut, RigidBody, Shape, Sky, Text, Time, Transform, With, Without, component, event,
+        random_f32, random_range, random_u64, resource, schema, system, world_position,
     };
 }
 

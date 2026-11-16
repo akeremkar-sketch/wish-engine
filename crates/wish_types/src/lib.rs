@@ -13,11 +13,17 @@
 //! `wasm32-unknown-unknown`.
 
 pub mod input;
+pub mod physics;
 pub mod render;
 pub mod time;
 pub mod transform;
 
 pub use input::{ActionSlot, ActionState, MAX_ACTIONS, action_id};
+pub use physics::{
+    BodyForce, BodyImpulse, BodyKind, BodyVelocity, CharacterController, CharacterMotion,
+    CharacterState, Collider, ColliderShape, CollisionEnded, CollisionStarted, PhysicsSettings,
+    RigidBody,
+};
 pub use render::{
     Ambient, Camera, DirectionalLight, EMISSIVE_NITS, Exposure, Material, Model, Primitive, Shape,
     Sky,

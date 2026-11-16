@@ -195,7 +195,7 @@ impl Workspace {
 /// the project example's): it would replace that system, or be replaced
 /// by it, without a word (M5 closing review).
 pub(crate) fn check_system_names(example: Option<&str>, module: &GameModule) -> Result<()> {
-    let mut reserved = vec![PROPAGATION.to_owned()];
+    let mut reserved = vec![PROPAGATION.to_owned(), wish_physics::SYSTEM.to_owned()];
     if let Some(example) = example {
         let mut app = wish_app::App::new(wish_app::AppConfig::default());
         if wish_examples::add_systems(example, &mut app).is_ok() {
@@ -230,17 +230,25 @@ pub(crate) fn add_game_systems(app: &mut wish_app::App, runtime: &ScriptRuntime)
     Ok(())
 }
 
-/// The transform propagation system, ordered after every other system.
+/// The engine's systems that run after the game's: physics (after every
+/// game and example system: it moves what they pushed), then transform
+/// propagation (after everything).
 pub(crate) fn propagation_after_all(app: &mut wish_app::App) -> Result<()> {
     let mut names: Vec<String> = app
         .system_states()
         .map(|(name, _)| name.to_owned())
-        .filter(|name| name != PROPAGATION)
+        .filter(|name| name != PROPAGATION && name != wish_physics::SYSTEM)
         .collect();
     names.sort();
+    let mut physics = wish_physics::system();
+    for name in &names {
+        physics = physics.after(name);
+    }
+    app.replace_system(physics)?;
     let mut propagation = System::new(PROPAGATION, |world, _| {
         wish_transform::update_global_transforms(world)
-    });
+    })
+    .after(wish_physics::SYSTEM);
     for name in &names {
         propagation = propagation.after(name);
     }

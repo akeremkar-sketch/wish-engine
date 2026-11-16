@@ -1,4 +1,832 @@
-//! Physics for Wish Engine (ADR-014). Rapier lives behind this crate; the
-//! rest of the engine sees components, events and queries.
+//! Physics for Wish Engine (ADR-014, design note M6 §3). Rapier lives behind
+//! this crate; the rest of the engine sees components, events and queries
+//! (`wish_types::physics`).
+//!
+//! Every tick, [`step`]:
+//! 1. brings Rapier up to date with the ECS (ECS is the source of truth):
+//!    new, changed and removed colliders and bodies; a `Transform` or
+//!    `BodyVelocity` written by anyone but physics moves or speeds the body;
+//! 2. moves character controllers;
+//! 3. steps the simulation (deterministic: `enhanced-determinism`, one
+//!    thread, entities always visited in entity order);
+//! 4. writes every moving body's place and speed back into its `Transform`
+//!    and `BodyVelocity`, and sends collision events.
+//!
+//! Rapier's own state (broad phase, contact caches, warm starting) is a
+//! world extension (ADR-026): snapshots carry it, the world hash does not
+//! need it because everything gameplay sees is written back to components.
 
-#![allow(missing_docs)]
+use std::collections::BTreeMap;
+use std::sync::Mutex;
+
+use rapier3d::control::{CharacterAutostep, CharacterLength, KinematicCharacterController};
+use rapier3d::prelude as rp;
+use wish_core::math::{Mat4, Quat, Vec3};
+use wish_core::{Diagnostic, Entity, Result};
+use wish_ecs::{ChangeTick, World};
+pub use wish_types::physics::{
+    BodyForce, BodyImpulse, BodyKind, BodyVelocity, CharacterController, CharacterMotion,
+    CharacterState, Collider, ColliderShape, CollisionEnded, CollisionStarted, PhysicsSettings,
+    RigidBody,
+};
+use wish_types::time::Time;
+use wish_types::transform::{GlobalTransform, Transform};
+
+/// The name of the physics system in an app.
+pub const SYSTEM: &str = "physics";
+
+/// The physics system, for `App::add_system`. Order it after the systems
+/// that move things and before transform propagation.
+pub fn system() -> wish_app::System {
+    wish_app::System::new(SYSTEM, |world, context| step(world, context.last_run))
+}
+
+/// Registers the physics components, resources and events.
+pub fn register(world: &mut World) -> Result<()> {
+    world.register_component::<RigidBody>()?;
+    world.register_component::<Collider>()?;
+    world.register_component::<BodyVelocity>()?;
+    world.register_component::<BodyForce>()?;
+    world.register_component::<CharacterController>()?;
+    world.register_component::<CharacterMotion>()?;
+    world.register_component::<CharacterState>()?;
+    world.register_resource::<PhysicsSettings>()?;
+    world.register_event::<BodyImpulse>()?;
+    world.register_event::<CollisionStarted>()?;
+    world.register_event::<CollisionEnded>()?;
+    Ok(())
+}
+
+// --------------------------------------------------------------------------
+// Conversions: our math (glam 0.34) and Rapier's (glam 0.33) meet as arrays.
+// --------------------------------------------------------------------------
+
+fn rv(v: Vec3) -> rp::Vector {
+    rp::Vector::new(v.x, v.y, v.z)
+}
+
+fn wv(v: rp::Vector) -> Vec3 {
+    Vec3::new(v.x, v.y, v.z)
+}
+
+fn rq(q: Quat) -> rp::Rotation {
+    rp::Rotation::from_xyzw(q.x, q.y, q.z, q.w)
+}
+
+fn wq(q: rp::Rotation) -> Quat {
+    Quat::from_xyzw(q.x, q.y, q.z, q.w)
+}
+
+fn pose(translation: Vec3, rotation: Quat) -> rp::Pose {
+    rp::Pose::from_parts(rv(translation), rq(rotation))
+}
+
+/// A rotation that is safe to hand to Rapier: unit length, finite.
+fn clean(rotation: Quat) -> Quat {
+    if rotation.is_finite() && rotation.length_squared() > 1e-12 {
+        rotation.normalize()
+    } else {
+        Quat::IDENTITY
+    }
+}
+
+// --------------------------------------------------------------------------
+// State
+// --------------------------------------------------------------------------
+
+/// What physics remembers about one entity.
+#[derive(Clone, Debug)]
+struct Link {
+    body: rp::RigidBodyHandle,
+    collider: rp::ColliderHandle,
+    /// The body settings last given to Rapier (`None`: no `RigidBody`, a
+    /// fixed collider).
+    body_desc: Option<RigidBody>,
+    /// The collider settings last given to Rapier, and the world scale.
+    collider_desc: Collider,
+    scale: Vec3,
+    /// The `Transform` and `BodyVelocity` physics wrote last; anything else
+    /// found there next tick was written by someone else (a teleport).
+    written: Option<(Transform, BodyVelocity)>,
+}
+
+/// Rapier's state for one world: a world extension (ADR-026).
+pub struct PhysicsState {
+    /// Scratch memory of a step; not carried by snapshots (a new one is
+    /// equivalent, proven by `wish_physics/tests/proof.rs`).
+    pipeline: rp::PhysicsPipeline,
+    islands: rp::IslandManager,
+    broad: rp::BroadPhaseBvh,
+    narrow: rp::NarrowPhase,
+    bodies: rp::RigidBodySet,
+    colliders: rp::ColliderSet,
+    impulse_joints: rp::ImpulseJointSet,
+    multibody_joints: rp::MultibodyJointSet,
+    soft: rp::SoftBodySet,
+    ccd: rp::CCDSolver,
+    links: BTreeMap<Entity, Link>,
+}
+
+impl Clone for PhysicsState {
+    fn clone(&self) -> Self {
+        Self {
+            pipeline: rp::PhysicsPipeline::new(),
+            islands: self.islands.clone(),
+            broad: self.broad.clone(),
+            narrow: self.narrow.clone(),
+            bodies: self.bodies.clone(),
+            colliders: self.colliders.clone(),
+            impulse_joints: self.impulse_joints.clone(),
+            multibody_joints: self.multibody_joints.clone(),
+            soft: self.soft.clone(),
+            ccd: self.ccd.clone(),
+            links: self.links.clone(),
+        }
+    }
+}
+
+impl Default for PhysicsState {
+    fn default() -> Self {
+        Self {
+            pipeline: rp::PhysicsPipeline::new(),
+            islands: rp::IslandManager::new(),
+            broad: rp::BroadPhaseBvh::new(),
+            narrow: rp::NarrowPhase::new(),
+            bodies: rp::RigidBodySet::new(),
+            colliders: rp::ColliderSet::new(),
+            impulse_joints: rp::ImpulseJointSet::new(),
+            multibody_joints: rp::MultibodyJointSet::new(),
+            soft: rp::SoftBodySet::new(),
+            ccd: rp::CCDSolver::new(),
+            links: BTreeMap::new(),
+        }
+    }
+}
+
+impl PhysicsState {
+    /// How many entities physics knows about.
+    pub fn len(&self) -> usize {
+        self.links.len()
+    }
+
+    /// Whether physics knows about no entity.
+    pub fn is_empty(&self) -> bool {
+        self.links.is_empty()
+    }
+
+    /// Whether the entity's body is asleep (at rest, costing nothing).
+    pub fn is_sleeping(&self, entity: Entity) -> Option<bool> {
+        let link = self.links.get(&entity)?;
+        self.bodies.get(link.body).map(rp::RigidBody::is_sleeping)
+    }
+
+    fn remove(&mut self, entity: Entity) {
+        if let Some(link) = self.links.remove(&entity) {
+            self.bodies.remove(
+                link.body,
+                &mut self.islands,
+                &mut self.colliders,
+                &mut self.impulse_joints,
+                &mut self.multibody_joints,
+                &mut self.soft,
+                true,
+            );
+        }
+    }
+}
+
+// --------------------------------------------------------------------------
+// Building Rapier objects from components
+// --------------------------------------------------------------------------
+
+fn body_type(desc: Option<&RigidBody>) -> rp::RigidBodyType {
+    match desc.map(|d| d.kind) {
+        Some(BodyKind::Dynamic) => rp::RigidBodyType::Dynamic,
+        Some(BodyKind::Kinematic) => rp::RigidBodyType::KinematicPositionBased,
+        Some(BodyKind::Fixed) | None => rp::RigidBodyType::Fixed,
+    }
+}
+
+fn locked_axes(desc: &RigidBody) -> rp::LockedAxes {
+    let mut axes = rp::LockedAxes::empty();
+    let flags = [
+        (
+            desc.lock_translation[0],
+            rp::LockedAxes::TRANSLATION_LOCKED_X,
+        ),
+        (
+            desc.lock_translation[1],
+            rp::LockedAxes::TRANSLATION_LOCKED_Y,
+        ),
+        (
+            desc.lock_translation[2],
+            rp::LockedAxes::TRANSLATION_LOCKED_Z,
+        ),
+        (desc.lock_rotation[0], rp::LockedAxes::ROTATION_LOCKED_X),
+        (desc.lock_rotation[1], rp::LockedAxes::ROTATION_LOCKED_Y),
+        (desc.lock_rotation[2], rp::LockedAxes::ROTATION_LOCKED_Z),
+    ];
+    for (on, flag) in flags {
+        if on {
+            axes |= flag;
+        }
+    }
+    axes
+}
+
+/// A speed with the locked axes taken out: Rapier keeps a locked axis still
+/// only for what the solver does, not for a speed set from outside.
+fn masked(velocity: BodyVelocity, desc: Option<&RigidBody>) -> BodyVelocity {
+    let Some(desc) = desc else {
+        return velocity;
+    };
+    let mask = |v: Vec3, locks: [bool; 3]| {
+        Vec3::new(
+            if locks[0] { 0.0 } else { v.x },
+            if locks[1] { 0.0 } else { v.y },
+            if locks[2] { 0.0 } else { v.z },
+        )
+    };
+    BodyVelocity {
+        linear: mask(velocity.linear, desc.lock_translation),
+        angular: mask(velocity.angular, desc.lock_rotation),
+    }
+}
+
+fn set_velocity(body: &mut rp::RigidBody, velocity: BodyVelocity, desc: Option<&RigidBody>) {
+    if !(velocity.linear.is_finite() && velocity.angular.is_finite()) {
+        return;
+    }
+    let velocity = masked(velocity, desc);
+    body.set_linvel(rv(velocity.linear), true);
+    body.set_angvel(rv(velocity.angular), true);
+}
+
+fn apply_body(body: &mut rp::RigidBody, desc: Option<&RigidBody>) {
+    body.set_body_type(body_type(desc), true);
+    let defaults = RigidBody {
+        kind: BodyKind::Fixed,
+        ..RigidBody::default()
+    };
+    let desc = desc.unwrap_or(&defaults);
+    body.set_linear_damping(desc.linear_damping.max(0.0));
+    body.set_angular_damping(desc.angular_damping.max(0.0));
+    body.set_gravity_scale(desc.gravity_scale, true);
+    body.enable_ccd(desc.ccd);
+    body.set_locked_axes(locked_axes(desc), true);
+    let mut activation = *body.activation();
+    if desc.can_sleep {
+        activation.normalized_linear_threshold =
+            rp::RigidBodyActivation::default_normalized_linear_threshold();
+        activation.angular_threshold = rp::RigidBodyActivation::default_angular_threshold();
+    } else {
+        activation.normalized_linear_threshold = -1.0;
+        activation.angular_threshold = -1.0;
+    }
+    *body.activation_mut() = activation;
+}
+
+/// A size that Rapier accepts: finite, at least a millimetre.
+fn dim(value: f32) -> f32 {
+    if value.is_finite() {
+        value.abs().max(0.001)
+    } else {
+        0.001
+    }
+}
+
+fn shape_of(desc: &Collider, scale: Vec3) -> rp::SharedShape {
+    let size = desc.size * scale.abs();
+    match desc.shape {
+        ColliderShape::Box => {
+            rp::SharedShape::cuboid(dim(size.x) / 2.0, dim(size.y) / 2.0, dim(size.z) / 2.0)
+        }
+        ColliderShape::Sphere => {
+            let diameter = dim(size.x).max(dim(size.y)).max(dim(size.z));
+            rp::SharedShape::ball(diameter / 2.0)
+        }
+        ColliderShape::Capsule => {
+            let radius = dim(size.x.max(size.z)) / 2.0;
+            let half_segment = (dim(size.y) / 2.0 - radius).max(0.0);
+            rp::SharedShape::capsule_y(half_segment, radius)
+        }
+        ColliderShape::Cylinder => {
+            rp::SharedShape::cylinder(dim(size.y) / 2.0, dim(size.x.max(size.z)) / 2.0)
+        }
+    }
+}
+
+fn groups(desc: &Collider) -> rp::InteractionGroups {
+    rp::InteractionGroups::new(
+        rp::Group::from_bits_retain(desc.layer),
+        rp::Group::from_bits_retain(desc.mask),
+        rp::InteractionTestMode::And,
+    )
+}
+
+fn apply_collider(collider: &mut rp::Collider, desc: &Collider, scale: Vec3) {
+    collider.set_shape(shape_of(desc, scale));
+    collider.set_translation_wrt_parent(rv(desc.offset * scale));
+    collider.set_friction(desc.friction.clamp(0.0, 10.0));
+    collider.set_restitution(desc.restitution.clamp(0.0, 1.0));
+    collider.set_density(desc.density.clamp(0.001, 100_000.0));
+    collider.set_sensor(desc.sensor);
+    collider.set_collision_groups(groups(desc));
+    collider.set_active_events(rp::ActiveEvents::COLLISION_EVENTS);
+    collider.set_active_collision_types(rp::ActiveCollisionTypes::all());
+}
+
+// --------------------------------------------------------------------------
+// Where an entity is in the world
+// --------------------------------------------------------------------------
+
+/// The parent's world matrix (identity for a root).
+fn parent_matrix(world: &World, entity: Entity) -> Mat4 {
+    world
+        .parent(entity)
+        .and_then(|parent| world.get::<GlobalTransform>(parent))
+        .map_or(Mat4::IDENTITY, |global| global.matrix)
+}
+
+/// The entity's world placement: scale, rotation, translation.
+fn world_placement(world: &World, entity: Entity) -> (Vec3, Quat, Vec3) {
+    let Some(local) = world.get::<Transform>(entity).copied() else {
+        let matrix = world
+            .get::<GlobalTransform>(entity)
+            .map_or(Mat4::IDENTITY, |g| g.matrix);
+        let (scale, rotation, translation) = matrix.to_scale_rotation_translation();
+        return (scale, clean(rotation), translation);
+    };
+    if world.parent(entity).is_none() {
+        return (local.scale, clean(local.rotation), local.translation);
+    }
+    let matrix = parent_matrix(world, entity) * local.to_matrix();
+    let (scale, rotation, translation) = matrix.to_scale_rotation_translation();
+    (scale, clean(rotation), translation)
+}
+
+/// The local `Transform` that puts `entity` at `translation`/`rotation` in
+/// the world, keeping its own scale.
+fn local_for(world: &World, entity: Entity, translation: Vec3, rotation: Quat) -> Transform {
+    let current = world.get::<Transform>(entity).copied().unwrap_or_default();
+    if world.parent(entity).is_none() {
+        return Transform {
+            translation,
+            rotation,
+            scale: current.scale,
+        };
+    }
+    let parent = parent_matrix(world, entity);
+    let world_matrix = Mat4::from_rotation_translation(rotation, translation);
+    let (_, rotation, translation) =
+        (parent.inverse() * world_matrix).to_scale_rotation_translation();
+    Transform {
+        translation,
+        rotation,
+        scale: current.scale,
+    }
+}
+
+// --------------------------------------------------------------------------
+// The step
+// --------------------------------------------------------------------------
+
+/// Collects Rapier's collision events during a step (in the order Rapier
+/// reports them, which is deterministic).
+#[derive(Default)]
+struct Collected {
+    events: Mutex<Vec<rp::CollisionEvent>>,
+}
+
+impl rp::EventHandler for Collected {
+    fn handle_collision_event(
+        &self,
+        _bodies: &rp::RigidBodySet,
+        _colliders: &rp::ColliderSet,
+        event: rp::CollisionEvent,
+        _contact_pair: Option<&rp::ContactPair>,
+    ) {
+        if let Ok(mut events) = self.events.lock() {
+            events.push(event);
+        }
+    }
+
+    fn handle_contact_force_event(
+        &self,
+        _dt: f32,
+        _bodies: &rp::RigidBodySet,
+        _colliders: &rp::ColliderSet,
+        _contact_pair: &rp::ContactPair,
+        _total_force_magnitude: f32,
+    ) {
+    }
+
+    fn handle_soft_body_tear_event(
+        &self,
+        _soft_bodies: &rp::SoftBodySet,
+        _event: &rp::SoftBodyTearEvent,
+    ) {
+    }
+}
+
+fn entity_of(colliders: &rp::ColliderSet, handle: rp::ColliderHandle) -> Option<Entity> {
+    colliders
+        .get(handle)
+        .map(|collider| Entity::from_bits(collider.user_data as u64))
+}
+
+fn internal(what: &str) -> Diagnostic {
+    Diagnostic::error(
+        "internal_error",
+        format!("Physics lost track of its state: {what}."),
+        "This is a bug in Wish Engine; restarting the session recovers. Please report it.",
+    )
+}
+
+/// One physics tick for `world`: the system [`SYSTEM`]. `since` is where
+/// the system last ran (events sent after it are read).
+pub fn step(world: &mut World, since: ChangeTick) -> Result<()> {
+    let mut state = world
+        .extension::<PhysicsState>()
+        .cloned()
+        .unwrap_or_default();
+    // Taken out while it works, put back at the end (also on failure: the
+    // state stays consistent with what it last did).
+    world.remove_extension::<PhysicsState>();
+    let result = run(world, &mut state, since);
+    world.insert_extension(state);
+    result
+}
+
+fn run(world: &mut World, state: &mut PhysicsState, since: ChangeTick) -> Result<()> {
+    let settings = world
+        .resource::<PhysicsSettings>()
+        .copied()
+        .unwrap_or_default();
+    let delta = world.resource::<Time>().map_or(1.0 / 60.0, |t| t.delta);
+
+    // 1. Who takes part, in entity order.
+    let mut present: Vec<Entity> = world
+        .query::<(Entity, &Collider)>()?
+        .map(|(entity, _)| entity)
+        .collect();
+    present.sort_unstable();
+    let gone: Vec<Entity> = state
+        .links
+        .keys()
+        .filter(|entity| present.binary_search(entity).is_err())
+        .copied()
+        .collect();
+    for entity in gone {
+        state.remove(entity);
+    }
+
+    // 2. Bring Rapier up to date.
+    for &entity in &present {
+        sync_entity(world, state, entity)?;
+    }
+
+    // 3. Kicks sent since the last run.
+    for impulse in world.events_since::<BodyImpulse>(since)? {
+        let Some(link) = state.links.get(&impulse.entity) else {
+            continue;
+        };
+        if let Some(body) = state.bodies.get_mut(link.body) {
+            if impulse.linear.is_finite() {
+                body.apply_impulse(rv(impulse.linear), true);
+            }
+            if impulse.angular.is_finite() {
+                body.apply_torque_impulse(rv(impulse.angular), true);
+            }
+        }
+    }
+
+    // 4. Step.
+    let substeps = settings.substeps.clamp(1, 8);
+    let params = rp::IntegrationParameters {
+        dt: delta / substeps as f32,
+        ..rp::IntegrationParameters::default()
+    };
+    let gravity = if settings.gravity.is_finite() {
+        rv(settings.gravity)
+    } else {
+        rp::Vector::new(0.0, -9.81, 0.0)
+    };
+    let collected = Collected::default();
+    for _ in 0..substeps {
+        state.pipeline.step(
+            gravity,
+            &params,
+            &mut state.islands,
+            &mut state.broad,
+            &mut state.narrow,
+            &mut state.bodies,
+            &mut state.colliders,
+            &mut state.impulse_joints,
+            &mut state.multibody_joints,
+            &mut state.soft,
+            &mut state.ccd,
+            &(),
+            &collected,
+        );
+    }
+
+    // 5. Characters, against the stepped world: the query tree only knows
+    // colliders after a step, and moving first would let a character fall
+    // through a floor added this tick.
+    move_characters(world, state, delta)?;
+
+    // 6. Write back.
+    for &entity in &present {
+        write_back(world, state, entity)?;
+    }
+
+    // 7. Events, a before b.
+    let events = collected.events.into_inner().unwrap_or_default();
+    for event in events {
+        let (h1, h2, started, sensor) = match event {
+            rp::CollisionEvent::Started(a, b, flags) => {
+                (a, b, true, flags.contains(rp::CollisionEventFlags::SENSOR))
+            }
+            rp::CollisionEvent::Stopped(a, b, flags) => {
+                (a, b, false, flags.contains(rp::CollisionEventFlags::SENSOR))
+            }
+        };
+        let (Some(e1), Some(e2)) = (
+            entity_of(&state.colliders, h1),
+            entity_of(&state.colliders, h2),
+        ) else {
+            continue;
+        };
+        let (a, b) = if e1 <= e2 { (e1, e2) } else { (e2, e1) };
+        if started {
+            world.send(CollisionStarted { a, b, sensor })?;
+        } else {
+            world.send(CollisionEnded { a, b, sensor })?;
+        }
+    }
+    Ok(())
+}
+
+fn sync_entity(world: &mut World, state: &mut PhysicsState, entity: Entity) -> Result<()> {
+    let Some(collider_desc) = world.get::<Collider>(entity).copied() else {
+        return Ok(());
+    };
+    let body_desc = world.get::<RigidBody>(entity).copied();
+    let (scale, rotation, translation) = world_placement(world, entity);
+    let link = match state.links.get(&entity) {
+        Some(link) => link.clone(),
+        None => {
+            let mut body = rp::RigidBodyBuilder::new(body_type(body_desc.as_ref()))
+                .pose(pose(translation, rotation))
+                .user_data(u128::from(entity.to_bits()))
+                .build();
+            apply_body(&mut body, body_desc.as_ref());
+            if let (Some(BodyKind::Dynamic), Some(velocity)) =
+                (body_desc.map(|d| d.kind), world.get::<BodyVelocity>(entity))
+            {
+                set_velocity(&mut body, *velocity, body_desc.as_ref());
+            }
+            let handle = state.bodies.insert(body);
+            let mut collider = rp::ColliderBuilder::new(shape_of(&collider_desc, scale))
+                .user_data(u128::from(entity.to_bits()))
+                .build();
+            apply_collider(&mut collider, &collider_desc, scale);
+            let collider = state
+                .colliders
+                .insert_with_parent(collider, handle, &mut state.bodies);
+            let link = Link {
+                body: handle,
+                collider,
+                body_desc,
+                collider_desc,
+                scale,
+                written: None,
+            };
+            state.links.insert(entity, link.clone());
+            return Ok(());
+        }
+    };
+    let PhysicsState {
+        bodies, colliders, ..
+    } = state;
+    let body = bodies
+        .get_mut(link.body)
+        .ok_or_else(|| internal("a body is missing"))?;
+    if link.body_desc != body_desc {
+        apply_body(body, body_desc.as_ref());
+    }
+    let kind = body_desc.map_or(BodyKind::Fixed, |d| d.kind);
+    let moved_by_others = match &link.written {
+        Some((transform, _)) => world.get::<Transform>(entity) != Some(transform),
+        None => false,
+    };
+    match kind {
+        BodyKind::Dynamic => {
+            if moved_by_others {
+                body.set_position(pose(translation, rotation), true);
+            }
+            let velocity = world.get::<BodyVelocity>(entity).copied();
+            let written = link.written.map(|(_, v)| v);
+            if let Some(velocity) = velocity
+                && Some(velocity) != written
+            {
+                set_velocity(body, velocity, body_desc.as_ref());
+            }
+            body.reset_forces(false);
+            body.reset_torques(false);
+            if let Some(force) = world.get::<BodyForce>(entity)
+                && force.force.is_finite()
+                && force.torque.is_finite()
+            {
+                body.add_force(rv(force.force), true);
+                body.add_torque(rv(force.torque), true);
+            }
+        }
+        BodyKind::Kinematic => {
+            if !world.has::<CharacterController>(entity) {
+                body.set_next_kinematic_position(pose(translation, rotation));
+            } else if moved_by_others {
+                body.set_position(pose(translation, rotation), true);
+            }
+        }
+        BodyKind::Fixed => {
+            let current = body.position();
+            if wv(current.translation) != translation || wq(current.rotation) != rotation {
+                body.set_position(pose(translation, rotation), true);
+            }
+        }
+    }
+    if link.collider_desc != collider_desc || link.scale != scale {
+        let collider = colliders
+            .get_mut(link.collider)
+            .ok_or_else(|| internal("a collider is missing"))?;
+        apply_collider(collider, &collider_desc, scale);
+        // A sleeping body would not notice its new shape.
+        if let Some(body) = bodies.get_mut(link.body) {
+            body.wake_up(true);
+        }
+    }
+    if let Some(stored) = state.links.get_mut(&entity) {
+        stored.body_desc = body_desc;
+        stored.collider_desc = collider_desc;
+        stored.scale = scale;
+    }
+    Ok(())
+}
+
+fn move_characters(world: &mut World, state: &mut PhysicsState, delta: f32) -> Result<()> {
+    let characters: Vec<(Entity, CharacterController, Vec3)> = state
+        .links
+        .iter()
+        .filter(|(_, link)| link.body_desc.map(|d| d.kind) == Some(BodyKind::Kinematic))
+        .filter_map(|(entity, _)| {
+            let controller = world.get::<CharacterController>(*entity).copied()?;
+            let motion = world
+                .get::<CharacterMotion>(*entity)
+                .map_or(Vec3::ZERO, |m| m.velocity);
+            Some((*entity, controller, motion))
+        })
+        .collect();
+    for (entity, controller, velocity) in characters {
+        let Some(link) = state.links.get(&entity).cloned() else {
+            continue;
+        };
+        let desired = if velocity.is_finite() {
+            velocity * delta
+        } else {
+            Vec3::ZERO
+        };
+        let (shape, position) = {
+            let collider = state
+                .colliders
+                .get(link.collider)
+                .ok_or_else(|| internal("a character's collider is missing"))?;
+            (collider.shared_shape().clone(), *collider.position())
+        };
+        let kcc = KinematicCharacterController {
+            up: rp::Vector::Y,
+            offset: CharacterLength::Absolute(controller.skin.clamp(0.001, 0.5)),
+            slide: true,
+            autostep: (controller.step_height > 0.0).then(|| CharacterAutostep {
+                max_height: CharacterLength::Absolute(controller.step_height.min(2.0)),
+                // Far enough onto the step for a round bottom (a capsule) to
+                // rest on it rather than slide back off the edge.
+                min_width: CharacterLength::Relative(0.8),
+                include_dynamic_bodies: false,
+            }),
+            max_slope_climb_angle: controller.max_slope_deg.clamp(0.0, 89.0).to_radians(),
+            min_slope_slide_angle: controller.max_slope_deg.clamp(0.0, 89.0).to_radians(),
+            snap_to_ground: (controller.snap_to_ground > 0.0)
+                .then(|| CharacterLength::Absolute(controller.snap_to_ground.min(2.0))),
+            ..KinematicCharacterController::default()
+        };
+        let filter = rp::QueryFilter::default()
+            .exclude_rigid_body(link.body)
+            .exclude_sensors();
+        let queries = state.broad.as_query_pipeline(
+            state.narrow.query_dispatcher(),
+            &state.bodies,
+            &state.colliders,
+            filter,
+        );
+        // Two moves: along the ground first (sliding, stepping up), then
+        // up or down. One combined move with gravity in it presses the shape
+        // into the floor and Rapier then refuses the sideways part.
+        let mut blocked = false;
+        let mut is_wall = |collision: rapier3d::control::CharacterCollision| {
+            // A hit whose normal is not ground-like is a wall or ceiling.
+            if collision.hit.normal1.y.abs() < 0.7 {
+                blocked = true;
+            }
+        };
+        let across = kcc.move_shape(
+            delta,
+            &queries,
+            shape.as_ref(),
+            &position,
+            rv(Vec3::new(desired.x, 0.0, desired.z)),
+            &mut is_wall,
+        );
+        let mut after = position;
+        after.translation += across.translation;
+        // While climbing a step the character is still over its edge: going
+        // down in the same tick would slide it back off.
+        let climbing = across.translation.y > 1e-4;
+        let down = if climbing && desired.y < 0.0 {
+            0.0
+        } else {
+            desired.y
+        };
+        let vertical = KinematicCharacterController {
+            autostep: None,
+            ..kcc
+        };
+        let along = vertical.move_shape(
+            delta,
+            &queries,
+            shape.as_ref(),
+            &after,
+            rv(Vec3::new(0.0, down, 0.0)),
+            |_| {},
+        );
+        let total = across.translation + along.translation;
+        let moved = wv(total);
+        if let Some(body) = state.bodies.get_mut(link.body) {
+            let current = *body.position();
+            let next = rp::Pose::from_parts(current.translation + total, current.rotation);
+            body.set_position(next, true);
+        }
+        // Going up (a jump) is never standing on the ground, however close the
+        // ground still is.
+        let grounded = down <= 0.0 && (along.grounded || (down == 0.0 && across.grounded));
+        let outcome = CharacterState {
+            grounded,
+            blocked,
+            moved,
+        };
+        if world.get::<CharacterState>(entity) != Some(&outcome) {
+            world.insert(entity, outcome)?;
+        }
+    }
+    Ok(())
+}
+
+fn write_back(world: &mut World, state: &mut PhysicsState, entity: Entity) -> Result<()> {
+    let Some(link) = state.links.get(&entity).cloned() else {
+        return Ok(());
+    };
+    let kind = link.body_desc.map_or(BodyKind::Fixed, |d| d.kind);
+    if kind == BodyKind::Fixed {
+        return Ok(());
+    }
+    let body = state
+        .bodies
+        .get(link.body)
+        .ok_or_else(|| internal("a body is missing"))?;
+    let position = body.position();
+    let transform = local_for(
+        world,
+        entity,
+        wv(position.translation),
+        wq(position.rotation),
+    );
+    let velocity = BodyVelocity {
+        linear: wv(body.linvel()),
+        angular: wv(body.angvel()),
+    };
+    if world.get::<Transform>(entity) != Some(&transform) {
+        world.insert(entity, transform)?;
+    }
+    if kind == BodyKind::Dynamic && world.get::<BodyVelocity>(entity) != Some(&velocity) {
+        world.insert(entity, velocity)?;
+    }
+    let written_velocity = world
+        .get::<BodyVelocity>(entity)
+        .copied()
+        .unwrap_or_default();
+    if let Some(stored) = state.links.get_mut(&entity) {
+        stored.written = Some((transform, written_velocity));
+    }
+    Ok(())
+}

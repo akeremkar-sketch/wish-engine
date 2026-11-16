@@ -1422,6 +1422,17 @@ impl World {
             .collect()
     }
 
+    /// The buffered events of type `E` sent after change tick `since`,
+    /// oldest first: what a system has not seen yet when it passes its
+    /// `SystemContext::last_run` (that position is in the app's snapshot,
+    /// unlike a cursor kept by the system itself).
+    pub fn events_since<E: Event>(&self, since: ChangeTick) -> Result<Vec<E>> {
+        let Some(id) = self.registry.event_id_of::<E>() else {
+            return Ok(Vec::new());
+        };
+        Self::decode_events(self.event_bytes_since(id, since)?)
+    }
+
     /// Every buffered event of type `E`, oldest first.
     pub fn events<E: Event>(&self) -> Result<Vec<E>> {
         let Some(id) = self.registry.event_id_of::<E>() else {

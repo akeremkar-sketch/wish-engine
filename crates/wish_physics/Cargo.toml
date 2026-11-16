@@ -8,12 +8,17 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-
-[dev-dependencies]
+wish_app.workspace = true
 wish_core.workspace = true
+wish_ecs.workspace = true
+wish_types.workspace = true
 # Cross-platform bit-exact results: `enhanced-determinism` forces libm math
 # and turns off SIMD; `parallel` stays off (ADR-005, ADR-014).
 rapier3d.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+wish_transform.workspace = true
 
 [lints]
 workspace = true

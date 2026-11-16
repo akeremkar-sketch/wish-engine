@@ -533,7 +533,7 @@ fn what_the_agent_evaluations_found() {
             .contains("set_override")
     );
     // Familiar names from other engines are explained.
-    let collider = ws.call("entity_query", &json!({ "with": ["Collider"] }), &me);
+    let collider = ws.call("entity_query", &json!({ "with": ["BoxCollider"] }), &me);
     assert!(
         collider["error"]["hint"]
             .as_str()

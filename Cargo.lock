@@ -4062,6 +4062,7 @@ dependencies = [
  "wish_examples",
  "wish_import",
  "wish_input",
+ "wish_physics",
  "wish_render",
  "wish_scene",
  "wish_schema",
@@ -4145,7 +4146,12 @@ name = "wish_physics"
 version = "0.1.0"
 dependencies = [
  "rapier3d",
+ "serde_json",
+ "wish_app",
  "wish_core",
+ "wish_ecs",
+ "wish_transform",
+ "wish_types",
 ]
 
 [[package]]
