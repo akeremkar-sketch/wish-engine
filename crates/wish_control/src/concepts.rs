@@ -12,7 +12,7 @@ pub fn explain(name: &str) -> Option<&'static str> {
             "Entities are named by their id (the key in the scene file); there is no Name component. Find entities by id pattern with entity_query \"name\": \"crate_*\"."
         }
         "visibility" | "visible" | "hidden" | "renderer" | "meshrenderer" | "mesh"
-        | "meshfilter" | "staticmesh" | "sprite" => {
+        | "meshfilter" | "staticmesh" => {
             "What is drawn comes from Primitive (built-in Cube, Sphere, Plane) or Model (a glTF asset); there is no Mesh or Visibility component. To hide something remove its Primitive or Model; describe_view says what is visible."
         }
         "boxcollider"
@@ -50,6 +50,14 @@ pub fn explain(name: &str) -> Option<&'static str> {
         | "textmeshpro" | "uitext" | "uibutton" | "button" | "recttransform" | "control"
         | "menu" => {
             "Interface: an entity with a UiNode is a box (width, height, padding, direction Column or Row, position Absolute with offset, background); child entities with a UiNode are laid out inside it like flexbox. Add UiText (text, size, color), UiImage (a PNG) or UiButton to a box; clicks come as ButtonClicked events. Positions are pixels of a 1280x720 virtual screen (UiSettings); game code writes text with text(\"...\")."
+        }
+        "sprite" | "spriterenderer" | "sprite2d" | "animatedsprite" | "animatedsprite2d"
+        | "camera2d" | "orthographic" | "ortho" | "tilemap" | "2d" => {
+            "2D: use a Camera with projection Orthographic (ortho_height in meters) and entities with a Sprite (image: a PNG, rect: the frame in pixels, pixels_per_unit, layer, flip_x, smooth false for pixel art) and a Transform. Lock RigidBody translation Z and rotations X and Y for 2D physics."
+        }
+        "particles" | "particlesystem" | "particleemitter" | "emitter" | "cpuparticles"
+        | "gpuparticles" | "particles2d" | "particles3d" | "vfx" => {
+            "Particles: put a ParticleEmitter on an entity (rate, burst, lifetime, speed, spread_deg, gravity, size_start/size_end, color_start/color_end, seed). Particles keep no state; restart by writing start_time = Time.elapsed. ParticleState.alive counts them."
         }
         "light" | "pointlight" | "spotlight" | "arealight" | "sunlight" => {
             "Lights: DirectionalLight (the sun: parallel rays along the entity's -Z axis, illuminance_lux), PointLight (a bulb: intensity_lm, range) and SpotLight (a cone along -Z: intensity_lm, range, inner_angle_deg, outer_angle_deg). Fill light is the Ambient resource; capture_frame with view lights shows where each light reaches."

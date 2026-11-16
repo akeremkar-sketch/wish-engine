@@ -115,6 +115,11 @@ const SHADERS: &[(&str, &str, &str)] = &[
         "wish_render/shaders/ui_pass.wgsl",
         include_str!("shaders/ui_pass.wgsl"),
     ),
+    (
+        "sprite_pass",
+        "wish_render/shaders/sprite_pass.wgsl",
+        include_str!("shaders/sprite_pass.wgsl"),
+    ),
 ];
 
 /// The library of the engine's shaders.
@@ -136,6 +141,7 @@ pub const ENTRY_SHADERS: &[&str] = &[
     "debug_pass",
     "gizmo_pass",
     "ui_pass",
+    "sprite_pass",
 ];
 
 /// Checks every pipeline shader of `library` and returns every problem found
@@ -663,7 +669,9 @@ pub struct Renderer {
     debug: debug::DebugPipelines,
     /// The in-game interface's pipeline.
     ui: crate::ui::UiPipeline,
-    /// The interface's pictures, by project path.
+    /// The sprites' and particles' pipeline.
+    overlay: crate::sprites::OverlayPipeline,
+    /// Pictures of the interface and of sprites, by project path.
     ui_pictures: BTreeMap<String, crate::ui::UiPicture>,
 }
 
@@ -781,6 +789,11 @@ impl Renderer {
         let ui_source = modules
             .iter()
             .find(|(entry, _)| *entry == "ui_pass")
+            .map(|(_, source)| source.clone())
+            .unwrap_or_default();
+        let sprite_source = modules
+            .iter()
+            .find(|(entry, _)| *entry == "sprite_pass")
             .map(|(_, source)| source.clone())
             .unwrap_or_default();
         let pipelines = gpu.checked("build the render pipelines", |gpu| {
@@ -1093,9 +1106,16 @@ impl Renderer {
             &material_layout,
         )?;
         let ui = crate::ui::UiPipeline::new(gpu, &ui_source, crate::capture::CAPTURE_FORMAT)?;
+        let overlay = crate::sprites::OverlayPipeline::new(
+            gpu,
+            &sprite_source,
+            crate::capture::CAPTURE_FORMAT,
+            DEPTH_FORMAT,
+        )?;
         Ok(Self {
             debug,
             ui,
+            overlay,
             ui_pictures: BTreeMap::new(),
             frame_layout,
             draw_layout,
@@ -1128,8 +1148,9 @@ impl Renderer {
         Ok(())
     }
 
-    /// Keeps a picture for the in-game interface under its project path
-    /// (`UiImage.image`), replacing one of the same path.
+    /// Keeps a picture for the in-game interface or a sprite under its
+    /// project path (`UiImage.image`, `Sprite.image`), replacing one of the
+    /// same path.
     pub fn set_ui_picture(&mut self, path: &str, picture: crate::ui::UiPicture) {
         self.ui_pictures.insert(path.to_owned(), picture);
     }
@@ -1137,6 +1158,26 @@ impl Renderer {
     /// Whether a picture is kept under `path`.
     pub fn has_ui_picture(&self, path: &str) -> bool {
         self.ui_pictures.contains_key(path)
+    }
+
+    /// The sprites and particle emitters of `scene` as a `width` × `height`
+    /// picture from `camera` (or the first camera) shows them: their boxes,
+    /// and how many particles each emitter has alive.
+    pub fn overlay_elements(
+        &self,
+        scene: &RenderScene,
+        camera: Option<Entity>,
+        width: u32,
+        height: u32,
+    ) -> Result<Vec<crate::sprites::OverlayElement>> {
+        let view = choose_camera(scene, camera)?;
+        Ok(crate::sprites::elements(
+            scene,
+            view,
+            width,
+            height,
+            &self.ui_pictures,
+        ))
     }
 
     /// Whether a model has been uploaded under `path`.
@@ -1321,7 +1362,9 @@ impl Renderer {
             draw_list,
             mut warnings,
         } = self.collect(scene, None, &posed);
-        // The interface is prepared on the CPU, drawn last.
+        // Sprites and particles, then the interface, are prepared on the CPU
+        // and drawn over the finished picture.
+        let overlay = crate::sprites::build(scene, view, aspect, &self.ui_pictures);
         let interface = (!scene.ui.is_empty())
             .then(|| crate::ui::build(scene, width, height, &self.ui_pictures));
         if let Some(batch) = &interface {
@@ -1607,7 +1650,8 @@ impl Renderer {
                         view: &depth,
                         depth_ops: Some(wgpu::Operations {
                             load: wgpu::LoadOp::Clear(1.0),
-                            store: wgpu::StoreOp::Discard,
+                            // Kept for the sprites and particles.
+                            store: wgpu::StoreOp::Store,
                         }),
                         stencil_ops: None,
                     }),
@@ -1656,6 +1700,10 @@ impl Renderer {
                 pass.set_pipeline(&self.tonemap);
                 pass.set_bind_group(0, &hdr_group, &[]);
                 pass.draw(0..3, 0..1);
+            }
+            if let Some(overlay) = &overlay {
+                self.overlay
+                    .draw(gpu, &mut encoder, &target.view, &depth, overlay);
             }
             if let Some(batch) = &interface {
                 self.ui.draw(gpu, &mut encoder, &target.view, batch);

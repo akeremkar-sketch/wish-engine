@@ -28,6 +28,7 @@ pub mod image;
 pub mod mesh;
 pub mod renderer;
 pub mod shader;
+pub mod sprites;
 mod texture;
 pub mod ui;
 
@@ -36,8 +37,8 @@ pub use components::{
     Ambient, Camera, DirectionalLight, Exposure, Material, Model, Primitive, Shape, Sky,
 };
 pub use extract::{
-    CameraView, ColliderView, Draw, LightView, LocalLightView, MaterialData, Mesh, RenderScene,
-    SkyData, UiBoxView, UiTextView, extract,
+    CameraView, ColliderView, Draw, EmitterView, LightView, LocalLightView, MaterialData, Mesh,
+    RenderScene, SkyData, SpriteView, UiBoxView, UiTextView, extract,
 };
 pub use gpu::{AdapterSummary, Gpu, GpuOptions};
 pub use image::{ImageDiff, RgbaImage, Tolerance};
@@ -47,4 +48,5 @@ pub use renderer::{
     project_to_pixel,
 };
 pub use shader::{CheckedShader, ComposedShader, ShaderLibrary, SourceLine, check_wgsl};
+pub use sprites::OverlayElement;
 pub use ui::{UiElement, UiPicture, ui_elements};

@@ -32,6 +32,7 @@ wish_script = { path = "crates/wish_script" }
 wish_input = { path = "crates/wish_input" }
 wish_anim = { path = "crates/wish_anim" }
 wish_audio = { path = "crates/wish_audio" }
+wish_particles = { path = "crates/wish_particles" }
 wish_physics = { path = "crates/wish_physics" }
 wish_text = { path = "crates/wish_text" }
 wish_ui = { path = "crates/wish_ui" }

@@ -115,7 +115,8 @@ impl Drawing {
 /// When a file was read: its length and modification time.
 pub type Stamp = (u64, Option<SystemTime>);
 
-/// Loads the pictures the interface of `scene` shows (`UiImage`), again if
+/// Loads the pictures the interface and the sprites of `scene` show
+/// (`UiImage`, `Sprite`), again if
 /// their files changed since `known` says they were read. A picture that
 /// cannot be loaded is a warning (`ui_image_not_loaded`): its box shows its
 /// background only.
@@ -130,6 +131,12 @@ pub fn load_ui_pictures(
         .ui
         .iter()
         .filter_map(|view| view.image.as_ref().map(|(path, _)| path.as_str()))
+        .chain(
+            scene
+                .sprites
+                .iter()
+                .filter_map(|view| view.image.as_deref()),
+        )
         .collect();
     paths.sort_unstable();
     paths.dedup();

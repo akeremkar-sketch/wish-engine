@@ -82,6 +82,9 @@ pub struct CameraView {
     pub near: f32,
     /// Far plane distance.
     pub far: f32,
+    /// For an orthographic camera, the height it shows in meters; `None` for
+    /// a perspective one.
+    pub ortho_height: Option<f32>,
 }
 
 impl CameraView {
@@ -89,9 +92,17 @@ impl CameraView {
     /// right-handed view space: clip depth runs 0 to 1 and +Y is up, as wgpu
     /// expects.
     pub fn projection(&self, aspect: f32) -> Mat4 {
-        wish_core::math::camera::rh::proj::directx::perspective(
-            self.fov_y, aspect, self.near, self.far,
-        )
+        match self.ortho_height {
+            Some(height) => {
+                let (half_h, half_w) = (height * 0.5, height * 0.5 * aspect);
+                wish_core::math::camera::rh::proj::directx::orthographic(
+                    -half_w, half_w, -half_h, half_h, self.near, self.far,
+                )
+            }
+            None => wish_core::math::camera::rh::proj::directx::perspective(
+                self.fov_y, aspect, self.near, self.far,
+            ),
+        }
     }
 }
 
@@ -142,6 +153,30 @@ pub struct ColliderView {
     pub sensor: bool,
     /// Whether it moves (a dynamic or kinematic body).
     pub moving: bool,
+}
+
+/// A sprite where it stands.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SpriteView {
+    /// The entity that owns it.
+    pub entity: Entity,
+    /// Its placement (local to world).
+    pub world: Mat4,
+    /// The sprite.
+    pub sprite: wish_types::sprite::Sprite,
+    /// Its picture's project path, if it has one.
+    pub image: Option<String>,
+}
+
+/// A particle emitter where it stands.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EmitterView {
+    /// The entity that owns it.
+    pub entity: Entity,
+    /// Its placement (local to world).
+    pub world: Mat4,
+    /// The emitter.
+    pub emitter: wish_types::particles::ParticleEmitter,
 }
 
 /// Text in an interface box, ready to lay out and draw.
@@ -221,6 +256,12 @@ pub struct RenderScene {
     pub ui_settings: wish_types::ui::UiSettings,
     /// The fonts the interface's text uses (the world's).
     pub fonts: wish_text::Fonts,
+    /// The sprites, in entity order.
+    pub sprites: Vec<SpriteView>,
+    /// The particle emitters, in entity order.
+    pub emitters: Vec<EmitterView>,
+    /// The simulation time shown (`Time.elapsed`), for particles.
+    pub time: f64,
 }
 
 fn rgb(color: Color) -> [f32; 3] {
@@ -285,6 +326,9 @@ pub fn extract(world: &World) -> Result<RenderScene> {
             .extension::<wish_text::Fonts>()
             .cloned()
             .unwrap_or_default(),
+        sprites: Vec::new(),
+        emitters: Vec::new(),
+        time: wish_particles::now(world),
     };
     let global = |world: &World, entity: Entity| {
         world
@@ -298,6 +342,30 @@ pub fn extract(world: &World) -> Result<RenderScene> {
             scene.ui.push(view);
         }
         let placement = global(world, entity);
+        if finite_matrix(&placement) {
+            if let Some(sprite) = world.get::<wish_types::sprite::Sprite>(entity).copied() {
+                let image = world
+                    .text(sprite.image.text())
+                    .filter(|path| !path.is_empty())
+                    .map(str::to_owned);
+                scene.sprites.push(SpriteView {
+                    entity,
+                    world: placement,
+                    sprite,
+                    image,
+                });
+            }
+            if let Some(emitter) = world
+                .get::<wish_types::particles::ParticleEmitter>(entity)
+                .copied()
+            {
+                scene.emitters.push(EmitterView {
+                    entity,
+                    world: placement,
+                    emitter,
+                });
+            }
+        }
         if let Some(camera) = world.get::<Camera>(entity).copied() {
             if camera.far <= camera.near {
                 return Err(bad_camera(
@@ -331,6 +399,14 @@ pub fn extract(world: &World) -> Result<RenderScene> {
                 fov_y: camera.fov_y_deg.to_radians(),
                 near: camera.near,
                 far: camera.far,
+                ortho_height: (camera.projection == crate::components::Projection::Orthographic)
+                    .then(|| {
+                        if camera.ortho_height.is_finite() {
+                            camera.ortho_height.max(0.001)
+                        } else {
+                            10.0
+                        }
+                    }),
             });
         }
         if let Some(light) = world.get::<DirectionalLight>(entity).copied() {

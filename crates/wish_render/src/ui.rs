@@ -25,7 +25,7 @@ pub(crate) const ATLAS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8U
 /// Bytes per vertex: position (2 floats), texture coordinate (2), colour (4).
 const VERTEX_BYTES: u64 = 32;
 /// The white block at the atlas's top left, for plain colour.
-const WHITE: u32 = 4;
+pub(crate) const WHITE: u32 = 4;
 
 /// A picture for the interface: 8-bit RGBA, sRGB, rows top to bottom.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -51,16 +51,16 @@ pub(crate) struct Batch {
 }
 
 /// A shelf packer over a growing atlas.
-struct Atlas {
-    pixels: Vec<u8>,
-    height: u32,
+pub(crate) struct Atlas {
+    pub(crate) pixels: Vec<u8>,
+    pub(crate) height: u32,
     shelf_x: u32,
     shelf_y: u32,
     shelf_height: u32,
 }
 
 impl Atlas {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let mut atlas = Self {
             pixels: Vec::new(),
             height: 0,
@@ -84,7 +84,7 @@ impl Atlas {
         }
     }
 
-    fn set(&mut self, x: u32, y: u32, texel: [u8; 4]) {
+    pub(crate) fn set(&mut self, x: u32, y: u32, texel: [u8; 4]) {
         let at = ((y * ATLAS_WIDTH + x) * 4) as usize;
         if let Some(slot) = self.pixels.get_mut(at..at + 4) {
             slot.copy_from_slice(&texel);
@@ -93,7 +93,7 @@ impl Atlas {
 
     /// Room for a `width` × `height` block (one texel apart from the others),
     /// or `None` when the atlas is full.
-    fn place(&mut self, width: u32, height: u32) -> Option<(u32, u32)> {
+    pub(crate) fn place(&mut self, width: u32, height: u32) -> Option<(u32, u32)> {
         if width + 1 > ATLAS_WIDTH {
             return None;
         }
@@ -114,7 +114,7 @@ impl Atlas {
 }
 
 /// Where a block of the atlas is: left, top, width, height in texels.
-type Region = (u32, u32, u32, u32);
+pub(crate) type Region = (u32, u32, u32, u32);
 
 /// A glyph in the atlas and where it sits from its pen position.
 #[derive(Clone, Copy)]
@@ -161,7 +161,7 @@ fn finite(values: [f32; 4]) -> bool {
 }
 
 /// The texel-corner coordinates of `region` in an atlas `height` tall.
-fn uv_of((x, y, w, h): Region, height: u32) -> [f32; 4] {
+pub(crate) fn uv_of((x, y, w, h): Region, height: u32) -> [f32; 4] {
     let (aw, ah) = (ATLAS_WIDTH as f32, height.max(1) as f32);
     [
         x as f32 / aw,

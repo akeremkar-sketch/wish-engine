@@ -71,10 +71,11 @@ pub use wish_types::{
     AudioPlayback, AudioSettings, AudioSource, BodyForce, BodyImpulse, BodyKind, BodyVelocity,
     ButtonClicked, Camera, CharacterController, CharacterMotion, CharacterState, Collider,
     ColliderShape, CollisionEnded, CollisionStarted, DirectionalLight, Exposure, GlobalTransform,
-    Material, Model, PhysicsSettings, PlaySound, PointLight, Pointer, Primitive, RigidBody, Shape,
-    Sky, SoundEnded, SoundStarted, SpotLight, Time, Transform, UiAlign, UiButton, UiDirection,
-    UiImage, UiInteraction, UiJustify, UiLayout, UiLength, UiNode, UiPosition, UiSettings, UiText,
-    UiTextAlign, UiUnit, world_position,
+    Material, Model, ParticleEmitter, ParticleState, PhysicsSettings, PlaySound, PointLight,
+    Pointer, Primitive, Projection, RigidBody, Shape, Sky, SoundEnded, SoundStarted, SpotLight,
+    Sprite, Time, Transform, UiAlign, UiButton, UiDirection, UiImage, UiInteraction, UiJustify,
+    UiLayout, UiLength, UiNode, UiPosition, UiSettings, UiText, UiTextAlign, UiUnit,
+    world_position,
 };
 
 pub use physics::{Ray, RayHit, raycast};
@@ -100,6 +101,7 @@ pub mod prelude {
         ButtonClicked, Pointer, UiAlign, UiButton, UiDirection, UiImage, UiInteraction, UiJustify,
         UiLayout, UiLength, UiNode, UiPosition, UiSettings, UiText, UiTextAlign, UiUnit,
     };
+    pub use crate::{ParticleEmitter, ParticleState, Projection, Sprite};
 }
 
 /// The handle of `text`, to write into a field of type `Text` (such as

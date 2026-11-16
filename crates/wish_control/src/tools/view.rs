@@ -79,7 +79,7 @@ pub(crate) const CAPTURE_FRAME: Tool = Tool {
 pub(crate) const DESCRIBE_VIEW: Tool = Tool {
     name: "describe_view",
     title: "What the camera sees",
-    description: "Says what a camera sees without a picture: for each visible entity its pixel count, how much of it is not hidden by other things (visible_percent), its box on screen [left, top, right, bottom] and its distance in meters; and the entities that are drawn but not visible (hidden behind something, or outside the picture); and the in-game interface (interface: each box that shows something, its box in the picture, its text, whether it is a button and if the pointer is over it). Use it to check that what you built is on screen and not blocked, and what the interface says.",
+    description: "Says what a camera sees without a picture: for each visible entity its pixel count, how much of it is not hidden by other things (visible_percent), its box on screen [left, top, right, bottom] and its distance in meters; and the entities that are drawn but not visible (hidden behind something, or outside the picture); the sprites (their box in the picture and layer) and particle emitters (the box their particles cover, how many are alive); and the in-game interface (interface: each box that shows something, its box in the picture, its text, whether it is a button and if the pointer is over it). Use it to check that what you built is on screen and not blocked, and what the interface says.",
     params: &[
         SCENE,
         SESSION,
@@ -325,6 +325,9 @@ fn describe_view(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
     let description = open
         .renderer
         .describe(&open.gpu, &prepared.scene, camera, width, height)?;
+    let overlay = open
+        .renderer
+        .overlay_elements(&prepared.scene, camera, width, height)?;
     let adapter = adapter_json(open);
     let name = |entity: Entity| {
         prepared
@@ -393,6 +396,30 @@ fn describe_view(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
         out.insert("visible_not_listed".to_owned(), json!(total - limit));
     }
     out.insert("hidden".to_owned(), json!(hidden));
+    // Sprites and particle emitters are not in the depth picture: their
+    // boxes are worked out from where they stand.
+    let mut sprites = Vec::new();
+    let mut particles = Vec::new();
+    for element in overlay.into_iter().take(limit) {
+        let mut entry = json!({ "entity": name(element.entity) });
+        match element.bounding_box {
+            Some(found) => entry["bounding_box"] = json!(found),
+            None => entry["on_screen"] = json!(false),
+        }
+        if let Some(layer) = element.layer {
+            entry["layer"] = json!(layer);
+            sprites.push(entry);
+        } else {
+            entry["alive"] = json!(element.particles.unwrap_or(0));
+            particles.push(entry);
+        }
+    }
+    if !sprites.is_empty() {
+        out.insert("sprites".to_owned(), json!(sprites));
+    }
+    if !particles.is_empty() {
+        out.insert("particles".to_owned(), json!(particles));
+    }
     if !interface.is_empty() {
         out.insert("interface".to_owned(), json!(interface));
     }

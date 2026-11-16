@@ -4267,6 +4267,7 @@ dependencies = [
  "wish_examples",
  "wish_import",
  "wish_input",
+ "wish_particles",
  "wish_physics",
  "wish_render",
  "wish_scene",
@@ -4350,6 +4351,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "wish_particles"
+version = "0.1.0"
+dependencies = [
+ "wish_app",
+ "wish_core",
+ "wish_ecs",
+ "wish_types",
+]
+
+[[package]]
 name = "wish_physics"
 version = "0.1.0"
 dependencies = [
@@ -4374,6 +4385,7 @@ dependencies = [
  "wish_core",
  "wish_ecs",
  "wish_import",
+ "wish_particles",
  "wish_scene",
  "wish_schema",
  "wish_text",

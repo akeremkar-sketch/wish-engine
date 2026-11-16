@@ -11,6 +11,16 @@ use wish_schema::{component, resource, schema};
 /// The luminance of an emissive value of 1, in cd/m².
 pub const EMISSIVE_NITS: f32 = 30000.0;
 
+/// How a camera maps the world onto the picture.
+#[schema]
+pub enum Projection {
+    /// Things farther away look smaller (3D).
+    Perspective,
+    /// Things look the same size at any distance (2D games, maps, plans):
+    /// the picture shows `ortho_height` meters from top to bottom.
+    Orthographic,
+}
+
 /// A camera: looks along its entity's -Z axis, +Y up. The aspect ratio comes
 /// from the image being drawn.
 #[component]
@@ -25,6 +35,12 @@ pub struct Camera {
     /// Must be larger than `near`.
     #[schema(unit = "m", range = 0.001..=100000.0, default = 1000.0)]
     pub far: f32,
+    /// Perspective (3D) or Orthographic (2D).
+    pub projection: Projection,
+    /// For an orthographic camera: how many meters the picture shows from
+    /// top to bottom (the width follows from the picture's shape).
+    #[schema(unit = "m", range = 0.001..=100000.0, default = 10.0)]
+    pub ortho_height: f32,
 }
 
 /// A light as far away as the sun: parallel rays along its entity's -Z

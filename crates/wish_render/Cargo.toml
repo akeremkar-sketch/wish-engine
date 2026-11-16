@@ -15,6 +15,7 @@ wgpu.workspace = true
 wish_core.workspace = true
 wish_ecs.workspace = true
 wish_import.workspace = true
+wish_particles.workspace = true
 wish_schema.workspace = true
 wish_types.workspace = true
 wish_text.workspace = true

@@ -770,7 +770,7 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     ),
     (
         "ui_image_not_loaded",
-        "A UiImage names a picture that could not be loaded (missing, outside the project, or not a readable PNG); its box shows only its background. Fix the path or the file.",
+        "A UiImage or a Sprite names a picture that could not be loaded (missing, outside the project, or not a readable PNG); the box shows only its background and the sprite is not drawn. Fix the path or the file.",
     ),
     (
         "ui_without_node",
@@ -1281,6 +1281,20 @@ the next tick with `EventReader<ButtonClicked>`). The pointer is the `Pointer` r
 Game code writes text with `text(...)`: `label.text = text(&format!("Score: {}", score.points));`, and reads
 one back with `text_of(handle)`. A tool clicks with `sim_step` input `{ "pointer": [x, y], "click": true }`
 and then a step without `click`; `describe_view` lists the interface with its text.
+
+## 2D and particles
+
+A 2D game looks through a `Camera` with `projection: Orthographic` (`ortho_height`: meters shown from top to
+bottom) and is made of `Sprite { image, rect, color, pixels_per_unit, anchor, flip_x, flip_y, layer, smooth }`
+entities standing in their XY plane (a sprite sheet frame is `rect`, in pixels; game code animates by writing
+it). Sprites are not lit; higher `layer` is drawn over lower. For 2D physics lock the Z translation and the X and
+Y rotations of `RigidBody`.
+
+A `ParticleEmitter { rate, burst, lifetime, speed, spread_deg, gravity, size_start/end, color_start/end, seed,
+start_time, duration, max, playing }` gives off soft round particles in a cone around its entity's +Y axis.
+Particles keep no state (their places follow from the time): to start again, write `start_time` with
+`Time.elapsed`. The engine writes how many are alive into `ParticleState.alive`; `describe_view` lists sprites
+and particles with their boxes.
 
 ## Rules
 
