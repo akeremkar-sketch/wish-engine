@@ -1,0 +1,27 @@
+[package]
+name = "wish_editor"
+description = "The hand-editing editor of Wish Engine: panels over the control plane, drawn on the CPU so that it runs (and is tested) headless."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+egui.workspace = true
+glam.workspace = true
+png.workspace = true
+serde_json.workspace = true
+wish_control.workspace = true
+wish_core.workspace = true
+wish_render.workspace = true
+wish_text.workspace = true
+wish_window.workspace = true
+
+[dev-dependencies]
+egui.workspace = true
+png.workspace = true
+wish_script.workspace = true
+
+[lints]
+workspace = true

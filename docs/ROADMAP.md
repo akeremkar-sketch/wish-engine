@@ -189,9 +189,18 @@ Arayüz hibrittir (ADR-018): elle düzenleme ve yapay zekâ kokpiti eşit düzey
 
 ### M8a — Editör temeli (elle düzenleme)
 
+**Durum: tamamlandı (17 Kasım 2026)**, `m8a-editor` → `main`. Tasarım ve sonuç: [design/M8a-editor-temeli.md](design/M8a-editor-temeli.md) (teknoloji kararı: `egui` + kendi CPU rasterleyicimiz, §2; çıkış ölçütü kanıtları §9).
+
+- Elle uçtan uca vitrin senaryosu.
+- Otomatik eşlik tablosu: 26 araç + 15 düzenleme işlemi.
+- 12 dilli arayüz.
+- MCP Streamable HTTP.
+- Bağımsız kapanış incelemesi: 35 bulgu, hepsi ele alındı.
+- CI faturalandırma yüzünden çalışmadı: yalnızca yerelde doğrulandı.
+
 **Ön koşul.** T1'in elle düzenleme maketleri tamamlanmış; ADR-018 arayüz teknolojisi kesinleşmiş. Yalnızca kontrol düzlemine (M4) ve render'a (M3) bağlıdır; bu yüzden M5–M7 ile **paralel** başlayabilir ve motorun kendi geliştirilmesinde de işe yarar.
 
-**Çıktı.** Görünüm penceresi ve kamera gezinmesi; hiyerarşi; şemadan otomatik üretilen denetçi; taşıma/döndürme/ölçekleme tutamaçları; varlık tarayıcı (sürükle-bırak); materyal ve prefab düzenleme; girdi haritası düzenleyici; oynat/duraklat/adım at/geri sar denetimleri ve anlık görüntü zaman çizelgesi; konsol ve tanılar paneli; performans paneli; proje ayarları; "dış kod düzenleyicide aç"; Türkçe/İngilizce arayüz.
+**Çıktı.** Görünüm penceresi ve kamera gezinmesi; hiyerarşi; şemadan otomatik üretilen denetçi; taşıma/döndürme/ölçekleme tutamaçları; varlık tarayıcı (sürükle-bırak); materyal ve prefab düzenleme; girdi haritası düzenleyici; oynat/duraklat/adım at/geri sar denetimleri ve anlık görüntü zaman çizelgesi; konsol ve tanılar paneli; performans paneli; proje ayarları; "dış kod düzenleyicide aç"; **çok dilli arayüz**: "bir dil = bir dosya" altyapısı, 1.0'da Latin/Kiril/Yunan alfabeli 10–12 dil (TR, EN, DE, FR, ES, PT, IT, PL, RU, UK, EL…; kullanıcı kararı, 16 Kasım 2026).
 
 **Çıkış ölçütü.**
 - **Hiçbir yapay zekâ bağlı değilken** bir kullanıcı, vitrin oyununun bir bölümünü yalnızca elle kurar, oynatır ve dışa aktarıma hazır hâle getirir.
@@ -226,12 +235,15 @@ Arayüz hibrittir (ADR-018): elle düzenleme ve yapay zekâ kokpiti eşit düzey
 
 ## M10 — 1.0 sonrası (sıra ihtiyaca göre)
 
-- Gelişmiş render: GPU güdümlü çizim, bağsız kaynaklar, meshlet/sanal geometri, ışın izlemeli aydınlatma
+- Gelişmiş render: GPU güdümlü çizim, bağsız kaynaklar, meshlet/sanal geometri, ışın izlemeli aydınlatma, kademeli gölge haritaları (tek harita sahneye oturtulduğu için uzak bir nesne yakındaki gölgeleri yumuşatır: M8a WP9 bulgusu)
 - Web hedefi (WebGPU + Wasm)
 - Araç zinciri gerektirmeyen ikinci betik dili
 - Paralel sistem yürütme
 - Çok oyunculu (geri almalı ağ kodu — determinizm altyapısı hazır)
 - Linux ve macOS paketleri
+- Latin/Kiril/Yunan dışı arayüz dilleri: Çince, Japonca, Korece, Arapça (sağdan sola), Hintçe — yazı tipi (Noto, SIL OFL-1.1: izinli listeye eklenmesi kullanıcı kararı) ve sağdan sola metin dizme gerekir (kullanıcı kararı, 16 Kasım 2026)
+- Motorun tanı iletilerinin (`message`/`hint`) çevrilmesi: editör arayüzü 12 dilde (M8a WP8), ama kontrol düzleminin iletileri İngilizce (ajanlar ve belgeler için tek dil); editörde tanıyı kişinin diline çevirmek kod başına çeviri dosyası ister
+- MCP Streamable HTTP'de sunucunun başlattığı akış (`GET` + SSE: ilerleme bildirimleri, sunucudan istek) ve tarayıcıdan doğrudan bağlanma için CORS (M8a WP8'de yalnızca `POST`/`DELETE`, yanıtlar JSON)
 
 ---
 

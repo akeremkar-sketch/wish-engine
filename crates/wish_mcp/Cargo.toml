@@ -1,6 +1,6 @@
 [package]
 name = "wish_mcp"
-description = "The Wish Engine MCP server: the control plane's tools, docs and prompts over the Model Context Protocol (stdio)."
+description = "The Wish Engine MCP server: the control plane's tools, docs and prompts over the Model Context Protocol (stdio and Streamable HTTP)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

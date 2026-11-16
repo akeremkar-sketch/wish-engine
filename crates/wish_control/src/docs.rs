@@ -181,6 +181,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "A scene file changed outside the engine in a way that could not be recorded as separate edits. It is recorded as one change by the file (revisions keep counting), and earlier changes can no longer be undone.",
     ),
     (
+        "http_needs_token",
+        "wen mcp --http was asked to listen beyond this machine without a token. Set WISH_MCP_TOKEN (clients send it as Authorization: Bearer <token>) or listen on 127.0.0.1.",
+    ),
+    (
         "image_invalid",
         "A picture for the interface cannot be read: it is not a PNG, is damaged, or is larger than 4096x4096 pixels. Re-export it as an 8- or 16-bit PNG.",
     ),
@@ -217,12 +221,20 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "A paging cursor does not belong to the query. Pass the previous answer's next_cursor unchanged, with the same other parameters.",
     ),
     (
+        "invalid_editor_script",
+        "An editor input script (wen edit --headless-frame) is malformed: an event or step the editor does not know, or a size out of range. The hint shows the format.",
+    ),
+    (
         "invalid_entity_id",
         "A runtime entity id is malformed or refers to an entity that no longer exists.",
     ),
     (
         "invalid_hash",
         "A hash string is not 32 hexadecimal digits.",
+    ),
+    (
+        "invalid_http_address",
+        "wen mcp --http got an address it cannot listen on: write a port (7878) or an address and port (127.0.0.1:7878; port 0 picks a free one).",
     ),
     (
         "invalid_input_file",
@@ -307,6 +319,18 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "light_clusters_full",
         "Too many point and spot lights reach the same part of the picture (more than 128); some were left out there, so it is darker than it should be. Spread lights out or give them a smaller range.",
+    ),
+    (
+        "live_edit",
+        "A note in a session's log: someone changed the running game with edit_apply and session. It lasts while the session runs; the scene file is not changed.",
+    ),
+    (
+        "live_edit_unsupported",
+        "An operation that only means something in a scene file (instantiate, overrides, notes) was sent to a running game. Make it in the scene and start the game again.",
+    ),
+    (
+        "live_edit_while_recording",
+        "A running game that is recording a replay refuses live edits (they are not input, so the replay would not play the same). Save the recording first.",
     ),
     (
         "managed_component",
@@ -416,6 +440,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     ("png_decode", "An image could not be decoded as PNG."),
     ("png_encode", "A picture could not be encoded as PNG."),
     (
+        "prefab_edit_invalid",
+        "An edit of a prefab file would leave it no longer a prefab (an entity without a parent besides root, root removed or renamed, a resource, a prefab instance inside). The message says which rule.",
+    ),
+    (
         "prefab_entity_outside_root",
         "Every entity of a prefab must be below its root entity.",
     ),
@@ -424,8 +452,8 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "No prefab file has that path. Prefabs are project-relative .prefab.json files.",
     ),
     (
-        "prefab_read_only",
-        "The tools can read prefabs (scene_get, entity_get, entity_query with the prefab path as scene) but not change them yet. Change instances instead: set / replace for an instance's root, set_override for the prefab's other entities.",
+        "prefab_override_orphaned",
+        "An edit of a prefab removes or renames an entity that instances in scenes override. Drop those overrides first (remove_override, or Revert to prefab in the editor).",
     ),
     (
         "prefab_root_with_parent",
@@ -824,6 +852,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "unknown_key",
         "A document has a key the format does not know. The hint gives the closest valid key.",
+    ),
+    (
+        "unknown_language",
+        "The editor has no interface language with that code (wen edit --lang). The hint lists the codes.",
     ),
     (
         "unknown_parameter",

@@ -137,6 +137,25 @@ impl Workspace {
         })
     }
 
+    /// Changes the project's name and/or default scene and writes
+    /// `wish.json` (canonically, all at once).
+    pub(crate) fn write_config(&mut self, name: Option<&str>, scene: Option<&str>) -> Result<()> {
+        let Some(config) = self.config.as_mut() else {
+            return Ok(());
+        };
+        let mut next = config.clone();
+        if let Some(name) = name {
+            next.name = name.to_owned();
+        }
+        if let Some(scene) = scene {
+            next.scene = scene.to_owned();
+        }
+        let text = next.to_canonical()?;
+        crate::documents::write_project_file(&self.root, crate::project::PROJECT_FILE, &text)?;
+        *config = next;
+        Ok(())
+    }
+
     /// Why `wish.json` could not be read.
     pub fn config_problem(&self) -> Option<&Diagnostic> {
         self.config_problem.as_ref()

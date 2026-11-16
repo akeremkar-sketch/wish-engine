@@ -64,7 +64,24 @@ Wish Engine: yapay zekâya tamamen entegre ama yapay zekâsız da eksiksiz kulla
   - M7 WP7 bitti: **MCP Inspector 2.13.0 ile 11/11** (`tools/mcp_inspector_check.py`, `--strict` şema denetimi temiz; sonuç `evals/results/m7-mcp-inspector.md`); karşılaştırma düzeneği `tools/compare/` (8 görev, Wish + Unity, `selftest` ücretsiz ve geçiyor; Unity hazırlığı `tools/compare/README.md`). Unreal yok (kullanıcı kararı: disk).
   - M7 WP8 bitti: kapanış incelemesi (platform taşıması duvar/tavan görür ve platformu adımdan önce bulur, `asset_create` iz bırakmaz ve bilinmeyen alanı reddeder, tarifler testte oynanır, 11 görev denetimi sıkılaştı); **Sonnet 5.5 · medium 41/41 (%100), 4,59 $ karşılığı** (`evals/results/m7-sonnet-5-5-medium.json`).
   - **Bekleyen kullanıcı adımları (M7, kullanıcı seçimiyle yapılmadı):** Haiku 5.5 koşumu (`wish-evals run --tries 1 --model haiku`, ~2–4 $); karşılaştırma koşumları (`tools/compare/run.py run --engine wish|unity`, Unity için `tools/compare/README.md`; Unreal yok). Kota harcar → onay.
-- **Sıradaki: M8a (editör temeli: elle düzenleme)** — ROADMAP'teki önerilen model · efor: Sonnet 5.5 · high. Başlamadan önce tasarım notu yaz (`docs/design/M8a-...`); ADR-018 (arayüz teknolojisi) kesinleşmeli.
+- **Tamamlanan: M8a (editör temeli: elle düzenleme)** — 17 Kasım 2026, `m8a-editor` dalından `main`'e birleştirildi (CI faturalandırma yüzünden çalışmadı: yalnızca yerelde doğrulandı). Sonuç ve kanıtlar: [docs/design/M8a-editor-temeli.md](docs/design/M8a-editor-temeli.md) §9; kapanış incelemesi (35 bulgu, hepsi ele alındı): §8 WP9. Editöre dokunmadan önce §3 ve §8'i oku.
+  - `wish_editor` (`egui` 0.37 + kendi belirlenimci CPU rasterleyici; ADR-018), `wen edit [--lang] [--headless-frame betik --out png]`; her eylem `human` imzalı `Workspace::call`. Testler AccessKit ağacından widget'ları adla bulur (`EditorApp::widgets`), girdi betiği `wish_editor::script`.
+  - **Kurallar (çiğneme):**
+    - Yeni arayüz metni `t("...")`/`tf("...", adlar)` ile yazılır (literal) ve `crates/wish_editor/lang/*.json` içindeki 11 dosyaya çevirisi eklenir; yoksa `tests/languages.rs` kırılır.
+    - Yeni bir araç ya da `edit_apply` işlemi eklersen `wish_editor::parity::PARITY`'e editördeki karşılığını ve onu elle yapan testi yaz; yoksa `tests/parity.rs` kırılır (değişmez 9).
+    - Oynarken dosyaya dokunan eylemler kapalıdır.
+    - Prefab düzenlemesi `commit_document`'ta prefab kurallarıyla denetlenir.
+  - Kontrol düzleminde M8a'nın getirdikleri: `project_settings` (26. araç); `edit_apply` prefab dosyalarını ve (`session` ile) canlı oyunu düzenler; `entity_get` parçaların `overridden` listesini verir; `Workspace::render_picture/render_ids` (`PictureSource::Preview`).
+  - MCP Streamable HTTP: `wen mcp --http <port>` (`wish_mcp::http`; her zaman jeton, ADR-022).
+  - **Sıradaki: M8b (yapay zekâ kokpiti).** Kullanıcı testi (3 kişi) ve gerçek model koşumu kullanıcı onayı ister. Önce kullanıcısız parçalar:
+    - etkinlik akışı ve kart başına geri al,
+    - denetim noktaları,
+    - önce/sonra karşılaştırma,
+    - yetki kipleri,
+    - göster-ve-söyle bağlamı,
+    - sahte modelle sınanan kokpit ajanı.
+
+    Önerilen model · efor: Opus 5.5 · high.
 - **`wen`'i çalıştırmak:** `cargo run -p wish_cli --release -- run --example bounce --frames 10000 --seed 7 --json`. Derlenmiş ikili `C:\wish-build\target\release\wen.exe` altında.
 - **Hash'leri değiştirme konusunda dikkat:** `wish_ecs/tests/snapshot.rs` ve `wish_core` testlerinde kayıtlı hash/rastgelelik değerleri var. Bunlar kırılırsa önce bilinçli bir format değişikliği olup olmadığını düşün; bilinçliyse sürüm etiketini (`wish-world-hash-v1` vb.) artır.
 - **Git:** M1 (`m1-core`) ve M2 (`m2-data`) kendi dallarında geliştirilip `main`'e birleştirildi. Her kilometre taşı kendi dalında (`m2-...`) yürür, bitince `main`'e birleştirilir. Commit kimliği depoya özel proje kimliğidir (kullanıcı kararı); kişisel e-posta kullanma.

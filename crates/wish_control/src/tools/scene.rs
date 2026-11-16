@@ -106,7 +106,7 @@ pub(crate) const ENTITY_QUERY: Tool = Tool {
 pub(crate) const ENTITY_GET: Tool = Tool {
     name: "entity_get",
     title: "Entity values",
-    description: "The component values of entities, by id: the effective values (prefab parts expanded, defaults filled in), plus parent, prefab and notes. Engine-internal components (SceneId, Hierarchy, GlobalTransform) are left out unless named. Also the values of resources (world-wide data such as a game's Score or Time), by name. Pass session to read a running game.",
+    description: "The component values of entities, by id: the effective values (prefab parts expanded, defaults filled in), plus parent, prefab and notes; for a part of a prefab instance (id instance/part), from_prefab and the components the instance overrides (overridden). Engine-internal components (SceneId, Hierarchy, GlobalTransform) are left out unless named. Also the values of resources (world-wide data such as a game's Score or Time), by name. Pass session to read a running game.",
     params: &[
         SCENE,
         SESSION,
@@ -129,9 +129,14 @@ pub(crate) const ENTITY_GET: Tool = Tool {
 pub(crate) const EDIT_APPLY: Tool = Tool {
     name: "edit_apply",
     title: "Change the scene",
-    description: "Applies a list of operations to a scene, all or nothing, and writes the file. Operations: spawn {id, parent?, order?, components?, notes?}, instantiate {id, prefab, ...}, despawn {id}, set {id, component, value} (merges fields), replace {id, component, value}, remove {id, component}, reparent {id, parent, order?}, rename {id, to}, set_notes {id, notes}, set_resource / replace_resource {name, value}, remove_resource {name}, set_override / replace_override / remove_override {id, entity, component, value?}. In Transform values, \"euler_deg\": [x, y, z] may stand for rotation. Siblings keep the order of their \"order\" (then by id): give order where it matters, as in an interface column. A failed operation changes nothing and says which one (location.op). Answers the new revision, what changed, and what others changed since you last looked.",
+    description: "Applies a list of operations to a scene, all or nothing, and writes the file. Operations: spawn {id, parent?, order?, components?, notes?}, instantiate {id, prefab, ...}, despawn {id}, set {id, component, value} (merges fields), replace {id, component, value}, remove {id, component}, reparent {id, parent, order?}, rename {id, to}, set_notes {id, notes}, set_resource / replace_resource {name, value}, remove_resource {name}, set_override / replace_override / remove_override {id, entity, component, value?}. In Transform values, \"euler_deg\": [x, y, z] may stand for rotation. Siblings keep the order of their \"order\" (then by id): give order where it matters, as in an interface column. A failed operation changes nothing and says which one (location.op). Answers the new revision, what changed, and what others changed since you last looked. With session, the operations change that running game's world instead (not the file, not its history; it lasts while the session runs): spawn, despawn, set, replace, remove, reparent, rename and the resource operations.",
     params: &[
         SCENE,
+        Param::optional(
+            "session",
+            Kind::String,
+            "Change this running game (from sim_start) instead of the scene file. Not kept: make the change in the scene to keep it.",
+        ),
         Param::required(
             "ops",
             Kind::Array,
@@ -620,8 +625,20 @@ fn entity_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<S
             if let Some(notes) = described.notes() {
                 item.insert("notes".to_owned(), json!(notes));
             }
-        } else if doc.is_some() {
+        } else if let Some(doc) = &doc {
             item.insert("from_prefab".to_owned(), json!(true));
+            // Which of its components the instance changes (overrides).
+            if let Some((instance, inner)) = id.split_once('/')
+                && let Some(changed) = doc
+                    .entity(instance)
+                    .and_then(|owner| owner.overrides().get(inner))
+                && !changed.is_empty()
+            {
+                item.insert(
+                    "overridden".to_owned(),
+                    json!(changed.keys().collect::<Vec<_>>()),
+                );
+            }
         }
         let mut components = Map::new();
         if let Value::Object(all) = world.entity_json(entity)? {
@@ -717,14 +734,6 @@ fn changes_json(changes: &[String]) -> Value {
 }
 
 fn refuse_if_file_invalid(workspace: &Workspace, path: &str) -> Result<()> {
-    if path.ends_with(".prefab.json") {
-        return Err(Diagnostic::error(
-            "prefab_read_only",
-            format!("'{path}' is a prefab: the tools can look at prefabs but not change them yet."),
-            "Change an instance instead: set / replace on the instance's id for its root, set_override for the prefab's other entities. Editing prefabs themselves comes with the prefab editor.",
-        )
-        .at_path("/scene"));
-    }
     if let Some(problem) = &workspace.document(path)?.disk_problem {
         let mut refusal = problem.clone();
         refusal.severity = wish_core::Severity::Error;
@@ -736,6 +745,11 @@ fn refuse_if_file_invalid(workspace: &Workspace, path: &str) -> Result<()> {
 }
 
 fn edit_apply(workspace: &mut Workspace, args: &Args, actor: &Actor) -> Result<Map<String, Value>> {
+    if let Some(session) = args.str("session") {
+        let id = workspace.session_id(Some(session))?;
+        let ops = crate::ops::parse_ops(args.value("ops").unwrap_or(&Value::Null))?;
+        return workspace.edit_session(&id, &ops, actor, args.flag("dry_run"));
+    }
     let create = args.flag("create");
     let (path, notes) = open(workspace, args, create)?;
     refuse_if_file_invalid(workspace, &path)?;

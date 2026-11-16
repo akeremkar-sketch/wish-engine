@@ -54,6 +54,11 @@ pub(crate) struct Documents {
     prefab_stamp: Option<Vec<(String, u64, Option<SystemTime>)>>,
 }
 
+/// Writes a project file (settings) atomically: all of it or nothing.
+pub(crate) fn write_project_file(root: &Path, path: &str, text: &str) -> Result<()> {
+    atomic_write(root, path, text)
+}
+
 fn atomic_write(root: &Path, path: &str, text: &str) -> Result<()> {
     let target = root.join(path);
     if let Some(folder) = target.parent() {
@@ -388,7 +393,7 @@ impl Workspace {
         match scene {
             Some(path) => self.exact_case(normalize_scene_path(path)?),
             None => match self.config() {
-                Some(config) => normalize_scene_path(&config.scene),
+                Some(config) => self.exact_case(normalize_scene_path(&config.scene)?),
                 None => Err(Diagnostic::error(
                     "no_default_scene",
                     "No scene was named and the project has no default scene (no wish.json).",
@@ -489,10 +494,12 @@ impl Workspace {
             );
             return Ok(notes);
         }
-        let Some(open) = self.docs.open.get(path) else {
+        let Some(open) = self.docs.open.get_mut(path) else {
             return Ok(notes);
         };
         if text == open.disk_text {
+            // Back to what the engine wrote (a bad save undone by hand).
+            open.disk_problem = None;
             return Ok(notes);
         }
         let Some(text) = text else {
@@ -615,6 +622,7 @@ impl Workspace {
     /// checked once more right before it is replaced: if someone saved it in
     /// the meantime, their save is not overwritten.
     pub(crate) fn commit_document(&mut self, path: &str, doc: SceneDocument) -> Result<()> {
+        self.check_prefab_edit(path, &doc)?;
         let root = self.root().to_path_buf();
         let text = doc.to_canonical()?;
         let on_disk = read_text(&root, path)?;
@@ -631,14 +639,79 @@ impl Workspace {
         open.doc = doc;
         open.disk_text = Some(text);
         open.view = None;
+        if path.ends_with(".prefab.json") {
+            // A prefab changed: every scene that has instances of it is
+            // built again, now (a file's size and time alone could miss a
+            // change made within the same clock tick).
+            self.docs.prefab_stamp = None;
+        }
+        Ok(())
+    }
+
+    /// A prefab file's new content must still be a prefab (one `root`, the
+    /// rest below it, no resources, no instances), and no scene may keep an
+    /// override of an entity the change removes or renames: either would
+    /// leave files that no longer load.
+    pub(crate) fn check_prefab_edit(&mut self, path: &str, doc: &SceneDocument) -> Result<()> {
+        if !path.ends_with(".prefab.json") {
+            return Ok(());
+        }
+        let text = doc.to_canonical()?;
+        let checked = wish_scene::load_prefab(&text, path, self.registry());
+        if let Some(first) = checked.diagnostics.iter().find(|d| d.is_error()) {
+            return Err(Diagnostic::error(
+                "prefab_edit_invalid",
+                format!(
+                    "This change would leave '{path}' no longer a prefab: {}",
+                    first.message
+                ),
+                format!(
+                    "A prefab keeps one entity 'root' with no parent, every other entity below it, no resources and no prefab instances. {}",
+                    first.hint
+                ),
+            )
+            .at_file(path));
+        }
+        let kept: std::collections::BTreeSet<String> =
+            doc.entities().map(|(id, _)| id.to_owned()).collect();
+        let scenes: Vec<String> = wish_asset::index::documents(self.root())?
+            .into_iter()
+            .map(|(name, _)| name)
+            .filter(|name| name.ends_with(".scene.json"))
+            .collect();
+        let mut orphaned = Vec::new();
+        for scene in scenes {
+            let Ok(open) = self.document(&scene) else {
+                continue;
+            };
+            for (id, entity) in open.doc.entities() {
+                if entity.prefab() != Some(path) {
+                    continue;
+                }
+                for inner in entity.overrides().keys() {
+                    if !kept.contains(inner) {
+                        orphaned.push(format!("{scene}: {id}/{inner}"));
+                    }
+                }
+            }
+        }
+        if !orphaned.is_empty() {
+            return Err(Diagnostic::error(
+                "prefab_override_orphaned",
+                format!(
+                    "Scenes change prefab entities this edit removes or renames: {}.",
+                    orphaned.join(", ")
+                ),
+                "Drop those overrides first (edit_apply remove_override on each scene; Revert to prefab in the editor), then change the prefab.",
+            )
+            .at_file(path));
+        }
         Ok(())
     }
 
     /// The document at `path` instantiated into a world (cached per
     /// revision).
     pub(crate) fn view(&mut self, path: &str) -> Result<&WorldView> {
-        let example = self.example().map(str::to_owned);
-        let module = self.game_module().cloned();
         let generation = self.scripts.generation;
         let open = self.document_mut(path)?;
         // A new game module can add types the scene uses: the view is
@@ -646,14 +719,10 @@ impl Workspace {
         let revision = open.doc.revision() ^ (generation << 48);
         let fresh = open.view.as_ref().is_some_and(|(at, _)| *at == revision);
         if !fresh {
-            let (fonts, _) = self.fonts();
+            let doc = open.doc.clone();
+            let view = self.build_view(&doc)?;
             let open = self.document_mut(path)?;
-            let mut world = World::new();
-            crate::types::register_all(example.as_deref(), module.as_deref(), &mut world)?;
-            let ids = open.doc.instantiate(&mut world)?;
-            wish_transform::update_global_transforms(&mut world)?;
-            crate::ui::prepare(&mut world, fonts)?;
-            open.view = Some((revision, WorldView { world, ids }));
+            open.view = Some((revision, view));
         }
         let open = self.document_mut(path)?;
         open.view.as_ref().map(|(_, view)| view).ok_or_else(|| {
@@ -663,6 +732,37 @@ impl Workspace {
                 "This is a bug in the engine. Please report it.",
             )
         })
+    }
+
+    /// A document instantiated into a world of its own (not cached).
+    pub(crate) fn build_view(&mut self, doc: &SceneDocument) -> Result<WorldView> {
+        let example = self.example().map(str::to_owned);
+        let module = self.game_module().cloned();
+        let (fonts, _) = self.fonts();
+        let mut world = World::new();
+        crate::types::register_all(example.as_deref(), module.as_deref(), &mut world)?;
+        let ids = doc.instantiate(&mut world)?;
+        wish_transform::update_global_transforms(&mut world)?;
+        crate::ui::prepare(&mut world, fonts)?;
+        Ok(WorldView { world, ids })
+    }
+
+    /// The document at `path` with `ops` applied on a copy (nothing is kept,
+    /// nothing written), as a world: what the scene would look like after
+    /// the change. For previews while a change is being made.
+    pub(crate) fn build_preview(&mut self, path: &str, ops: &Value) -> Result<WorldView> {
+        let ops = crate::ops::parse_ops(ops)?;
+        let registry = self.registry().clone();
+        let mut working = self.document(path)?.doc.clone();
+        working.apply(
+            &Transaction {
+                actor: Actor::Human,
+                base_revision: None,
+                ops,
+            },
+            &registry,
+        )?;
+        self.build_view(&working)
     }
 
     /// What other actors changed in `path` since `actor` last looked, and

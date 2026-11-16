@@ -281,7 +281,7 @@ Tüm değişiklikler (elle ya da ajanla) kontrol düzleminden geçer; arayüzün
 
 **Kapsam etkisi.** Bu karar **1.0 kapsamını büyütür**: tam elle düzenleme, arayüz işini yaklaşık iki katına çıkarır. Önlem: arayüz kilometre taşı ikiye bölündü (M8a editör temeli, M8b yapay zekâ kokpiti); uzman araçlar 1.0 dışında tutuldu; denetçi elle yazılmaz, şemadan üretilir.
 
-**Geçici kısım — arayüz teknolojisi.** Varsayılan: süreç içi `egui` (görünüm aynı wgpu aygıtını paylaşır, tek paket dağıtımı kolay). Alternatif: HTTP kontrol düzlemine bağlanan web teknolojili arayüz (zengin metin/konuşma arayüzünde daha güçlü). M8 başında, kokpit tasarımı (yol haritasında T1) tamamlandıktan sonra kesinleşir.
+**Arayüz teknolojisi — kesinleşti (16 Kasım 2026, M8a WP1).** Süreç içi `egui` 0.37 (`egui` + `epaint`, MIT OR Apache-2.0; varsayılan yazı tipleri kapalı, motorun Roboto'su kullanılır), **kendi belirlenimci CPU rasterleyicimizle** çizilir ve `wish_window`'un "ekran dışına çiz, resmi göster" yolunu izler. `egui-wgpu` seçilmedi: değişmez 6'yı (wgpu yalnızca `wish_render`'da) zorlar ve başsız testi zorlaştırır; `egui_software_backend` 0.0.x olgun değil. Kanıt: tam HD'de (6.524 üçgen, 60 etiket + 8 denetçi paneli) düzen 0,6 ms + çizim 4,3 ms < 6 ms bütçe; çıktı bit düzeyinde belirlenimci, altın görüntüyle test edilir. Web arayüzü seçeneği (HTTP + webview) ve M8b'nin zengin metin ihtiyacı ayrıca değerlendirilecek; çekirdek arayüzden bağımsız olduğu için teknoloji değişse motor etkilenmez. Ayrıntı: [design/M8a-editor-temeli.md](design/M8a-editor-temeli.md) §2 ve WP1.
 
 **Risk ve önlem.** Kokpit tasarımı kod yazılmadan önce maketlerle sınanır (T1). Çekirdek arayüzden bağımsız olduğu için teknoloji değişse de motor etkilenmez.
 
@@ -304,7 +304,7 @@ Tüm değişiklikler (elle ya da ajanla) kontrol düzleminden geçer; arayüzün
 
 ## ADR-022 — Güvenlik
 
-**Karar.** MCP sunucusu yalnızca proje klasörüne yazar. HTTP taşıması yalnızca yerel makineye bağlanır ve oturum belirteci ister. `--read-only` kipi vardır. Wasm konukları yakıt, bellek ve süre sınırlıdır. Yıkıcı işlemler (dosya silme) geri alınabilir işlem olarak yürür.
+**Karar.** MCP sunucusu yalnızca proje klasörüne yazar. HTTP taşıması yalnızca yerel makineye bağlanır ve oturum belirteci ister. *(Uygulama, M8a: `wen mcp --http` her zaman bir taşıyıcı jeton ister — `WISH_MCP_TOKEN` ya da başlarken üretilip gösterilen rastgele bir jeton; döngü dışı adres yalnızca `WISH_MCP_TOKEN` ile; `Origin` ve `Host` denetimi; MCP oturum kimliği ayrıca, her istemci kendi kimliğiyle.)* `--read-only` kipi vardır. Wasm konukları yakıt, bellek ve süre sınırlıdır. Yıkıcı işlemler (dosya silme) geri alınabilir işlem olarak yürür.
 
 ## ADR-023 — Ürün ve dağıtım
 

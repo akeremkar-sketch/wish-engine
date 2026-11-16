@@ -118,11 +118,32 @@ struct Prepared {
 }
 
 fn prepare(workspace: &mut Workspace, args: &Args) -> Result<Prepared> {
-    let session = match args.str("session") {
+    prepare_source(workspace, args.str("session"), args.str("scene"))
+}
+
+/// [`prepare`] without the tool's arguments: a session's live world, or a
+/// scene file's (the project's by default).
+fn prepare_source(
+    workspace: &mut Workspace,
+    session: Option<&str>,
+    scene: Option<&str>,
+) -> Result<Prepared> {
+    prepare_with(workspace, session, scene, None)
+}
+
+/// [`prepare_source`], optionally with `preview` edit operations applied on a
+/// copy of the scene (what it would look like after them).
+fn prepare_with(
+    workspace: &mut Workspace,
+    session: Option<&str>,
+    scene: Option<&str>,
+    preview: Option<&Value>,
+) -> Result<Prepared> {
+    let session = match session {
         Some(id) => Some(workspace.session_id(Some(id))?),
         None => None,
     };
-    let (scene, by_name, notes, source) = match &session {
+    let (mut scene, by_name, notes, source) = match &session {
         Some(id) => {
             let session = workspace.session(id)?;
             let world = session.app.world();
@@ -134,18 +155,36 @@ fn prepare(workspace: &mut Workspace, args: &Args) -> Result<Prepared> {
             )
         }
         None => {
-            let path = workspace.scene_path(args.str("scene"))?;
+            let path = workspace.scene_path(scene)?;
             let notes = workspace.open_document(&path, false)?;
             let revision = workspace.document(&path)?.doc.revision();
-            let view = workspace.view(&path)?;
-            (
-                extract(&view.world)?,
-                view.ids.clone(),
-                notes,
-                json!({ "scene": path, "revision": revision }),
-            )
+            if let Some(ops) = preview {
+                let view = workspace.build_preview(&path, ops)?;
+                (
+                    extract(&view.world)?,
+                    view.ids,
+                    notes,
+                    json!({ "scene": path, "revision": revision, "preview": true }),
+                )
+            } else {
+                let view = workspace.view(&path)?;
+                (
+                    extract(&view.world)?,
+                    view.ids.clone(),
+                    notes,
+                    json!({ "scene": path, "revision": revision }),
+                )
+            }
         }
     };
+    // A prefab has no camera or light of its own: it is looked at from a
+    // default stage (from the front and above, in daylight).
+    if source["scene"]
+        .as_str()
+        .is_some_and(|path| path.ends_with(".prefab.json"))
+    {
+        stage(&mut scene);
+    }
     let names = by_name
         .iter()
         .map(|(name, entity)| (*entity, name.clone()))
@@ -157,6 +196,36 @@ fn prepare(workspace: &mut Workspace, args: &Args) -> Result<Prepared> {
         notes,
         source,
     })
+}
+
+/// Gives a scene with no camera one, and one with no light a sun: what a
+/// prefab needs to be looked at.
+fn stage(scene: &mut RenderScene) {
+    use wish_core::math::Vec3;
+    if scene.cameras.is_empty() {
+        let eye = Vec3::new(0.0, 2.5, 6.5);
+        scene.cameras.push(wish_render::CameraView {
+            entity: Entity::NULL,
+            view: wish_core::math::camera::rh::view::look_at_mat4(
+                eye,
+                Vec3::new(0.0, 0.8, 0.0),
+                Vec3::Y,
+            ),
+            position: eye,
+            fov_y: 50f32.to_radians(),
+            near: 0.1,
+            far: 200.0,
+            ortho_height: None,
+        });
+    }
+    if scene.lights.is_empty() {
+        scene.lights.push(wish_render::LightView {
+            entity: Entity::NULL,
+            direction: Vec3::new(-0.4, -1.0, -0.3).normalize(),
+            radiance: [100_000.0, 98_000.0, 92_000.0],
+            shadows: true,
+        });
+    }
 }
 
 fn camera_entity(prepared: &Prepared, args: &Args) -> Result<Option<Entity>> {
@@ -189,7 +258,15 @@ fn drawing<'a>(
     args: &Args,
     scene: &RenderScene,
 ) -> Result<(&'a mut Drawing, Vec<Diagnostic>)> {
-    let shaders = args.str("shaders").map(std::path::PathBuf::from);
+    drawing_with(workspace, args.str("shaders"), scene)
+}
+
+fn drawing_with<'a>(
+    workspace: &'a mut Workspace,
+    shaders: Option<&str>,
+    scene: &RenderScene,
+) -> Result<(&'a mut Drawing, Vec<Diagnostic>)> {
+    let shaders = shaders.map(std::path::PathBuf::from);
     let shaders = shaders.map(|dir| {
         if dir.is_absolute() {
             dir
@@ -428,4 +505,106 @@ fn describe_view(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
         out.insert("diagnostics".to_owned(), json!(warnings));
     }
     Ok(out)
+}
+
+/// Where a picture comes from.
+#[derive(Clone, Copy, Debug)]
+pub enum PictureSource<'a> {
+    /// A scene file (`None`: the project's scene).
+    Scene(Option<&'a str>),
+    /// A scene file with these edit operations applied on a copy: what it
+    /// would look like after them (the file and the history are untouched).
+    /// For showing a change while it is still being made.
+    Preview(Option<&'a str>, &'a Value),
+    /// A play session's live world.
+    Session(&'a str),
+}
+
+/// A picture of a scene or session, as the editor's view shows it.
+pub struct Picture {
+    /// The pixels (sRGB, 8-bit RGBA).
+    pub image: wish_render::RgbaImage,
+    /// Entity names of what could be drawn, by entity.
+    pub names: BTreeMap<Entity, String>,
+    /// What is worth telling the person looking (a model that did not load).
+    pub warnings: Vec<Diagnostic>,
+}
+
+impl Workspace {
+    /// Draws the scene or session the way `capture_frame` does, but takes
+    /// the camera as a function of the scene's own first camera (a fly
+    /// camera moves it) and returns the picture itself instead of a PNG:
+    /// for the editor's view, which draws many pictures a second.
+    ///
+    /// `camera` is applied to the scene's first camera (a scene without one
+    /// is an error, as for `capture_frame`).
+    pub fn render_picture(
+        &mut self,
+        source: PictureSource<'_>,
+        camera: Option<&dyn Fn(&wish_render::CameraView) -> wish_render::CameraView>,
+        width: u32,
+        height: u32,
+        view: View,
+    ) -> Result<Picture> {
+        let (session, scene, preview) = match source {
+            PictureSource::Scene(scene) => (None, scene, None),
+            PictureSource::Preview(scene, ops) => (None, scene, Some(ops)),
+            PictureSource::Session(id) => (Some(id), None, None),
+        };
+        let mut prepared = prepare_with(self, session, scene, preview)?;
+        if let (Some(camera), Some(first)) = (camera, prepared.scene.cameras.first_mut()) {
+            *first = camera(first);
+        }
+        let (open, model_warnings) = drawing_with(self, None, &prepared.scene)?;
+        let frame =
+            open.renderer
+                .render_view(&open.gpu, &prepared.scene, None, width, height, view)?;
+        let mut warnings = prepared.notes;
+        warnings.extend(model_warnings);
+        warnings.extend(frame.warnings);
+        Ok(Picture {
+            image: frame.image,
+            names: prepared.names,
+            warnings: without_repeats(warnings),
+        })
+    }
+}
+
+/// Which entity is drawn at each pixel of a picture, with the entities' names.
+pub struct IdPicture {
+    /// The identity buffer: [`wish_render::IdBuffer::entity_at`] says who is at a pixel.
+    pub ids: wish_render::IdBuffer,
+    /// Entity names, by entity.
+    pub names: BTreeMap<Entity, String>,
+}
+
+impl Workspace {
+    /// The identity buffer of the scene or session from the same camera
+    /// [`Workspace::render_picture`] would use: "which entity is at this
+    /// pixel", for clicking in the editor's view.
+    pub fn render_ids(
+        &mut self,
+        source: PictureSource<'_>,
+        camera: Option<&dyn Fn(&wish_render::CameraView) -> wish_render::CameraView>,
+        width: u32,
+        height: u32,
+    ) -> Result<IdPicture> {
+        let (session, scene, preview) = match source {
+            PictureSource::Scene(scene) => (None, scene, None),
+            PictureSource::Preview(scene, ops) => (None, scene, Some(ops)),
+            PictureSource::Session(id) => (Some(id), None, None),
+        };
+        let mut prepared = prepare_with(self, session, scene, preview)?;
+        if let (Some(camera), Some(first)) = (camera, prepared.scene.cameras.first_mut()) {
+            *first = camera(first);
+        }
+        let (open, _) = drawing_with(self, None, &prepared.scene)?;
+        let ids = open
+            .renderer
+            .id_buffer(&open.gpu, &prepared.scene, None, width, height)?;
+        Ok(IdPicture {
+            ids,
+            names: prepared.names,
+        })
+    }
 }

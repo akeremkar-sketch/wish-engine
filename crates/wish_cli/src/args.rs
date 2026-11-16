@@ -10,8 +10,8 @@ use wish_core::{Diagnostic, Result};
 /// The commands `wen` understands.
 pub const COMMANDS: &[&str] = &[
     "run", "bench", "schema", "mv", "check", "fmt", "migrate", "watch", "capture", "describe",
-    "shaders", "view", "call", "do", "new", "build", "play", "replay", "test", "sdk", "package",
-    "mcp", "examples", "help", "version",
+    "shaders", "view", "edit", "call", "do", "new", "build", "play", "replay", "test", "sdk",
+    "package", "mcp", "examples", "help", "version",
 ];
 
 /// A parsed command line.
@@ -108,6 +108,7 @@ pub enum Command {
     },
     /// Play the project's game in a window.
     Play(PlayArgs),
+    Edit(EditArgs),
     /// Run the project's scenario tests (the `test_run` tool).
     Test {
         /// Only these test files (all when empty).
@@ -201,6 +202,27 @@ pub struct CaptureArgs {
     pub out: String,
 }
 
+/// The options of `wen edit`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EditArgs {
+    /// The project folder (default: the current folder).
+    pub root: Option<String>,
+    /// The window's size in pixels.
+    pub size: (u32, u32),
+    /// Use the software adapter.
+    pub software: bool,
+    /// Close after this many frames (for scripts).
+    pub exit_after: Option<u64>,
+    /// Instead of a window: run this input script and write the last
+    /// picture to `out`.
+    pub headless_frame: Option<String>,
+    /// Where `--headless-frame` writes its PNG.
+    pub out: Option<String>,
+    /// The interface's language (`tr`, `de`...); else the saved choice,
+    /// `WISH_LANG` or the system's.
+    pub lang: Option<String>,
+}
+
 /// The options of `wen play`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PlayArgs {
@@ -267,6 +289,9 @@ pub struct ToolContext {
     pub actor: Option<String>,
     /// Draw with the software (CPU) adapter.
     pub software: bool,
+    /// `wen mcp` only: serve Streamable HTTP on this address instead of
+    /// standard input and output.
+    pub http: Option<String>,
 }
 
 /// The options of `wen call`.
@@ -340,7 +365,14 @@ fn parse_tool_command(command: &str, rest: &[String]) -> Result<Args> {
             "--root" if !value.is_empty() => context.root = Some(value),
             "--example" if !value.is_empty() => context.example = Some(value),
             "--actor" if !value.is_empty() => context.actor = Some(value),
-            "--root" | "--example" | "--actor" => return Err(missing(&name)),
+            "--http" if command != "mcp" => {
+                return Err(usage_error(
+                    "--http is only for 'wen mcp'.".to_owned(),
+                    "Write it like: wen mcp --http 7878.".to_owned(),
+                ));
+            }
+            "--http" if !value.is_empty() => context.http = Some(value),
+            "--root" | "--example" | "--actor" | "--http" => return Err(missing(&name)),
             _ if command == "do" || command == "mcp" => {
                 let names = ["--root", "--example", "--actor", "--json"];
                 return Err(usage_error(
@@ -356,7 +388,7 @@ fn parse_tool_command(command: &str, rest: &[String]) -> Result<Args> {
         if let Some(extra) = positional.first() {
             return Err(usage_error(
                 format!("'wen mcp' takes no argument '{extra}'."),
-                "Write it like: wen mcp [--root <folder>] [--software]. MCP clients start it themselves (see .mcp.json).".to_owned(),
+                "Write it like: wen mcp [--root <folder>] [--software] [--http <port or address>]. MCP clients start it themselves (see .mcp.json).".to_owned(),
             ));
         }
         return Ok(Args {
@@ -482,6 +514,16 @@ fn flags_of(command: &str) -> &'static [(&'static str, bool)] {
             ("--size", true),
             ("--software", false),
             ("--exit-after", true),
+            ("--json", false),
+        ],
+        "edit" => &[
+            ("--root", true),
+            ("--size", true),
+            ("--software", false),
+            ("--exit-after", true),
+            ("--headless-frame", true),
+            ("--out", true),
+            ("--lang", true),
             ("--json", false),
         ],
         "sdk" => &[("--out", true), ("--json", false)],
@@ -748,6 +790,17 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
                 root: value_of("--root").map(str::to_owned),
             }
         }
+        "edit" => Command::Edit(EditArgs {
+            root: value_of("--root").map(str::to_owned),
+            size: value_of("--size").map_or(Ok((1280, 720)), parse_size)?,
+            software: values.iter().any(|(flag, _)| *flag == "--software"),
+            exit_after: value_of("--exit-after")
+                .map(|value| parse_number("--exit-after", value))
+                .transpose()?,
+            headless_frame: value_of("--headless-frame").map(str::to_owned),
+            out: value_of("--out").map(str::to_owned),
+            lang: value_of("--lang").map(str::to_owned),
+        }),
         "play" => Command::Play(PlayArgs {
             root: value_of("--root").map(str::to_owned),
             scene: value_of("--scene").map(str::to_owned),

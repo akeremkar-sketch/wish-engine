@@ -7,7 +7,7 @@ Bu, araç yüzeyinin taslağıdır. **Durum (M4 tamamlandı, 16 Kasım 2026):** 
 | Taşıma | Kullanım |
 |---|---|
 | stdio | `wen mcp` — Claude Code / Claude Desktop sunucuyu kendisi başlatır. `wen new` projeye `.mcp.json` yazar, bağlantı otomatiktir. |
-| Streamable HTTP | `wen mcp --http` — çalışan editöre ya da oyuna bağlanma; yalnızca yerel makine, oturum belirteciyle. |
+| Streamable HTTP | `wen mcp --http <port ya da adres>` (M8a WP8) — tek uç `/mcp`: `POST` (istek → `200` + JSON, bildirim → `202`), `DELETE` oturumu bitirir, `GET` akışı yok (`405`). `initialize` yanıtı `Mcp-Session-Id` verir, sonraki her ileti onu taşır (yoksa `400`, bilinmiyorsa `404`). Varsayılan yalnızca `127.0.0.1`; her zaman jeton (`Authorization: Bearer`; `WISH_MCP_TOKEN` yoksa rastgele üretilip başlarken gösterilir — ADR-022); başka adres `WISH_MCP_TOKEN` ister; `Host` yerel olmalı. Her oturum kendi istemci adıyla kaydedilir. Başka sitenin sayfası `Origin` ile reddedilir (`WISH_MCP_ORIGINS` ek izin). `notifications/cancelled` başka bağlantıdan da anında işler. Kod: `wish_mcp::http`. |
 
 Her MCP aracının birebir komut satırı karşılığı vardır (`wen entity query …`, `wen sim step …`), `--json` ile aynı çıktıyı verir.
 

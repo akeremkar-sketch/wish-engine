@@ -236,3 +236,282 @@ fn entity_get_says_which_resources_are_defaults() {
         "{got}"
     );
 }
+
+/// M8a WP5: a preview draws a scene with edits applied on a copy: what it
+/// would look like, with the file, the history and the revision untouched.
+#[test]
+fn a_preview_shows_a_change_without_making_it() {
+    use wish_control::PictureSource;
+    let (dir, mut ws) = project("preview");
+    ws.set_software(true);
+    let added = call(
+        &mut ws,
+        "edit_apply",
+        json!({ "ops": [{ "op": "spawn", "id": "marker", "components": {
+            "Transform": { "translation": [0.0, 1.0, 0.0] }, "Primitive": { "shape": "Cube" },
+            "Material": { "base_color": [0.9, 0.1, 0.1, 1] } } }] }),
+    );
+    assert_eq!(added["ok"], true, "{added}");
+    let file = std::fs::read_to_string(dir.join("scenes/main.scene.json")).unwrap();
+    let before = call(&mut ws, "edit_history", json!({ "action": "list" }));
+    let still = ws
+        .render_picture(
+            PictureSource::Scene(None),
+            None,
+            320,
+            180,
+            wish_render::View::Lit,
+        )
+        .unwrap();
+    // Move the cube far to the right on a copy.
+    let ops = json!([{ "op": "set", "id": "marker", "component": "Transform",
+                       "value": { "translation": [3.0, 1.0, 0.0] } }]);
+    let moved = ws
+        .render_picture(
+            PictureSource::Preview(None, &ops),
+            None,
+            320,
+            180,
+            wish_render::View::Lit,
+        )
+        .unwrap();
+    let differing = still
+        .image
+        .pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(moved.image.pixels.as_chunks::<4>().0)
+        .filter(|(a, b)| a != b)
+        .count();
+    assert!(
+        differing > 500,
+        "the preview shows the move ({differing} pixels differ)"
+    );
+    // Nothing was made: same file, same history, and a plain picture is
+    // still the old one.
+    assert_eq!(
+        std::fs::read_to_string(dir.join("scenes/main.scene.json")).unwrap(),
+        file
+    );
+    assert_eq!(
+        call(&mut ws, "edit_history", json!({ "action": "list" })),
+        before
+    );
+    let again = ws
+        .render_picture(
+            PictureSource::Scene(None),
+            None,
+            320,
+            180,
+            wish_render::View::Lit,
+        )
+        .unwrap();
+    assert_eq!(again.image.pixels, still.image.pixels);
+    // A preview that cannot be made is a diagnostic, not a panic.
+    let bad = json!([{ "op": "set", "id": "nobody", "component": "Transform", "value": {} }]);
+    let error = ws
+        .render_picture(
+            PictureSource::Preview(None, &bad),
+            None,
+            320,
+            180,
+            wish_render::View::Lit,
+        )
+        .err()
+        .unwrap();
+    assert!(!error.hint.is_empty());
+}
+
+/// M8a WP6: a prefab is made and edited with `edit_apply` like a scene; the
+/// scenes that hold instances of it see the change at once.
+#[test]
+fn a_prefab_is_made_and_edited_and_its_instances_follow() {
+    let (dir, mut ws) = project("prefab-edit");
+    let made = call(
+        &mut ws,
+        "edit_apply",
+        json!({ "scene": "prefabs/lamp.prefab.json", "create": true, "ops": [
+            { "op": "spawn", "id": "root", "components": { "Transform": {} } },
+            { "op": "spawn", "id": "bulb", "parent": "root", "components": {
+                "Transform": { "translation": [0, 1, 0] },
+                "Primitive": { "shape": "Sphere" }, "Material": {} } }] }),
+    );
+    assert_eq!(made["ok"], true, "{made}");
+    assert!(dir.join("prefabs/lamp.prefab.json").exists());
+    let placed = call(
+        &mut ws,
+        "edit_apply",
+        json!({ "ops": [{ "op": "instantiate", "id": "lamp_1", "prefab": "prefabs/lamp.prefab.json" }] }),
+    );
+    assert_eq!(placed["ok"], true, "{placed}");
+    let read = |ws: &mut Workspace| {
+        call(
+            ws,
+            "entity_get",
+            json!({ "ids": ["lamp_1/bulb"], "components": ["Material"] }),
+        )["entities"][0]["components"]["Material"]["metallic"]
+            .clone()
+    };
+    assert_eq!(read(&mut ws), 0.0);
+    // Edit the prefab: the instance follows, with no call to refresh.
+    let edited = call(
+        &mut ws,
+        "edit_apply",
+        json!({ "scene": "prefabs/lamp.prefab.json", "ops": [
+            { "op": "set", "id": "bulb", "component": "Material", "value": { "metallic": 0.8 } }] }),
+    );
+    assert_eq!(edited["ok"], true, "{edited}");
+    assert_eq!(read(&mut ws), 0.8);
+    // An instance's own override wins over the prefab, and survives the edit.
+    call(
+        &mut ws,
+        "edit_apply",
+        json!({ "ops": [{ "op": "set_override", "id": "lamp_1", "entity": "bulb",
+                          "component": "Material", "value": { "metallic": 0.2 } }] }),
+    );
+    call(
+        &mut ws,
+        "edit_apply",
+        json!({ "scene": "prefabs/lamp.prefab.json", "ops": [
+            { "op": "set", "id": "bulb", "component": "Material", "value": { "roughness": 0.9 } }] }),
+    );
+    assert_eq!(read(&mut ws), 0.2);
+    // The prefab has its own history: undo takes the last edit back.
+    let undone = call(
+        &mut ws,
+        "edit_history",
+        json!({ "scene": "prefabs/lamp.prefab.json", "action": "undo" }),
+    );
+    assert_eq!(undone["ok"], true, "{undone}");
+    let got = call(
+        &mut ws,
+        "entity_get",
+        json!({ "ids": ["lamp_1/bulb"], "components": ["Material"] }),
+    );
+    assert_eq!(
+        got["entities"][0]["components"]["Material"]["roughness"],
+        0.5
+    );
+    // `check` still passes.
+    assert_eq!(call(&mut ws, "check", json!({}))["passed"], true);
+}
+
+/// M8a WP7 (from M5): `edit_apply` with `session` changes the running game,
+/// all or nothing, and leaves the scene file and its history alone.
+#[test]
+fn edit_apply_changes_a_running_game_and_not_the_file() {
+    let (dir, mut ws) = project("live-edit");
+    let file = std::fs::read_to_string(dir.join("scenes/main.scene.json")).unwrap();
+    let started = call(&mut ws, "sim_start", json!({}));
+    let session = started["session"].as_str().unwrap().to_owned();
+    call(
+        &mut ws,
+        "sim_step",
+        json!({ "session": session, "frames": 5 }),
+    );
+    let live = |ws: &mut Workspace, ops: Value| {
+        call(ws, "edit_apply", json!({ "session": session, "ops": ops }))
+    };
+    // Set, spawn (with a parent), rename: one call, all applied.
+    let done = live(
+        &mut ws,
+        json!([
+            { "op": "set", "id": "ground", "component": "Material", "value": { "metallic": 1.0 } },
+            { "op": "spawn", "id": "box", "parent": "ground", "components": {
+                "Transform": { "translation": [0, 2, 0] }, "Primitive": { "shape": "Cube" } } },
+            { "op": "rename", "id": "sun", "to": "lamp" }
+        ]),
+    );
+    assert_eq!(done["ok"], true, "{done}");
+    assert_eq!(done["changes"]["count"], 4);
+    let got = call(
+        &mut ws,
+        "entity_get",
+        json!({ "session": session, "ids": ["ground", "box", "lamp"] }),
+    );
+    assert_eq!(got["ok"], true, "{got}");
+    assert_eq!(
+        got["entities"][0]["components"]["Material"]["metallic"],
+        1.0
+    );
+    assert_eq!(
+        got["entities"][1]["components"]["Transform"]["translation"],
+        json!([0.0, 2.0, 0.0])
+    );
+    // The world goes on with it.
+    let stepped = call(
+        &mut ws,
+        "sim_step",
+        json!({ "session": session, "frames": 3 }),
+    );
+    assert_eq!(stepped["ok"], true, "{stepped}");
+    // The file and the scene's history are untouched.
+    assert_eq!(
+        std::fs::read_to_string(dir.join("scenes/main.scene.json")).unwrap(),
+        file
+    );
+    assert_eq!(
+        call(&mut ws, "edit_history", json!({ "action": "list" }))["can_undo"],
+        false
+    );
+    // The session's log says who changed what.
+    let logs = call(
+        &mut ws,
+        "logs_get",
+        json!({ "session": session, "kinds": ["edit"] }),
+    );
+    assert!(logs.to_string().contains("live_edit"), "{logs}");
+    // All or nothing: the second operation fails, the first is not kept.
+    let refused = live(
+        &mut ws,
+        json!([
+            { "op": "despawn", "id": "box" },
+            { "op": "set", "id": "nobody", "component": "Transform", "value": {} }
+        ]),
+    );
+    assert_eq!(refused["error"]["code"], "unknown_entity");
+    assert_eq!(refused["error"]["location"]["op"], 1);
+    let still = call(
+        &mut ws,
+        "entity_get",
+        json!({ "session": session, "ids": ["box"] }),
+    );
+    assert_eq!(still["ok"], true, "box is still there: {still}");
+    // A dry run changes nothing.
+    let dry = call(
+        &mut ws,
+        "edit_apply",
+        json!({ "session": session, "dry_run": true, "ops": [{ "op": "despawn", "id": "box" }] }),
+    );
+    assert_eq!(dry["dry_run"], true, "{dry}");
+    assert_eq!(
+        call(
+            &mut ws,
+            "entity_get",
+            json!({ "session": session, "ids": ["box"] })
+        )["ok"],
+        true
+    );
+    // What only means something in a file is refused, with a hint.
+    let placed = live(
+        &mut ws,
+        json!([{ "op": "set_notes", "id": "box", "notes": "x" }]),
+    );
+    assert_eq!(placed["error"]["code"], "live_edit_unsupported");
+    // A recording session refuses live edits.
+    call(&mut ws, "sim_stop", json!({ "session": session }));
+    let fresh = call(&mut ws, "sim_start", json!({}));
+    let fresh = fresh["session"].as_str().unwrap().to_owned();
+    call(
+        &mut ws,
+        "replay",
+        json!({ "action": "record", "session": fresh }),
+    );
+    let recording = call(
+        &mut ws,
+        "edit_apply",
+        json!({ "session": fresh, "ops": [{ "op": "despawn", "id": "sun" }] }),
+    );
+    assert_eq!(recording["error"]["code"], "live_edit_while_recording");
+}

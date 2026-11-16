@@ -523,14 +523,24 @@ fn what_the_agent_evaluations_found() {
         values["entities"][0]["components"]["Transform"]["scale"],
         json!([1.0, 1.0, 1.0])
     );
-    // ...but not changed.
-    let refused = ws.call("edit_apply", &json!({ "scene": "prefabs/crate.prefab.json", "ops": [{ "op": "despawn", "id": "root" }] }), &me);
-    assert_eq!(refused["error"]["code"], "prefab_read_only");
-    assert!(
-        refused["error"]["hint"]
-            .as_str()
-            .unwrap()
-            .contains("set_override")
+    // ...and changed (M8a): a prefab is edited like a scene, and the scenes
+    // that have instances of it see the change at once.
+    let edited = ws.call(
+        "edit_apply",
+        &json!({ "scene": "prefabs/crate.prefab.json", "ops": [{
+            "op": "set", "id": "root", "component": "Primitive", "value": { "shape": "Sphere" } }] }),
+        &me,
+    );
+    assert_eq!(edited["ok"], true, "{edited}");
+    let after = ok(&ws.call(
+        "scene_get",
+        &json!({ "scene": "prefabs/crate.prefab.json", "detail": "normal" }),
+        &me,
+    ))
+    .clone();
+    assert_eq!(
+        after["tree"][0]["components"]["Primitive"]["shape"],
+        "Sphere"
     );
     // Familiar names from other engines are explained.
     let collider = ws.call("entity_query", &json!({ "with": ["BoxCollider"] }), &me);

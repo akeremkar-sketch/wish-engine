@@ -115,6 +115,21 @@ fn examples() -> Vec<(&'static str, Value)> {
             json!({ "path": "assets/dot.png", "picture": { "shape": "circle", "width": 16, "height": 16, "color": [1, 0, 0, 1] } }),
         ),
         ("asset_create", json!({ "path": "assets/music.mp3" })),
+        ("project_settings", json!({})),
+        (
+            "project_settings",
+            json!({ "action": "set", "name": "Renamed", "input": { "format": 1, "actions": {
+                "jump": { "kind": "button", "keys": ["Space", "Up"] } } } }),
+        ),
+        (
+            "project_settings",
+            json!({ "action": "set", "input": { "format": 1, "actions": {
+                "jump": { "kind": "button", "keys": ["Spacebar"] } } } }),
+        ),
+        (
+            "project_settings",
+            json!({ "action": "set", "dry_run": true, "scene": "scenes/main.scene.json" }),
+        ),
         ("scene_get", json!({ "detail": "normal" })),
         ("asset_info", json!({ "path": "assets/models/tri.glb" })),
         ("sim_step", json!({})),
