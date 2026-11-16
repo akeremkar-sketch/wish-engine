@@ -42,6 +42,43 @@ pub struct DirectionalLight {
     pub shadows: bool,
 }
 
+/// A light that shines in every direction from a point, like a bulb. Its
+/// light fades with the square of the distance and is gone at `range`.
+#[component]
+pub struct PointLight {
+    /// The light's colour.
+    pub color: Color,
+    /// How much light it gives off in all: a 60 W light bulb is about 800
+    /// lumens, a candle about 12.
+    #[schema(unit = "lm", range = 0.0..=10000000.0, default = 800.0)]
+    pub intensity_lm: f32,
+    /// Beyond this distance it lights nothing (it fades out smoothly before).
+    #[schema(unit = "m", range = 0.01..=10000.0, default = 10.0)]
+    pub range: f32,
+}
+
+/// A light that shines in a cone along its entity's -Z axis, like a
+/// torch or a stage light.
+#[component]
+pub struct SpotLight {
+    /// The light's colour.
+    pub color: Color,
+    /// How much light it would give off if it shone in every direction (so
+    /// that narrowing the cone does not change how bright it is).
+    #[schema(unit = "lm", range = 0.0..=10000000.0, default = 800.0)]
+    pub intensity_lm: f32,
+    /// Beyond this distance it lights nothing.
+    #[schema(unit = "m", range = 0.01..=10000.0, default = 10.0)]
+    pub range: f32,
+    /// Inside this angle from the axis the light is at full strength.
+    #[schema(unit = "deg", range = 0.0..=89.0, default = 25.0)]
+    pub inner_angle_deg: f32,
+    /// Beyond this angle from the axis there is no light; in between it
+    /// fades.
+    #[schema(unit = "deg", range = 0.1..=89.9, default = 35.0)]
+    pub outer_angle_deg: f32,
+}
+
 /// The built-in shapes.
 #[schema]
 pub enum Shape {

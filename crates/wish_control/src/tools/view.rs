@@ -37,7 +37,7 @@ const SHADERS: Param = Param::optional(
 pub(crate) const CAPTURE_FRAME: Tool = Tool {
     name: "capture_frame",
     title: "Take a picture",
-    description: "Draws the scene (or a session's live world) from a camera and returns the picture as a PNG (image content over MCP; image.data is base64 on the command line unless out is given). The default 512x288 keeps it cheap; ask for more only to inspect detail. view picks what is drawn: lit (the real picture), ids (each entity its own color), depth (white near, black far), normals (surface direction as color), wireframe (triangle edges). Use describe_view to ask what is visible instead of reading pixels.",
+    description: "Draws the scene (or a session's live world) from a camera and returns the picture as a PNG (image content over MCP; image.data is base64 on the command line unless out is given). The default 512x288 keeps it cheap; ask for more only to inspect detail. view picks what is drawn: lit (the real picture), ids (each entity its own color), depth (white near, black far), normals (surface direction as color), wireframe (triangle edges), colliders (the wireframe with every physics collider over it: fixed green, moving cyan, sensors yellow), lights (the wireframe with how far each point and spot light reaches). Use describe_view to ask what is visible instead of reading pixels.",
     params: &[
         SCENE,
         SESSION,
@@ -57,7 +57,7 @@ pub(crate) const CAPTURE_FRAME: Tool = Tool {
         Param::optional(
             "view",
             Kind::Choice(View::NAMES),
-            "lit, ids, depth, normals or wireframe.",
+            "lit, ids, depth, normals, wireframe, colliders or lights.",
         )
         .or("\"lit\""),
         Param::optional(

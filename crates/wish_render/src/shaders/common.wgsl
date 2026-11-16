@@ -24,6 +24,13 @@ struct Frame {
     // x: 1 when the light casts shadows; y: depth bias; z: normal offset in
     // meters; w: 1 / shadow map size.
     shadow: vec4<f32>,
+    // World space to the camera's space (for a pixel's depth).
+    view: mat4x4<f32>,
+    // x, y: tiles across and down; z: depth slices; w: point and spot lights.
+    cluster: vec4<f32>,
+    // x: near plane; y: far plane; z: slices per unit of ln(depth / near);
+    // w: tile size in pixels.
+    cluster_depth: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> frame: Frame;

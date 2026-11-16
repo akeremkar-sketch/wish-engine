@@ -7,6 +7,10 @@
 //! - **depth:** distance from the camera, white near and black far.
 //! - **normals:** the surface normal in world space as a colour.
 //! - **wireframe:** the triangle edges.
+//! - **colliders:** the wireframe, with every physics collider drawn over it
+//!   (fixed green, moving cyan, sensors yellow).
+//! - **lights:** the wireframe, with where each point and spot light reaches
+//!   (its range sphere or cone, in its colour).
 //!
 //! [`Renderer::describe`] turns the identity buffer into a list of what is
 //! on screen: for each entity how many pixels, how much of it is visible, a
@@ -49,11 +53,23 @@ pub enum View {
     Normals,
     /// Triangle edges.
     Wireframe,
+    /// The wireframe and the physics colliders.
+    Colliders,
+    /// The wireframe and where the point and spot lights reach.
+    Lights,
 }
 
 impl View {
     /// The names of all views, as `wen capture --view` takes them.
-    pub const NAMES: &'static [&'static str] = &["lit", "ids", "depth", "normals", "wireframe"];
+    pub const NAMES: &'static [&'static str] = &[
+        "lit",
+        "ids",
+        "depth",
+        "normals",
+        "wireframe",
+        "colliders",
+        "lights",
+    ];
 
     /// The view's name.
     pub fn name(self) -> &'static str {
@@ -63,6 +79,8 @@ impl View {
             Self::Depth => "depth",
             Self::Normals => "normals",
             Self::Wireframe => "wireframe",
+            Self::Colliders => "colliders",
+            Self::Lights => "lights",
         }
     }
 
@@ -74,6 +92,8 @@ impl View {
             "depth" => Self::Depth,
             "normals" => Self::Normals,
             "wireframe" => Self::Wireframe,
+            "colliders" => Self::Colliders,
+            "lights" => Self::Lights,
             _ => {
                 return Err(Diagnostic::error(
                     "unknown_view",
@@ -95,12 +115,14 @@ pub(super) struct DebugPipelines {
     normals: [wgpu::RenderPipeline; 2],
     fill: [wgpu::RenderPipeline; 2],
     lines: wgpu::RenderPipeline,
+    /// World-space coloured lines drawn over everything (colliders, lights).
+    gizmo: wgpu::RenderPipeline,
 }
 
 impl DebugPipelines {
     pub(super) fn new(
         gpu: &Gpu,
-        source: &str,
+        (source, gizmo_source): (&str, &str),
         draw_layout: &wgpu::BindGroupLayout,
         material_layout: &wgpu::BindGroupLayout,
     ) -> Result<Self> {
@@ -230,7 +252,67 @@ impl DebugPipelines {
                     ),
                 ]
             };
+            let gizmo_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("gizmo"),
+                bind_group_layouts: &[Some(&layout)],
+                immediate_size: 0,
+            });
+            let gizmo_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("gizmo_pass"),
+                source: wgpu::ShaderSource::Wgsl(gizmo_source.to_owned().into()),
+            });
+            let gizmo = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("gizmo lines"),
+                layout: Some(&gizmo_layout),
+                vertex: wgpu::VertexState {
+                    module: &gizmo_shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: 28,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &[
+                            wgpu::VertexAttribute {
+                                format: wgpu::VertexFormat::Float32x3,
+                                offset: 0,
+                                shader_location: 0,
+                            },
+                            wgpu::VertexAttribute {
+                                format: wgpu::VertexFormat::Float32x4,
+                                offset: 12,
+                                shader_location: 1,
+                            },
+                        ],
+                    })],
+                },
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::LineList,
+                    ..wgpu::PrimitiveState::default()
+                },
+                // Over everything: a collider inside a wall is still shown.
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(wgpu::CompareFunction::Always),
+                    stencil: wgpu::StencilState::default(),
+                    bias: none,
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &gizmo_shader,
+                    entry_point: Some("fs_main"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: COLOUR_FORMAT,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            });
             Self {
+                gizmo,
                 ids: both("ids", "fs_ids", ID_FORMAT, none),
                 depth: both("depth", "fs_depth", COLOUR_FORMAT, none),
                 normals: both("normals", "fs_normals", COLOUR_FORMAT, none),
@@ -384,7 +466,13 @@ impl Renderer {
             }
             .to_image()
         } else {
-            let mut raw = self.debug_pass(gpu, camera_view, &collected, width, height, view)?;
+            let lines = match view {
+                View::Colliders => crate::gizmo::colliders(scene),
+                View::Lights => crate::gizmo::lights(scene),
+                _ => Vec::new(),
+            };
+            let mut raw =
+                self.debug_pass(gpu, camera_view, &collected, (width, height), view, &lines)?;
             // The target has no alpha of its own that means anything.
             for pixel in raw.pixels.as_chunks_mut::<4>().0 {
                 pixel[3] = 255;
@@ -522,7 +610,7 @@ impl Renderer {
         width: u32,
         height: u32,
     ) -> Result<Vec<u32>> {
-        let raw = self.debug_pass(gpu, camera, collected, width, height, View::Ids)?;
+        let raw = self.debug_pass(gpu, camera, collected, (width, height), View::Ids, &[])?;
         Ok(raw
             .pixels
             .as_chunks::<4>()
@@ -538,10 +626,15 @@ impl Renderer {
         gpu: &Gpu,
         camera: &CameraView,
         collected: &Collected<'a>,
-        width: u32,
-        height: u32,
+        (width, height): (u32, u32),
         view: View,
+        lines: &[crate::gizmo::LineVertex],
     ) -> Result<RgbaImage> {
+        let wire = matches!(view, View::Wireframe | View::Colliders | View::Lights);
+        let line_bytes: Vec<u8> = lines
+            .iter()
+            .flat_map(|vertex| vertex.iter().flat_map(|value| value.to_le_bytes()))
+            .collect();
         let format = if view == View::Ids {
             ID_FORMAT
         } else {
@@ -578,6 +671,8 @@ impl Renderer {
                 })
                 .create_view(&wgpu::TextureViewDescriptor::default());
             let uniform_buffer = buffer_with(gpu, "debug", &uniform.0, wgpu::BufferUsages::UNIFORM);
+            let line_buffer =
+                buffer_with(gpu, "gizmo lines", &line_bytes, wgpu::BufferUsages::VERTEX);
             let draw_buffer = buffer_with(
                 gpu,
                 "debug draws",
@@ -611,7 +706,7 @@ impl Renderer {
                     b: 0.2,
                     a: 1.0,
                 },
-                View::Wireframe => wgpu::Color {
+                View::Wireframe | View::Colliders | View::Lights => wgpu::Color {
                     r: 0.02,
                     g: 0.02,
                     b: 0.03,
@@ -683,7 +778,7 @@ impl Renderer {
                     pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..mesh.index_count, 0, 0..1);
                 }
-                if view == View::Wireframe {
+                if wire {
                     pass.set_pipeline(&self.debug.lines);
                     for (source, offset) in draws {
                         let Some((mesh, textures, _)) = parts(source) else {
@@ -699,6 +794,12 @@ impl Renderer {
                         pass.set_index_buffer(mesh.edges.slice(..), wgpu::IndexFormat::Uint32);
                         pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
                     }
+                }
+                if !lines.is_empty() {
+                    pass.set_pipeline(&self.debug.gizmo);
+                    pass.set_bind_group(0, &debug_group, &[]);
+                    pass.set_vertex_buffer(0, line_buffer.slice(..));
+                    pass.draw(0..u32::try_from(lines.len()).unwrap_or(0), 0..1);
                 }
             }
             target.copy(&mut encoder);

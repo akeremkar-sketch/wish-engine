@@ -477,3 +477,32 @@ fn the_inspector_explains_physics_mistakes() {
         "{fell}"
     );
 }
+
+#[test]
+fn the_colliders_and_lights_views_come_through_the_tools() {
+    let (_dir, mut ws) = project("views");
+    ws.set_software(true);
+    stack(&mut ws);
+    call(
+        &mut ws,
+        "edit_apply",
+        json!({ "ops": [{ "op": "spawn", "id": "bulb", "components": {
+            "Transform": { "translation": [2, 2, 0] },
+            "PointLight": { "intensity_lm": 800, "range": 4 } } }] }),
+    );
+    for view in ["colliders", "lights"] {
+        let picture = call(
+            &mut ws,
+            "capture_frame",
+            json!({ "view": view, "width": 128, "height": 72 }),
+        );
+        assert!(
+            picture["image"]["data"].as_str().unwrap().len() > 100,
+            "{view}"
+        );
+    }
+    let agent = parse_actor("agent");
+    let wrong = ws.call("capture_frame", &json!({ "view": "collider" }), &agent);
+    assert_eq!(wrong["error"]["code"], "invalid_parameter", "{wrong}");
+    assert!(wrong.to_string().contains("colliders"), "{wrong}");
+}

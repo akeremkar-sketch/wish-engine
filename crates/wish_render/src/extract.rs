@@ -11,7 +11,8 @@ use wish_ecs::World;
 use wish_transform::GlobalTransform;
 
 use crate::components::{
-    Ambient, Camera, DirectionalLight, Exposure, Material, Model, Primitive, Shape, Sky,
+    Ambient, Camera, DirectionalLight, Exposure, Material, Model, PointLight, Primitive, Shape,
+    Sky, SpotLight,
 };
 
 /// What a draw shows.
@@ -104,6 +105,42 @@ pub struct LightView {
     pub shadows: bool,
 }
 
+/// A point or spot light ready to use.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LocalLightView {
+    /// The entity that owns it.
+    pub entity: Entity,
+    /// Where it is, in world space.
+    pub position: Vec3,
+    /// Linear RGB multiplied by the luminous intensity (candela).
+    pub intensity: [f32; 3],
+    /// Beyond this distance it lights nothing.
+    pub range: f32,
+    /// For a spot light: the direction it shines (unit vector) and the
+    /// cosines of its inner and outer angles. `None` for a point light.
+    pub spot: Option<(Vec3, f32, f32)>,
+}
+
+/// A physics collider, for the `colliders` debug view: its shape where
+/// physics puts it (the entity's scale applied to the size, as physics does).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ColliderView {
+    /// The entity that owns it.
+    pub entity: Entity,
+    /// Its centre in world space.
+    pub center: Vec3,
+    /// Its orientation.
+    pub rotation: wish_core::math::Quat,
+    /// The shape.
+    pub shape: wish_types::physics::ColliderShape,
+    /// Its size in meters, the entity's scale applied.
+    pub size: Vec3,
+    /// Whether it is a sensor (a trigger, not a solid).
+    pub sensor: bool,
+    /// Whether it moves (a dynamic or kinematic body).
+    pub moving: bool,
+}
+
 /// The sky colours, linear RGB.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SkyData {
@@ -124,6 +161,10 @@ pub struct RenderScene {
     pub cameras: Vec<CameraView>,
     /// The directional lights, in entity order.
     pub lights: Vec<LightView>,
+    /// The point and spot lights, in entity order.
+    pub local_lights: Vec<LocalLightView>,
+    /// The physics colliders, in entity order (for the `colliders` view).
+    pub colliders: Vec<ColliderView>,
     /// What to draw, in entity order.
     pub draws: Vec<Draw>,
     /// The sky.
@@ -161,6 +202,8 @@ pub fn extract(world: &World) -> Result<RenderScene> {
     let mut scene = RenderScene {
         cameras: Vec::new(),
         lights: Vec::new(),
+        local_lights: Vec::new(),
+        colliders: Vec::new(),
         draws: Vec::new(),
         sky: {
             let sky = world.resource::<Sky>().copied().unwrap_or_default();
@@ -247,6 +290,63 @@ pub fn extract(world: &World) -> Result<RenderScene> {
                 ],
                 shadows: light.shadows,
             });
+        }
+        // Lumens over the whole sphere give the intensity in candela; a spot
+        // light keeps the same intensity whatever its cone (design note M6 §5).
+        let candela = |color: Color, lumens: f32| {
+            let [r, g, b] = rgb(color);
+            let intensity = lumens.max(0.0) / (4.0 * std::f32::consts::PI);
+            [r * intensity, g * intensity, b * intensity]
+        };
+        let position = placement.w_axis.truncate();
+        if let Some(light) = world.get::<PointLight>(entity).copied()
+            && position.is_finite()
+        {
+            scene.local_lights.push(LocalLightView {
+                entity,
+                position,
+                intensity: candela(light.color, light.intensity_lm),
+                range: light.range.max(0.01),
+                spot: None,
+            });
+        }
+        if let Some(light) = world.get::<SpotLight>(entity).copied()
+            && position.is_finite()
+        {
+            let direction = placement
+                .transform_vector3(Vec3::NEG_Z)
+                .try_normalize()
+                .unwrap_or(Vec3::NEG_Y);
+            let outer = light.outer_angle_deg.clamp(0.1, 89.9).to_radians();
+            let inner = light
+                .inner_angle_deg
+                .clamp(0.0, 89.0)
+                .to_radians()
+                .min(outer);
+            scene.local_lights.push(LocalLightView {
+                entity,
+                position,
+                intensity: candela(light.color, light.intensity_lm),
+                range: light.range.max(0.01),
+                spot: Some((direction, inner.cos(), outer.cos())),
+            });
+        }
+        if let Some(collider) = world.get::<wish_types::physics::Collider>(entity).copied() {
+            let (scale, rotation, translation) = placement.to_scale_rotation_translation();
+            if translation.is_finite() && rotation.is_finite() {
+                let moving = world
+                    .get::<wish_types::physics::RigidBody>(entity)
+                    .is_some_and(|body| body.kind != wish_types::physics::BodyKind::Fixed);
+                scene.colliders.push(ColliderView {
+                    entity,
+                    center: placement.transform_point3(collider.offset),
+                    rotation: rotation.normalize(),
+                    shape: collider.shape,
+                    size: collider.size * scale.abs(),
+                    sensor: collider.sensor,
+                    moving,
+                });
+            }
         }
         let mesh = if let Some(primitive) = world.get::<Primitive>(entity) {
             Some((Mesh::Primitive(primitive.shape), None))

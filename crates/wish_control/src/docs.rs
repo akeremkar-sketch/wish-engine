@@ -297,6 +297,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "Stored data was made by a different version of a type. Re-create it with the current version.",
     ),
     (
+        "light_clusters_full",
+        "Too many point and spot lights reach the same part of the picture (more than 128); some were left out there, so it is darker than it should be. Spread lights out or give them a smaller range.",
+    ),
+    (
         "managed_component",
         "The engine keeps this component itself (such as GlobalTransform or Hierarchy). Change the component it is derived from instead, such as Transform or the parent.",
     ),
@@ -715,6 +719,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "too_many_entities",
         "The world holds the most entities it can.",
+    ),
+    (
+        "too_many_lights",
+        "The scene has more than 1024 point and spot lights; only the first 1024 (in entity order) are drawn. Remove lights that add little or merge them.",
     ),
     (
         "too_many_sessions",

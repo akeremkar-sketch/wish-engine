@@ -43,7 +43,7 @@ pub fn explain(name: &str) -> Option<&'static str> {
             "The listener is the AudioListener component (put it on the camera); the first one in entity order is heard from. Loudness and left/right are worked out from its position and orientation."
         }
         "light" | "pointlight" | "spotlight" | "arealight" | "sunlight" => {
-            "The light component is DirectionalLight (parallel rays like the sun, along the entity's -Z axis); point and spot lights come later. Fill light is the Ambient resource."
+            "Lights: DirectionalLight (the sun: parallel rays along the entity's -Z axis, illuminance_lux), PointLight (a bulb: intensity_lm, range) and SpotLight (a cone along -Z: intensity_lm, range, inner_angle_deg, outer_angle_deg). Fill light is the Ambient resource; capture_frame with view lights shows where each light reaches."
         }
         "position" | "location" | "rotation" | "orientation" | "scale" | "localtransform"
         | "worldtransform" | "transform3d" | "node3d" => {

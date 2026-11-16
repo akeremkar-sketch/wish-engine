@@ -35,8 +35,10 @@ pub use debug::{Description, IdBuffer, MAX_VISIBILITY_MEASUREMENTS, View, Visibl
 const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-/// Bytes of the frame uniform: three matrices and nine vectors.
-const FRAME_UNIFORM_SIZE: u64 = 336;
+/// Bytes of the frame uniform: four matrices and eleven vectors.
+const FRAME_UNIFORM_SIZE: u64 = 432;
+/// Bytes of one point or spot light in the light buffer: four vectors.
+const LIGHT_STRIDE: usize = 64;
 /// Side of the shadow map, in texels.
 pub const SHADOW_MAP_SIZE: u32 = 2048;
 const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -84,6 +86,11 @@ const SHADERS: &[(&str, &str, &str)] = &[
         include_str!("shaders/sky_pass.wgsl"),
     ),
     (
+        "lights",
+        "wish_render/shaders/lights.wgsl",
+        include_str!("shaders/lights.wgsl"),
+    ),
+    (
         "opaque",
         "wish_render/shaders/opaque.wgsl",
         include_str!("shaders/opaque.wgsl"),
@@ -97,6 +104,11 @@ const SHADERS: &[(&str, &str, &str)] = &[
         "debug_pass",
         "wish_render/shaders/debug_pass.wgsl",
         include_str!("shaders/debug_pass.wgsl"),
+    ),
+    (
+        "gizmo_pass",
+        "wish_render/shaders/gizmo_pass.wgsl",
+        include_str!("shaders/gizmo_pass.wgsl"),
     ),
 ];
 
@@ -117,6 +129,7 @@ pub const ENTRY_SHADERS: &[&str] = &[
     "tonemap_pass",
     "shadow_pass",
     "debug_pass",
+    "gizmo_pass",
 ];
 
 /// Checks every pipeline shader of `library` and returns every problem found
@@ -606,6 +619,39 @@ fn material_group(
     })
 }
 
+/// A read-only storage buffer for fragment shaders (the light lists).
+fn storage_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }
+}
+
+/// The point and spot lights as the shader reads them (`LocalLight`).
+fn light_bytes(lights: &[crate::extract::LocalLightView]) -> Vec<u8> {
+    let mut bytes = Bytes::default();
+    for light in lights.iter().take(crate::cluster::MAX_LIGHTS) {
+        bytes.vec4(light.position.to_array(), light.range);
+        let (spot, direction, outer, inner) = match light.spot {
+            Some((direction, inner, outer)) => (1.0, direction.to_array(), outer, inner),
+            None => (0.0, [0.0, -1.0, 0.0], -1.0, -1.0),
+        };
+        bytes.vec4(light.intensity, spot);
+        bytes.vec4(direction, outer);
+        bytes.vec4([inner, 0.0, 0.0], 0.0);
+    }
+    if bytes.0.is_empty() {
+        bytes.pad_to(LIGHT_STRIDE as u64);
+    }
+    bytes.0
+}
+
 fn uniform_entry(binding: u32, dynamic: bool, size: u64) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
@@ -636,6 +682,11 @@ impl Renderer {
         let debug_source = modules
             .iter()
             .find(|(entry, _)| *entry == "debug_pass")
+            .map(|(_, source)| source.clone())
+            .unwrap_or_default();
+        let gizmo_source = modules
+            .iter()
+            .find(|(entry, _)| *entry == "gizmo_pass")
             .map(|(_, source)| source.clone())
             .unwrap_or_default();
         let pipelines = gpu.checked("build the render pipelines", |gpu| {
@@ -671,6 +722,9 @@ impl Renderer {
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
                         count: None,
                     },
+                    storage_entry(3),
+                    storage_entry(4),
+                    storage_entry(5),
                 ],
             });
             let light_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -938,7 +992,12 @@ impl Renderer {
                 .map(|shape| GpuMesh::new(gpu, &primitive(shape), "primitive"))
                 .collect()
         })?;
-        let debug = debug::DebugPipelines::new(gpu, &debug_source, &draw_layout, &material_layout)?;
+        let debug = debug::DebugPipelines::new(
+            gpu,
+            (&debug_source, &gizmo_source),
+            &draw_layout,
+            &material_layout,
+        )?;
         Ok(Self {
             debug,
             frame_layout,
@@ -1145,7 +1204,7 @@ impl Renderer {
 
         let Collected {
             draw_list,
-            warnings,
+            mut warnings,
         } = self.collect(scene, None);
         let DrawList {
             mut bytes,
@@ -1172,7 +1231,66 @@ impl Renderer {
             fit.map_or(0.0, |fit| fit.normal_offset),
             1.0 / SHADOW_MAP_SIZE as f32,
         ]);
+        let clusters = crate::cluster::build(
+            &scene.local_lights,
+            &view.view,
+            &view.projection(aspect),
+            (width, height),
+            (view.near, view.far),
+        );
+        let lights = scene.local_lights.len().min(crate::cluster::MAX_LIGHTS);
+        if scene.local_lights.len() > crate::cluster::MAX_LIGHTS {
+            warnings.push(Diagnostic::warning(
+                "too_many_lights",
+                format!(
+                    "The scene has {} point and spot lights; only the first {} are drawn.",
+                    scene.local_lights.len(),
+                    crate::cluster::MAX_LIGHTS
+                ),
+                "Remove lights that add little, or give them a smaller range.",
+            ));
+        }
+        if clusters.dropped > 0 {
+            warnings.push(Diagnostic::warning(
+                "light_clusters_full",
+                format!(
+                    "Too many lights reach the same part of the picture: {} light placements were left out, so some areas are darker than they should be.",
+                    clusters.dropped
+                ),
+                format!(
+                    "At most {} lights can light one region; spread lights out or give them a smaller range.",
+                    crate::cluster::MAX_PER_CLUSTER
+                ),
+            ));
+        }
+        frame.mat4(&view.view);
+        frame.floats(&[
+            clusters.tiles_x as f32,
+            clusters.tiles_y as f32,
+            crate::cluster::SLICES as f32,
+            lights as f32,
+            clusters.near,
+            view.far,
+            clusters.log_scale,
+            crate::cluster::TILE_PX as f32,
+        ]);
         frame.pad_to(FRAME_UNIFORM_SIZE);
+        let local_light_bytes = light_bytes(&scene.local_lights);
+        let range_bytes: Vec<u8> = clusters
+            .ranges
+            .iter()
+            .flat_map(|[start, count]| [start.to_le_bytes(), count.to_le_bytes()])
+            .flatten()
+            .collect();
+        let index_bytes: Vec<u8> = if clusters.indices.is_empty() {
+            vec![0; 4]
+        } else {
+            clusters
+                .indices
+                .iter()
+                .flat_map(|i| i.to_le_bytes())
+                .collect()
+        };
         let light_bytes = {
             let mut bytes = Bytes::default();
             bytes.mat4(&fit.map_or(Mat4::IDENTITY, |fit| fit.view_proj));
@@ -1210,6 +1328,10 @@ impl Renderer {
             )
             .create_view(&wgpu::TextureViewDescriptor::default());
             let frame_buffer = buffer_with(gpu, "frame", &frame.0, wgpu::BufferUsages::UNIFORM);
+            let storage = wgpu::BufferUsages::STORAGE;
+            let lights_buffer = buffer_with(gpu, "local lights", &local_light_bytes, storage);
+            let ranges_buffer = buffer_with(gpu, "cluster ranges", &range_bytes, storage);
+            let indices_buffer = buffer_with(gpu, "cluster lights", &index_bytes, storage);
             let draw_buffer = buffer_with(gpu, "draws", &draw_bytes.0, wgpu::BufferUsages::UNIFORM);
             let shadow_size = if fit.is_some() { SHADOW_MAP_SIZE } else { 1 };
             let shadow_texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -1253,6 +1375,18 @@ impl Renderer {
                     wgpu::BindGroupEntry {
                         binding: 2,
                         resource: wgpu::BindingResource::Sampler(&self.shadow_sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: lights_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: ranges_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: indices_buffer.as_entire_binding(),
                     },
                 ],
             });

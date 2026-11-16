@@ -30,8 +30,8 @@ pub use physics::{
     RigidBody,
 };
 pub use render::{
-    Ambient, Camera, DirectionalLight, EMISSIVE_NITS, Exposure, Material, Model, Primitive, Shape,
-    Sky,
+    Ambient, Camera, DirectionalLight, EMISSIVE_NITS, Exposure, Material, Model, PointLight,
+    Primitive, Shape, Sky, SpotLight,
 };
 pub use time::Time;
 pub use transform::{GLOBAL_TRANSFORM, GlobalTransform, Transform, world_position};

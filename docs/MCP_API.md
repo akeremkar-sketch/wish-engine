@@ -62,7 +62,7 @@ Oturum sırasında `entity_query`, `entity_get` ve `edit_apply` `session` parame
 
 | Araç | Amaç | Öne çıkan parametreler |
 |---|---|---|
-| `capture_frame` | Görüntü al (MCP görsel içeriği olarak döner) | `camera`, `size`, `view`: `lit` \| `ids` \| `depth` \| `normals` \| `wireframe` \| `colliders` |
+| `capture_frame` | Görüntü al (MCP görsel içeriği olarak döner) | `camera`, `size`, `view`: `lit` \| `ids` \| `depth` \| `normals` \| `wireframe` \| `colliders` \| `lights` |
 | `describe_view` | Anlamsal görüş: görünen varlıklar, ekran kutuları, görünürlük yüzdesi, uzaklık | `camera`, `limit` |
 | `logs_get` | Yapılandırılmış günlükler ve olaylar (ses olayları dahil) | `since`, `severity`, `kinds` |
 | `physics_query` | Fizik dünyasına soru (M6): ışın neye çarpar, bir şekle ne değer, bir varlığa ne dokunur — oturumda ya da sahne dosyasında | `ray`, `overlap`, `touching`, `mask`, `session` |

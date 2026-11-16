@@ -71,7 +71,8 @@ pub use wish_types::{
     AudioSource, BodyForce, BodyImpulse, BodyKind, BodyVelocity, Camera, CharacterController,
     CharacterMotion, CharacterState, Collider, ColliderShape, CollisionEnded, CollisionStarted,
     DirectionalLight, Exposure, GlobalTransform, Material, Model, PhysicsSettings, PlaySound,
-    Primitive, RigidBody, Shape, Sky, SoundEnded, SoundStarted, Time, Transform, world_position,
+    PointLight, Primitive, RigidBody, Shape, Sky, SoundEnded, SoundStarted, SpotLight, Time,
+    Transform, world_position,
 };
 
 pub use physics::{Ray, RayHit, raycast};
@@ -87,10 +88,10 @@ pub mod prelude {
         AudioSource, BodyForce, BodyImpulse, BodyKind, BodyVelocity, Camera, CharacterController,
         CharacterMotion, CharacterState, Collider, ColliderShape, CollisionEnded, CollisionStarted,
         Color, Commands, DirectionalLight, Entity, EventReader, EventWriter, Exposure,
-        GlobalTransform, Material, Model, PhysicsSettings, PlaySound, Primitive, Query, Ray,
-        RayHit, Res, ResMut, RigidBody, Shape, Sky, SoundEnded, SoundStarted, Text, Time,
-        Transform, With, Without, component, event, random_f32, random_range, random_u64, raycast,
-        resource, schema, system, world_position,
+        GlobalTransform, Material, Model, PhysicsSettings, PlaySound, PointLight, Primitive, Query,
+        Ray, RayHit, Res, ResMut, RigidBody, Shape, Sky, SoundEnded, SoundStarted, SpotLight, Text,
+        Time, Transform, With, Without, component, event, random_f32, random_range, random_u64,
+        raycast, resource, schema, system, world_position,
     };
 }
 

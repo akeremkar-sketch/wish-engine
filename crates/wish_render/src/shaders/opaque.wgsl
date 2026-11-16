@@ -2,9 +2,10 @@
 #import sky
 #import brdf
 #import draw
+#import lights
 
-// Opaque surfaces, lit by one directional light, the ambient light, and the
-// sky's reflection. Output is already multiplied by the exposure.
+// Opaque surfaces, lit by one directional light, the point and spot lights
+// of their cluster, the ambient light, and the sky's reflection. Output is already multiplied by the exposure.
 
 // The material's textures. A slot without a texture holds a 1x1 default, so
 // the factors alone decide.
@@ -29,6 +30,8 @@ struct VertexOut {
     @location(2) uv: vec2<f32>,
     @location(3) tangent: vec3<f32>,
     @location(4) tangent_sign: f32,
+    // Distance in front of the camera, for finding the pixel's light cluster.
+    @location(5) view_depth: f32,
 };
 
 @vertex
@@ -41,6 +44,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
     out.uv = in.uv;
     out.tangent = (draw.model * vec4<f32>(in.tangent.xyz, 0.0)).xyz;
     out.tangent_sign = in.tangent.w;
+    out.view_depth = -(frame.view * world).z;
     return out;
 }
 
@@ -96,6 +100,10 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
             let visibility = shadow_visibility(in.world_position, normalize(in.normal));
             colour += (diffuse + specular) * frame.light_radiance.rgb * n_dot_l * visibility;
         }
+    }
+    if (frame.cluster.w > 0.5) {
+        colour += local_lighting(in.clip.xy, in.view_depth, in.world_position, n, v,
+            diffuse_colour, f0, alpha);
     }
     // Ambient light on the diffuse part, the sky's reflection on the
     // specular part.
