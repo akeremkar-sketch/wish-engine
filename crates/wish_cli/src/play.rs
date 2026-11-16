@@ -14,7 +14,7 @@ use wish_control::{Workspace, WorkspaceOptions, parse_actor};
 use wish_core::{Diagnostic, Entity, Result};
 use wish_render::{Gpu, RenderScene, Renderer, View};
 use wish_script::build::SCRIPTS_ENTRY;
-use wish_window::{Content, Loaded, ViewerOptions, fingerprint_dir};
+use wish_window::{Content, Loaded, Pointing, ViewerOptions, fingerprint_dir};
 
 use crate::args::PlayArgs;
 use crate::capture::load_models;
@@ -138,14 +138,25 @@ impl Content for Game {
         true
     }
 
-    fn play(&mut self, keys: &BTreeSet<String>, seconds: f64) -> Option<Result<RenderScene>> {
+    fn play(
+        &mut self,
+        keys: &BTreeSet<String>,
+        pointing: Option<Pointing>,
+        seconds: f64,
+    ) -> Option<Result<RenderScene>> {
         let id = self.session.clone()?;
         self.owed += seconds * TICK_RATE;
         let whole = self.owed.floor();
         self.owed -= whole;
         let ticks = (whole as u64).min(MAX_CATCH_UP);
         if ticks > 0 {
-            let stepped = self.workspace.play_step(&id, ticks, keys);
+            let pointer = pointing.map(|at| wish_control::PointerAt {
+                x: at.x,
+                y: at.y,
+                width: at.width as f32,
+                height: at.height as f32,
+            });
+            let stepped = self.workspace.play_step(&id, ticks, keys, pointer);
             self.hear(&id);
             match stepped {
                 Ok(problems) => {

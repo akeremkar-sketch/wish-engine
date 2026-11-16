@@ -417,11 +417,15 @@ fn held_keys_drive_a_session_the_way_the_play_window_does() {
         names.iter().map(|n| (*n).to_owned()).collect()
     };
     // The window passes the keys it sees held; W is "move up" in input.json.
-    assert!(ws.play_step(&id, 30, &keys(&["W"])).unwrap().is_empty());
+    assert!(
+        ws.play_step(&id, 30, &keys(&["W"]), None)
+            .unwrap()
+            .is_empty()
+    );
     let at = hero_at(&mut ws);
     assert!((at[2] + 2.0).abs() < 1e-3, "{at:?}");
     // Keys the map does not know are ignored; no key is rest.
-    ws.play_step(&id, 10, &keys(&["Q", "F9"])).unwrap();
+    ws.play_step(&id, 10, &keys(&["Q", "F9"]), None).unwrap();
     assert!((hero_at(&mut ws)[2] + 2.0).abs() < 1e-3);
     // What is drawn is the session's own world: the cube moved with it.
     let scene = ws.play_scene(&id).unwrap();

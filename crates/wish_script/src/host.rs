@@ -20,9 +20,10 @@ const MAX_LOGS_PER_CALL: usize = 100;
 /// The longest message kept from the guest, in bytes.
 const MAX_MESSAGE: usize = 2000;
 
-/// What the engine answers for game code during a call, beyond the frame:
-/// physics questions today (`wish.physics_query`). Implemented by the
-/// control plane, which knows the subsystems; `wish_script` does not.
+/// What the engine answers for game code during a call, beyond the frame and
+/// the world's texts: physics questions today (`wish.physics_query`).
+/// Implemented by the control plane, which knows the subsystems;
+/// `wish_script` does not.
 pub trait HostServices: Send + Sync {
     /// Answers a physics request (encoded by `wish_sdk::physics`) about
     /// `world` as it was when the call began; `None` if it is not a valid
@@ -30,28 +31,36 @@ pub trait HostServices: Send + Sync {
     fn physics_query(&self, world: &World, request: &[u8]) -> Option<Vec<u8>>;
 }
 
-/// The world a call may ask about, by address.
-pub(crate) struct WorldRef(*const World);
+/// The world a call may ask about (and add texts to), by address.
+pub(crate) struct WorldRef(*mut World);
 
-// SAFETY: a `WorldRef` is created from a `&World` just before a guest call
-// and dropped (the `query` field cleared) right after it, on the same
-// thread, while the caller keeps the world borrowed and unchanged; it is
-// only `Send` so that the store holding it can live in a `Mutex`.
+// SAFETY: a `WorldRef` is created from a `&mut World` just before a guest
+// call and dropped (the `query` field cleared) right after it, on the same
+// thread, while the caller keeps the world borrowed and does not touch it
+// until the call returns; it is only `Send` so that the store holding it can
+// live in a `Mutex`.
 #[allow(unsafe_code)]
 unsafe impl Send for WorldRef {}
 
 impl WorldRef {
     /// The address of `world`, valid while the caller keeps it borrowed.
-    pub(crate) fn new(world: &World) -> Self {
-        Self(world as *const World)
+    pub(crate) fn new(world: &mut World) -> Self {
+        Self(world as *mut World)
     }
 }
 
 /// The world and services a call may ask, while it runs.
 pub(crate) struct QueryContext {
     pub world: WorldRef,
-    pub services: Arc<dyn HostServices>,
+    pub services: Option<Arc<dyn HostServices>>,
 }
+
+/// The longest text game code may add to the world, in bytes.
+pub const MAX_TEXT_BYTES: usize = 4096;
+/// The most new texts one call may add to the world.
+pub const MAX_NEW_TEXTS_PER_CALL: u32 = 1024;
+/// The fuel adding or reading a text costs, plus one per byte.
+const TEXT_FUEL: u64 = 2_000;
 
 /// The fuel one physics question costs: a fixed price, so a guest cannot
 /// ask without limit and the cost stays deterministic.
@@ -71,6 +80,8 @@ pub(crate) struct HostState {
     pub rng: Rng,
     /// What the guest may ask about during this call.
     pub query: Option<QueryContext>,
+    /// How many texts the call added to the world.
+    pub texts_added: u32,
 }
 
 impl HostState {
@@ -83,6 +94,7 @@ impl HostState {
             logs_dropped: 0,
             rng,
             query: None,
+            texts_added: 0,
         }
     }
 }
@@ -113,7 +125,14 @@ impl wasmtime::ResourceLimiter for HostState {
 
 /// The names the `wish` module provides. Any other import makes a module
 /// unloadable (`script_forbidden_import`).
-pub(crate) const IMPORTS: &[&str] = &["log", "panic", "rng_next", "physics_query"];
+pub(crate) const IMPORTS: &[&str] = &[
+    "log",
+    "panic",
+    "rng_next",
+    "physics_query",
+    "text_intern",
+    "text_read",
+];
 
 /// Reads `len` bytes at `ptr` from the guest's memory as text (lossy, cut to
 /// [`MAX_MESSAGE`]). Out-of-range pointers give an empty string: a guest
@@ -220,7 +239,10 @@ pub(crate) fn link(linker: &mut wasmtime::Linker<HostState>) -> wasmtime::Result
                 // `WorldRef`); this closure runs inside that call.
                 #[allow(unsafe_code)]
                 let world = unsafe { &*context.world.0 };
-                context.services.physics_query(world, &bytes)
+                let Some(services) = context.services.as_ref() else {
+                    return -1;
+                };
+                services.physics_query(world, &bytes)
             };
             let Some(answer) = answer else {
                 return -1;
@@ -232,6 +254,98 @@ pub(crate) fn link(linker: &mut wasmtime::Linker<HostState>) -> wasmtime::Result
                 return -1;
             }
             i32::try_from(answer.len()).unwrap_or(-1)
+        },
+    )?;
+    // text_intern(ptr, len) -> the handle of that (UTF-8) text in the
+    // world's text table, added if new; -1 if refused (not UTF-8, too long,
+    // too many new texts in one call, or outside a call).
+    linker.func_wrap(
+        "wish",
+        "text_intern",
+        |mut caller: wasmtime::Caller<'_, HostState>, ptr: i32, len: i32| -> i64 {
+            let (Ok(start), Ok(len)) = (usize::try_from(ptr), usize::try_from(len)) else {
+                return -1;
+            };
+            let fuel = caller.get_fuel().unwrap_or(0);
+            let _ = caller.set_fuel(fuel.saturating_sub(TEXT_FUEL + len as u64));
+            if len > MAX_TEXT_BYTES {
+                return -1;
+            }
+            let Some(wasmtime::Extern::Memory(memory)) = caller.get_export("memory") else {
+                return -1;
+            };
+            let Some(text) = memory
+                .data(&caller)
+                .get(start..start.saturating_add(len))
+                .and_then(|bytes| std::str::from_utf8(bytes).ok())
+                .map(str::to_owned)
+            else {
+                return -1;
+            };
+            let state = caller.data_mut();
+            let Some(context) = state.query.as_ref() else {
+                return -1;
+            };
+            // SAFETY: `query` is only set for the duration of a call by
+            // `Live::call`, from a `&mut World` its caller keeps borrowed and
+            // does not use until the call returns (see `WorldRef`); this
+            // closure runs inside that call, and nothing else holds a
+            // reference into the world meanwhile.
+            #[allow(unsafe_code)]
+            let world = unsafe { &mut *context.world.0 };
+            let known = world.texts().find(&text);
+            if known.is_none() && state.texts_added >= MAX_NEW_TEXTS_PER_CALL {
+                return -1;
+            }
+            match known.map_or_else(|| world.intern(&text), Ok) {
+                Ok(handle) => {
+                    if known.is_none() {
+                        state.texts_added += 1;
+                    }
+                    i64::from(handle.index())
+                }
+                Err(_) => -1,
+            }
+        },
+    )?;
+    // text_read(handle, out, capacity) -> the text's length in bytes (its
+    // first `capacity` bytes written at `out`), or -1 for an unknown handle.
+    linker.func_wrap(
+        "wish",
+        "text_read",
+        |mut caller: wasmtime::Caller<'_, HostState>,
+         handle: i32,
+         out: i32,
+         capacity: i32|
+         -> i32 {
+            let Ok(index) = u32::try_from(handle) else {
+                return -1;
+            };
+            let text = {
+                let Some(context) = caller.data().query.as_ref() else {
+                    return -1;
+                };
+                // SAFETY: as for `text_intern`; only read here.
+                #[allow(unsafe_code)]
+                let world = unsafe { &*context.world.0 };
+                let Some(text) = world.text(wish_core::Text::from_index(index)) else {
+                    return -1;
+                };
+                text.as_bytes().to_vec()
+            };
+            let fuel = caller.get_fuel().unwrap_or(0);
+            let _ = caller.set_fuel(fuel.saturating_sub(TEXT_FUEL + text.len() as u64));
+            let Some(wasmtime::Extern::Memory(memory)) = caller.get_export("memory") else {
+                return -1;
+            };
+            let (Ok(at), Ok(capacity)) = (usize::try_from(out), usize::try_from(capacity)) else {
+                return -1;
+            };
+            let shown = &text[..text.len().min(capacity)];
+            if !shown.is_empty() && memory.write(&mut caller, at, shown).is_err() {
+                return -1;
+            }
+            i32::try_from(text.len()).unwrap_or(-1)
         },
     )?;
     Ok(())

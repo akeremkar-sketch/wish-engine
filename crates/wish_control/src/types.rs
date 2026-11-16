@@ -14,6 +14,7 @@ pub fn register_engine_types(world: &mut World) -> Result<()> {
     wish_physics::register(world)?;
     wish_audio::register(world)?;
     wish_anim::register(world)?;
+    wish_ui::register(world)?;
     wish_render::components::register(world)
 }
 

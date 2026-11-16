@@ -29,6 +29,7 @@ pub mod mesh;
 pub mod renderer;
 pub mod shader;
 mod texture;
+pub mod ui;
 
 pub use capture::{MAX_CAPTURE_SIZE, draw_probe};
 pub use components::{
@@ -36,7 +37,7 @@ pub use components::{
 };
 pub use extract::{
     CameraView, ColliderView, Draw, LightView, LocalLightView, MaterialData, Mesh, RenderScene,
-    SkyData, extract,
+    SkyData, UiBoxView, UiTextView, extract,
 };
 pub use gpu::{AdapterSummary, Gpu, GpuOptions};
 pub use image::{ImageDiff, RgbaImage, Tolerance};
@@ -46,3 +47,4 @@ pub use renderer::{
     project_to_pixel,
 };
 pub use shader::{CheckedShader, ComposedShader, ShaderLibrary, SourceLine, check_wgsl};
+pub use ui::{UiElement, UiPicture, ui_elements};

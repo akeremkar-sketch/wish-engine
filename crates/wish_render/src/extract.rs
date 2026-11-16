@@ -144,6 +144,45 @@ pub struct ColliderView {
     pub moving: bool,
 }
 
+/// Text in an interface box, ready to lay out and draw.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UiTextView {
+    /// The text.
+    pub text: String,
+    /// The font's project path; empty for the engine's font.
+    pub font: String,
+    /// The font's height in interface pixels.
+    pub size: f32,
+    /// Linear RGBA.
+    pub color: [f32; 4],
+    /// How lines line up.
+    pub align: wish_text::Align,
+    /// Whether long lines wrap.
+    pub wrap: bool,
+}
+
+/// One shown box of the in-game interface, where the layout put it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UiBoxView {
+    /// The entity that owns it.
+    pub entity: Entity,
+    /// Left, top, width and height, in interface pixels.
+    pub rect: [f32; 4],
+    /// The same inside the padding: where text and pictures go.
+    pub content: [f32; 4],
+    /// Linear RGBA; alpha 0 draws nothing.
+    pub background: [f32; 4],
+    /// A picture: its project path and tint (linear RGBA).
+    pub image: Option<(String, [f32; 4])>,
+    /// Its text.
+    pub text: Option<UiTextView>,
+    /// For a button: whether the pointer is over it, and whether it is held
+    /// down.
+    pub button: Option<(bool, bool)>,
+    /// Drawing order: higher is drawn later.
+    pub order: u32,
+}
+
 /// The sky colours, linear RGB.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SkyData {
@@ -176,6 +215,12 @@ pub struct RenderScene {
     pub ambient: [f32; 3],
     /// Exposure value at ISO 100.
     pub ev100: f32,
+    /// The interface's boxes, in drawing order.
+    pub ui: Vec<UiBoxView>,
+    /// The interface's virtual screen.
+    pub ui_settings: wish_types::ui::UiSettings,
+    /// The fonts the interface's text uses (the world's).
+    pub fonts: wish_text::Fonts,
 }
 
 fn rgb(color: Color) -> [f32; 3] {
@@ -231,6 +276,15 @@ pub fn extract(world: &World) -> Result<RenderScene> {
             .copied()
             .unwrap_or_default()
             .ev100,
+        ui: Vec::new(),
+        ui_settings: world
+            .resource::<wish_types::ui::UiSettings>()
+            .copied()
+            .unwrap_or_default(),
+        fonts: world
+            .extension::<wish_text::Fonts>()
+            .cloned()
+            .unwrap_or_default(),
     };
     let global = |world: &World, entity: Entity| {
         world
@@ -240,6 +294,9 @@ pub fn extract(world: &World) -> Result<RenderScene> {
 
     let entities: Vec<Entity> = world.entities().collect();
     for entity in entities {
+        if let Some(view) = ui_box(world, entity) {
+            scene.ui.push(view);
+        }
         let placement = global(world, entity);
         if let Some(camera) = world.get::<Camera>(entity).copied() {
             if camera.far <= camera.near {
@@ -392,5 +449,68 @@ pub fn extract(world: &World) -> Result<RenderScene> {
             });
         }
     }
+    scene.ui.sort_by_key(|view| view.order);
     Ok(scene)
+}
+
+/// The interface box of `entity`, if it is one and the layout shows it.
+fn ui_box(world: &World, entity: Entity) -> Option<UiBoxView> {
+    use wish_types::ui::{UiButton, UiImage, UiInteraction, UiLayout, UiNode, UiText, UiTextAlign};
+    let node = world.get::<UiNode>(entity)?;
+    let layout = world.get::<UiLayout>(entity)?;
+    let finite = layout
+        .position
+        .iter()
+        .chain(&layout.size)
+        .all(|v| v.is_finite());
+    if !layout.shown || !finite {
+        return None;
+    }
+    let [left, top] = layout.position;
+    let [width, height] = layout.size;
+    let pad = node
+        .padding
+        .map(|v| if v.is_finite() { v.max(0.0) } else { 0.0 });
+    let content = [
+        left + pad[3],
+        top + pad[0],
+        (width - pad[1] - pad[3]).max(0.0),
+        (height - pad[0] - pad[2]).max(0.0),
+    ];
+    let image = world.get::<UiImage>(entity).and_then(|image| {
+        let path = world.text(image.image.text())?;
+        (!path.is_empty()).then(|| (path.to_owned(), image.tint.to_array()))
+    });
+    let text = world.get::<UiText>(entity).map(|text| UiTextView {
+        text: world.text(text.text).unwrap_or_default().to_owned(),
+        font: world.text(text.font.text()).unwrap_or_default().to_owned(),
+        size: text.size,
+        color: text.color.to_array(),
+        align: match text.align {
+            UiTextAlign::Left => wish_text::Align::Left,
+            UiTextAlign::Center => wish_text::Align::Center,
+            UiTextAlign::Right => wish_text::Align::Right,
+        },
+        wrap: text.wrap,
+    });
+    let button = world.get::<UiButton>(entity).map(|button| {
+        let state = world
+            .get::<UiInteraction>(entity)
+            .copied()
+            .unwrap_or_default();
+        (
+            button.enabled && state.hovered,
+            button.enabled && state.pressed,
+        )
+    });
+    Some(UiBoxView {
+        entity,
+        rect: [left, top, width, height],
+        content,
+        background: node.background.to_array(),
+        image,
+        text,
+        button,
+        order: layout.order,
+    })
 }

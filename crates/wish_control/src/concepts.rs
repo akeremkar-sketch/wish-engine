@@ -46,6 +46,11 @@ pub fn explain(name: &str) -> Option<&'static str> {
         | "animationplayer3d" => {
             "Animation: give an entity with a glTF Model an AnimationPlayer (clip: the clip's name in the file, time, speed, looping, playing). The engine moves time on every tick and sends AnimationFinished when a clip that does not loop ends."
         }
+        "canvas" | "ui" | "gui" | "hud" | "widget" | "panel" | "label" | "textmesh"
+        | "textmeshpro" | "uitext" | "uibutton" | "button" | "recttransform" | "control"
+        | "menu" => {
+            "Interface: an entity with a UiNode is a box (width, height, padding, direction Column or Row, position Absolute with offset, background); child entities with a UiNode are laid out inside it like flexbox. Add UiText (text, size, color), UiImage (a PNG) or UiButton to a box; clicks come as ButtonClicked events. Positions are pixels of a 1280x720 virtual screen (UiSettings); game code writes text with text(\"...\")."
+        }
         "light" | "pointlight" | "spotlight" | "arealight" | "sunlight" => {
             "Lights: DirectionalLight (the sun: parallel rays along the entity's -Z axis, illuminance_lux), PointLight (a bulb: intensity_lm, range) and SpotLight (a cone along -Z: intensity_lm, range, inner_angle_deg, outer_angle_deg). Fill light is the Ambient resource; capture_frame with view lights shows where each light reaches."
         }

@@ -401,9 +401,7 @@ impl Workspace {
                 cancelled = true;
                 break;
             }
-            if !session.input.is_empty() {
-                wish_input::apply(session.app.world_mut(), &session.input, &values)?;
-            }
+            wish_input::apply(session.app.world_mut(), &session.input, &values)?;
             failures.extend(session.app.step()?.failures);
             ran += 1;
             let actual = short(session.app.hash());

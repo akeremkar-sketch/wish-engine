@@ -15,5 +15,5 @@
 mod apply;
 mod map;
 
-pub use apply::{Values, apply, register};
+pub use apply::{CLICK, POINTER, Values, apply, register};
 pub use map::{Binding, INPUT_FILE, InputMap, key_names};

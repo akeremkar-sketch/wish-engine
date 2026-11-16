@@ -9,10 +9,10 @@ publish.workspace = true
 
 [dependencies]
 gltf.workspace = true
+png.workspace = true
 wish_core.workspace = true
 
 [dev-dependencies]
-png.workspace = true
 serde_json.workspace = true
 
 [lints]

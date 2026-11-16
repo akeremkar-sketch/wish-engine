@@ -33,6 +33,8 @@ wish_input = { path = "crates/wish_input" }
 wish_anim = { path = "crates/wish_anim" }
 wish_audio = { path = "crates/wish_audio" }
 wish_physics = { path = "crates/wish_physics" }
+wish_text = { path = "crates/wish_text" }
+wish_ui = { path = "crates/wish_ui" }
 
 # External crates. Check the license before adding one (see deny.toml).
 #
@@ -90,6 +92,12 @@ rapier3d = { version = "0.36", default-features = false, features = ["dim3", "f3
 cpal = { version = "0.18", default-features = false }
 hound = "3.5"
 lewton = "0.10"
+
+# In-game interface. `taffy` (MIT, wish_ui only) lays boxes out like CSS
+# flexbox; only the flexbox and block algorithms. `ab_glyph` (Apache-2.0,
+# wish_text only) reads fonts, measures and rasterizes glyphs.
+taffy = { version = "0.15", default-features = false, features = ["std", "taffy_tree", "flexbox", "block_layout", "content_size"] }
+ab_glyph = "0.2.32"
 
 # Procedural macros. syn 3, the same major version serde_derive uses, so the
 # build compiles one syn.

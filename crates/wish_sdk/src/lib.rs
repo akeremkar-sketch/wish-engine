@@ -69,10 +69,12 @@ pub use wish_sdk_macros::system;
 pub use wish_types::{
     ActionSlot, ActionState, Ambient, AnimationFinished, AnimationPlayer, AudioBus, AudioListener,
     AudioPlayback, AudioSettings, AudioSource, BodyForce, BodyImpulse, BodyKind, BodyVelocity,
-    Camera, CharacterController, CharacterMotion, CharacterState, Collider, ColliderShape,
-    CollisionEnded, CollisionStarted, DirectionalLight, Exposure, GlobalTransform, Material, Model,
-    PhysicsSettings, PlaySound, PointLight, Primitive, RigidBody, Shape, Sky, SoundEnded,
-    SoundStarted, SpotLight, Time, Transform, world_position,
+    ButtonClicked, Camera, CharacterController, CharacterMotion, CharacterState, Collider,
+    ColliderShape, CollisionEnded, CollisionStarted, DirectionalLight, Exposure, GlobalTransform,
+    Material, Model, PhysicsSettings, PlaySound, PointLight, Pointer, Primitive, RigidBody, Shape,
+    Sky, SoundEnded, SoundStarted, SpotLight, Time, Transform, UiAlign, UiButton, UiDirection,
+    UiImage, UiInteraction, UiJustify, UiLayout, UiLength, UiNode, UiPosition, UiSettings, UiText,
+    UiTextAlign, UiUnit, world_position,
 };
 
 pub use physics::{Ray, RayHit, raycast};
@@ -91,8 +93,36 @@ pub mod prelude {
         EventWriter, Exposure, GlobalTransform, Material, Model, PhysicsSettings, PlaySound,
         PointLight, Primitive, Query, Ray, RayHit, Res, ResMut, RigidBody, Shape, Sky, SoundEnded,
         SoundStarted, SpotLight, Text, Time, Transform, With, Without, component, event,
-        random_f32, random_range, random_u64, raycast, resource, schema, system, world_position,
+        random_f32, random_range, random_u64, raycast, resource, schema, system, text, text_of,
+        world_position,
     };
+    pub use crate::{
+        ButtonClicked, Pointer, UiAlign, UiButton, UiDirection, UiImage, UiInteraction, UiJustify,
+        UiLayout, UiLength, UiNode, UiPosition, UiSettings, UiText, UiTextAlign, UiUnit,
+    };
+}
+
+/// The handle of `text`, to write into a field of type `Text` (such as
+/// `UiText.text`): `text(&format!("Score: {score}"))`. The engine keeps
+/// each distinct text once. A text longer than 4096 bytes, or more than 1024
+/// new texts in one call, is refused: the result is the empty text and a
+/// warning is logged.
+pub fn text(text: &str) -> Text {
+    match abi::text_intern(text) {
+        Some(index) => Text::from_index(index),
+        None => {
+            abi::log(
+                1,
+                "a text was refused (longer than 4096 bytes, or more than 1024 new texts in one tick); the empty text is used",
+            );
+            Text::EMPTY
+        }
+    }
+}
+
+/// The string a `Text` handle stands for (empty for an unknown handle).
+pub fn text_of(text: Text) -> String {
+    abi::text_read(text.index()).unwrap_or_default()
 }
 
 /// The next number from this system's own random stream.

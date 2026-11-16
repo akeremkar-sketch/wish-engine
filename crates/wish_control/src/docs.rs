@@ -121,6 +121,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "A file could not be written. Check that the folder exists, can be written to, and that no other program has the file locked.",
     ),
     (
+        "font_invalid",
+        "A font file of the project cannot be read (not a TrueType or OpenType font, damaged, or larger than 32 MiB). Text asking for it is drawn with the engine's font (Roboto). Re-export or replace the file.",
+    ),
+    (
         "gltf_file_missing",
         "A .gltf file refers to separate .bin or image files that are not next to it. Keep them together, or use a single .glb file.",
     ),
@@ -175,6 +179,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "history_reset",
         "A scene file changed outside the engine in a way that could not be recorded as separate edits. It is recorded as one change by the file (revisions keep counting), and earlier changes can no longer be undone.",
+    ),
+    (
+        "image_invalid",
+        "A picture for the interface cannot be read: it is not a PNG, is damaged, or is larger than 4096x4096 pixels. Re-export it as an 8- or 16-bit PNG.",
     ),
     (
         "internal_error",
@@ -753,6 +761,22 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "Two different types were registered under the same name.",
     ),
     (
+        "ui_atlas_full",
+        "One frame's interface needs more glyphs and pictures than fit in its 4096x4096 atlas, so some were not drawn. Use smaller pictures or less text at very large sizes.",
+    ),
+    (
+        "ui_font_missing",
+        "A UiText names a font file the project does not have (or cannot read), so the engine's font is used. Fix the path (a .ttf or .otf in the project) or leave font empty.",
+    ),
+    (
+        "ui_image_not_loaded",
+        "A UiImage names a picture that could not be loaded (missing, outside the project, or not a readable PNG); its box shows only its background. Fix the path or the file.",
+    ),
+    (
+        "ui_without_node",
+        "An entity has UiText, UiImage or UiButton but no UiNode, so it is not part of the interface and is not shown. Add a UiNode to the same entity: it is the box that places it.",
+    ),
+    (
         "unknown_action",
         "sim_step's input names an action the project does not have. The candidates are the actions in input.json.",
     ),
@@ -1239,6 +1263,24 @@ A glTF `Model` with clips plays one through an `AnimationPlayer { clip, time, sp
 same entity (clip: the name in the file; empty plays the first). The engine moves `time` on every tick; a clip
 that does not loop stops at its end, sets `playing` to false and sends `AnimationFinished { entity }`. To play
 another clip, write `clip` and set `time` to 0.
+
+## Interface
+
+The in-game interface is made of entities. An entity with a `UiNode` is a box; its children (in the entity
+hierarchy) with a `UiNode` are laid out inside it in a column (or a `direction: Row`), like CSS flexbox:
+`width`/`height` (`{ "unit": "Px" | "Percent" | "Auto", "value": n }`), `padding`/`margin` (top, right,
+bottom, left), `gap`, `justify`, `align`, `grow`, `position: Absolute` with `offset` [x, y], `background`,
+`visible`, `layer`. A box can show `UiText { text, size, color, align, wrap, font }` (the engine's font is
+Roboto; `font` names a .ttf/.otf of the project) or `UiImage { image, tint }` (a PNG), and be a `UiButton`.
+
+Positions are interface pixels on a virtual screen (`UiSettings`, 1280 x 720 by default, (0, 0) at the top
+left), scaled to fit any window. Every tick the engine writes each box's place into `UiLayout` and, for buttons,
+`UiInteraction { hovered, pressed, clicks, last_click_tick }`; a click sends `ButtonClicked { entity }` (read it
+the next tick with `EventReader<ButtonClicked>`). The pointer is the `Pointer` resource.
+
+Game code writes text with `text(...)`: `label.text = text(&format!("Score: {}", score.points));`, and reads
+one back with `text_of(handle)`. A tool clicks with `sim_step` input `{ "pointer": [x, y], "click": true }`
+and then a step without `click`; `describe_view` lists the interface with its text.
 
 ## Rules
 

@@ -79,7 +79,7 @@ pub(crate) const CAPTURE_FRAME: Tool = Tool {
 pub(crate) const DESCRIBE_VIEW: Tool = Tool {
     name: "describe_view",
     title: "What the camera sees",
-    description: "Says what a camera sees without a picture: for each visible entity its pixel count, how much of it is not hidden by other things (visible_percent), its box on screen [left, top, right, bottom] and its distance in meters; and the entities that are drawn but not visible (hidden behind something, or outside the picture). Use it to check that what you built is on screen and not blocked.",
+    description: "Says what a camera sees without a picture: for each visible entity its pixel count, how much of it is not hidden by other things (visible_percent), its box on screen [left, top, right, bottom] and its distance in meters; and the entities that are drawn but not visible (hidden behind something, or outside the picture); and the in-game interface (interface: each box that shows something, its box in the picture, its text, whether it is a button and if the pointer is over it). Use it to check that what you built is on screen and not blocked, and what the interface says.",
     params: &[
         SCENE,
         SESSION,
@@ -355,6 +355,27 @@ fn describe_view(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
         .iter()
         .map(|entity| name(*entity))
         .collect();
+    // The interface, over the picture: what each element shows and where.
+    let interface: Vec<Value> = wish_render::ui_elements(&prepared.scene, width, height)
+        .into_iter()
+        .take(limit)
+        .map(|element| {
+            let mut entry = json!({
+                "entity": name(element.entity),
+                "bounding_box": element.bounding_box,
+            });
+            if let Some(text) = element.text {
+                entry["text"] = json!(text);
+            }
+            if element.image {
+                entry["image"] = json!(true);
+            }
+            if let Some((hovered, pressed)) = element.button {
+                entry["button"] = json!({ "hovered": hovered, "pressed": pressed });
+            }
+            entry
+        })
+        .collect();
     let mut warnings = prepared.notes;
     warnings.extend(model_warnings);
     warnings.extend(description.warnings.iter().cloned());
@@ -372,6 +393,9 @@ fn describe_view(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
         out.insert("visible_not_listed".to_owned(), json!(total - limit));
     }
     out.insert("hidden".to_owned(), json!(hidden));
+    if !interface.is_empty() {
+        out.insert("interface".to_owned(), json!(interface));
+    }
     out.insert("adapter".to_owned(), adapter);
     if !warnings.is_empty() {
         out.insert("diagnostics".to_owned(), json!(warnings));

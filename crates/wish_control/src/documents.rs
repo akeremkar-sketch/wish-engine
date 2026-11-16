@@ -646,12 +646,16 @@ impl Workspace {
         let revision = open.doc.revision() ^ (generation << 48);
         let fresh = open.view.as_ref().is_some_and(|(at, _)| *at == revision);
         if !fresh {
+            let (fonts, _) = self.fonts();
+            let open = self.document_mut(path)?;
             let mut world = World::new();
             crate::types::register_all(example.as_deref(), module.as_deref(), &mut world)?;
             let ids = open.doc.instantiate(&mut world)?;
             wish_transform::update_global_transforms(&mut world)?;
+            crate::ui::prepare(&mut world, fonts)?;
             open.view = Some((revision, WorldView { world, ids }));
         }
+        let open = self.document_mut(path)?;
         open.view.as_ref().map(|(_, view)| view).ok_or_else(|| {
             Diagnostic::error(
                 "internal_error",

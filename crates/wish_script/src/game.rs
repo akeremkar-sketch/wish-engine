@@ -615,13 +615,12 @@ impl ScriptRuntime {
         };
         let system = i32::try_from(index).map_err(|_| poisoned())?;
         let sent = call.frame.clone();
-        let query = self
-            .services
-            .as_ref()
-            .map(|services| crate::host::QueryContext {
-                world: crate::host::WorldRef::new(world),
-                services: Arc::clone(services),
-            });
+        // The world is lent to the call (texts, physics questions) and not
+        // touched here until it returns.
+        let query = Some(crate::host::QueryContext {
+            world: crate::host::WorldRef::new(world),
+            services: self.services.clone(),
+        });
         let outcome = live.call(system, &mut call.frame, context.rng, query);
         let (report, commands) = match outcome {
             Ok(done) => done,

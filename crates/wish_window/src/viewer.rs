@@ -30,6 +30,19 @@ pub struct Loaded {
     pub warnings: Vec<Diagnostic>,
 }
 
+/// Where the mouse is over the picture, for live content.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Pointing {
+    /// Pixels from the picture's left edge.
+    pub x: f32,
+    /// Pixels from the picture's top edge.
+    pub y: f32,
+    /// The picture's width in pixels.
+    pub width: u32,
+    /// The picture's height in pixels.
+    pub height: u32,
+}
+
 /// Where the viewer gets its scene from.
 pub trait Content {
     /// Loads (or reloads) the scene and uploads whatever it needs to the
@@ -52,9 +65,15 @@ pub trait Content {
 
     /// For live content: lets `seconds` of real time pass with the named
     /// keys held (the names `input.json` uses: `W`, `Space`, `MouseLeft`)
+    /// and the mouse at `pointing` (`None` when it is outside the window),
     /// and returns what to draw. A mistake is reported and the last picture
     /// stays.
-    fn play(&mut self, _keys: &BTreeSet<String>, _seconds: f64) -> Option<Result<RenderScene>> {
+    fn play(
+        &mut self,
+        _keys: &BTreeSet<String>,
+        _pointing: Option<Pointing>,
+        _seconds: f64,
+    ) -> Option<Result<RenderScene>> {
         None
     }
 }
@@ -237,6 +256,7 @@ pub fn run(options: ViewerOptions, content: &mut dyn Content) -> Result<Report> 
         window: None,
         surface: None,
         cursor: (0.0, 0.0),
+        cursor_inside: false,
         press_at: None,
         dirty: true,
         redraws: 0,
@@ -293,6 +313,8 @@ struct App<'a> {
     window: Option<Rc<Window>>,
     surface: Option<softbuffer::Surface<Rc<Window>, Rc<Window>>>,
     cursor: (f64, f64),
+    /// Whether the mouse is over the window.
+    cursor_inside: bool,
     press_at: Option<(f64, f64)>,
     dirty: bool,
     /// Redraws attempted, drawn or not (a scene with no camera draws nothing
@@ -553,7 +575,11 @@ impl ApplicationHandler for App<'_> {
                     self.key(code, event.state == ElementState::Pressed, event_loop);
                 }
             }
-            WindowEvent::CursorMoved { position, .. } => self.cursor = (position.x, position.y),
+            WindowEvent::CursorMoved { position, .. } => {
+                self.cursor = (position.x, position.y);
+                self.cursor_inside = true;
+            }
+            WindowEvent::CursorLeft { .. } => self.cursor_inside = false,
             WindowEvent::MouseInput { state, button, .. } if self.content.live() => {
                 let name = match button {
                     MouseButton::Left => Some("MouseLeft"),
@@ -602,7 +628,14 @@ impl ApplicationHandler for App<'_> {
         let seconds = now.duration_since(self.last_frame).as_secs_f32().min(0.1);
         self.last_frame = now;
         if self.content.live() {
-            match self.content.play(&self.held, f64::from(seconds)) {
+            let (width, height) = self.size();
+            let pointing = self.cursor_inside.then_some(Pointing {
+                x: self.cursor.0 as f32,
+                y: self.cursor.1 as f32,
+                width,
+                height,
+            });
+            match self.content.play(&self.held, pointing, f64::from(seconds)) {
                 Some(Ok(scene)) => {
                     self.scene = scene;
                     self.dirty = true;

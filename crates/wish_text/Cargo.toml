@@ -1,0 +1,18 @@
+[package]
+name = "wish_text"
+description = "Fonts and text layout for Wish Engine: line breaking and glyph placement shared by the simulation (sizes) and the renderer (glyphs), plus the engine's default font."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+# The bundled font (fonts/Roboto-Regular.ttf) is Roboto 2.138 by Google,
+# Apache-2.0: fonts/LICENSE-Roboto.txt.
+include = ["src/**", "fonts/**", "Cargo.toml"]
+
+[dependencies]
+ab_glyph.workspace = true
+wish_core.workspace = true
+
+[lints]
+workspace = true

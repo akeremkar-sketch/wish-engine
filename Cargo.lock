@@ -3005,6 +3005,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "taffy"
+version = "0.15.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "31f7bd2d97198df05186f93a3a3c306845f40e8b3c22bf9279cdd7e5cf5fea7d"
+dependencies = [
+ "serde",
+ "slotmap",
+]
+
+[[package]]
 name = "target-lexicon"
 version = "0.13.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4263,7 +4273,9 @@ dependencies = [
  "wish_schema",
  "wish_script",
  "wish_sdk",
+ "wish_text",
  "wish_transform",
+ "wish_ui",
 ]
 
 [[package]]
@@ -4364,8 +4376,10 @@ dependencies = [
  "wish_import",
  "wish_scene",
  "wish_schema",
+ "wish_text",
  "wish_transform",
  "wish_types",
+ "wish_ui",
 ]
 
 [[package]]
@@ -4436,6 +4450,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "wish_text"
+version = "0.1.0"
+dependencies = [
+ "ab_glyph",
+ "wish_core",
+]
+
+[[package]]
 name = "wish_transform"
 version = "0.1.0"
 dependencies = [
@@ -4453,6 +4475,18 @@ dependencies = [
  "serde_json",
  "wish_core",
  "wish_schema",
+]
+
+[[package]]
+name = "wish_ui"
+version = "0.1.0"
+dependencies = [
+ "taffy",
+ "wish_app",
+ "wish_core",
+ "wish_ecs",
+ "wish_text",
+ "wish_types",
 ]
 
 [[package]]

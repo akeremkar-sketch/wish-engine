@@ -112,6 +112,8 @@ pub(crate) struct Sessions {
     pub clips: crate::audio::Clips,
     /// The animation clips of the project's models, kept until a file changes.
     pub models: crate::audio::Models,
+    /// The project's fonts, kept until a file changes.
+    pub fonts: crate::ui::FontCache,
     pub open: BTreeMap<String, Session>,
     next_id: u32,
     next_seq: u64,
@@ -231,6 +233,10 @@ fn build_app(
     wish_physics::prepare(app.world_mut())?;
     wish_audio::install(app.world_mut(), workspace.audio_clips());
     wish_anim::install(app.world_mut(), workspace.animation_clips());
+    // The interface is laid out before the first tick, so that a picture
+    // or a click at tick 0 finds it.
+    let (fonts, _) = workspace.fonts();
+    crate::ui::prepare(app.world_mut(), fonts)?;
     Ok((app, runtime))
 }
 
@@ -308,10 +314,8 @@ fn step_app(
             break;
         }
         // The tick's input, before any system runs. A project without
-        // actions has none, and its world stays as it was.
-        if !session.input.is_empty() {
-            wish_input::apply(session.app.world_mut(), &session.input, input)?;
-        }
+        // actions (and no pointer) has none, and its world stays as it was.
+        wish_input::apply(session.app.world_mut(), &session.input, input)?;
         if let Some(trail) = session.recording.as_mut()
             && input != &trail.current
         {
@@ -357,10 +361,53 @@ fn step_app(
     })
 }
 
+/// What looks wrong with the interface: parts of a box on an entity that
+/// is not a box, and text asking for a font the project does not have.
+fn interface_findings(world: &World) -> Vec<(String, Diagnostic)> {
+    let mut found = Vec::new();
+    let fonts = world.extension::<wish_text::Fonts>();
+    for entity in world.entities() {
+        let parts = [
+            ("UiText", world.has::<wish_ui::UiText>(entity)),
+            ("UiImage", world.has::<wish_ui::UiImage>(entity)),
+            ("UiButton", world.has::<wish_ui::UiButton>(entity)),
+        ];
+        if !world.has::<wish_ui::UiNode>(entity)
+            && let Some((part, _)) = parts.iter().find(|(_, has)| *has)
+        {
+            let name = name_of(world, entity);
+            found.push((
+                name.clone(),
+                Diagnostic::warning(
+                    "ui_without_node",
+                    format!("Entity '{name}' has a {part} but no UiNode, so it is not shown."),
+                    "Add a UiNode to the same entity: it is the box that holds the text, picture or button, and places it on the screen.",
+                ),
+            ));
+        }
+        if let Some(text) = world.get::<wish_ui::UiText>(entity) {
+            let path = world.text(text.font.text()).unwrap_or_default();
+            if !path.is_empty() && !fonts.is_some_and(|fonts| fonts.contains(path)) {
+                let name = name_of(world, entity);
+                found.push((
+                    name.clone(),
+                    Diagnostic::warning(
+                        "ui_font_missing",
+                        format!("Entity '{name}' asks for the font '{path}', which the project does not have (or cannot read); the engine's font is used."),
+                        "Check the path (a .ttf or .otf file in the project; asset_list shows them), or leave font empty for the engine's font. check reports fonts that cannot be read.",
+                    )
+                    .at_file(path),
+                ));
+            }
+        }
+    }
+    found
+}
+
 /// Rules that look at the world after a run and say what looks wrong.
 fn inspect(session: &mut Session) -> Vec<Diagnostic> {
     let world = session.app.world();
-    let mut found: Vec<(String, Diagnostic)> = Vec::new();
+    let mut found: Vec<(String, Diagnostic)> = interface_findings(world);
     for entity in world.entities() {
         let Ok(transform) = world.get_json(entity, "Transform") else {
             continue;

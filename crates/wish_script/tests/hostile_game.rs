@@ -717,3 +717,71 @@ fn physics_questions_cannot_hurt_the_host() {
     app.step().unwrap();
     assert_whole(&mut app);
 }
+
+#[test]
+fn texts_from_game_code_cannot_hurt_the_host() {
+    // Garbage pointers, a text too long, bytes that are not UTF-8, unknown
+    // handles and a flood of new texts: each is refused with -1, nothing
+    // traps, and at most 1024 new texts enter the world per call. The guest
+    // traps (`unreachable`) if an answer is not the one expected.
+    let body = "
+      (if (i64.ne (call $t (i32.const -5) (i32.const 10)) (i64.const -1)) (then unreachable))
+      (if (i64.ne (call $t (i32.const 0) (i32.const 999999)) (i64.const -1)) (then unreachable))
+      (if (i64.ne (call $t (i32.const 0x7ffffff0) (i32.const 64)) (i64.const -1)) (then unreachable))
+      (if (i64.ne (call $t (i32.const 0x31100) (i32.const 2)) (i64.const -1)) (then unreachable))
+      (if (i32.ne (call $r (i32.const 999999) (i32.const 0x30000) (i32.const 64)) (i32.const -1)) (then unreachable))
+      (if (i32.ne (call $r (i32.const -1) (i32.const 0x30000) (i32.const 64)) (i32.const -1)) (then unreachable))
+      (local.set $hi (call $t (i32.const 0x31000) (i32.const 2)))
+      (if (i64.lt_s (local.get $hi) (i64.const 1)) (then unreachable))
+      (if (i64.ne (call $t (i32.const 0x31000) (i32.const 2)) (local.get $hi)) (then unreachable))
+      (if (i32.ne (call $r (i32.wrap_i64 (local.get $hi)) (i32.const 0x7fffff00) (i32.const 64)) (i32.const -1)) (then unreachable))
+      (if (i32.ne (call $r (i32.wrap_i64 (local.get $hi)) (i32.const 0x30000) (i32.const 1)) (i32.const 2)) (then unreachable))
+      (if (i32.ne (i32.load8_u (i32.const 0x30000)) (i32.const 104)) (then unreachable))
+      (loop $more
+        (i32.store8 (i32.const 0x32000) (i32.add (i32.const 65) (i32.and (local.get $i) (i32.const 15))))
+        (i32.store8 (i32.const 0x32001) (i32.add (i32.const 65) (i32.and (i32.shr_u (local.get $i) (i32.const 4)) (i32.const 15))))
+        (i32.store8 (i32.const 0x32002) (i32.add (i32.const 65) (i32.and (i32.shr_u (local.get $i) (i32.const 8)) (i32.const 15))))
+        (if (i64.ge_s (call $t (i32.const 0x32000) (i32.const 3)) (i64.const 0))
+          (then (local.set $ok (i32.add (local.get $ok) (i32.const 1)))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br_if $more (i32.lt_u (local.get $i) (i32.const 1500))))
+      (if (i32.ne (local.get $ok) (i32.const 1023)) (then unreachable))";
+    let manifest_text = manifest(json!([{ "name": "words", "params": [{ "commands": {} }] }]));
+    let wat = format!(
+        r#"(module
+  (import "wish" "text_intern" (func $t (param i32 i32) (result i64)))
+  (import "wish" "text_read" (func $r (param i32 i32 i32) (result i32)))
+  (memory (export "memory") 64)
+  (data (i32.const {MANIFEST_AT}) "{m}")
+  (data (i32.const 0x31000) "hi")
+  (data (i32.const 0x31100) "\ff\fe")
+  (func (export "wish_abi_version") (result i32) (i32.const 1))
+  (func (export "wish_alloc") (param i32) (result i32) (i32.const {FRAME_AT}))
+  (func (export "wish_manifest") (result i64) (i64.const {packed}))
+  (func (export "wish_run") (param $system i32) (param $frame i32) (result i32)
+    (local $hi i64) (local $i i32) (local $ok i32)
+    {body}
+    (i32.const 0)))"#,
+        m = escape(manifest_text.as_bytes()),
+        packed = (u64::from(MANIFEST_AT) << 32) | manifest_text.len() as u64,
+    );
+    let module = load(&wat::parse_str(wat).unwrap());
+    let mut app = App::new(AppConfig::default());
+    wish_transform::register(app.world_mut()).unwrap();
+    module.install(app.world_mut()).unwrap();
+    // No host services: texts do not need them.
+    let runtime = ScriptRuntime::new(Arc::clone(&module));
+    for system in runtime.systems() {
+        app.add_system(system).unwrap();
+    }
+    let before = app.world().texts().len();
+    let report = app.step().unwrap();
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    assert_eq!(app.world().texts().len(), before + 1024);
+    assert!(app.world().texts().find("hi").is_some());
+    // The next tick may add its own: the limit is per call. "hi" and the
+    // first 1023 are known now, so the next 1023 are new.
+    let report = app.step().unwrap();
+    assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
+    assert_whole(&mut app);
+}

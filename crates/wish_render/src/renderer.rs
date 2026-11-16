@@ -110,6 +110,11 @@ const SHADERS: &[(&str, &str, &str)] = &[
         "wish_render/shaders/gizmo_pass.wgsl",
         include_str!("shaders/gizmo_pass.wgsl"),
     ),
+    (
+        "ui_pass",
+        "wish_render/shaders/ui_pass.wgsl",
+        include_str!("shaders/ui_pass.wgsl"),
+    ),
 ];
 
 /// The library of the engine's shaders.
@@ -130,6 +135,7 @@ pub const ENTRY_SHADERS: &[&str] = &[
     "shadow_pass",
     "debug_pass",
     "gizmo_pass",
+    "ui_pass",
 ];
 
 /// Checks every pipeline shader of `library` and returns every problem found
@@ -210,7 +216,12 @@ struct GpuMesh {
 /// buffer at creation and panics if that mapping fails; filling through the
 /// queue cannot panic, and a failure surfaces in the error scope instead.)
 /// `contents` must be a multiple of 4 bytes long, which all engine data is.
-fn buffer_with(gpu: &Gpu, label: &str, contents: &[u8], usage: wgpu::BufferUsages) -> wgpu::Buffer {
+pub(crate) fn buffer_with(
+    gpu: &Gpu,
+    label: &str,
+    contents: &[u8],
+    usage: wgpu::BufferUsages,
+) -> wgpu::Buffer {
     let size = (contents.len() as u64).max(wgpu::COPY_BUFFER_ALIGNMENT);
     let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some(label),
@@ -650,6 +661,10 @@ pub struct Renderer {
     models: BTreeMap<String, GpuModel>,
     /// The pipelines of the debug views.
     debug: debug::DebugPipelines,
+    /// The in-game interface's pipeline.
+    ui: crate::ui::UiPipeline,
+    /// The interface's pictures, by project path.
+    ui_pictures: BTreeMap<String, crate::ui::UiPicture>,
 }
 
 impl std::fmt::Debug for Renderer {
@@ -761,6 +776,11 @@ impl Renderer {
         let gizmo_source = modules
             .iter()
             .find(|(entry, _)| *entry == "gizmo_pass")
+            .map(|(_, source)| source.clone())
+            .unwrap_or_default();
+        let ui_source = modules
+            .iter()
+            .find(|(entry, _)| *entry == "ui_pass")
             .map(|(_, source)| source.clone())
             .unwrap_or_default();
         let pipelines = gpu.checked("build the render pipelines", |gpu| {
@@ -1072,8 +1092,11 @@ impl Renderer {
             &draw_layout,
             &material_layout,
         )?;
+        let ui = crate::ui::UiPipeline::new(gpu, &ui_source, crate::capture::CAPTURE_FORMAT)?;
         Ok(Self {
             debug,
+            ui,
+            ui_pictures: BTreeMap::new(),
             frame_layout,
             draw_layout,
             hdr_layout,
@@ -1098,9 +1121,22 @@ impl Renderer {
     pub fn reload_shaders(&mut self, gpu: &Gpu, library: &ShaderLibrary) -> Result<()> {
         let fresh = Self::with_shaders(gpu, library)?;
         let models = std::mem::take(&mut self.models);
+        let pictures = std::mem::take(&mut self.ui_pictures);
         *self = fresh;
         self.models = models;
+        self.ui_pictures = pictures;
         Ok(())
+    }
+
+    /// Keeps a picture for the in-game interface under its project path
+    /// (`UiImage.image`), replacing one of the same path.
+    pub fn set_ui_picture(&mut self, path: &str, picture: crate::ui::UiPicture) {
+        self.ui_pictures.insert(path.to_owned(), picture);
+    }
+
+    /// Whether a picture is kept under `path`.
+    pub fn has_ui_picture(&self, path: &str) -> bool {
+        self.ui_pictures.contains_key(path)
     }
 
     /// Whether a model has been uploaded under `path`.
@@ -1285,6 +1321,12 @@ impl Renderer {
             draw_list,
             mut warnings,
         } = self.collect(scene, None, &posed);
+        // The interface is prepared on the CPU, drawn last.
+        let interface = (!scene.ui.is_empty())
+            .then(|| crate::ui::build(scene, width, height, &self.ui_pictures));
+        if let Some(batch) = &interface {
+            warnings.extend(batch.warnings.iter().cloned());
+        }
         let DrawList {
             mut bytes,
             draws,
@@ -1614,6 +1656,9 @@ impl Renderer {
                 pass.set_pipeline(&self.tonemap);
                 pass.set_bind_group(0, &hdr_group, &[]);
                 pass.draw(0..3, 0..1);
+            }
+            if let Some(batch) = &interface {
+                self.ui.draw(gpu, &mut encoder, &target.view, batch);
             }
             target.copy(&mut encoder);
             gpu.queue.submit([encoder.finish()]);

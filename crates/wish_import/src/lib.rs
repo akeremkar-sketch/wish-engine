@@ -23,9 +23,11 @@ use gltf::mesh::Mode;
 use wish_core::math::{Mat4, Quat, Vec2, Vec3, Vec4};
 
 mod anim;
+mod image;
 pub mod samples;
 
 pub use anim::{Animation, Channel, Interpolation, MAX_JOINTS, MAX_KEYFRAMES, Property, Skin};
+pub use image::{MAX_IMAGE_SIDE, load_png};
 use wish_core::{Diagnostic, Result};
 
 /// The most nodes one model may nest (hostile files could nest forever).
