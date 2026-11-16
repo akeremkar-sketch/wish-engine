@@ -10,8 +10,8 @@ use wish_core::{Diagnostic, Result};
 /// The commands `wen` understands.
 pub const COMMANDS: &[&str] = &[
     "run", "bench", "schema", "mv", "check", "fmt", "migrate", "watch", "capture", "describe",
-    "shaders", "view", "call", "do", "new", "build", "play", "replay", "test", "sdk", "mcp",
-    "examples", "help", "version",
+    "shaders", "view", "call", "do", "new", "build", "play", "replay", "test", "sdk", "package",
+    "mcp", "examples", "help", "version",
 ];
 
 /// A parsed command line.
@@ -50,6 +50,8 @@ pub enum Command {
         ticks: u64,
         /// The random seed.
         seed: u64,
+        /// Measure game code (WebAssembly) against native systems instead.
+        script: bool,
     },
     /// Move an asset file or folder and update the scenes that refer to it.
     Move {
@@ -126,6 +128,11 @@ pub enum Command {
         root: Option<String>,
         /// Only check that it compiles.
         dry_run: bool,
+    },
+    /// Build a package for machines without developer tools (engine development).
+    Package {
+        /// Where to put it (default: `package` next to wen).
+        out: Option<String>,
     },
     /// Build the game SDK pack from the engine's sources (engine development).
     Sdk {
@@ -421,6 +428,7 @@ fn flags_of(command: &str) -> &'static [(&'static str, bool)] {
             ("--entities", true),
             ("--ticks", true),
             ("--seed", true),
+            ("--script", false),
             ("--json", false),
         ],
         "schema" => &[("--example", true), ("--json", false)],
@@ -475,6 +483,7 @@ fn flags_of(command: &str) -> &'static [(&'static str, bool)] {
             ("--json", false),
         ],
         "sdk" => &[("--out", true), ("--json", false)],
+        "package" => &[("--out", true), ("--json", false)],
         "view" => &[
             ("--example", true),
             ("--scene", true),
@@ -638,6 +647,7 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
                 })?,
             ticks: value_of("--ticks").map_or(Ok(600), |value| parse_number("--ticks", value))?,
             seed: value_of("--seed").map_or(Ok(0), |value| parse_number("--seed", value))?,
+            script: values.iter().any(|(flag, _)| *flag == "--script"),
         },
         "schema" => Command::Schema {
             example: value_of("--example").map(str::to_owned),
@@ -739,6 +749,9 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
         "build" => Command::Build {
             root: value_of("--root").map(str::to_owned),
             dry_run: values.iter().any(|(flag, _)| *flag == "--dry-run"),
+        },
+        "package" => Command::Package {
+            out: value_of("--out").map(str::to_owned),
         },
         "sdk" => Command::Sdk {
             out: value_of("--out").map(str::to_owned),

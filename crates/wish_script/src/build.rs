@@ -421,7 +421,7 @@ pub fn build_game(toolchain: &Toolchain, root: &Path, install: bool) -> Result<B
         "--target",
         "wasm32-unknown-unknown",
         "-C",
-        "opt-level=1",
+        "opt-level=2",
         "-C",
         "panic=abort",
         "-C",
@@ -500,4 +500,114 @@ pub fn build_game(toolchain: &Toolchain, root: &Path, install: bool) -> Result<B
         seconds,
         output: passed.then(|| if install { GAME_WASM } else { CHECKED_WASM }.to_owned()),
     })
+}
+
+/// The description file of a packed toolchain.
+const TOOLCHAIN_FILE: &str = "toolchain.json";
+
+fn copy_tree(from: &Path, to: &Path, skip: &dyn Fn(&str) -> bool) -> Result<u64> {
+    std::fs::create_dir_all(to).map_err(|e| io_failed("create the toolchain folder", &e))?;
+    let mut bytes = 0;
+    let entries =
+        std::fs::read_dir(from).map_err(|e| io_failed("read the compiler's folder", &e))?;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if skip(&name) {
+            continue;
+        }
+        let target = to.join(&name);
+        match entry.file_type() {
+            Ok(kind) if kind.is_dir() => bytes += copy_tree(&entry.path(), &target, skip)?,
+            Ok(_) => {
+                bytes += std::fs::copy(entry.path(), &target)
+                    .map_err(|e| io_failed(&format!("copy {name}"), &e))?;
+            }
+            Err(_) => {}
+        }
+    }
+    Ok(bytes)
+}
+
+/// Copies the parts of the compiler `rustc` that a game build needs into
+/// `out` (ADR-025): the compiler and its libraries, the WebAssembly linker,
+/// and the standard library for wasm32. Nothing else: no cargo, no rustup,
+/// no host standard library, no debug databases. The folder works on its
+/// own: `out/bin/rustc` finds its standard library relative to itself.
+pub fn pack_toolchain(rustc: &Path, out: &Path) -> Result<Value> {
+    let real = real_rustc(rustc)?;
+    let version = rustc_version(&real)?;
+    let bin = real
+        .parent()
+        .ok_or_else(|| toolchain_missing(&real, "it is not in a bin folder"))?;
+    let sysroot = bin
+        .parent()
+        .ok_or_else(|| toolchain_missing(&real, "it has no sysroot"))?;
+    let host = Command::new(&real)
+        .arg("-vV")
+        .output()
+        .ok()
+        .and_then(|out| {
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .find_map(|l| l.strip_prefix("host: ").map(str::to_owned))
+        })
+        .ok_or_else(|| toolchain_missing(&real, "it does not say which machine it runs on"))?;
+    let _ = std::fs::remove_dir_all(out);
+    let library =
+        |name: &str| name.ends_with(".dll") || name.contains(".so") || name.ends_with(".dylib");
+    let mut bytes = 0;
+    // The compiler and the libraries it is made of.
+    for (folder, keep) in [
+        (
+            "bin",
+            &(|name: &str| name == "rustc" || name == "rustc.exe" || library(name))
+                as &dyn Fn(&str) -> bool,
+        ),
+        ("lib", &library),
+    ] {
+        let target = out.join(folder);
+        std::fs::create_dir_all(&target)
+            .map_err(|e| io_failed("create the toolchain folder", &e))?;
+        for entry in std::fs::read_dir(sysroot.join(folder))
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if entry.file_type().is_ok_and(|kind| kind.is_file()) && keep(&name) {
+                bytes += std::fs::copy(entry.path(), target.join(&name))
+                    .map_err(|e| io_failed(&format!("copy {name}"), &e))?;
+            }
+        }
+    }
+    let rustlib = Path::new("lib").join("rustlib");
+    // The standard library for wasm32.
+    bytes += copy_tree(
+        &sysroot.join(&rustlib).join("wasm32-unknown-unknown"),
+        &out.join(&rustlib).join("wasm32-unknown-unknown"),
+        &|name| name.ends_with(".pdb"),
+    )?;
+    // The WebAssembly linker (rust-lld and the wasm-ld name it is called by).
+    let tools = sysroot.join(&rustlib).join(&host).join("bin");
+    bytes += copy_tree(
+        &tools,
+        &out.join(&rustlib).join(&host).join("bin"),
+        &|name| {
+            let wanted =
+                name.starts_with("rust-lld") || name == "gcc-ld" || name.starts_with("wasm-ld");
+            !wanted || name.ends_with(".pdb")
+        },
+    )?;
+    let description = json!({
+        "format": 1,
+        "rustc": version,
+        "host": host,
+        "bytes": bytes,
+    });
+    std::fs::write(
+        out.join(TOOLCHAIN_FILE),
+        serde_json::to_string_pretty(&description).unwrap_or_default(),
+    )
+    .map_err(|e| io_failed("write toolchain.json", &e))?;
+    Ok(description)
 }

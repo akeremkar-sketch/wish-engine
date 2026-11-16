@@ -810,6 +810,90 @@ impl World {
         Ok(true)
     }
 
+    /// Appends component `id` of every entity in archetype `archetype` (the
+    /// index into [`World::archetypes`]) to `out`, packed in row order,
+    /// padding zeroed: one column slice in one call, for passing many values
+    /// to a game module (M5 WP7). The entities are the archetype's
+    /// [`Archetype::entities`], in the same order.
+    pub fn archetype_column_bytes(
+        &self,
+        archetype: usize,
+        id: ComponentId,
+        out: &mut Vec<u8>,
+    ) -> Result<()> {
+        let info = self.component_info(id)?;
+        let column = self
+            .archetype(archetype)?
+            .column(id)
+            .ok_or_else(|| internal_error("the archetype does not store that component"))?;
+        let size = info.size();
+        let start = out.len();
+        out.resize(start + column.len() * size, 0);
+        for row in 0..column.len() {
+            let at = start + row * size;
+            column.read_into(row, info.spans(), &mut out[at..at + size])?;
+        }
+        Ok(())
+    }
+
+    /// Writes back component `id` of every entity in archetype `archetype`
+    /// from `bytes` (packed in row order, as [`World::archetype_column_bytes`]
+    /// gave them): only the values whose bytes differ are written, and only
+    /// those count as changed. Values are checked like
+    /// [`World::insert_bytes`] when the type has fields that need it.
+    /// Returns how many values changed.
+    pub fn write_archetype_column(
+        &mut self,
+        archetype: usize,
+        id: ComponentId,
+        bytes: &[u8],
+    ) -> Result<usize> {
+        self.check_writable(id)?;
+        let info = self.component_info(id)?.clone();
+        let size = info.size();
+        let check = info.schema().needs_validation() || !info.text_offsets().is_empty();
+        let rows = self
+            .archetype(archetype)?
+            .column(id)
+            .map(Column::len)
+            .ok_or_else(|| internal_error("the archetype does not store that component"))?;
+        if bytes.len() != rows * size {
+            return Err(internal_error("column bytes have the wrong length"));
+        }
+        // Find the changed rows first (and check them), then write: a value
+        // that is refused leaves the whole column as it was.
+        let mut current = vec![0u8; size];
+        let mut changed = Vec::new();
+        {
+            let column = self
+                .archetype(archetype)?
+                .column(id)
+                .ok_or_else(|| internal_error("the archetype does not store that component"))?;
+            for row in 0..rows {
+                let new = &bytes[row * size..(row + 1) * size];
+                current.fill(0);
+                column.read_into(row, info.spans(), &mut current)?;
+                if new != current.as_slice() {
+                    if check {
+                        self.check_outside_bytes(&info, new)?;
+                    }
+                    changed.push(row);
+                }
+            }
+        }
+        let tick = self.state.change_tick;
+        let column = self
+            .state
+            .archetypes
+            .get_mut(archetype)
+            .and_then(|a| a.column_mut(id))
+            .ok_or_else(|| internal_error("the archetype does not store that component"))?;
+        for row in &changed {
+            column.write_bytes(*row, &bytes[row * size..(row + 1) * size], tick)?;
+        }
+        Ok(changed.len())
+    }
+
     /// The entity's component in JSON form.
     pub fn get_json(&self, entity: Entity, name: &str) -> Result<Value> {
         let id = self.component_id(name)?;

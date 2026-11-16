@@ -25,6 +25,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "No asset file has that path. Paths are project-relative with '/' between folders; asset_list shows what exists.",
     ),
     (
+        "bench_failed",
+        "`wen bench --script` could not prepare its measurement (a temporary folder, or the measured game code did not build). Check that `wen sdk` was run with this engine.",
+    ),
+    (
         "capture_failed",
         "A scenario test's capture step could not take its picture (no camera, or the camera named does not exist); the message says which.",
     ),
@@ -356,6 +360,14 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "overrides_without_prefab",
         "An entity has overrides but is not a prefab instance. Remove the overrides or make it an instance.",
+    ),
+    (
+        "package_failed",
+        "`wen package` could not build the package (engine development only): the message says which step.",
+    ),
+    (
+        "package_needs_static_crt",
+        "The wen being packaged needs the Visual C++ runtime DLL, which a clean Windows may not have; build it with the C runtime linked in (RUSTFLAGS=-C target-feature=+crt-static).",
     ),
     (
         "path_case_mismatch",

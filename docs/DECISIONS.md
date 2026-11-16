@@ -181,6 +181,8 @@ Taslak araç listesi: [MCP_API.md](MCP_API.md).
 
 **Tetikleyici.** M5 kıyaslamasında sınır maliyeti kare bütçesinin %20'sini aşarsa paylaşımlı bellek görünümleri tasarlanır.
 
+**Ölçüm (M5 WP7, 16 Kasım 2026, `wen bench --script`):** aynı sistem 10.000 varlıkta yerel 0,014 ms, oyun kodu 1,87 ms → sınır **kare bütçesinin %11,2'si** (tetikleyicinin altında); tick başına sabit maliyet 0,04 ms. Ayrıntı ve iyileştirme notları: `docs/design/M5-oyun-mantigi.md` §17 WP7.
+
 ## ADR-012 — Render
 
 **Karar.**

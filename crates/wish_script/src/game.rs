@@ -339,21 +339,25 @@ impl GameModule {
                 Role::Component => registry.component_id(name).and_then(|id| {
                     registry
                         .component(id)
-                        .map(|info| (info.schema().clone(), id.index()))
+                        .map(|info| (info.schema().clone(), info.is_native() || info.is_managed()))
                 }),
                 Role::Resource => registry.resource_id(name).and_then(|id| {
                     registry
                         .resource(id)
-                        .map(|info| (info.schema().clone(), id.index()))
+                        .map(|info| (info.schema().clone(), info.is_native() || info.is_managed()))
                 }),
                 Role::Event => registry.event_id(name).and_then(|id| {
                     registry
                         .event(id)
-                        .map(|info| (info.schema().clone(), id.index()))
+                        .map(|info| (info.schema().clone(), info.is_native() || info.is_managed()))
                 }),
             };
             let result = match existing {
-                Some((schema, _)) if schema.same_layout(&ty.schema) && schema == ty.schema => {
+                // Nothing changed; or an engine type with the engine's layout
+                // (its documentation is the engine's to keep).
+                Some((schema, engine))
+                    if schema == ty.schema || (engine && schema.same_layout(&ty.schema)) =>
+                {
                     continue;
                 }
                 Some(_) => self.retype(world, ty).map(|note| notes.extend(note)),
@@ -561,7 +565,9 @@ impl ScriptRuntime {
 /// Where one parameter's data is in the frame, resolved against the world.
 enum Resolved {
     Query {
-        entities: Vec<Entity>,
+        /// The matching archetypes and how many entities each has, in the
+        /// order their rows were packed.
+        archetypes: Vec<(usize, usize)>,
         columns: Vec<(ComponentId, usize, bool)>,
     },
     Res {
@@ -617,14 +623,17 @@ fn event_id(world: &World, name: &str, system: &str) -> Result<EventId> {
 /// The entities that have all of `required` and none of `excluded`, in the
 /// world's stable order (archetypes in creation order, rows in order: the
 /// same order native queries see).
-fn matching(world: &World, required: &[ComponentId], excluded: &[ComponentId]) -> Vec<Entity> {
+fn matching(world: &World, required: &[ComponentId], excluded: &[ComponentId]) -> Vec<usize> {
     world
         .archetypes()
         .iter()
-        .filter(|a| {
-            required.iter().all(|c| a.contains(*c)) && !excluded.iter().any(|c| a.contains(*c))
+        .enumerate()
+        .filter(|(_, a)| {
+            !a.is_empty()
+                && required.iter().all(|c| a.contains(*c))
+                && !excluded.iter().any(|c| a.contains(*c))
         })
-        .flat_map(|a| a.entities().iter().copied())
+        .map(|(index, _)| index)
         .collect()
 }
 
@@ -653,25 +662,33 @@ impl Call {
                         .iter()
                         .map(|name| component(world, name, &spec.name).map(|(id, _)| id))
                         .collect::<Result<Vec<_>>>()?;
-                    let entities = matching(world, &required, &excluded);
+                    // Whole column slices, archetype by archetype: no
+                    // per-entity lookups (M5 WP7).
+                    let archetypes: Vec<(usize, usize)> = matching(world, &required, &excluded)
+                        .into_iter()
+                        .map(|a| (a, world.archetypes().get(a).map_or(0, |x| x.len())))
+                        .collect();
+                    let count: usize = archetypes.iter().map(|(_, n)| n).sum();
                     let sizes: Vec<usize> = cols.iter().map(|(_, size, _)| *size).collect();
-                    let (len, offsets) = query_layout(entities.len(), &sizes);
-                    let mut bytes = vec![0u8; len];
-                    bytes[0..4].copy_from_slice(&(entities.len() as u32).to_le_bytes());
-                    bytes[4..8].copy_from_slice(&(cols.len() as u32).to_le_bytes());
-                    for (row, entity) in entities.iter().enumerate() {
-                        bytes[8 + row * 8..16 + row * 8]
-                            .copy_from_slice(&entity.to_bits().to_le_bytes());
-                    }
-                    for ((id, size, _), offset) in cols.iter().zip(&offsets) {
-                        for (row, entity) in entities.iter().enumerate() {
-                            let at = offset + row * size;
-                            world.component_bytes_into(*entity, *id, &mut bytes[at..at + size])?;
+                    let (len, offsets) = query_layout(count, &sizes);
+                    let mut bytes = Vec::with_capacity(len);
+                    bytes.extend((count as u32).to_le_bytes());
+                    bytes.extend((cols.len() as u32).to_le_bytes());
+                    for (a, _) in &archetypes {
+                        for entity in world.archetypes().get(*a).map_or(&[][..], |x| x.entities()) {
+                            bytes.extend(entity.to_bits().to_le_bytes());
                         }
                     }
+                    for ((id, _, _), offset) in cols.iter().zip(&offsets) {
+                        bytes.resize(*offset, 0);
+                        for (a, _) in &archetypes {
+                            world.archetype_column_bytes(*a, *id, &mut bytes)?;
+                        }
+                    }
+                    bytes.resize(len, 0);
                     writer.section(bytes);
                     resolved.push(Resolved::Query {
-                        entities,
+                        archetypes,
                         columns: cols,
                     });
                 }
@@ -737,24 +754,24 @@ impl Call {
         {
             let section = self.frame.get(*start..start + len).ok_or_else(poisoned)?;
             match resolved {
-                Resolved::Query { entities, columns } => {
+                Resolved::Query {
+                    archetypes,
+                    columns,
+                } => {
+                    let count: usize = archetypes.iter().map(|(_, n)| n).sum();
                     let sizes: Vec<usize> = columns.iter().map(|(_, size, _)| *size).collect();
-                    let (_, offsets) = query_layout(entities.len(), &sizes);
-                    let mut current = Vec::new();
+                    let (_, offsets) = query_layout(count, &sizes);
                     for ((id, size, write), offset) in columns.iter().zip(&offsets) {
                         if !write {
                             continue;
                         }
-                        current.resize(*size, 0);
-                        for (row, entity) in entities.iter().enumerate() {
-                            let at = offset + row * size;
-                            let new = section.get(at..at + size).ok_or_else(poisoned)?;
-                            world.component_bytes_into(*entity, *id, &mut current)?;
-                            if new != current.as_slice() {
-                                world
-                                    .insert_bytes(*entity, *id, new)
-                                    .map_err(|cause| write_failed(&spec.name, &cause))?;
-                            }
+                        let mut at = *offset;
+                        for (a, rows) in archetypes {
+                            let slice = section.get(at..at + rows * size).ok_or_else(poisoned)?;
+                            world
+                                .write_archetype_column(*a, *id, slice)
+                                .map_err(|cause| write_failed(&spec.name, &cause))?;
+                            at += rows * size;
                         }
                     }
                 }

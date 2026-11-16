@@ -35,6 +35,10 @@ jobs:
       # release). Rendering is tested both ways.
       - name: Rendering tests in release
         run: cargo test --release --locked -p wish_render
+      # ADR-023/ADR-025: a packed copy of the compiler alone (no cargo,
+      # rustup or linker in its environment) builds game code that runs.
+      - name: Game code builds with the packed toolchain
+        run: cargo test --locked -p wish_script --test toolchain -- --ignored --nocapture
       # What the rendering tests drew, for comparing platforms and for
       # inspecting a failed golden-image test.
       - name: Keep rendered images

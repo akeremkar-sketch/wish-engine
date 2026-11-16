@@ -11,6 +11,7 @@
 //! ```
 
 mod args;
+mod bench_script;
 mod capture;
 mod play;
 mod project_cmds;
@@ -38,7 +39,7 @@ wen - the Wish Engine command-line tool
 USAGE:
     wen run --example <name> [--scene <file> [--root <folder>]] [--frames <n>] [--seed <n>]
             [--hash-every <n>] [--headless] [--json]
-    wen bench [--entities <n>] [--ticks <n>] [--seed <n>] [--json]
+    wen bench [--entities <n>] [--ticks <n>] [--seed <n>] [--script] [--json]
     wen check [files...] --example <name> [--root <folder>] [--json]
     wen fmt [files...] --example <name> [--root <folder>] [--check] [--json]
     wen migrate [files...] [--root <folder>] [--json]
@@ -56,6 +57,7 @@ USAGE:
     wen replay <name> [--root <folder>] [--json]
     wen play [--root <folder>] [--scene <file>] [--size <w>x<h>] [--software] [--exit-after <frames>]
     wen sdk [--out <folder>] [--json]
+    wen package [--out <folder>] [--json]
     wen mcp [--root <folder>] [--software]
     wen call <tool> ['{json args}' | --<param> <value> ...] [--root <folder>] [--actor <name>]
     wen do [<file> | -] [--root <folder>] [--actor <name>]
@@ -72,7 +74,8 @@ COMMANDS:
                current folder) gives the entities and resources instead, and the
                example only supplies the component types. Prefabs are found in --root.
     bench      Time the core on many moving entities (defaults: 100000 entities, 600 ticks).
-               Build with --release for meaningful numbers.
+               Build with --release for meaningful numbers. --script measures game code instead: the
+               same system natively and as WebAssembly on 1, 1 000 and 10 000 entities (needs the SDK).
     check      Check every prefab, scene and meta file of the project (syntax, schema,
                references, asset files) and report all problems with file, line and
                column. Exits with failure if there is any error.
@@ -119,6 +122,9 @@ COMMANDS:
                as it did, otherwise says the first tick that differs. Exits with failure if it differs.
     sdk        Engine development: build the game SDK pack from the engine's sources (needs cargo).
                Packaged engines ship it; game builds look for it next to wen or in WISH_SDK.
+    package    Engine development: a folder with wen, the game SDK and the packed compiler (no cargo,
+               rustup or Visual Studio needed to build game code), plus clean-test.wsb, which runs
+               a project build and its tests in Windows Sandbox (a machine with no developer tools).
     mcp        Serve the tools over MCP (Model Context Protocol, stdio). Claude Code and other MCP
                clients start it themselves from .mcp.json (wen new writes it); --software draws
                with the CPU adapter. Standard output carries only the protocol.
@@ -264,6 +270,12 @@ fn execute_any(args: Args) -> Result<Outcome> {
             args.json,
             tool_cmds::replay_text,
         )),
+        Command::Package { out } => {
+            tool_cmds::package(out.as_deref(), args.json).map(|text| Outcome {
+                text,
+                success: true,
+            })
+        }
         Command::Sdk { out } => {
             tool_cmds::pack_sdk(out.as_deref(), args.json).map(|text| Outcome {
                 text,
@@ -308,9 +320,15 @@ fn execute(args: Args) -> Result<String> {
             args.json,
         ),
         Command::Bench {
+            ticks,
+            script: true,
+            ..
+        } => bench_script::bench_script(ticks, args.json),
+        Command::Bench {
             entities,
             ticks,
             seed,
+            script: false,
         } => bench(entities, ticks, seed, args.json),
         Command::Check { .. }
         | Command::Format { .. }
@@ -322,6 +340,7 @@ fn execute(args: Args) -> Result<String> {
         | Command::Replay { .. }
         | Command::Test { .. }
         | Command::Sdk { .. }
+        | Command::Package { .. }
         | Command::Capture(_)
         | Command::Describe(_)
         | Command::Mcp(_)
