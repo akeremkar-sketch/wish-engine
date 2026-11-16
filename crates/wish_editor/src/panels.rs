@@ -4,6 +4,7 @@
 
 use std::collections::VecDeque;
 
+use crate::i18n::{t, tf};
 use egui::{Color32, RichText, Sense, Ui, vec2};
 use serde_json::Value;
 
@@ -63,10 +64,13 @@ fn severity_color(severity: &str) -> Color32 {
 pub(crate) fn tabs(ui: &mut Ui, current: Tab, problems: usize, actions: &mut PanelActions) {
     ui.horizontal(|ui| {
         for (tab, name) in [
-            (Tab::Assets, "Assets".to_owned()),
-            (Tab::Console, "Console".to_owned()),
-            (Tab::Problems, format!("Problems ({problems})")),
-            (Tab::Performance, "Performance".to_owned()),
+            (Tab::Assets, t("Assets").to_owned()),
+            (Tab::Console, t("Console").to_owned()),
+            (
+                Tab::Problems,
+                tf("Problems ({problems})", &[("problems", &problems)]),
+            ),
+            (Tab::Performance, t("Performance").to_owned()),
         ] {
             if ui.selectable_label(current == tab, name).clicked() && current != tab {
                 actions.tab = Some(tab);
@@ -78,8 +82,8 @@ pub(crate) fn tabs(ui: &mut Ui, current: Tab, problems: usize, actions: &mut Pan
 /// The console: log entries, newest last.
 pub(crate) fn console(ui: &mut Ui, entries: &VecDeque<Value>, actions: &mut PanelActions) {
     ui.horizontal(|ui| {
-        ui.weak(format!("{} entries", entries.len()));
-        if ui.small_button("Clear").clicked() {
+        ui.weak(tf("{count} entries", &[("count", &entries.len())]));
+        if ui.small_button(t("Clear")).clicked() {
             actions.clear_console = true;
         }
     });
@@ -117,11 +121,11 @@ pub(crate) fn console(ui: &mut Ui, entries: &VecDeque<Value>, actions: &mut Pane
 /// The problems `check` found; a click on one about an entity selects it.
 pub(crate) fn problems(ui: &mut Ui, found: &[Value], actions: &mut PanelActions) {
     ui.horizontal(|ui| {
-        if ui.small_button("Check again").clicked() {
+        if ui.small_button(t("Check again")).clicked() {
             actions.check = true;
         }
         if found.is_empty() {
-            ui.weak("No problems.");
+            ui.weak(t("No problems."));
         }
     });
     egui::ScrollArea::vertical()
@@ -169,18 +173,28 @@ pub(crate) fn performance(ui: &mut Ui, history: &VecDeque<Timing>, playing: bool
     let count = history.len().max(1) as f32;
     let average = |f: fn(&Timing) -> f32| history.iter().map(f).sum::<f32>() / count;
     ui.horizontal(|ui| {
-        ui.label(format!("interface {:.1} ms", average(|t| t.interface)));
+        let ms = |value: f32, digits: usize| format!("{value:.digits$}");
+        ui.label(tf(
+            "interface {ms} ms",
+            &[("ms", &ms(average(|t| t.interface), 1))],
+        ));
         ui.separator();
-        ui.label(format!("scene picture {:.1} ms", average(|t| t.scene)));
+        ui.label(tf(
+            "scene picture {ms} ms",
+            &[("ms", &ms(average(|t| t.scene), 1))],
+        ));
         if playing {
             ui.separator();
-            ui.label(format!("game {:.2} ms", average(|t| t.game)));
+            ui.label(tf("game {ms} ms", &[("ms", &ms(average(|t| t.game), 2))]));
             ui.separator();
             let ticks: u32 = history.iter().map(|t| t.ticks).sum();
-            ui.label(format!("{ticks} ticks in {} frames", history.len()));
+            ui.label(tf(
+                "{ticks} ticks in {frames} frames",
+                &[("ticks", &ticks), ("frames", &history.len())],
+            ));
         }
     });
-    ui.weak("Bars: one per frame (interface grey, scene blue, game green); the line is 16.7 ms (60 frames a second).");
+    ui.weak(t("Bars: one per frame (interface grey, scene blue, game green); the line is 16.7 ms (60 frames a second)."));
     let (rect, _) = ui.allocate_exact_size(
         vec2(ui.available_width(), ui.available_height().max(40.0)),
         Sense::hover(),

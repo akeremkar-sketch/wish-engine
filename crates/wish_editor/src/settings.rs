@@ -4,6 +4,7 @@
 
 use std::cell::RefCell;
 
+use crate::i18n::t;
 use egui::Ui;
 use serde_json::{Map, Value, json};
 
@@ -85,18 +86,18 @@ pub(crate) fn window(
         return;
     };
     let mut open = true;
-    egui::Window::new("Project settings")
+    egui::Window::new(t("Project settings"))
 
         .open(&mut open)
         .default_width(520.0)
         .default_pos([380.0, 80.0])
         .show(ui.ctx(), |ui| {
-            ui.heading("Project");
+            ui.heading(t("Project"));
             egui::Grid::new("project_grid").num_columns(2).show(ui, |ui| {
-                ui.label("Name");
+                ui.label(t("Name"));
                 ui.add(egui::TextEdit::singleline(&mut draft.name).desired_width(260.0));
                 ui.end_row();
-                ui.label("Default scene");
+                ui.label(t("Default scene"));
                 egui::ComboBox::from_id_salt("default_scene")
                     .selected_text(&draft.scene)
                     .show_ui(ui, |ui| {
@@ -106,12 +107,12 @@ pub(crate) fn window(
                     });
                 ui.end_row();
             });
-            if ui.button("Save project").clicked() {
+            if ui.button(t("Save project")).clicked() {
                 actions.save_project = true;
             }
             ui.separator();
-            ui.heading("Input map");
-            ui.weak("Actions the game code reads (actions.pressed(\"jump\"), actions.axis2(\"move\")) and the keys that drive them. Several keys: separate them with commas.");
+            ui.heading(t("Input map"));
+            ui.weak(t("Actions the game code reads (actions.pressed(\"jump\"), actions.axis2(\"move\")) and the keys that drive them. Several keys: separate them with commas."));
             let mut remove = None;
             egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
                 egui::Grid::new("input_grid").num_columns(3).striped(true).show(ui, |ui| {
@@ -137,7 +138,7 @@ pub(crate) fn window(
                                     let response = ui.add(
                                         egui::TextEdit::singleline(&mut text)
                                             .desired_width(200.0)
-                                            .hint_text("Space, W, Up..."),
+                                            .hint_text(t("Space, W, Up...")),
                                     );
                                     if response.changed() {
                                         let keys: Vec<Value> = text
@@ -150,7 +151,7 @@ pub(crate) fn window(
                                     }
                                 });
                             }
-                            if ui.small_button("Remove action").clicked() {
+                            if ui.small_button(t("Remove action")).clicked() {
                                 remove = Some(name.clone());
                             }
                         });
@@ -164,7 +165,7 @@ pub(crate) fn window(
             ui.horizontal(|ui| {
                 ui.add(
                     egui::TextEdit::singleline(&mut draft.new_action)
-                        .hint_text("new action")
+                        .hint_text(t("new action"))
                         .desired_width(140.0),
                 );
                 egui::ComboBox::from_id_salt("new_kind")
@@ -176,7 +177,7 @@ pub(crate) fn window(
                     });
                 let name = draft.new_action.trim().to_owned();
                 if ui
-                    .add_enabled(!name.is_empty() && !draft.actions.contains_key(&name), egui::Button::new("Add action"))
+                    .add_enabled(!name.is_empty() && !draft.actions.contains_key(&name), egui::Button::new(t("Add action")))
                     .clicked()
                 {
                     let mut binding = Map::new();
@@ -188,7 +189,7 @@ pub(crate) fn window(
                     draft.new_action.clear();
                 }
             });
-            if ui.button("Save input map").clicked() {
+            if ui.button(t("Save input map")).clicked() {
                 actions.save_input = true;
             }
         });

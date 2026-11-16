@@ -29,6 +29,26 @@ pub fn edit(args: &EditArgs, as_json: bool) -> Result<String> {
     })?;
     workspace.set_software(args.software);
     let mut app = EditorApp::new(workspace);
+    // A window keeps the person's choice of language; a scripted picture
+    // depends only on its arguments.
+    if args.headless_frame.is_none()
+        && let Some(path) = wish_editor::preferences_path()
+    {
+        app.use_preferences(path);
+    }
+    if let Some(code) = &args.lang
+        && !app.set_language(code)
+    {
+        let known: Vec<_> = wish_editor::i18n::LANGUAGES
+            .iter()
+            .map(|language| language.code)
+            .collect();
+        return Err(Diagnostic::error(
+            "unknown_language",
+            format!("The editor has no language '{code}'."),
+            format!("Use one of: {}.", known.join(", ")),
+        ));
+    }
     if let Some(script_path) = &args.headless_frame {
         let Some(out) = &args.out else {
             return Err(Diagnostic::error(

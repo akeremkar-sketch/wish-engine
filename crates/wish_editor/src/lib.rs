@@ -7,6 +7,7 @@
 mod app;
 mod browser;
 mod gizmo;
+pub mod i18n;
 mod inspector;
 mod panels;
 pub mod raster;
@@ -14,6 +15,26 @@ pub mod script;
 mod settings;
 
 pub use app::{EditorApp, Opener, Row, ids};
+
+/// Where the person's editor preferences are kept: `WISH_CONFIG_DIR`, else
+/// the system's place for settings (`%APPDATA%\\Wish` on Windows,
+/// `$XDG_CONFIG_HOME/wish` or `~/.config/wish` elsewhere), file
+/// `editor.json`.
+pub fn preferences_path() -> Option<std::path::PathBuf> {
+    let var = |name: &str| std::env::var_os(name).filter(|value| !value.is_empty());
+    let folder = if let Some(dir) = var("WISH_CONFIG_DIR") {
+        std::path::PathBuf::from(dir)
+    } else if cfg!(windows) {
+        std::path::PathBuf::from(var("APPDATA")?).join("Wish")
+    } else if let Some(dir) = var("XDG_CONFIG_HOME") {
+        std::path::PathBuf::from(dir).join("wish")
+    } else {
+        std::path::PathBuf::from(var("HOME")?)
+            .join(".config")
+            .join("wish")
+    };
+    Some(folder.join("editor.json"))
+}
 pub use inspector::has_widget;
 
 use std::sync::Arc;

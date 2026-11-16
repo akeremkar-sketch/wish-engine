@@ -10,6 +10,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use crate::i18n::{t, tf};
 use egui::{ColorImage, Sense, TextureHandle, TextureOptions, Ui, vec2};
 use serde_json::Value;
 
@@ -187,25 +188,25 @@ fn size_text(bytes: u64) -> String {
 /// The browser panel's contents.
 pub(crate) fn panel(ui: &mut Ui, view: &BrowserView<'_>, actions: &mut BrowserActions) {
     ui.horizontal(|ui| {
-        ui.weak("Filter:");
+        ui.weak(t("Filter:"));
         let mut state = view.state.borrow_mut();
         ui.add(
             egui::TextEdit::singleline(&mut state.filter)
-                .hint_text("Filter")
+                .hint_text(t("Filter"))
                 .desired_width(160.0),
         );
         for (label, kind) in [
-            ("All", None),
-            ("Images", Some("image")),
-            ("Models", Some("model")),
-            ("Sounds", Some("sound")),
-            ("Prefabs", Some("prefab")),
+            (t("All"), None),
+            (t("Images"), Some("image")),
+            (t("Models"), Some("model")),
+            (t("Sounds"), Some("sound")),
+            (t("Prefabs"), Some("prefab")),
         ] {
             if ui.selectable_label(state.kind == kind, label).clicked() {
                 state.kind = kind;
             }
         }
-        ui.weak(format!("{} files", view.assets.len()));
+        ui.weak(tf("{count} files", &[("count", &view.assets.len())]));
     });
     ui.separator();
     let (filter, kind) = {
@@ -305,15 +306,15 @@ fn row(ui: &mut Ui, view: &BrowserView<'_>, asset: &Asset, actions: &mut Browser
         }
         ui.weak(size_text(asset.bytes));
         response.context_menu(|ui| {
-            if asset.placeable() && ui.button("Add to scene").clicked() {
+            if asset.placeable() && ui.button(t("Add to scene")).clicked() {
                 actions.place = Some(asset.path.clone());
                 ui.close();
             }
-            if ui.button("Open outside").clicked() {
+            if ui.button(t("Open outside")).clicked() {
                 actions.open = Some(asset.path.clone());
                 ui.close();
             }
-            if asset.kind != "prefab" && ui.button("Rename / move...").clicked() {
+            if asset.kind != "prefab" && ui.button(t("Rename / move...")).clicked() {
                 view.state.borrow_mut().rename = Some((asset.path.clone(), asset.path.clone()));
                 ui.close();
             }
@@ -324,7 +325,7 @@ fn row(ui: &mut Ui, view: &BrowserView<'_>, asset: &Asset, actions: &mut Browser
 /// What `asset_info` says about the selected file.
 fn detail(ui: &mut Ui, view: &BrowserView<'_>) {
     let Some(path) = view.selected else {
-        ui.weak("Select a file to see what it is and who uses it.");
+        ui.weak(t("Select a file to see what it is and who uses it."));
         return;
     };
     ui.strong(path);
@@ -336,7 +337,7 @@ fn detail(ui: &mut Ui, view: &BrowserView<'_>) {
             continue;
         }
         let text = match value {
-            Value::Array(items) if items.is_empty() => "(none)".to_owned(),
+            Value::Array(items) if items.is_empty() => t("(none)").to_owned(),
             Value::Array(items) => items
                 .iter()
                 .map(|item| {
@@ -354,5 +355,5 @@ fn detail(ui: &mut Ui, view: &BrowserView<'_>) {
         });
     }
     ui.add_space(4.0);
-    ui.weak("Drag it into the view or onto a field of the inspector.");
+    ui.weak(t("Drag it into the view or onto a field of the inspector."));
 }

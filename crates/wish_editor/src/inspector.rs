@@ -26,6 +26,7 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
+use crate::i18n::{t, tf};
 use egui::{DragValue, Ui};
 use serde_json::{Map, Value, json};
 
@@ -115,24 +116,28 @@ fn common(inspected: &[Inspected]) -> Vec<String> {
 
 /// The inspector panel.
 pub(crate) fn panel(ui: &mut Ui, view: &InspectorView<'_>, actions: &mut InspectorActions) {
-    ui.heading("Inspector");
+    ui.heading(t("Inspector"));
     ui.separator();
     let Some(first) = view.inspected.first() else {
-        ui.weak("Select an entity to edit its components.");
+        ui.weak(t("Select an entity to edit its components."));
         return;
     };
     if view.inspected.len() == 1 {
         ui.strong(&first.id);
     } else {
-        ui.strong(format!("{} entities", view.inspected.len()));
-        ui.weak("Shown: the first one's values. A change applies to all of them.");
+        ui.strong(tf("{count} entities", &[("count", &view.inspected.len())]));
+        ui.weak(t(
+            "Shown: the first one's values. A change applies to all of them.",
+        ));
     }
     if let Some(prefab) = &first.prefab {
-        ui.weak(format!("Instance of {prefab}"));
+        ui.weak(tf("Instance of {prefab}", &[("prefab", &prefab)]));
     }
     let part = view.inspected.iter().any(|entity| entity.part);
     if part {
-        ui.weak("Part of a prefab instance: changes are kept as overrides of the instance.");
+        ui.weak(t(
+            "Part of a prefab instance: changes are kept as overrides of the instance.",
+        ));
     }
     ui.separator();
     egui::ScrollArea::vertical()
@@ -146,7 +151,7 @@ pub(crate) fn panel(ui: &mut Ui, view: &InspectorView<'_>, actions: &mut Inspect
                     .default_open(true)
                     .show(ui, |ui| {
                         let Some(schema) = schema else {
-                            ui.weak("No schema for this component (rebuild the game code?).");
+                            ui.weak(t("No schema for this component (rebuild the game code?)."));
                             return;
                         };
                         if let Some((field, new)) = fields(ui, view, &name, schema, value) {
@@ -154,8 +159,11 @@ pub(crate) fn panel(ui: &mut Ui, view: &InspectorView<'_>, actions: &mut Inspect
                         }
                         if !part
                             && ui
-                                .small_button("Remove component")
-                                .on_hover_text(format!("Takes {name} off the selection."))
+                                .small_button(t("Remove component"))
+                                .on_hover_text(tf(
+                                    "Takes {name} off the selection.",
+                                    &[("name", &name)],
+                                ))
                                 .clicked()
                         {
                             actions.remove = Some(name.clone());
@@ -163,21 +171,21 @@ pub(crate) fn panel(ui: &mut Ui, view: &InspectorView<'_>, actions: &mut Inspect
                     });
                 let header_response = header.header_response;
                 header_response.context_menu(|ui| {
-                    if ui.button("Copy values").clicked() {
+                    if ui.button(t("Copy values")).clicked() {
                         actions.copy = Some(name.clone());
                         ui.close();
                     }
                     if ui
                         .add_enabled(
                             view.copied == Some(name.as_str()),
-                            egui::Button::new("Paste values"),
+                            egui::Button::new(t("Paste values")),
                         )
                         .clicked()
                     {
                         actions.paste = Some(name.clone());
                         ui.close();
                     }
-                    if ui.button("Reset to defaults").clicked() {
+                    if ui.button(t("Reset to defaults")).clicked() {
                         actions.reset = Some(name.clone());
                         ui.close();
                     }
@@ -189,11 +197,11 @@ pub(crate) fn panel(ui: &mut Ui, view: &InspectorView<'_>, actions: &mut Inspect
             if !part {
                 ui.separator();
                 let present = common(view.inspected);
-                ui.menu_button("Add component...", |ui| {
+                ui.menu_button(t("Add component..."), |ui| {
                     let mut filter = view.state.borrow().add_filter.clone();
                     let search = ui.add(
                         egui::TextEdit::singleline(&mut filter)
-                            .hint_text("Search")
+                            .hint_text(t("Search"))
                             .desired_width(200.0),
                     );
                     search.request_focus();
@@ -603,7 +611,7 @@ fn objects(
 ) -> Option<Value> {
     let items = value.as_array().cloned().unwrap_or_default();
     let mut changed = None;
-    egui::CollapsingHeader::new(format!("{} items", items.len()))
+    egui::CollapsingHeader::new(tf("{count} items", &[("count", &items.len())]))
         .id_salt(("items", key))
         .default_open(false)
         .show(ui, |ui| {
@@ -633,7 +641,7 @@ fn raw(ui: &mut Ui, view: &InspectorView<'_>, key: &str, value: &Value) -> Optio
         .unwrap_or_else(|| stored.clone());
     let response = ui
         .add(egui::TextEdit::singleline(&mut typed).desired_width(150.0))
-        .on_hover_text("Raw JSON: this kind of value has no widget yet.");
+        .on_hover_text(t("Raw JSON: this kind of value has no widget yet."));
     if response.has_focus() {
         view.state.borrow_mut().texts.insert(key.to_owned(), typed);
         return None;

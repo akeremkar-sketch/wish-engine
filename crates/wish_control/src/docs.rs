@@ -838,6 +838,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "A document has a key the format does not know. The hint gives the closest valid key.",
     ),
     (
+        "unknown_language",
+        "The editor has no interface language with that code (wen edit --lang). The hint lists the codes.",
+    ),
+    (
         "unknown_parameter",
         "A tool has no parameter with that name. The hint gives the closest; the candidates list them all.",
     ),

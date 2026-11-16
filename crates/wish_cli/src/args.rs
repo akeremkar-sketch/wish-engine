@@ -218,6 +218,9 @@ pub struct EditArgs {
     pub headless_frame: Option<String>,
     /// Where `--headless-frame` writes its PNG.
     pub out: Option<String>,
+    /// The interface's language (`tr`, `de`...); else the saved choice,
+    /// `WISH_LANG` or the system's.
+    pub lang: Option<String>,
 }
 
 /// The options of `wen play`.
@@ -510,6 +513,7 @@ fn flags_of(command: &str) -> &'static [(&'static str, bool)] {
             ("--exit-after", true),
             ("--headless-frame", true),
             ("--out", true),
+            ("--lang", true),
             ("--json", false),
         ],
         "sdk" => &[("--out", true), ("--json", false)],
@@ -785,6 +789,7 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
                 .transpose()?,
             headless_frame: value_of("--headless-frame").map(str::to_owned),
             out: value_of("--out").map(str::to_owned),
+            lang: value_of("--lang").map(str::to_owned),
         }),
         "play" => Command::Play(PlayArgs {
             root: value_of("--root").map(str::to_owned),

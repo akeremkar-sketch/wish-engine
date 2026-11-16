@@ -24,6 +24,7 @@ use wish_window::{Button, FlyCamera, Modifiers, Movement, Picture, Shell, ShellE
 use crate::Editor;
 use crate::browser::{Asset, AssetDrag, BrowserActions, BrowserState, BrowserView};
 use crate::gizmo::{self, Drag, Eye, Handle, Mode, Space, Target};
+use crate::i18n::{t, tf};
 use crate::inspector::{self, Inspected, InspectorActions, InspectorState, InspectorView};
 use crate::panels::{PanelActions, Tab, Timing};
 use crate::raster::Canvas;
@@ -188,6 +189,11 @@ pub struct EditorApp {
     game_time: (f32, u32),
     /// How a file is opened outside the engine.
     opener: Opener,
+    /// The interface's language (a code of [`crate::i18n::LANGUAGES`]).
+    language: &'static str,
+    /// Where the person's own editor preferences are kept (the language),
+    /// if anywhere: tests keep none.
+    preferences: Option<std::path::PathBuf>,
     /// What the handles do, along which axes, and whether they snap.
     mode: Mode,
     space: Space,
@@ -240,6 +246,8 @@ struct Actions {
     scene: Option<String>,
     view: Option<View>,
     quit: bool,
+    /// Show the interface in this language.
+    language: Option<&'static str>,
     /// An entity was clicked in the hierarchy: its id, and whether to toggle.
     select: Option<(String, bool)>,
     /// The empty part of the hierarchy was clicked.
@@ -288,6 +296,7 @@ impl Actions {
             || self.check
             || self.reset_camera
             || self.quit
+            || self.language.is_some()
             || self.deselect
             || self.delete
             || self.scene.is_some()
@@ -362,6 +371,8 @@ impl EditorApp {
             timings: VecDeque::new(),
             game_time: (0.0, 0),
             opener: Box::new(open_with_system),
+            language: "en",
+            preferences: None,
             mode: Mode::Translate,
             space: Space::World,
             snap: false,
@@ -654,9 +665,9 @@ impl EditorApp {
                     self.picture_stale = true;
                     if let Some(ops) = active.ops {
                         let what = match self.mode {
-                            Mode::Translate => format!("moved {}", active.id),
-                            Mode::Rotate => format!("rotated {}", active.id),
-                            Mode::Scale => format!("scaled {}", active.id),
+                            Mode::Translate => tf("moved {id}", &[("id", &active.id)]),
+                            Mode::Rotate => tf("rotated {id}", &[("id", &active.id)]),
+                            Mode::Scale => tf("scaled {id}", &[("id", &active.id)]),
                         };
                         let Value::Array(ops) = ops else {
                             return true;
@@ -671,7 +682,7 @@ impl EditorApp {
                 pressed: true,
                 ..
             } if name == "Escape" && self.drag.take().is_some() => {
-                self.status = "cancelled".to_owned();
+                self.status = t("cancelled").to_owned();
                 self.picture_stale = true;
             }
             _ => {}
@@ -716,7 +727,13 @@ impl EditorApp {
                     )
                 })
                 .collect();
-            self.edit(&format!("set {component}.{field}"), ops);
+            self.edit(
+                &tf(
+                    "set {component}.{field}",
+                    &[("component", &component), ("field", &field)],
+                ),
+                ops,
+            );
         }
         if let Some(component) = asked.copy {
             if let Some(value) = self
@@ -725,7 +742,7 @@ impl EditorApp {
                 .and_then(|entity| entity.components.get(&component))
             {
                 self.clipboard = Some((component.clone(), value.clone()));
-                self.status = format!("copied {component}");
+                self.status = tf("copied {component}", &[("component", &component)]);
             }
             self.inspected_for = (Vec::new(), u64::MAX);
             return;
@@ -740,7 +757,7 @@ impl EditorApp {
                     .iter()
                     .map(|(id, part)| op_for(id, *part, &name, value.clone()))
                     .collect();
-                self.edit(&format!("pasted {name}"), ops);
+                self.edit(&tf("pasted {name}", &[("name", &name)]), ops);
             }
             self.inspected_for = (Vec::new(), u64::MAX);
             return;
@@ -756,7 +773,7 @@ impl EditorApp {
                     _ => json!({ "op": "replace", "id": id, "component": component, "value": {} }),
                 })
                 .collect();
-            self.edit(&format!("reset {component}"), ops);
+            self.edit(&tf("reset {component}", &[("component", &component)]), ops);
             self.inspected_for = (Vec::new(), u64::MAX);
             return;
         }
@@ -765,14 +782,17 @@ impl EditorApp {
                 .iter()
                 .map(|(id, part)| op_for(id, *part, &component, json!({})))
                 .collect();
-            self.edit(&format!("added {component}"), ops);
+            self.edit(&tf("added {component}", &[("component", &component)]), ops);
         }
         if let Some(component) = asked.remove {
             let ops = targets
                 .iter()
                 .map(|(id, _)| json!({ "op": "remove", "id": id, "component": component }))
                 .collect();
-            self.edit(&format!("removed {component}"), ops);
+            self.edit(
+                &tf("removed {component}", &[("component", &component)]),
+                ops,
+            );
         }
         self.inspected_for = (Vec::new(), u64::MAX);
     }
@@ -926,7 +946,7 @@ impl EditorApp {
         if info["ok"] != true {
             self.status = info["error"]["message"]
                 .as_str()
-                .unwrap_or("the project could not be read")
+                .unwrap_or(t("the project could not be read"))
                 .to_owned();
             return;
         }
@@ -987,7 +1007,7 @@ impl EditorApp {
         if got["ok"] != true {
             let message = got["error"]["message"]
                 .as_str()
-                .unwrap_or("the scene could not be read");
+                .unwrap_or(t("the scene could not be read"));
             let hint = got["error"]["hint"].as_str().unwrap_or("");
             self.status = format!("{message} {hint}");
             return false;
@@ -1060,15 +1080,21 @@ impl EditorApp {
         let done = self.call("edit_apply", &args);
         let applied = done["ok"] == true;
         self.status = if applied && self.play.is_some() {
-            format!("{what} (live: not kept when the game stops)")
+            tf(
+                "{what} (live: not kept when the game stops)",
+                &[("what", &what)],
+            )
         } else if applied {
             what.to_owned()
         } else {
             let message = done["error"]["message"]
                 .as_str()
-                .unwrap_or("it did not work");
+                .unwrap_or(t("it did not work"));
             let hint = done["error"]["hint"].as_str().unwrap_or("");
-            format!("{what} failed: {message} {hint}")
+            tf(
+                "{what} failed: {message} {hint}",
+                &[("what", &what), ("message", &message), ("hint", &hint)],
+            )
         };
         // Look again either way: a refusal means the scene is not what the
         // person saw.
@@ -1085,17 +1111,76 @@ impl EditorApp {
         self.opener = opener;
     }
 
+    /// Shows the interface in the language `code` (`tr`, `de-DE`...).
+    /// Returns whether the editor has that language (if not, nothing
+    /// changes).
+    pub fn set_language(&mut self, code: &str) -> bool {
+        match crate::i18n::find(code) {
+            Some(language) => {
+                self.language = language.code;
+                crate::i18n::set_language(language.code);
+                self.picture_stale = true;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The interface's language (its code).
+    pub fn language(&self) -> &'static str {
+        self.language
+    }
+
+    /// Keeps the person's editor preferences in `path` (a JSON file such as
+    /// `{ "language": "tr" }`): reads them now, and writes them when they
+    /// change. Without a file, the language comes from `WISH_LANG` or the
+    /// system's; else English.
+    pub fn use_preferences(&mut self, path: std::path::PathBuf) {
+        let saved = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+            .and_then(|prefs| prefs["language"].as_str().map(str::to_owned));
+        let chosen = saved
+            .as_deref()
+            .and_then(crate::i18n::find)
+            .or_else(crate::i18n::from_environment);
+        if let Some(language) = chosen {
+            self.set_language(language.code);
+        }
+        self.preferences = Some(path);
+    }
+
+    /// Writes the preferences, if the editor keeps them (a failure only
+    /// shows in the status bar: the choice still holds for this run).
+    fn save_preferences(&mut self) {
+        let Some(path) = self.preferences.clone() else {
+            return;
+        };
+        let text = format!("{:#}\n", json!({ "language": self.language }));
+        let written = path
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| std::fs::write(&path, text));
+        if let Err(error) = written {
+            self.status = tf(
+                "the language could not be saved: {error}",
+                &[("error", &error)],
+            );
+        }
+    }
+
     /// Opens a project file in an outside editor.
     fn open_file(&mut self, relative: &str) {
         let path = self.workspace.root().join(relative);
         if !path.exists() {
-            self.status = format!("{relative} does not exist");
+            self.status = tf("{relative} does not exist", &[("relative", &relative)]);
             return;
         }
         self.status = match (self.opener)(&path) {
-            Ok(()) => format!("opened {relative}"),
-            Err(error) => format!(
-                "could not open {relative}: {error} (set WISH_EDITOR to your editor, such as code)"
+            Ok(()) => tf("opened {relative}", &[("relative", &relative)]),
+            Err(error) => tf(
+                "could not open {relative}: {error} (set WISH_EDITOR to your editor, such as code)",
+                &[("relative", &relative), ("error", &error)],
             ),
         };
     }
@@ -1139,16 +1224,19 @@ impl EditorApp {
     /// Starts the game from the scene being edited.
     fn start_play(&mut self) {
         if self.scene.ends_with(".prefab.json") {
-            self.status = "a prefab cannot be played; open a scene".to_owned();
+            self.status = t("a prefab cannot be played; open a scene").to_owned();
             return;
         }
         let started = self.call("sim_start", &json!({ "scene": self.scene.clone() }));
         let Some(session) = started["session"].as_str().map(str::to_owned) else {
             let message = started["error"]["message"]
                 .as_str()
-                .unwrap_or("it did not start");
+                .unwrap_or(t("it did not start"));
             let hint = started["error"]["hint"].as_str().unwrap_or("");
-            self.status = format!("play failed: {message} {hint}");
+            self.status = tf(
+                "play failed: {message} {hint}",
+                &[("message", &message), ("hint", &hint)],
+            );
             return;
         };
         self.drag = None;
@@ -1164,7 +1252,7 @@ impl EditorApp {
             since_read: 0.0,
         });
         self.snapshot();
-        self.status = "playing".to_owned();
+        self.status = t("playing").to_owned();
         self.inspected_for = (Vec::new(), u64::MAX);
         self.picture_stale = true;
     }
@@ -1174,7 +1262,7 @@ impl EditorApp {
     fn stop_play(&mut self) {
         if let Some(play) = self.play.take() {
             self.call("sim_stop", &json!({ "session": play.session }));
-            self.status = "stopped (live changes were not kept)".to_owned();
+            self.status = t("stopped (live changes were not kept)").to_owned();
             self.inspected_for = (Vec::new(), u64::MAX);
             self.target_for = (Vec::new(), u64::MAX);
             self.picture_stale = true;
@@ -1304,12 +1392,12 @@ impl EditorApp {
                 play.owed = 0.0;
                 play.since_snapshot = 0.0;
             }
-            self.status = format!("back at tick {tick}");
+            self.status = tf("back at tick {tick}", &[("tick", &tick)]);
         } else {
             let message = restored["error"]["message"]
                 .as_str()
-                .unwrap_or("it did not work");
-            self.status = format!("rewind failed: {message}");
+                .unwrap_or(t("it did not work"));
+            self.status = tf("rewind failed: {message}", &[("message", &message)]);
         }
         self.inspected_for = (Vec::new(), u64::MAX);
         self.picture_stale = true;
@@ -1365,15 +1453,21 @@ impl EditorApp {
                 "components": { "Transform": { "translation": translation }, "Model": { "asset": path } }
             }),
             _ => {
-                self.status = format!("{path} cannot be put in a scene (a prefab or a model can)");
+                self.status = tf(
+                    "{path} cannot be put in a scene (a prefab or a model can)",
+                    &[("path", &path)],
+                );
                 return;
             }
         };
         if self.scene.ends_with(".prefab.json") && Asset::kind_of(path) == "prefab" {
-            self.status = "a prefab cannot hold another prefab".to_owned();
+            self.status = t("a prefab cannot hold another prefab").to_owned();
             return;
         }
-        if self.edit(&format!("added {id} ({path})"), vec![op]) {
+        if self.edit(
+            &tf("added {id} ({path})", &[("id", &id), ("path", &path)]),
+            vec![op],
+        ) {
             self.selected = vec![id];
         }
     }
@@ -1388,7 +1482,7 @@ impl EditorApp {
             &json!({ "scene": scene, "detail": "normal", "root": id }),
         );
         let Some(node) = got["tree"].get(0).filter(|_| got["ok"] == true) else {
-            self.status = "make prefab failed: the entity could not be read".to_owned();
+            self.status = t("make prefab failed: the entity could not be read").to_owned();
             return;
         };
         let transform = node["components"].get("Transform").cloned();
@@ -1417,7 +1511,7 @@ impl EditorApp {
             true
         }
         if !collect(node, None, true, &mut ops) {
-            self.status = "make prefab failed: it already contains prefab instances".to_owned();
+            self.status = t("make prefab failed: it already contains prefab instances").to_owned();
             return;
         }
         let base = id
@@ -1447,9 +1541,12 @@ impl EditorApp {
         if made["ok"] != true {
             let message = made["error"]["message"]
                 .as_str()
-                .unwrap_or("it did not work");
+                .unwrap_or(t("it did not work"));
             let hint = made["error"]["hint"].as_str().unwrap_or("");
-            self.status = format!("make prefab failed: {message} {hint}");
+            self.status = tf(
+                "make prefab failed: {message} {hint}",
+                &[("message", &message), ("hint", &hint)],
+            );
             return;
         }
         let parent = self
@@ -1465,7 +1562,7 @@ impl EditorApp {
             instance["components"] = json!({ "Transform": transform });
         }
         let swapped = self.edit(
-            &format!("made prefab {path}"),
+            &tf("made prefab {path}", &[("path", &path)]),
             vec![json!({ "op": "despawn", "id": id }), instance],
         );
         self.asset_count = u64::MAX;
@@ -1488,6 +1585,10 @@ impl EditorApp {
     fn act(&mut self, actions: Actions) {
         if actions.quit {
             self.exit = true;
+        }
+        if let Some(code) = actions.language {
+            self.set_language(code);
+            self.save_preferences();
         }
         if let Some(scene) = actions.scene
             && scene != self.scene
@@ -1528,13 +1629,19 @@ impl EditorApp {
             );
             self.status = if moved["ok"] == true {
                 let updated = moved["updated"].as_array().map_or(0, Vec::len);
-                format!("moved {from} to {to} ({updated} file(s) that use it updated)")
+                tf(
+                    "moved {from} to {to} ({updated} file(s) that use it updated)",
+                    &[("from", &from), ("to", &to), ("updated", &updated)],
+                )
             } else {
                 let message = moved["error"]["message"]
                     .as_str()
-                    .unwrap_or("it did not work");
+                    .unwrap_or(t("it did not work"));
                 let hint = moved["error"]["hint"].as_str().unwrap_or("");
-                format!("move failed: {message} {hint}")
+                tf(
+                    "move failed: {message} {hint}",
+                    &[("message", &message), ("hint", &hint)],
+                )
             };
             if self.asset_selected.as_deref() == Some(from.as_str()) {
                 self.asset_selected = Some(to);
@@ -1577,16 +1684,17 @@ impl EditorApp {
                 vec![built["error"].clone()]
             };
             self.status = if built["passed"] == true {
-                format!(
-                    "game code built ({} warning(s))",
-                    built["warnings"].as_u64().unwrap_or(0)
+                let warnings = built["warnings"].as_u64().unwrap_or(0);
+                tf(
+                    "game code built ({warnings} warning(s))",
+                    &[("warnings", &warnings)],
                 )
             } else {
                 let first = problems
                     .first()
                     .and_then(|p| p["message"].as_str())
-                    .unwrap_or("it did not build");
-                format!("game code not built: {first}")
+                    .unwrap_or(t("it did not build"));
+                tf("game code not built: {first}", &[("first", &first)])
             };
             if built["passed"] != true {
                 self.found = problems;
@@ -1601,7 +1709,7 @@ impl EditorApp {
             } else {
                 self.status = got["error"]["message"]
                     .as_str()
-                    .unwrap_or("the settings could not be read")
+                    .unwrap_or(t("the settings could not be read"))
                     .to_owned();
             }
         }
@@ -1628,13 +1736,16 @@ impl EditorApp {
                                 .join(", ")
                         })
                         .unwrap_or_default();
-                    format!("settings saved ({what})")
+                    tf("settings saved ({what})", &[("what", &what)])
                 } else {
                     let message = saved["error"]["message"]
                         .as_str()
-                        .unwrap_or("it did not work");
+                        .unwrap_or(t("it did not work"));
                     let hint = saved["error"]["hint"].as_str().unwrap_or("");
-                    format!("settings not saved: {message} {hint}")
+                    tf(
+                        "settings not saved: {message} {hint}",
+                        &[("message", &message), ("hint", &hint)],
+                    )
                 };
                 self.refresh_project();
             }
@@ -1647,7 +1758,12 @@ impl EditorApp {
         {
             play.paused = !play.paused;
             play.owed = 0.0;
-            self.status = if play.paused { "paused" } else { "playing" }.to_owned();
+            self.status = if play.paused {
+                t("paused")
+            } else {
+                t("playing")
+            }
+            .to_owned();
         }
         if actions.play_step && self.play.as_ref().is_some_and(|p| p.paused) {
             self.run_ticks(1);
@@ -1687,7 +1803,7 @@ impl EditorApp {
             if let Some(parent) = parent {
                 op["parent"] = json!(parent);
             }
-            if self.edit(&format!("added {id}"), vec![op]) {
+            if self.edit(&tf("added {id}", &[("id", &id)]), vec![op]) {
                 self.selected = vec![id];
             }
         }
@@ -1698,9 +1814,9 @@ impl EditorApp {
                 .map(|id| json!({ "op": "despawn", "id": id }))
                 .collect();
             let what = if doomed.len() == 1 {
-                format!("deleted {}", doomed[0])
+                tf("deleted {id}", &[("id", &doomed[0])])
             } else {
-                format!("deleted {} entities", doomed.len())
+                tf("deleted {count} entities", &[("count", &doomed.len())])
             };
             if self.edit(&what, ops) {
                 self.selected.clear();
@@ -1714,7 +1830,7 @@ impl EditorApp {
             // renamed entity keeps its place in the selection by hand.
             let place = self.selected.iter().position(|id| *id == from);
             if self.edit(
-                &format!("renamed {from} to {to}"),
+                &tf("renamed {from} to {to}", &[("from", &from), ("to", &to)]),
                 vec![json!({ "op": "rename", "id": from, "to": to })],
             ) && let Some(place) = place
             {
@@ -1727,26 +1843,32 @@ impl EditorApp {
         }
         if let Some((id, parent)) = actions.reparent {
             let what = match &parent {
-                Some(parent) => format!("moved {id} under {parent}"),
-                None => format!("moved {id} to the root"),
+                Some(parent) => tf(
+                    "moved {id} under {parent}",
+                    &[("id", &id), ("parent", &parent)],
+                ),
+                None => tf("moved {id} to the root", &[("id", &id)]),
             };
             self.edit(
                 &what,
                 vec![json!({ "op": "reparent", "id": id, "parent": parent })],
             );
         }
-        for (wanted, action) in [(actions.undo, "undo"), (actions.redo, "redo")] {
+        for (wanted, action, done_text) in [
+            (actions.undo, "undo", t("undo: done")),
+            (actions.redo, "redo", t("redo: done")),
+        ] {
             if wanted {
                 let done = self.call(
                     "edit_history",
                     &json!({ "scene": self.scene.clone(), "action": action }),
                 );
                 self.status = if done["ok"] == true {
-                    format!("{action}: done")
+                    done_text.to_owned()
                 } else {
                     done["error"]["message"]
                         .as_str()
-                        .unwrap_or("it did not work")
+                        .unwrap_or(t("it did not work"))
                         .to_owned()
                 };
                 self.revision = u64::MAX;
@@ -1760,14 +1882,11 @@ impl EditorApp {
                 .cloned()
                 .unwrap_or_default();
             let found = self.found.len();
-            self.status = format!(
-                "check: {}",
-                if checked["passed"] == true {
-                    "no problems".to_owned()
-                } else {
-                    format!("{found} problem(s)")
-                }
-            );
+            self.status = if checked["passed"] == true {
+                t("check: no problems").to_owned()
+            } else {
+                tf("check: {found} problem(s)", &[("found", &found)])
+            };
             self.refresh_project();
         }
     }
@@ -2067,15 +2186,15 @@ impl EditorApp {
     /// The hierarchy panel: select, add, delete, rename, move.
     fn hierarchy(&self, ui: &mut Ui, actions: &mut Actions) {
         ui.horizontal(|ui| {
-            ui.heading("Hierarchy");
+            ui.heading(t("Hierarchy"));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if ui
-                    .add_enabled(!self.selected.is_empty(), egui::Button::new("Delete"))
+                    .add_enabled(!self.selected.is_empty(), egui::Button::new(t("Delete")))
                     .clicked()
                 {
                     actions.delete = true;
                 }
-                if ui.button("+").on_hover_text("Add an entity").clicked() {
+                if ui.button("+").on_hover_text(t("Add an entity")).clicked() {
                     actions.add = Some(None);
                 }
             });
@@ -2144,25 +2263,25 @@ impl EditorApp {
                         actions.reparent = Some(((*dragged).clone(), Some(row.id.clone())));
                     }
                     response.context_menu(|ui| {
-                        if ui.button("Add child").clicked() {
+                        if ui.button(t("Add child")).clicked() {
                             actions.add = Some(Some(row.id.clone()));
                             ui.close();
                         }
-                        if ui.button("Rename").clicked() {
+                        if ui.button(t("Rename")).clicked() {
                             self.ui_state.borrow_mut().rename =
                                 Some((row.id.clone(), row.id.clone()));
                             ui.close();
                         }
                         if !self.scene.ends_with(".prefab.json")
                             && ui
-                                .button("Make prefab")
-                                .on_hover_text("Saves it and its children as a prefab and puts an instance in its place")
+                                .button(t("Make prefab"))
+                                .on_hover_text(t("Saves it and its children as a prefab and puts an instance in its place"))
                                 .clicked()
                         {
                             actions.make_prefab = Some(row.id.clone());
                             ui.close();
                         }
-                        if ui.button("Delete").clicked() {
+                        if ui.button(t("Delete")).clicked() {
                             actions.select = Some((row.id.clone(), false));
                             actions.delete = true;
                             ui.close();
@@ -2193,36 +2312,48 @@ impl EditorApp {
             ui.horizontal(|ui| {
                 ui.menu_button(self.project.as_str(), |ui| {
                     if ui
-                        .button("Settings...")
-                        .on_hover_text("The project's name, default scene and input map")
+                        .button(t("Settings..."))
+                        .on_hover_text(t("The project's name, default scene and input map"))
                         .clicked()
                     {
                         actions.open_settings = true;
                         ui.close();
                     }
-                    if ui.button("Check").on_hover_text("Look for problems in the whole project").clicked() {
+                    if ui.button(t("Check")).on_hover_text(t("Look for problems in the whole project")).clicked() {
                         actions.check = true;
                         ui.close();
                     }
                     ui.separator();
                     if ui
-                        .button("Edit code")
-                        .on_hover_text("Open scripts/src/lib.rs in your code editor (WISH_EDITOR, or the system's)")
+                        .button(t("Edit code"))
+                        .on_hover_text(t("Open scripts/src/lib.rs in your code editor (WISH_EDITOR, or the system's)"))
                         .clicked()
                     {
                         actions.edit_code = true;
                         ui.close();
                     }
                     if ui
-                        .button("Build code")
-                        .on_hover_text("Build the game code; a running game switches to it")
+                        .button(t("Build code"))
+                        .on_hover_text(t("Build the game code; a running game switches to it"))
                         .clicked()
                     {
                         actions.build_code = true;
                         ui.close();
                     }
                     ui.separator();
-                    if ui.button("Quit").clicked() {
+                    ui.menu_button(t("Language"), |ui| {
+                        for language in crate::i18n::LANGUAGES {
+                            if ui
+                                .selectable_label(self.language == language.code, language.name)
+                                .clicked()
+                            {
+                                actions.language = Some(language.code);
+                                ui.close();
+                            }
+                        }
+                    });
+                    ui.separator();
+                    if ui.button(t("Quit")).clicked() {
                         actions.quit = true;
                         ui.close();
                     }
@@ -2237,7 +2368,7 @@ impl EditorApp {
                         }
                         if !self.prefabs.is_empty() {
                             ui.separator();
-                            ui.weak("Prefabs");
+                            ui.weak(t("Prefabs"));
                         }
                         for prefab in &self.prefabs {
                             if ui.selectable_label(*prefab == self.scene, prefab).clicked() {
@@ -2247,13 +2378,13 @@ impl EditorApp {
                     });
                 ui.separator();
                 if ui
-                    .add_enabled(self.can_undo, egui::Button::new("Undo"))
+                    .add_enabled(self.can_undo, egui::Button::new(t("Undo")))
                     .clicked()
                 {
                     actions.undo = true;
                 }
                 if ui
-                    .add_enabled(self.can_redo, egui::Button::new("Redo"))
+                    .add_enabled(self.can_redo, egui::Button::new(t("Redo")))
                     .clicked()
                 {
                     actions.redo = true;
@@ -2277,10 +2408,10 @@ impl EditorApp {
                         if ui
                             .add_enabled(
                                 !self.scene.ends_with(".prefab.json"),
-                                egui::Button::new("Play"),
+                                egui::Button::new(t("Play")),
                             )
                             .on_hover_text(
-                                "Run the game here; changes made while it runs are not kept",
+                                t("Run the game here; changes made while it runs are not kept"),
                             )
                             .clicked()
                         {
@@ -2288,21 +2419,21 @@ impl EditorApp {
                         }
                     }
                     Some(play) => {
-                        let pause = if play.paused { "Resume" } else { "Pause" };
+                        let pause = if play.paused { t("Resume") } else { t("Pause") };
                         if ui.button(pause).clicked() {
                             actions.play_pause = true;
                         }
                         if ui
-                            .add_enabled(play.paused, egui::Button::new("Step"))
-                            .on_hover_text("One tick")
+                            .add_enabled(play.paused, egui::Button::new(t("Step")))
+                            .on_hover_text(t("One tick"))
                             .clicked()
                         {
                             actions.play_step = true;
                         }
-                        if ui.button("Stop").clicked() {
+                        if ui.button(t("Stop")).clicked() {
                             actions.play_stop = true;
                         }
-                        ui.label(format!("tick {}", play.tick));
+                        ui.label(tf("tick {tick}", &[("tick", &play.tick)]));
                         if play.snapshots.len() > 1 {
                             let pending = self.ui_state.borrow().timeline;
                             let mut cursor = pending.unwrap_or(play.cursor);
@@ -2311,7 +2442,7 @@ impl EditorApp {
                                     egui::Slider::new(&mut cursor, 0..=play.snapshots.len() - 1)
                                         .show_value(false),
                                 )
-                                .on_hover_text("Timeline: let go to go back to that moment");
+                                .on_hover_text(t("Timeline: let go to go back to that moment"));
                             // Where it is put counts when the button is let go.
                             let down = ui.input(|input| input.pointer.any_down());
                             if response.changed() {
@@ -2324,38 +2455,38 @@ impl EditorApp {
                     }
                 }
                 ui.separator();
-                if ui.button("Reset camera").clicked() {
+                if ui.button(t("Reset camera")).clicked() {
                     actions.reset_camera = true;
                 }
                 ui.separator();
                 for (mode, name) in [
-                    (Mode::Translate, "Move"),
-                    (Mode::Rotate, "Rotate"),
-                    (Mode::Scale, "Scale"),
+                    (Mode::Translate, t("Move")),
+                    (Mode::Rotate, t("Rotate")),
+                    (Mode::Scale, t("Scale")),
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, name)
-                        .on_hover_text("Keys W, E, R")
+                        .on_hover_text(t("Keys W, E, R"))
                         .clicked()
                     {
                         actions.mode = Some(mode);
                     }
                 }
                 let space = if self.space == Space::World {
-                    "World"
+                    t("World")
                 } else {
-                    "Local"
+                    t("Local")
                 };
                 if ui
                     .button(space)
-                    .on_hover_text("The handles' axes: the world's or the entity's own")
+                    .on_hover_text(t("The handles' axes: the world's or the entity's own"))
                     .clicked()
                 {
                     actions.toggle_space = true;
                 }
                 if ui
-                    .selectable_label(self.snap, "Snap")
-                    .on_hover_text("Half metres, 15 degrees, steps of 10 % when on")
+                    .selectable_label(self.snap, t("Snap"))
+                    .on_hover_text(t("Half metres, 15 degrees, steps of 10 % when on"))
                     .clicked()
                 {
                     actions.toggle_snap = true;
@@ -2365,7 +2496,10 @@ impl EditorApp {
         egui::Panel::bottom("status").show(ui, |ui| {
             ui.horizontal(|ui| {
                 let (errors, warnings) = self.problems;
-                ui.label(format!("{errors} error(s), {warnings} warning(s)"));
+                ui.label(tf(
+                    "{errors} error(s), {warnings} warning(s)",
+                    &[("errors", &errors), ("warnings", &warnings)],
+                ));
                 ui.separator();
                 ui.label(&self.status);
             });
@@ -2438,6 +2572,8 @@ impl EditorApp {
         seconds: f64,
         events: Vec<ShellEvent>,
     ) -> bool {
+        // The language is per thread; this editor's is set for its frame.
+        crate::i18n::set_language(self.language);
         self.since_poll += seconds;
         self.since_project_poll += seconds;
         self.since_log += seconds;

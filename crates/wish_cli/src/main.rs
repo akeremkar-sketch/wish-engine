@@ -57,7 +57,7 @@ USAGE:
     wen test [files...] [--root <folder>] [--update-golden] [--json]
     wen replay <name> [--root <folder>] [--json]
     wen edit [--root <folder>] [--size <w>x<h>] [--software] [--exit-after <frames>]
-             [--headless-frame <script.json> --out <picture.png>]
+             [--headless-frame <script.json> --out <picture.png>] [--lang <code>]
     wen play [--root <folder>] [--scene <file>] [--size <w>x<h>] [--software] [--exit-after <frames>]
     wen sdk [--out <folder>] [--json]
     wen package [--out <folder>] [--json]
