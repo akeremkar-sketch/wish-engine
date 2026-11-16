@@ -189,6 +189,8 @@ Arayüz hibrittir (ADR-018): elle düzenleme ve yapay zekâ kokpiti eşit düzey
 
 ### M8a — Editör temeli (elle düzenleme)
 
+**Durum: sürüyor** (`m8a-editor`). Tasarım: [design/M8a-editor-temeli.md](design/M8a-editor-temeli.md) (teknoloji kararı: `egui` + kendi CPU rasterleyicimiz, §2).
+
 **Ön koşul.** T1'in elle düzenleme maketleri tamamlanmış; ADR-018 arayüz teknolojisi kesinleşmiş. Yalnızca kontrol düzlemine (M4) ve render'a (M3) bağlıdır; bu yüzden M5–M7 ile **paralel** başlayabilir ve motorun kendi geliştirilmesinde de işe yarar.
 
 **Çıktı.** Görünüm penceresi ve kamera gezinmesi; hiyerarşi; şemadan otomatik üretilen denetçi; taşıma/döndürme/ölçekleme tutamaçları; varlık tarayıcı (sürükle-bırak); materyal ve prefab düzenleme; girdi haritası düzenleyici; oynat/duraklat/adım at/geri sar denetimleri ve anlık görüntü zaman çizelgesi; konsol ve tanılar paneli; performans paneli; proje ayarları; "dış kod düzenleyicide aç"; Türkçe/İngilizce arayüz.
