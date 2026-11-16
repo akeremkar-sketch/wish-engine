@@ -810,3 +810,72 @@ fn golden_pictures_are_made_compared_and_explained() {
         true
     );
 }
+
+fn copy_dir(from: &std::path::Path, to: &std::path::Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_dir(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
+/// The mini game in `examples/collect` (M5's exit criterion): it builds,
+/// its scenario test proves it can be won, and a recorded win replays.
+#[test]
+fn the_collect_example_builds_is_won_by_its_test_and_replays() {
+    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/collect");
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("example-collect");
+    let _ = std::fs::remove_dir_all(&dir);
+    copy_dir(&source, &dir);
+    let mut ws = open(&dir);
+    let agent = parse_actor("agent");
+    let built = ws.call("script_build", &json!({}), &agent);
+    assert_eq!(built["passed"], true, "{built}");
+    assert_eq!(
+        built["warnings"], 0,
+        "the example compiles without warnings: {built}"
+    );
+    assert_eq!(ws.call("check", &json!({}), &agent)["passed"], true);
+    let tests = ws.call("test_run", &json!({}), &agent);
+    assert_eq!(tests["passed"], true, "{tests}");
+    assert_eq!(tests["tests"], 2);
+
+    // Played by hand through the tools, recorded, replayed.
+    let started = ws.call("sim_start", &json!({}), &agent);
+    let id = started["session"].as_str().unwrap().to_owned();
+    ws.call(
+        "replay",
+        &json!({ "action": "record", "session": id }),
+        &agent,
+    );
+    for (input, frames) in [
+        (json!({ "move": [1, 0] }), 45),
+        (json!({ "move": [0, 1] }), 45),
+        (json!({ "move": [-1, 0] }), 45),
+        (json!({}), 10),
+    ] {
+        ws.call(
+            "sim_step",
+            &json!({ "session": id, "frames": frames, "input": input }),
+            &agent,
+        );
+    }
+    let state = ws.call(
+        "entity_query",
+        &json!({ "session": id, "with": ["Coin"] }),
+        &agent,
+    );
+    assert_eq!(state["matched"], 0, "every coin was picked up: {state}");
+    ws.call(
+        "replay",
+        &json!({ "action": "save", "session": id, "name": "win" }),
+        &agent,
+    );
+    let replayed = ws.call("replay", &json!({ "action": "run", "name": "win" }), &agent);
+    assert_eq!(replayed["passed"], true, "{replayed}");
+}

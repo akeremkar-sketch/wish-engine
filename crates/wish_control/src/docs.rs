@@ -947,7 +947,7 @@ Tests: `tests/*.test.json` (`{{ \"format\": 1, \"scene\": ..., \"seed\": 1, \"st
 - A person may edit at the same time: mind `changed_by_others`, and use `base_revision` for changes prepared earlier.\n\
 - Sessions never change files. To keep something found in a session, make the change with `edit_apply`.\n\
 \n\
-More: `wish://docs/components/<Name>` for any type, `wish://docs/diagnostics/<code>` for any error code, `docs_search` to search.\n"
+More: `wish://docs/sdk` for the game code SDK, `wish://docs/components/<Name>` for any type, `wish://docs/diagnostics/<code>` for any error code, `docs_search` to search.\n"
     )
 }
 
@@ -976,6 +976,22 @@ pub fn search(registry: &Registry, query: &str, limit: usize) -> Vec<Value> {
         pages.push((
             "wish://docs/guide".to_owned(),
             format!("Guide: {title}"),
+            section.to_owned(),
+        ));
+    }
+    for section in sdk_page().split(
+        "
+## ",
+    ) {
+        let title = section
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .trim_start_matches("# ")
+            .to_owned();
+        pages.push((
+            "wish://docs/sdk".to_owned(),
+            format!("SDK: {title}"),
             section.to_owned(),
         ));
     }
@@ -1037,3 +1053,90 @@ pub fn search(registry: &Registry, query: &str, limit: usize) -> Vec<Value> {
         .map(|hit| json!({ "uri": hit.uri, "title": hit.title, "snippet": hit.snippet.trim() }))
         .collect()
 }
+
+/// The game code SDK reference (`wish://docs/sdk`): everything a system in
+/// `scripts/src/lib.rs` can use, with the shapes to copy.
+pub fn sdk_page() -> String {
+    SDK_PAGE.to_owned()
+}
+
+const SDK_PAGE: &str = r#"# Game code SDK (wish_sdk)
+
+Game code is Rust in `scripts/src/lib.rs`, compiled by `script_build` (no Cargo, no other files needed).
+Start the file with `use wish_sdk::prelude::*;` and end it with `wish_sdk::export! { ... }`.
+
+## Data
+
+```rust
+/// A coin the player can pick up.            // every type and field needs a /// comment
+#[component]                                  // data on entities
+pub struct Coin {
+    /// Points it is worth.
+    #[schema(range = 1..=100, default = 1)]   // also: unit = "m/s", alias = "..."
+    pub value: u32,
+}
+
+/// Points so far.
+#[resource]                                   // one value per world
+pub struct Score { /// The total.
+    pub points: u32 }
+
+/// A coin was picked up.
+#[event]                                      // a message between systems
+pub struct Collected { /// Its points.
+    pub value: u32 }
+```
+
+Field types: `bool`, integers, `f32`, `f64`, `Vec2`, `Vec3`, `Vec4`, `Quat`, `Mat4`, `Color`, `Entity`, `Text`,
+`AssetRef`, fixed arrays `[T; N]`, and structs / fieldless enums marked `#[schema]`. No `String`, `Vec`, `Option`:
+data must have a fixed size. The engine's own types are there too: `Transform`, `GlobalTransform` (read only),
+`Camera`, `DirectionalLight`, `Primitive`, `Material`, `Model`, `Sky`, `Ambient`, `Exposure`, `Time`.
+
+## Systems
+
+```rust
+#[system]                                     // or #[system(after = "move_player", before = "score")]
+fn collect(
+    players: Query<&Transform, With<Player>>,                 // read
+    mut coins: Query<(Entity, &mut Transform, &Coin), Without<Player>>,   // &mut = write
+    time: Res<Time>,                                           // a resource, read
+    mut score: ResMut<Score>,                                  // a resource, write
+    actions: Actions,                                          // the player's input
+    mut commands: Commands,                                    // spawn / despawn / insert / remove
+    events: EventReader<Collected>,                            // events since this system last ran
+    mut sent: EventWriter<Collected>,                          // send events
+) { ... }
+```
+
+- `Query`: `iter()`, `iter_mut()`, `get(entity)`, `get_mut(entity)`, `single()`, `single_mut()`, `len()`,
+  `is_empty()`, `entities()`. Items are tuples in the order asked. Filters: `With<T>`, `Without<T>`, tuples.
+- Changes through `&mut` and `ResMut` are written back when the system ends; only real changes count.
+- `Commands`: `commands.spawn().insert(Coin { value: 1 }).insert(Transform::from_translation(p))`,
+  `commands.despawn(entity)`, `commands.insert(entity, value)`, `commands.remove::<Coin>(entity)`,
+  `commands.set_parent(child, parent)`. They happen after the system, in order.
+- `Actions` (names from input.json): `held("jump")`, `pressed("jump")` (this tick only), `released("jump")`,
+  `axis("throttle")` (-1..1), `axis2("move")` (`Vec2`: x right, y forward). A name not in input.json reads as rest.
+- `Res<Time>`: `tick`, `delta` (seconds per tick, 1/60), `elapsed`.
+- Randomness: `random_f32()` (0..1), `random_range(a, b)`, `random_u64()`: the system's own seeded stream.
+- Logging: `wish_sdk::info!("x = {}", x)`, `warn!`, `error!` (shown in logs_get, kind "script").
+- A resource the world does not have yet starts at its default.
+
+## Export
+
+```rust
+wish_sdk::export! {
+    components: [Coin, Player],      // types scenes may use (those in queries are found by themselves)
+    resources: [Score],
+    events: [Collected],
+    systems: [move_player, collect, score],
+}
+```
+
+## Rules
+
+- All state lives in components and resources. The module starts fresh every tick: a `static` keeps nothing.
+- No clock, files, threads or network; no third-party crates (only `wish_sdk`).
+- A panic or an endless loop turns that system off and is reported with its line; the game keeps running.
+- Coordinates: +Y up, the camera looks along -Z, so "forward" is -Z: `Vec3::new(go.x, 0.0, -go.y)`.
+- Prove behaviour with a scenario test (tests/*.test.json, test_run) and check determinism with replay.
+"#;

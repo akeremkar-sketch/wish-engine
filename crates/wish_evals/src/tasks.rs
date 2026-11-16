@@ -20,6 +20,9 @@ pub struct Task {
     pub check: fn(&mut Probe, &Path, &Value) -> Verdict,
     /// A correct solution, made with the tools (for the self-test).
     pub reference: fn(&mut Probe) -> Result<(), String>,
+    /// Whether the agent may read and edit files (game code tasks); else it
+    /// has the engine's tools only.
+    pub files: bool,
 }
 
 fn edit(probe: &mut Probe, ops: Value) -> Result<(), String> {
@@ -656,6 +659,7 @@ pub fn all() -> Vec<Task> {
             setup: plain,
             baseline: nothing,
             check: cube_check,
+            files: false,
             reference: cube_reference,
         },
         Task {
@@ -664,6 +668,7 @@ pub fn all() -> Vec<Task> {
             setup: plain,
             baseline: nothing,
             check: stairs_check,
+            files: false,
             reference: stairs_reference,
         },
         Task {
@@ -672,6 +677,7 @@ pub fn all() -> Vec<Task> {
             setup: plain,
             baseline: nothing,
             check: sunset_check,
+            files: false,
             reference: sunset_reference,
         },
         Task {
@@ -680,6 +686,7 @@ pub fn all() -> Vec<Task> {
             setup: statue_setup,
             baseline: statue_baseline,
             check: framing_check,
+            files: false,
             reference: framing_reference,
         },
         Task {
@@ -688,6 +695,7 @@ pub fn all() -> Vec<Task> {
             setup: crate_setup,
             baseline: nothing,
             check: row_check,
+            files: false,
             reference: row_reference,
         },
         Task {
@@ -696,6 +704,7 @@ pub fn all() -> Vec<Task> {
             setup: lamp_setup,
             baseline: others_baseline,
             check: lamp_check,
+            files: false,
             reference: lamp_reference,
         },
         Task {
@@ -704,6 +713,7 @@ pub fn all() -> Vec<Task> {
             setup: falling_setup,
             baseline: nothing,
             check: falling_check,
+            files: false,
             reference: falling_reference,
         },
         Task {
@@ -712,6 +722,7 @@ pub fn all() -> Vec<Task> {
             setup: wall_setup,
             baseline: target_baseline,
             check: wall_check,
+            files: false,
             reference: wall_reference,
         },
         Task {
@@ -720,6 +731,7 @@ pub fn all() -> Vec<Task> {
             setup: model_setup,
             baseline: nothing,
             check: model_check,
+            files: false,
             reference: model_reference,
         },
         Task {
@@ -728,7 +740,26 @@ pub fn all() -> Vec<Task> {
             setup: plain,
             baseline: main_scene_baseline,
             check: night_check,
+            files: false,
             reference: night_reference,
+        },
+        Task {
+            id: "11_walk_code",
+            prompt: "'player' adlı küpü oyuncu yürütebilsin: oyun kodunu (scripts/src/lib.rs) yaz. input.json'daki 'move' eylemi oyuncuyu zeminde saniyede 4 metre yürütsün (move'un x'i sağa, +X; y'si ileri, yani -Z yönü); girdi yokken dursun. script_build ile derle ve davranışı tests/ altına yazacağın bir senaryo testiyle kanıtla.",
+            setup: crate::game_tasks::walk_setup,
+            baseline: nothing,
+            check: crate::game_tasks::walk_check,
+            files: true,
+            reference: crate::game_tasks::walk_reference,
+        },
+        Task {
+            id: "12_collect_game",
+            prompt: "Bir toplama oyunu yap. Sahnede 'player' ve üç para var (coin_a, coin_b, coin_c). Oyun kodunda (scripts/src/lib.rs) Coin bileşeni, Score kaynağı (points alanı) ve GameState kaynağı (won alanı) olsun. Oyuncu input.json'daki 'move' eylemiyle saniyede 4 metre yürüsün (x sağa +X, y ileri -Z). Oyuncu bir paraya 0,8 metreden yakın gelince para yok olsun ve Score.points bir artsın; hiç para kalmayınca GameState.won true olsun. Sahnedeki paralara Coin bileşenini ekle. Oyunun kazanılabildiğini tests/ altına yazacağın bir senaryo testiyle kanıtla.",
+            setup: crate::game_tasks::collect_setup,
+            baseline: nothing,
+            check: crate::game_tasks::collect_check,
+            files: true,
+            reference: crate::game_tasks::collect_reference,
         },
     ]
 }

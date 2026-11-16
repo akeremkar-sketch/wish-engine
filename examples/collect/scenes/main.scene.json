@@ -1,0 +1,111 @@
+{
+  "entities": {
+    "camera": {
+      "components": {
+        "Camera": {
+          "fov_y_deg": 50
+        },
+        "Transform": {
+          "rotation": [-0.4226183, 0.0, 0.0, 0.9063078],
+          "translation": [1.5, 8, 6.5]
+        }
+      }
+    },
+    "coin_corner": {
+      "components": {
+        "Coin": {
+          "value": 1
+        },
+        "Material": {
+          "base_color": [1, 0.78, 0.2, 1],
+          "metallic": 1,
+          "roughness": 0.3
+        },
+        "Primitive": {
+          "shape": "Sphere"
+        },
+        "Transform": {
+          "scale": [0.6, 0.6, 0.6],
+          "translation": [3, 0.5, -3]
+        }
+      }
+    },
+    "coin_east": {
+      "components": {
+        "Coin": {
+          "value": 1
+        },
+        "Material": {
+          "base_color": [1, 0.78, 0.2, 1],
+          "metallic": 1,
+          "roughness": 0.3
+        },
+        "Primitive": {
+          "shape": "Sphere"
+        },
+        "Transform": {
+          "scale": [0.6, 0.6, 0.6],
+          "translation": [3, 0.5, 0]
+        }
+      }
+    },
+    "coin_north": {
+      "components": {
+        "Coin": {
+          "value": 1
+        },
+        "Material": {
+          "base_color": [1, 0.78, 0.2, 1],
+          "metallic": 1,
+          "roughness": 0.3
+        },
+        "Primitive": {
+          "shape": "Sphere"
+        },
+        "Transform": {
+          "scale": [0.6, 0.6, 0.6],
+          "translation": [0, 0.5, -3]
+        }
+      }
+    },
+    "ground": {
+      "components": {
+        "Material": {
+          "base_color": [0.45, 0.45, 0.42, 1],
+          "roughness": 0.9
+        },
+        "Primitive": {
+          "shape": "Plane"
+        },
+        "Transform": {
+          "scale": [30, 1, 30]
+        }
+      }
+    },
+    "player": {
+      "components": {
+        "Material": {
+          "base_color": [0.15, 0.35, 0.9, 1]
+        },
+        "Player": {},
+        "Primitive": {
+          "shape": "Cube"
+        },
+        "Transform": {
+          "translation": [0, 0.5, 0]
+        }
+      }
+    },
+    "sun": {
+      "components": {
+        "DirectionalLight": {
+          "illuminance_lux": 100000
+        },
+        "Transform": {
+          "rotation": [-0.4545195, 0.3304543, 0.1786597, 0.8067046]
+        }
+      }
+    }
+  },
+  "format": 1
+}

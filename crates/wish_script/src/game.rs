@@ -384,6 +384,27 @@ impl GameModule {
                 .at_file(self.name())
             })?;
         }
+        // The game's resources exist from the start, at their defaults (a
+        // scene that sets them, and the game itself, change them later), so
+        // that tools and tests can read them before any system ran.
+        for ty in self
+            .manifest
+            .types
+            .iter()
+            .filter(|t| t.role == Role::Resource)
+        {
+            let Some(id) = world.registry().resource_id(&ty.schema.name) else {
+                continue;
+            };
+            if world.resource_bytes(id)?.is_none() {
+                let default = world
+                    .registry()
+                    .resource(id)
+                    .map(|info| info.default_bytes().to_vec())
+                    .ok_or_else(poisoned)?;
+                world.insert_resource_bytes(id, &default)?;
+            }
+        }
         Ok(notes)
     }
 

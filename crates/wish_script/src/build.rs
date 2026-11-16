@@ -64,7 +64,11 @@ fn toolchain_missing(rustc: &Path, why: &str) -> Diagnostic {
 /// `manifest`) and packs it into `out`. `rustc` is the compiler games will
 /// be built with; the pack records its version.
 pub fn pack_sdk(cargo: &Path, manifest: &Path, target_dir: &Path, out: &Path) -> Result<Value> {
-    let output = Command::new(cargo)
+    let mut command = Command::new(cargo);
+    if let Some(dir) = manifest.parent() {
+        command.current_dir(dir);
+    }
+    let output = command
         .args([
             "build",
             "-p",
@@ -140,10 +144,15 @@ pub fn pack_sdk(cargo: &Path, manifest: &Path, target_dir: &Path, out: &Path) ->
             }
         }
     }
+    // The compiler that built the pack, found the way cargo found it (from
+    // the engine's folder, so rustup picks the pinned toolchain). Game builds
+    // must use the same one.
     let rustc = std::env::var_os("RUSTC").map_or_else(|| PathBuf::from("rustc"), PathBuf::from);
+    let compiler = real_rustc_in(&rustc, manifest.parent())?;
     let description = json!({
         "format": 1,
-        "rustc": rustc_version(&real_rustc(&rustc)?)?,
+        "rustc": rustc_version(&compiler)?,
+        "rustc_path": compiler.display().to_string(),
         "externs": externs,
     });
     std::fs::write(
@@ -157,7 +166,17 @@ pub fn pack_sdk(cargo: &Path, manifest: &Path, target_dir: &Path, out: &Path) ->
 /// The compiler binary behind `rustc`, which may be rustup's proxy (the
 /// proxy needs rustup's environment, which the build does not pass on).
 fn real_rustc(rustc: &Path) -> Result<PathBuf> {
-    let out = Command::new(rustc)
+    real_rustc_in(rustc, None)
+}
+
+/// [`real_rustc`], asked from folder `dir` (rustup's toolchain file there
+/// decides which compiler the proxy means).
+fn real_rustc_in(rustc: &Path, dir: Option<&Path>) -> Result<PathBuf> {
+    let mut command = Command::new(rustc);
+    if let Some(dir) = dir {
+        command.current_dir(dir);
+    }
+    let out = command
         .args(["--print", "sysroot"])
         .output()
         .map_err(|e| toolchain_missing(rustc, &e.to_string()))?;
@@ -204,7 +223,15 @@ impl Toolchain {
             Some(path) => PathBuf::from(path),
             None => match beside.map(|dir| dir.join("toolchain").join("bin").join(exe)) {
                 Some(bundled) if bundled.is_file() => bundled,
-                _ => real_rustc(Path::new("rustc"))?,
+                // Engine development: the compiler that built the SDK pack
+                // (another rustup toolchain of the same version may lack
+                // the wasm32 target).
+                _ => std::fs::read_to_string(sdk.join(SDK_FILE))
+                    .ok()
+                    .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+                    .and_then(|d| d["rustc_path"].as_str().map(PathBuf::from))
+                    .filter(|path| path.is_file())
+                    .map_or_else(|| real_rustc(Path::new("rustc")), Ok)?,
             },
         };
         Ok(Self { sdk, rustc })
