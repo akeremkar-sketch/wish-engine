@@ -142,6 +142,10 @@ pub struct EditorApp {
     can_undo: bool,
     can_redo: bool,
     problems: (u64, u64),
+    /// Why the scene cannot be shown (message, hint), if it cannot.
+    scene_error: Option<(String, String)>,
+    /// The project has game code that is not built yet.
+    unbuilt: bool,
     view: View,
     /// The fly camera, made from the scene's first camera on first use.
     eye: RefCell<Option<FlyCamera>>,
@@ -248,6 +252,8 @@ struct Actions {
     quit: bool,
     /// Show the interface in this language.
     language: Option<&'static str>,
+    /// Look for problems and show them.
+    show_problems: bool,
     /// An entity was clicked in the hierarchy: its id, and whether to toggle.
     select: Option<(String, bool)>,
     /// The empty part of the hierarchy was clicked.
@@ -297,6 +303,7 @@ impl Actions {
             || self.reset_camera
             || self.quit
             || self.language.is_some()
+            || self.show_problems
             || self.deselect
             || self.delete
             || self.scene.is_some()
@@ -391,6 +398,8 @@ impl EditorApp {
             since_poll: POLL_SECONDS,
             since_project_poll: 0.0,
             scripts: String::new(),
+            scene_error: None,
+            unbuilt: false,
             frames: 0,
             exit: false,
         };
@@ -966,10 +975,17 @@ impl EditorApp {
                 .or_else(|| self.scenes.first().cloned())
                 .unwrap_or_default();
         }
-        self.problems = (
+        let problems = (
             info["problems"]["errors"].as_u64().unwrap_or(0),
             info["problems"]["warnings"].as_u64().unwrap_or(0),
         );
+        // The problems tab follows what the project has (it is not empty
+        // while the status bar counts errors).
+        if problems != self.problems {
+            self.problems = problems;
+            self.run_check();
+        }
+        self.unbuilt = !info["scripts"]["sources"].is_null() && info["scripts"]["module"].is_null();
         let prefabs: Vec<String> = info["prefabs"]
             .as_array()
             .into_iter()
@@ -1009,8 +1025,15 @@ impl EditorApp {
                 .as_str()
                 .unwrap_or(t("the scene could not be read"));
             let hint = got["error"]["hint"].as_str().unwrap_or("");
-            self.status = format!("{message} {hint}");
-            return false;
+            let error = (message.to_owned(), hint.to_owned());
+            let changed = self.scene_error.as_ref() != Some(&error);
+            self.status = message.to_owned();
+            self.scene_error = Some(error);
+            self.rows.clear();
+            return changed;
+        }
+        if self.scene_error.take().is_some() {
+            self.status.clear();
         }
         let revision = got["revision"].as_u64().unwrap_or(0);
         if revision == self.revision {
@@ -1585,6 +1608,10 @@ impl EditorApp {
     fn act(&mut self, actions: Actions) {
         if actions.quit {
             self.exit = true;
+        }
+        if actions.show_problems {
+            self.run_check();
+            self.tab = Tab::Problems;
         }
         if let Some(code) = actions.language {
             self.set_language(code);
@@ -2309,7 +2336,32 @@ impl EditorApp {
     fn layout(&self, ui: &mut Ui, viewport: &mut Rect) -> Actions {
         let mut actions = Actions::default();
         egui::Panel::top("menu").show(ui, |ui| {
-            ui.horizontal(|ui| {
+            // Shortcuts, unless the person is typing (a text box has its
+            // own undo).
+            if !ui.ctx().egui_wants_keyboard_input() {
+                let pressed = |ui: &Ui, modifiers: egui::Modifiers, key: egui::Key| {
+                    ui.input_mut(|input| {
+                        input.consume_shortcut(&egui::KeyboardShortcut::new(modifiers, key))
+                    })
+                };
+                let command = egui::Modifiers::COMMAND;
+                if pressed(ui, command | egui::Modifiers::SHIFT, egui::Key::Z)
+                    || pressed(ui, command, egui::Key::Y)
+                {
+                    actions.redo |= self.can_redo;
+                } else if pressed(ui, command, egui::Key::Z) {
+                    actions.undo |= self.can_undo;
+                }
+                if pressed(ui, command, egui::Key::P) {
+                    if self.play.is_some() {
+                        actions.play_stop = true;
+                    } else if !self.scene.ends_with(".prefab.json") {
+                        actions.play_start = true;
+                    }
+                }
+            }
+            // A narrow window puts the rest of the bar on a second line.
+            ui.horizontal_wrapped(|ui| {
                 ui.menu_button(self.project.as_str(), |ui| {
                     if ui
                         .button(t("Settings..."))
@@ -2379,23 +2431,29 @@ impl EditorApp {
                 ui.separator();
                 if ui
                     .add_enabled(self.can_undo, egui::Button::new(t("Undo")))
+                    .on_hover_text("Ctrl+Z")
                     .clicked()
                 {
                     actions.undo = true;
                 }
                 if ui
                     .add_enabled(self.can_redo, egui::Button::new(t("Redo")))
+                    .on_hover_text("Ctrl+Y")
                     .clicked()
                 {
                     actions.redo = true;
                 }
                 ui.separator();
                 egui::ComboBox::from_id_salt("view")
-                    .selected_text(self.view.name())
+                    .selected_text(view_label(self.view.name()))
                     .show_ui(ui, |ui| {
                         for name in View::NAMES {
                             if ui
-                                .selectable_label(*name == self.view.name(), *name)
+                                .selectable_label(*name == self.view.name(), view_label(name))
+                                .on_hover_text(tf(
+                                    "Called '{name}' by capture_frame and wen capture --view",
+                                    &[("name", name)],
+                                ))
                                 .clicked()
                                 && let Ok(view) = View::parse(name)
                             {
@@ -2410,9 +2468,9 @@ impl EditorApp {
                                 !self.scene.ends_with(".prefab.json"),
                                 egui::Button::new(t("Play")),
                             )
-                            .on_hover_text(
-                                t("Run the game here; changes made while it runs are not kept"),
-                            )
+                            .on_hover_text(t(
+                                "Run the game here; changes made while it runs are not kept (Ctrl+P)",
+                            ))
                             .clicked()
                         {
                             actions.play_start = true;
@@ -2501,7 +2559,8 @@ impl EditorApp {
                     &[("errors", &errors), ("warnings", &warnings)],
                 ));
                 ui.separator();
-                ui.label(&self.status);
+                ui.add(egui::Label::new(&self.status).truncate())
+                    .on_hover_text(&self.status);
             });
         });
         egui::Panel::bottom("assets")
@@ -2560,8 +2619,56 @@ impl EditorApp {
                         .unwrap_or_else(|| area.center());
                     actions.drop = Some((dropped.0.clone(), at));
                 }
+                if let Some((message, hint)) = &self.scene_error {
+                    self.scene_problem(ui, area, message, hint, &mut actions);
+                }
             });
         actions
+    }
+
+    /// A card in the middle of the view: why the scene cannot be shown, and
+    /// what to do about it.
+    fn scene_problem(
+        &self,
+        ui: &mut Ui,
+        area: Rect,
+        message: &str,
+        hint: &str,
+        actions: &mut Actions,
+    ) {
+        let card = Rect::from_center_size(
+            area.center(),
+            vec2((area.width() - 40.0).clamp(120.0, 520.0), 200.0),
+        );
+        ui.scope_builder(egui::UiBuilder::new().max_rect(card), |ui| {
+            egui::Frame::group(ui.style())
+                .fill(ui.visuals().panel_fill)
+                .inner_margin(16.0)
+                .show(ui, |ui| {
+                    ui.heading(t("This scene cannot be shown"));
+                    ui.add_space(4.0);
+                    ui.label(message);
+                    if !hint.is_empty() {
+                        ui.weak(hint);
+                    }
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if self.unbuilt
+                            && ui
+                                .button(t("Build code"))
+                                .on_hover_text(t(
+                                    "The scene uses the game code's own types: build it first",
+                                ))
+                                .clicked()
+                        {
+                            actions.build_code = true;
+                        }
+                        if ui.button(t("Show problems")).clicked() {
+                            actions.show_problems = true;
+                        }
+                    });
+                });
+        });
     }
 
     /// Runs one frame: input, calls, layout, the scene's picture, painting.
@@ -2594,6 +2701,7 @@ impl EditorApp {
             || log_changed
             || self.play.as_ref().is_some_and(|play| !play.paused)
             || self.frames < 3
+            || (self.canvas.width, self.canvas.height) != size
             || self.movement.any()
             || self.editor.as_ref().is_some_and(Editor::wants_repaint);
         if self.since_poll >= POLL_SECONDS {
@@ -2842,6 +2950,21 @@ impl Shell for EditorApp {
 
     fn wants_exit(&self) -> bool {
         self.exit
+    }
+}
+
+/// What a view of the scene is called in the interface (its name, such as
+/// `lit`, is what `capture_frame` and `wen capture --view` take).
+fn view_label(name: &str) -> &'static str {
+    match name {
+        "lit" => t("Shaded"),
+        "ids" => t("Entity colours"),
+        "depth" => t("Depth"),
+        "normals" => t("Normals"),
+        "wireframe" => t("Wireframe"),
+        "colliders" => t("Colliders"),
+        "lights" => t("Lights"),
+        _ => t("Other view"),
     }
 }
 
