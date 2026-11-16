@@ -14,7 +14,8 @@ use wish_control::scaffold::create_project;
 use wish_control::{Workspace, WorkspaceOptions, parse_actor};
 use wish_script::Limits;
 use wish_script::build::{
-    GAME_WASM, SCRIPTS_ENTRY, Toolchain, build_game_within, clear_output_folder, pack_sdk,
+    GAME_WASM, SCRIPTS_ENTRY, SDK_ENTRIES, Toolchain, build_game_within, clear_output_folder,
+    pack_sdk,
 };
 
 fn toolchain() -> &'static Toolchain {
@@ -24,6 +25,8 @@ fn toolchain() -> &'static Toolchain {
         let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml");
         let cargo = PathBuf::from(std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned()));
         let sdk = tmp.join("sdk-pack-review-m5");
+        // The folder is the test's own (a cache may have left anything in it).
+        let _ = std::fs::remove_dir_all(&sdk);
         pack_sdk(&cargo, &manifest, &tmp.join("sdk-target"), &sdk).unwrap();
         let out = std::process::Command::new("rustc")
             .args(["--print", "sysroot"])
@@ -299,16 +302,18 @@ fn t7_a_snapshot_later_than_the_recording_stops_it() {
 fn t8_an_output_folder_is_emptied_only_if_wen_made_it() {
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("review-m5-t8");
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(dir.join("work")).unwrap();
+    std::fs::create_dir_all(dir.join("work/wasm")).unwrap();
     std::fs::write(dir.join("work/precious.txt"), "keep me").unwrap();
-    let refused = clear_output_folder(&dir.join("work"), "sdk.json").unwrap_err();
+    let refused = clear_output_folder(&dir.join("work"), SDK_ENTRIES).unwrap_err();
     assert_eq!(refused.code, "output_exists");
+    assert!(refused.message.contains("precious.txt"), "{refused:?}");
     assert!(dir.join("work/precious.txt").is_file());
-    std::fs::create_dir_all(dir.join("sdk")).unwrap();
-    std::fs::write(dir.join("sdk/sdk.json"), "{}").unwrap();
-    clear_output_folder(&dir.join("sdk"), "sdk.json").unwrap();
+    // A pack, even one left half-written (no sdk.json yet), is replaced.
+    std::fs::create_dir_all(dir.join("sdk/wasm")).unwrap();
+    std::fs::create_dir_all(dir.join("sdk/host")).unwrap();
+    clear_output_folder(&dir.join("sdk"), SDK_ENTRIES).unwrap();
     assert!(!dir.join("sdk").exists());
-    clear_output_folder(&dir.join("missing"), "sdk.json").unwrap();
+    clear_output_folder(&dir.join("missing"), SDK_ENTRIES).unwrap();
 }
 
 #[test]

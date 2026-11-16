@@ -655,7 +655,17 @@ pub fn package(out: Option<&str>, as_json: bool) -> wish_core::Result<String> {
             "Check that the package folder can be written to.",
         )
     };
-    wish_script::build::clear_output_folder(&out, "sdk/sdk.json")?;
+    wish_script::build::clear_output_folder(
+        &out,
+        &[
+            "wen.exe",
+            "wen",
+            "sdk",
+            "toolchain",
+            "clean-test.ps1",
+            "clean-test.wsb",
+        ],
+    )?;
     std::fs::create_dir_all(&out).map_err(|e| failed("create the package folder", e))?;
     std::fs::copy(&exe, out.join(exe.file_name().unwrap_or_default()))
         .map_err(|e| failed("copy wen", e))?;

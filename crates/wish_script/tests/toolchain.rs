@@ -26,6 +26,8 @@ fn a_packed_toolchain_builds_game_code_on_its_own() {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml");
     let cargo = PathBuf::from(std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned()));
     let sdk = tmp.join("sdk-pack-toolchain");
+    // The folder is the test's own (a cache may have left anything in it).
+    let _ = std::fs::remove_dir_all(&sdk);
     pack_sdk(&cargo, &manifest, &tmp.join("sdk-target"), &sdk).unwrap();
     let packed = tmp.join("packed-toolchain");
     let description = pack_toolchain(&PathBuf::from("rustc"), &packed).unwrap();

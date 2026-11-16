@@ -28,25 +28,42 @@ const SDK_FILE: &str = "sdk.json";
 /// The most compiler messages kept in a build report.
 const MAX_MESSAGES: usize = 20;
 
-/// Empties an output folder before it is written again, but only if it is
-/// empty or was made by wen (it holds `marker`): `--out .` must never
-/// delete a project (M5 closing review).
-pub fn clear_output_folder(out: &Path, marker: &str) -> Result<()> {
-    let Ok(mut entries) = std::fs::read_dir(out) else {
+/// Empties an output folder before it is written again, but only if
+/// everything in it has one of the names wen writes there (`known`; a
+/// folder left half-written counts): `--out .` must never delete a project
+/// (M5 closing review).
+pub fn clear_output_folder(out: &Path, known: &[&str]) -> Result<()> {
+    let Ok(entries) = std::fs::read_dir(out) else {
         return Ok(());
     };
-    if entries.next().is_some() && !out.join(marker).is_file() {
+    let mut strangers: Vec<String> = entries
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| !known.contains(&name.as_str()))
+        .collect();
+    if !strangers.is_empty() {
+        strangers.sort();
+        strangers.truncate(5);
         return Err(Diagnostic::error(
             "output_exists",
             format!(
-                "'{}' already has files, and they were not made by wen (there is no {marker}).",
-                out.display()
+                "'{}' has files wen did not make there ({}).",
+                out.display(),
+                strangers.join(", ")
             ),
-            "Choose a new or empty folder for --out; wen replaces only folders it made itself.",
+            format!(
+                "Choose a new or empty folder for --out; wen replaces only folders that hold nothing but what it writes ({}).",
+                known.join(", ")
+            ),
         ));
     }
     std::fs::remove_dir_all(out).map_err(|e| io_failed("empty the output folder", &e))
 }
+
+/// What an SDK pack holds.
+pub const SDK_ENTRIES: &[&str] = &[SDK_FILE, "wasm", "host"];
+/// What a packed toolchain holds.
+pub const TOOLCHAIN_ENTRIES: &[&str] = &[TOOLCHAIN_FILE, "bin", "lib"];
 
 fn io_failed(what: &str, error: &std::io::Error) -> Diagnostic {
     Diagnostic::error(
@@ -118,7 +135,7 @@ pub fn pack_sdk(cargo: &Path, manifest: &Path, target_dir: &Path, out: &Path) ->
     }
     let wasm = out.join("wasm");
     let host = out.join("host");
-    clear_output_folder(out, SDK_FILE)?;
+    clear_output_folder(out, SDK_ENTRIES)?;
     std::fs::create_dir_all(&wasm).map_err(|e| io_failed("create the SDK folder", &e))?;
     std::fs::create_dir_all(&host).map_err(|e| io_failed("create the SDK folder", &e))?;
     let mut externs = serde_json::Map::new();
@@ -679,7 +696,7 @@ pub fn pack_toolchain(rustc: &Path, out: &Path) -> Result<Value> {
                 .find_map(|l| l.strip_prefix("host: ").map(str::to_owned))
         })
         .ok_or_else(|| toolchain_missing(&real, "it does not say which machine it runs on"))?;
-    clear_output_folder(out, TOOLCHAIN_FILE)?;
+    clear_output_folder(out, TOOLCHAIN_ENTRIES)?;
     let library =
         |name: &str| name.ends_with(".dll") || name.contains(".so") || name.ends_with(".dylib");
     let mut bytes = 0;

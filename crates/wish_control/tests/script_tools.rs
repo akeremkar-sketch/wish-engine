@@ -21,6 +21,8 @@ fn toolchain() -> &'static Toolchain {
         let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml");
         let cargo = PathBuf::from(std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned()));
         let sdk = tmp.join("sdk-pack-control");
+        // The folder is the test's own (a cache may have left anything in it).
+        let _ = std::fs::remove_dir_all(&sdk);
         pack_sdk(&cargo, &manifest, &tmp.join("sdk-target"), &sdk).unwrap();
         let out = std::process::Command::new("rustc")
             .args(["--print", "sysroot"])
