@@ -98,3 +98,10 @@ Görevler 26–40+: platform oyunu yapı taşları (takip kamerası, hareketli p
 - **`examples/quiz` (arayüz ağırlıklı):** menü → beş soru × dört şık düğmesi → sonuç; her şey `UiNode`; oyun kodu yalnızca `ButtonClicked`'e tepki verir ve metin yazar. Testler işaretçiyle tıklayarak oynar (tam doğru 5/5 ve bir yanlış 4/5).
 - **CI:** her ikisi de derlenir, testleri koşar, kaydedilen koşu bit düzeyinde tekrar oynatılır (`script_tools.rs`).
 - **Sürtünme F9–F10 (düzeltildi):** arayüz çocuklarının sırası belgesizdi (`order`); geçersiz UTF-8 dosyada ipucu kodlamayı söylemiyordu.
+
+### WP6 — değerlendirme görevleri 26–41
+
+- 16 yeni görev (`crates/wish_evals/src/m7_tasks.rs`); toplam **41**; **`selftest` 41/41** (her görev referans çözümden önce başarısız, sonra başarılı). Hepsi motorun yaptığına bakar (oturum koşusu, `describe_view`, günlükler, gizli senaryo testleri).
+- **Oyun kodu (6):** takip kamerası, hareketli platform, düşünce yeniden doğma, sensörle mücevher toplama + `Score`, itmeyle (`BodyImpulse`) zıplama, saniye sayacı yazısı (`text()`).
+- **Sahne/araç (10):** `asset_create` ile zil sesi (perde ve uzunluk ölçülür) ve halka resmi + arayüzde gösterme, çalışan oyunun kaynağını okuyup nota yazma (`entity_get resources`), dikey menü (arayüz sırası `order`), 2B sekme (kilitler), sahne ışığı konisi, animasyonu bir kez oynatma, çarpışma katmanı/maskesiyle "hayalet" top, ikinci seviye sahnesi, tekrar kaydı.
+- Çoğu sürtünme günlüğünden gelir: ajanın takılabileceği yerler (F5 asset_create, F7 kaynaklar, F9 sıra…). **Gerçek koşum (Sonnet · medium hedef ≥ %90, Haiku kayıt) kota harcar → M7 sonunda kullanıcı onayıyla.**
