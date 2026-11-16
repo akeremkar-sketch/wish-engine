@@ -1,6 +1,6 @@
 # M7 — Kendi motorumuzla oyun
 
-Durum: tasarım (16 Kasım 2026). Dal: `m7-game`. İlgili kararlar: ADR-016 (girdi), ADR-017 (test), ADR-020 (3D öncelikli), "İlk vitrin oyunu: küçük bir 3D platform oyunu" (DECISIONS, 10 Kasım 2026).
+Durum: tamamlandı (16 Kasım 2026). Dal: `m7-game`. İlgili kararlar: ADR-016 (girdi), ADR-017 (test), ADR-020 (3D öncelikli), "İlk vitrin oyunu: küçük bir 3D platform oyunu" (DECISIONS, 10 Kasım 2026).
 
 ## 1. Hedef ve yöntem
 
@@ -129,3 +129,16 @@ Görevler 26–40+: platform oyunu yapı taşları (takip kamerası, hareketli p
 - **Örnekler:** Bricks'te ilk tuş raketi otomatik pilottan devralır (`keys.test.json`), raket sesi yalnızca rakette; Islands/Bricks bitiş yazısı işaretçi bileşenle (`WinText`/`EndText`) bulunur; Quiz'de "Tekrar" düğmesi test edilir.
 - **Değerlendirme görevleri:** 26 kamera dünya konumu + görüntüde oyuncu (çocuk kamera da kabul), 28 hız sıfırlaması denetlenir, 30 gürültü zil sayılmaz, 31 tam 64×64, 32 değer tahmin edilemez (denetçi kendisi okur), 34 z kaymasını kilit durdurmalı, 35 yükseklik nesnenin tepesinden, 37 sensör/çarpıştırıcısız hile kabul edilmez, 38 en yüksek nokta `until` ile, 40 kopyalar aynı olmalı, 41 tam 81 tick; ajanın kendi testi `expect`/`until` içermeli (tüm oyun kodu görevleri). `selftest` **41/41**.
 - **Karşılaştırma düzeneği:** Unity kamera denetimi gerçek yatay/dikey görüş açısıyla; düşen kutuda tetikleyici/kilitli Y reddedilir; sahne içi malzeme okunur; iki ajan da boş, tarafsız klasörden ve dosya okuma araçları kapalı koşar; başlangıç sahnesi metin olarak kaydedilir ve okuyucunun nesneleri bulduğu doğrulanır; satırlar biter bitmez yazılır, zaman aşımı koşuyu düşürmez.
+
+## 11. M7 sonucu
+
+| Çıkış ölçütü | Durum | Kanıt |
+|---|---|---|
+| 1. Vitrin oyunu baştan sona oynanır, senaryo testleri geçer | **karşılandı** | `examples/islands`: 4 senaryo testi (açılış, ilk zıplama, kontrol noktası, kazanma + altın görüntü); CI'da derlenir, kazanılır, kayıt bit düzeyinde tekrar oynatılır (`script_tools.rs`). İki küçük örnek (`bricks` 2B, `quiz` arayüz) aynı biçimde. |
+| 2. Sonnet 5.5 · medium ≥ %90; Haiku kaydedilir | **Sonnet karşılandı: 41/41 (%100)**; Haiku kullanıcı seçimiyle koşulmadı | `evals/results/m7-sonnet-5-5-medium.json`: 41 görev × 1 deneme, 473 araç çağrısı, 14 araç hatası (hepsi ajanın kendi düzelttiği), 18 dk, **4,59 $ karşılığı**; M7 görevleri (26–41) 1,88 $. En pahalı: `16_jump_code` 0,27 $. |
+| 3. Claude dışında bir MCP istemcisi | **karşılandı** | MCP Inspector 2.13.0, `--strict` şema denetimi temiz, 11/11 (`evals/results/m7-mcp-inspector.md`). |
+| 4. Unity/Unreal karşılaştırması | **düzenek hazır, koşulmadı** | `tools/compare/` (8 görev, iki motor, `selftest` geçer). Unity koşumu kullanıcı seçimiyle ertelendi; Unreal kurulmadı (kullanıcı kararı: disk). |
+
+**Motora giren:** `asset_create` (25. araç), SDK `asset()`, `entity_get resources`, `scene_not_session`, karakter temas payı, hareketli platformun karakteri kesin (ve duvar görerek) taşıması, `wen do` akış girdisi, `wish://docs/recipes` (oynanarak test edilen 8 tarif), kılavuzda oyun sistemleri, arayüz çocuk sırası belgesi, kodlama ipucu, `tools/clean-build.ps1`.
+
+**Bekleyen kullanıcı adımları:** Haiku 5.5 koşumu (~2–4 $); karşılaştırma koşumları (Wish ~1 $, Unity ~1–2 $ + geçici 2–3 GB proje). Önceki kilometre taşlarından: M5 Windows Sandbox denemesi, ses çıkışını kulakla deneme.
