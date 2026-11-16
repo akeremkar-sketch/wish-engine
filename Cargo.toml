@@ -82,9 +82,11 @@ wat = "1"
 rapier3d = { version = "0.36", default-features = false, features = ["dim3", "f32", "std", "enhanced-determinism"] }
 
 # Sound (wish_audio only, ADR-015). `hound` (WAV, Apache-2.0) and `lewton`
-# (Ogg Vorbis, MIT/Apache-2.0) decode clips; `kira` (MIT/Apache-2.0) plays
-# them, with its default decoder (`symphonia`, MPL-2.0) switched off.
-kira = { version = "0.12", default-features = false, features = ["cpal"] }
+# (Ogg Vorbis, MIT/Apache-2.0) decode clips; `cpal` (Apache-2.0) reaches the
+# sound card and wish_audio mixes. Kira was the plan, but it depends on
+# MPL-2.0 code (symphonia, triple_buffer), which this project does not take.
+# cpal: sound output, default features (JACK, PipeWire, ASIO) off.
+cpal = { version = "0.18", default-features = false }
 hound = "3.5"
 lewton = "0.10"
 

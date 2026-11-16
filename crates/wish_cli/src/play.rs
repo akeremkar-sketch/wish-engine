@@ -25,14 +25,10 @@ const TICK_RATE: f64 = 60.0;
 /// game race to make up the time).
 const MAX_CATCH_UP: u64 = 5;
 
-/// The sound card, where there is one to open (Windows for now).
-#[cfg(windows)]
-type Speaker = Option<wish_audio::output::Speaker>;
-#[cfg(not(windows))]
-type Speaker = ();
-
 struct Game {
-    speaker: Speaker,
+    /// The sound card, where there is one to open (Windows for now).
+    #[cfg(windows)]
+    speaker: Option<wish_audio::output::Speaker>,
     workspace: Workspace,
     root: PathBuf,
     scene: Option<String>,
@@ -182,9 +178,8 @@ pub fn play(args: &PlayArgs, as_json: bool) -> Result<String> {
             None
         }
     };
-    #[cfg(not(windows))]
-    let speaker = ();
     let mut game = Game {
+        #[cfg(windows)]
         speaker,
         workspace,
         root,
