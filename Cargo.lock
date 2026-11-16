@@ -4569,11 +4569,13 @@ name = "wish_editor"
 version = "0.1.0"
 dependencies = [
  "egui",
+ "glam 0.34.3",
  "png",
  "serde_json",
  "wish_control",
  "wish_core",
  "wish_render",
+ "wish_script",
  "wish_text",
  "wish_window",
 ]

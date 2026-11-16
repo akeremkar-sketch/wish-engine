@@ -5,10 +5,12 @@
 //! no GPU, the same on every machine (see the M8a design note, §2).
 
 mod app;
+mod inspector;
 pub mod raster;
 pub mod script;
 
 pub use app::{EditorApp, Row, ids};
+pub use inspector::has_widget;
 
 use std::sync::Arc;
 
@@ -22,6 +24,26 @@ pub struct Editor {
     /// Seconds since the editor started, as egui's animations see them. It
     /// advances by what the caller says each frame, never by a clock.
     time: f64,
+    /// The widgets of the last frame, from egui's accessibility tree.
+    widgets: Vec<Widget>,
+    /// Whether egui asked for another frame right away (a menu opening, an
+    /// animation).
+    repaint: bool,
+}
+
+/// A widget on screen, as the accessibility tree describes it: what a
+/// screen reader would say, and where it is. Tests find buttons and fields
+/// by name with it instead of by pixel.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Widget {
+    /// Its role (`Button`, `Label`, `CheckBox`, `SpinButton`...).
+    pub role: String,
+    /// Its label, if it has one.
+    pub label: Option<String>,
+    /// Its value (a field's number or text), if it has one.
+    pub value: Option<String>,
+    /// Where it is, in pixels.
+    pub rect: Rect,
 }
 
 impl Default for Editor {
@@ -47,11 +69,25 @@ impl Editor {
                 .push("roboto".to_owned());
         }
         context.set_fonts(fonts);
+        context.enable_accesskit();
         Self {
             context,
             textures: Textures::default(),
             time: 0.0,
+            widgets: Vec::new(),
+            repaint: false,
         }
+    }
+
+    /// Whether the last frame asked for another one right away (a menu that
+    /// opens draws on the next frame).
+    pub fn wants_repaint(&self) -> bool {
+        self.repaint
+    }
+
+    /// The widgets of the last frame (role, label, value, place).
+    pub fn widgets(&self) -> &[Widget] {
+        &self.widgets
     }
 
     /// The egui context (to set styles; panels receive the [`Ui`]).
@@ -83,6 +119,28 @@ impl Editor {
             ..RawInput::default()
         };
         let mut output = self.context.run_ui(input, ui);
+        self.repaint = output
+            .viewport_output
+            .values()
+            .any(|viewport| viewport.repaint_delay.is_zero());
+        if let Some(update) = output.platform_output.accesskit_update.take() {
+            self.widgets = update
+                .nodes
+                .iter()
+                .filter_map(|(_, node)| {
+                    let bounds = node.bounds()?;
+                    Some(Widget {
+                        role: format!("{:?}", node.role()),
+                        label: node.label().map(str::to_owned),
+                        value: node.value().map(str::to_owned),
+                        rect: Rect::from_min_max(
+                            pos2(bounds.x0 as f32, bounds.y0 as f32),
+                            pos2(bounds.x1 as f32, bounds.y1 as f32),
+                        ),
+                    })
+                })
+                .collect();
+        }
         self.textures.apply(&output.textures_delta);
         let primitives = self
             .context

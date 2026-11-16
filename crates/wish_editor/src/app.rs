@@ -21,10 +21,13 @@ use wish_render::{CameraView, RgbaImage, View};
 use wish_window::{Button, FlyCamera, Modifiers, Movement, Picture, Shell, ShellEvent};
 
 use crate::Editor;
+use crate::inspector::{self, Inspected, InspectorActions, InspectorState, InspectorView};
 use crate::raster::Canvas;
 
-/// How often the project is looked at for changes made elsewhere.
+/// How often the scene is looked at for changes made elsewhere.
 const POLL_SECONDS: f64 = 0.4;
+/// How often the project as a whole is (problems, rebuilt game code).
+const PROJECT_POLL_SECONDS: f64 = 2.0;
 /// The window's backdrop where nothing is drawn.
 const BACKDROP: [u8; 4] = [24, 24, 27, 255];
 /// A viewport smaller than this is not drawn (a window being squeezed).
@@ -45,6 +48,8 @@ pub struct Row {
     pub components: Vec<String>,
     /// The id of its parent, if it has one.
     pub parent: Option<String>,
+    /// The prefab it is an instance of, if it is one.
+    pub prefab: Option<String>,
 }
 
 /// What the layout keeps between frames (text being typed).
@@ -91,8 +96,19 @@ pub struct EditorApp {
     drawn_size: (u32, u32),
     picture_stale: bool,
     ui_state: RefCell<UiState>,
+    /// Component schemas from `schema_get`, by name.
+    schemas: BTreeMap<String, Value>,
+    /// The project's files, for asset fields.
+    assets: Vec<String>,
+    /// The selection as the inspector shows it, and what it was read for.
+    inspected: Vec<Inspected>,
+    inspected_for: (Vec<String>, u64),
+    inspector_state: RefCell<InspectorState>,
     status: String,
     since_poll: f64,
+    since_project_poll: f64,
+    /// The game code's fingerprint when the schemas were read.
+    scripts: String,
     frames: u64,
     exit: bool,
 }
@@ -118,6 +134,8 @@ struct Actions {
     rename: Option<(String, String)>,
     /// Move an entity under a parent (`None`: to the root).
     reparent: Option<(String, Option<String>)>,
+    /// What the inspector asked for.
+    inspector: InspectorActions,
 }
 
 impl Actions {
@@ -136,6 +154,7 @@ impl Actions {
             || self.add.is_some()
             || self.rename.is_some()
             || self.reparent.is_some()
+            || self.inspector.any()
     }
 }
 
@@ -169,13 +188,139 @@ impl EditorApp {
             drawn_size: (0, 0),
             picture_stale: true,
             ui_state: RefCell::new(UiState::default()),
+            schemas: BTreeMap::new(),
+            assets: Vec::new(),
+            inspected: Vec::new(),
+            inspected_for: (Vec::new(), u64::MAX),
+            inspector_state: RefCell::new(InspectorState::default()),
             status: String::new(),
             since_poll: POLL_SECONDS,
+            since_project_poll: 0.0,
+            scripts: String::new(),
             frames: 0,
             exit: false,
         };
         app.refresh_project();
+        app.load_schemas();
         app
+    }
+
+    /// Reads every component's schema (again after game code changed: a
+    /// component defined in Wasm comes with it) and the project's files.
+    fn load_schemas(&mut self) {
+        let listed = self.call("schema_get", &json!({}));
+        let names: Vec<String> = listed["types"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|t| t["kind"] == "component")
+            .filter_map(|t| t["name"].as_str().map(str::to_owned))
+            // Kept by the engine itself: not for hand editing.
+            .filter(|name| !["GlobalTransform", "Hierarchy", "SceneId"].contains(&name.as_str()))
+            .collect();
+        let full = self.call("schema_get", &json!({ "names": names, "detail": "full" }));
+        self.schemas = full["types"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|t| Some((t["name"].as_str()?.to_owned(), t["schema"].clone())))
+            .collect();
+        let assets = self.call("asset_list", &json!({}));
+        self.assets = assets["assets"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|a| a["path"].as_str().map(str::to_owned))
+            .collect();
+    }
+
+    /// Reads the selected entities' components when the selection or the
+    /// scene changed.
+    fn refresh_inspected(&mut self) {
+        let key = (self.selected.clone(), self.revision);
+        if key == self.inspected_for {
+            return;
+        }
+        self.inspected_for = key;
+        self.inspected.clear();
+        if self.selected.is_empty() {
+            return;
+        }
+        let got = self.call(
+            "entity_get",
+            &json!({ "scene": self.scene.clone(), "ids": self.selected.clone() }),
+        );
+        if got["ok"] != true {
+            return;
+        }
+        for entity in got["entities"].as_array().into_iter().flatten() {
+            self.inspected.push(Inspected {
+                id: entity["id"].as_str().unwrap_or_default().to_owned(),
+                components: entity["components"]
+                    .as_object()
+                    .cloned()
+                    .unwrap_or_default(),
+                prefab: entity["prefab"].as_str().map(str::to_owned),
+                part: entity["from_prefab"] == true,
+            });
+        }
+        // A component the schemas do not know yet: game code was rebuilt.
+        let unknown = self
+            .inspected
+            .iter()
+            .flat_map(|entity| entity.components.keys())
+            .any(|name| !self.schemas.contains_key(name));
+        if unknown {
+            self.load_schemas();
+        }
+    }
+
+    /// The inspector's changes, as one `edit_apply` on every selected entity
+    /// (a part of a prefab instance gets an override).
+    fn inspector_act(&mut self, asked: InspectorActions) {
+        let targets: Vec<(String, bool)> = self
+            .inspected
+            .iter()
+            .map(|entity| (entity.id.clone(), entity.part))
+            .collect();
+        let op_for = |id: &str, part: bool, component: &str, value: Value| -> Value {
+            match (part, id.split_once('/')) {
+                (true, Some((instance, inner))) => json!({
+                    "op": "set_override", "id": instance, "entity": inner,
+                    "component": component, "value": value
+                }),
+                _ => json!({ "op": "set", "id": id, "component": component, "value": value }),
+            }
+        };
+        if let Some((component, field, value)) = asked.set {
+            let ops = targets
+                .iter()
+                .map(|(id, part)| {
+                    op_for(
+                        id,
+                        *part,
+                        &component,
+                        json!({ field.clone(): value.clone() }),
+                    )
+                })
+                .collect();
+            self.edit(&format!("set {component}.{field}"), ops);
+        }
+        if let Some(component) = asked.add {
+            let ops = targets
+                .iter()
+                .map(|(id, part)| op_for(id, *part, &component, json!({})))
+                .collect();
+            self.edit(&format!("added {component}"), ops);
+        }
+        if let Some(component) = asked.remove {
+            let ops = targets
+                .iter()
+                .map(|(id, _)| json!({ "op": "remove", "id": id, "component": component }))
+                .collect();
+            self.edit(&format!("removed {component}"), ops);
+        }
+        self.inspected_for = (Vec::new(), u64::MAX);
     }
 
     /// One control-plane call as the person at the keyboard (actor `human`).
@@ -201,9 +346,17 @@ impl EditorApp {
     /// Selects entities (as a click in the hierarchy would; unknown ids are
     /// dropped).
     pub fn select(&mut self, ids: &[&str]) {
+        let known = |id: &str| {
+            self.rows.iter().any(|row| row.id == id)
+                || id.split_once('/').is_some_and(|(instance, _)| {
+                    self.rows
+                        .iter()
+                        .any(|row| row.id == instance && row.prefab.is_some())
+                })
+        };
         self.selected = ids
             .iter()
-            .filter(|id| self.rows.iter().any(|row| row.id == **id))
+            .filter(|id| known(id))
             .map(|id| (*id).to_owned())
             .collect();
         self.picture_stale = true;
@@ -228,6 +381,12 @@ impl EditorApp {
     /// frame.
     pub fn viewport(&self) -> Rect {
         self.viewport
+    }
+
+    /// The widgets on screen in the last frame (from the accessibility
+    /// tree): role, label, value and place.
+    pub fn widgets(&self) -> &[crate::Widget] {
+        self.editor.as_ref().map_or(&[], |editor| editor.widgets())
     }
 
     /// The boxes drawn around the selection in the view (window pixels).
@@ -266,6 +425,20 @@ impl EditorApp {
             info["problems"]["errors"].as_u64().unwrap_or(0),
             info["problems"]["warnings"].as_u64().unwrap_or(0),
         );
+        // Game code rebuilt (by the person, an agent, `wen build`): its
+        // components come and go with it.
+        let scripts = info["scripts"]["module"]["fingerprint"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        if scripts != self.scripts {
+            let first = self.scripts.is_empty() && self.schemas.is_empty();
+            self.scripts = scripts;
+            if !first {
+                self.load_schemas();
+                self.inspected_for = (Vec::new(), u64::MAX);
+            }
+        }
     }
 
     /// Reads the scene's hierarchy and history; returns whether it changed
@@ -303,14 +476,28 @@ impl EditorApp {
                         })
                         .unwrap_or_default(),
                     parent: parent.map(str::to_owned),
+                    prefab: node["prefab"].as_str().map(str::to_owned),
                 });
                 walk(&node["children"], depth + 1, Some(&id), rows);
             }
         }
         walk(&got["tree"], 0, None, &mut self.rows);
         // What was selected may be gone now.
+        // (A part of a prefab instance, picked in the view, stays while its
+        // instance is there.)
         let known: BTreeSet<&str> = self.rows.iter().map(|row| row.id.as_str()).collect();
-        self.selected.retain(|id| known.contains(id.as_str()));
+        let instances: BTreeSet<&str> = self
+            .rows
+            .iter()
+            .filter(|row| row.prefab.is_some())
+            .map(|row| row.id.as_str())
+            .collect();
+        self.selected.retain(|id| {
+            known.contains(id.as_str())
+                || id
+                    .split_once('/')
+                    .is_some_and(|(instance, _)| instances.contains(instance))
+        });
         let history = self.call(
             "edit_history",
             &json!({ "scene": self.scene.clone(), "action": "list" }),
@@ -424,6 +611,9 @@ impl EditorApp {
                 self.selected.insert(place.min(self.selected.len()), to);
                 self.picture_stale = true;
             }
+        }
+        if actions.inspector.any() {
+            self.inspector_act(actions.inspector);
         }
         if let Some((id, parent)) = actions.reparent {
             let what = match &parent {
@@ -842,21 +1032,16 @@ impl EditorApp {
             .default_size(220.0)
             .show(ui, |ui| self.hierarchy(ui, &mut actions));
         egui::Panel::right("inspector")
-            .default_size(260.0)
+            .default_size(300.0)
             .show(ui, |ui| {
-                ui.heading("Inspector");
-                ui.separator();
-                match self.selected.as_slice() {
-                    [] => {
-                        ui.weak("Select an entity to edit its components.");
-                    }
-                    [one] => {
-                        ui.strong(one);
-                    }
-                    many => {
-                        ui.strong(format!("{} entities", many.len()));
-                    }
-                }
+                let view = InspectorView {
+                    inspected: &self.inspected,
+                    schemas: &self.schemas,
+                    entities: self.rows.iter().map(|row| row.id.as_str()).collect(),
+                    assets: &self.assets,
+                    state: &self.inspector_state,
+                };
+                inspector::panel(ui, &view, &mut actions.inspector);
             });
         // The middle is not painted: the scene's picture shows through.
         egui::CentralPanel::default()
@@ -876,12 +1061,21 @@ impl EditorApp {
         events: Vec<ShellEvent>,
     ) -> bool {
         self.since_poll += seconds;
-        let mut changed = !events.is_empty() || self.frames < 3 || self.movement.any();
+        self.since_project_poll += seconds;
+        if self.since_project_poll >= PROJECT_POLL_SECONDS {
+            self.since_project_poll = 0.0;
+            self.refresh_project();
+        }
+        let mut changed = !events.is_empty()
+            || self.frames < 3
+            || self.movement.any()
+            || self.editor.as_ref().is_some_and(Editor::wants_repaint);
         if self.since_poll >= POLL_SECONDS {
             self.since_poll = 0.0;
             changed |= self.refresh_scene();
         }
         self.view_input(&events);
+        self.refresh_inspected();
         if changed || self.picture_stale || self.pending_pick.is_some() {
             let egui_events = convert(&events, self.pointer);
             if self.canvas.width != size.0 || self.canvas.height != size.1 {
@@ -908,6 +1102,7 @@ impl EditorApp {
                 let acted = actions.any();
                 self.act(actions);
                 let picked = self.render_viewport(seconds);
+                self.refresh_inspected();
                 passes += 1;
                 // What was just done (a click, a button) changes what the
                 // panels say: lay them out again before drawing.
