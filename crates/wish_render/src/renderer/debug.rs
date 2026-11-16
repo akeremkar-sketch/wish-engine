@@ -453,7 +453,8 @@ impl Renderer {
             return self.render(gpu, scene, camera, width, height);
         }
         let camera_view = choose_camera(scene, camera)?;
-        let collected = self.collect(scene, None);
+        let posed = self.pose(gpu, scene)?;
+        let collected = self.collect(scene, None, &posed);
         let drawn = collected.draw_list.draws.len();
         let image = if view == View::Ids {
             let ids = self.id_pixels(gpu, camera_view, &collected, width, height)?;
@@ -497,7 +498,8 @@ impl Renderer {
         height: u32,
     ) -> Result<IdBuffer> {
         let camera_view = choose_camera(scene, camera)?;
-        let collected = self.collect(scene, None);
+        let posed = self.pose(gpu, scene)?;
+        let collected = self.collect(scene, None, &posed);
         let ids = self.id_pixels(gpu, camera_view, &collected, width, height)?;
         Ok(IdBuffer {
             width,
@@ -519,7 +521,8 @@ impl Renderer {
         height: u32,
     ) -> Result<Description> {
         let camera_view = choose_camera(scene, camera)?;
-        let collected = self.collect(scene, None);
+        let posed = self.pose(gpu, scene)?;
+        let collected = self.collect(scene, None, &posed);
         let ids = self.id_pixels(gpu, camera_view, &collected, width, height)?;
 
         // Per identity: pixel count and box.
@@ -565,7 +568,7 @@ impl Renderer {
             };
             let visible_fraction = if measured < MAX_VISIBILITY_MEASUREMENTS {
                 measured += 1;
-                let alone = self.collect(scene, Some(*id as usize - 1));
+                let alone = self.collect(scene, Some(*id as usize - 1), &posed);
                 let full = self
                     .id_pixels(gpu, camera_view, &alone, width, height)?
                     .iter()

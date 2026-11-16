@@ -839,6 +839,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "No view has that name: use lit, ids, depth, normals or wireframe.",
     ),
     (
+        "unsupported_animation",
+        "A model animates something that is not supported (morph target weights); that part does not move. Bake it into a skeletal animation or re-export without morph targets.",
+    ),
+    (
         "unsupported_extension",
         "A model uses (or requires) a glTF extension the engine does not read. Required ones stop the import; others are drawn without the extension.",
     ),
@@ -1228,6 +1232,13 @@ A one-off sound is an event: `sent.send(PlaySound { clip, bus: AudioBus::Sfx, vo
 spatial: true, position })`. The engine writes `AudioPlayback { position, gain, pan, started }` and sends
 `SoundStarted` / `SoundEnded` events. Nothing is played in a session: an agent reads what played with
 `logs_get kinds: ["audio"]` ("started on 'door': -12.0 dB at the listener, right 100%").
+
+## Animation
+
+A glTF `Model` with clips plays one through an `AnimationPlayer { clip, time, speed, looping, playing }` on the
+same entity (clip: the name in the file; empty plays the first). The engine moves `time` on every tick; a clip
+that does not loop stops at its end, sets `playing` to false and sends `AnimationFinished { entity }`. To play
+another clip, write `clip` and set `time` to 0.
 
 ## Rules
 

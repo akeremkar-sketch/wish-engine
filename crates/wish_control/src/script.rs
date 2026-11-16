@@ -199,6 +199,7 @@ pub(crate) fn check_system_names(example: Option<&str>, module: &GameModule) -> 
         PROPAGATION.to_owned(),
         wish_physics::SYSTEM.to_owned(),
         wish_audio::SYSTEM.to_owned(),
+        wish_anim::SYSTEM.to_owned(),
     ];
     if let Some(example) = example {
         let mut app = wish_app::App::new(wish_app::AppConfig::default());
@@ -272,19 +273,29 @@ pub(crate) fn propagation_after_all(app: &mut wish_app::App) -> Result<()> {
         .system_states()
         .map(|(name, _)| name.to_owned())
         .filter(|name| {
-            name != PROPAGATION && name != wish_physics::SYSTEM && name != wish_audio::SYSTEM
+            ![
+                PROPAGATION,
+                wish_physics::SYSTEM,
+                wish_audio::SYSTEM,
+                wish_anim::SYSTEM,
+            ]
+            .contains(&name.as_str())
         })
         .collect();
     names.sort();
     let mut physics = wish_physics::system();
+    let mut animation = wish_anim::system();
     for name in &names {
         physics = physics.after(name);
+        animation = animation.after(name);
     }
     app.replace_system(physics)?;
+    app.replace_system(animation)?;
     let mut propagation = System::new(PROPAGATION, |world, _| {
         wish_transform::update_global_transforms(world)
     })
-    .after(wish_physics::SYSTEM);
+    .after(wish_physics::SYSTEM)
+    .after(wish_anim::SYSTEM);
     for name in &names {
         propagation = propagation.after(name);
     }

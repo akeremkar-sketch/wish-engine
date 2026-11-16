@@ -67,12 +67,12 @@ pub use wish_core::{AssetRef, Color, Entity, Text, math};
 pub use wish_schema::{component, event, resource, schema};
 pub use wish_sdk_macros::system;
 pub use wish_types::{
-    ActionSlot, ActionState, Ambient, AudioBus, AudioListener, AudioPlayback, AudioSettings,
-    AudioSource, BodyForce, BodyImpulse, BodyKind, BodyVelocity, Camera, CharacterController,
-    CharacterMotion, CharacterState, Collider, ColliderShape, CollisionEnded, CollisionStarted,
-    DirectionalLight, Exposure, GlobalTransform, Material, Model, PhysicsSettings, PlaySound,
-    PointLight, Primitive, RigidBody, Shape, Sky, SoundEnded, SoundStarted, SpotLight, Time,
-    Transform, world_position,
+    ActionSlot, ActionState, Ambient, AnimationFinished, AnimationPlayer, AudioBus, AudioListener,
+    AudioPlayback, AudioSettings, AudioSource, BodyForce, BodyImpulse, BodyKind, BodyVelocity,
+    Camera, CharacterController, CharacterMotion, CharacterState, Collider, ColliderShape,
+    CollisionEnded, CollisionStarted, DirectionalLight, Exposure, GlobalTransform, Material, Model,
+    PhysicsSettings, PlaySound, PointLight, Primitive, RigidBody, Shape, Sky, SoundEnded,
+    SoundStarted, SpotLight, Time, Transform, world_position,
 };
 
 pub use physics::{Ray, RayHit, raycast};
@@ -84,14 +84,14 @@ pub const ABI_VERSION: i32 = 1;
 pub mod prelude {
     pub use crate::math::{Mat4, Quat, Vec2, Vec3, Vec4};
     pub use crate::{
-        Actions, Ambient, AssetRef, AudioBus, AudioListener, AudioPlayback, AudioSettings,
-        AudioSource, BodyForce, BodyImpulse, BodyKind, BodyVelocity, Camera, CharacterController,
-        CharacterMotion, CharacterState, Collider, ColliderShape, CollisionEnded, CollisionStarted,
-        Color, Commands, DirectionalLight, Entity, EventReader, EventWriter, Exposure,
-        GlobalTransform, Material, Model, PhysicsSettings, PlaySound, PointLight, Primitive, Query,
-        Ray, RayHit, Res, ResMut, RigidBody, Shape, Sky, SoundEnded, SoundStarted, SpotLight, Text,
-        Time, Transform, With, Without, component, event, random_f32, random_range, random_u64,
-        raycast, resource, schema, system, world_position,
+        Actions, Ambient, AnimationFinished, AnimationPlayer, AssetRef, AudioBus, AudioListener,
+        AudioPlayback, AudioSettings, AudioSource, BodyForce, BodyImpulse, BodyKind, BodyVelocity,
+        Camera, CharacterController, CharacterMotion, CharacterState, Collider, ColliderShape,
+        CollisionEnded, CollisionStarted, Color, Commands, DirectionalLight, Entity, EventReader,
+        EventWriter, Exposure, GlobalTransform, Material, Model, PhysicsSettings, PlaySound,
+        PointLight, Primitive, Query, Ray, RayHit, Res, ResMut, RigidBody, Shape, Sky, SoundEnded,
+        SoundStarted, SpotLight, Text, Time, Transform, With, Without, component, event,
+        random_f32, random_range, random_u64, raycast, resource, schema, system, world_position,
     };
 }
 

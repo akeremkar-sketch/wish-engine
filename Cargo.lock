@@ -4174,6 +4174,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "wish_anim"
+version = "0.1.0"
+dependencies = [
+ "wish_app",
+ "wish_core",
+ "wish_ecs",
+ "wish_types",
+]
+
+[[package]]
 name = "wish_app"
 version = "0.1.0"
 dependencies = [
@@ -4238,6 +4248,7 @@ name = "wish_control"
 version = "0.1.0"
 dependencies = [
  "serde_json",
+ "wish_anim",
  "wish_app",
  "wish_asset",
  "wish_audio",

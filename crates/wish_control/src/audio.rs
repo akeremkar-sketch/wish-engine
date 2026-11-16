@@ -76,6 +76,87 @@ impl Workspace {
     }
 }
 
+/// What is known of a model file's animation clips, kept until it changes.
+#[derive(Clone, Debug)]
+pub(crate) struct KnownModel {
+    bytes: u64,
+    modified: Option<SystemTime>,
+    clips: Vec<(String, f32)>,
+}
+
+/// The most model files read for their clips when a session starts.
+const MAX_MODELS: usize = 500;
+
+impl Workspace {
+    /// The animation clips of the project's models (`.gltf`, `.glb`) and
+    /// their lengths, keyed by (model path, clip name); a model's first
+    /// clip is also listed under the empty name. Kept until a file changes.
+    pub(crate) fn animation_clips(&mut self) -> Vec<((String, String), f32)> {
+        let root = self.root().to_path_buf();
+        let Ok(index) = wish_asset::AssetIndex::scan(&root) else {
+            return Vec::new();
+        };
+        let paths: Vec<String> = index
+            .paths()
+            .filter(|path| {
+                let lower = path.to_ascii_lowercase();
+                lower.ends_with(".gltf") || lower.ends_with(".glb")
+            })
+            .take(MAX_MODELS)
+            .map(str::to_owned)
+            .collect();
+        let mut found = Vec::new();
+        for path in paths {
+            let file = root.join(&path);
+            let Ok(meta) = std::fs::metadata(&file) else {
+                continue;
+            };
+            let (bytes, modified) = (meta.len(), meta.modified().ok());
+            let clips = match self.sessions.models.get(&path) {
+                Some(known) if known.bytes == bytes && known.modified == modified => {
+                    known.clips.clone()
+                }
+                _ => {
+                    let clips: Vec<(String, f32)> = wish_import::load_model_file(&file, &path)
+                        .map(|model| {
+                            model
+                                .animations
+                                .iter()
+                                .enumerate()
+                                .map(|(index, clip)| {
+                                    (
+                                        clip.name.clone().unwrap_or_else(|| format!("#{index}")),
+                                        clip.duration,
+                                    )
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    self.sessions.models.insert(
+                        path.clone(),
+                        KnownModel {
+                            bytes,
+                            modified,
+                            clips: clips.clone(),
+                        },
+                    );
+                    clips
+                }
+            };
+            if let Some((_, first)) = clips.first() {
+                found.push(((path.clone(), String::new()), *first));
+            }
+            for (name, seconds) in clips {
+                found.push(((path.clone(), name), seconds));
+            }
+        }
+        found
+    }
+}
+
+/// The cache of clip lengths of models (part of the sessions).
+pub(crate) type Models = BTreeMap<String, KnownModel>;
+
 /// The cache of clip lengths (part of the sessions).
 pub(crate) type Clips = BTreeMap<String, Known>;
 

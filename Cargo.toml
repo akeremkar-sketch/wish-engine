@@ -30,6 +30,7 @@ wish_sdk = { path = "crates/wish_sdk" }
 wish_sdk_macros = { path = "crates/wish_sdk_macros" }
 wish_script = { path = "crates/wish_script" }
 wish_input = { path = "crates/wish_input" }
+wish_anim = { path = "crates/wish_anim" }
 wish_audio = { path = "crates/wish_audio" }
 wish_physics = { path = "crates/wish_physics" }
 

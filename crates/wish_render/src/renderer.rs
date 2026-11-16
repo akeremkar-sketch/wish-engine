@@ -196,6 +196,7 @@ impl Bytes {
     }
 }
 
+#[derive(Clone)]
 struct GpuMesh {
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
@@ -380,6 +381,7 @@ impl<'a> DrawList<'a> {
 }
 
 /// One primitive of an uploaded model.
+#[derive(Clone)]
 struct GpuPrimitive {
     mesh: GpuMesh,
     /// The material's five textures and the sampler.
@@ -394,11 +396,19 @@ struct GpuPrimitive {
     matrix: Mat4,
     /// The primitive's bounding box in its own space.
     bounds: (Vec3, Vec3),
+    /// Where it is in the model file (for posing animated models).
+    placed: wish_import::Placed,
 }
+
+/// Posed primitives of animated draws, by draw index.
+type Posed = BTreeMap<usize, Vec<GpuPrimitive>>;
 
 /// A model on the GPU.
 struct GpuModel {
     primitives: Vec<GpuPrimitive>,
+    /// The model's CPU data, kept when it has skins or clips: posing needs
+    /// the node tree, the keyframes and the bind-pose vertices.
+    animated: Option<std::sync::Arc<wish_import::Model>>,
     /// How many of its materials blend alpha, which is not drawn blended yet.
     blended: usize,
 }
@@ -448,7 +458,70 @@ fn choose_camera(scene: &RenderScene, camera: Option<Entity>) -> Result<&CameraV
 impl Renderer {
     /// Turns the scene's draws into draw calls. With `only`, just the draw
     /// with that index in `scene.draws` (to measure one entity on its own).
-    fn collect<'a>(&'a self, scene: &RenderScene, only: Option<usize>) -> Collected<'a> {
+    /// The primitives of every animated model draw of `scene`, posed at its
+    /// clip's time (skinned vertices bent on the CPU), by draw index. Draws
+    /// of models without skins or clips are not here.
+    fn pose(&self, gpu: &Gpu, scene: &RenderScene) -> Result<Posed> {
+        let mut posed = Posed::new();
+        for (index, draw) in scene.draws.iter().enumerate() {
+            let Some((clip, time)) = &draw.animation else {
+                continue;
+            };
+            let file = draw
+                .model_path
+                .as_deref()
+                .unwrap_or_default()
+                .split('#')
+                .next()
+                .unwrap_or_default();
+            let Some(model) = self.models.get(file) else {
+                continue;
+            };
+            let Some(source) = &model.animated else {
+                continue;
+            };
+            let pose = source.pose(source.animation_index(clip), *time);
+            let mut primitives = Vec::with_capacity(model.primitives.len());
+            for primitive in &model.primitives {
+                let mut moved = primitive.clone();
+                let skinned = source.skin(&primitive.placed, &pose);
+                match skinned {
+                    Some((positions, normals)) => {
+                        let Some(original) = source
+                            .meshes
+                            .get(primitive.placed.mesh)
+                            .and_then(|m| m.primitives.get(primitive.placed.primitive))
+                        else {
+                            continue;
+                        };
+                        let mut data = MeshData::from(original);
+                        moved.bounds = bounds_of(&positions);
+                        data.positions = positions;
+                        data.normals = normals;
+                        moved.mesh = gpu
+                            .checked("upload a posed mesh", |gpu| GpuMesh::new(gpu, &data, file))?;
+                        moved.matrix = Mat4::IDENTITY;
+                    }
+                    None => {
+                        moved.matrix = pose
+                            .get(primitive.placed.node)
+                            .copied()
+                            .unwrap_or(primitive.matrix);
+                    }
+                }
+                primitives.push(moved);
+            }
+            posed.insert(index, primitives);
+        }
+        Ok(posed)
+    }
+
+    fn collect<'a>(
+        &'a self,
+        scene: &RenderScene,
+        only: Option<usize>,
+        posed: &'a Posed,
+    ) -> Collected<'a> {
         // What one draw call draws: a built-in shape (with the entity's own
         // `Material`), or one primitive of an uploaded model (with the
         // material from its file).
@@ -504,7 +577,8 @@ impl Renderer {
                     if model.blended > 0 && !blended_models.contains(&key.as_str()) {
                         blended_models.push(key.as_str());
                     }
-                    for primitive in &model.primitives {
+                    let primitives = posed.get(&index).unwrap_or(&model.primitives);
+                    for primitive in primitives {
                         draw_list.push(
                             Source::Primitive(primitive),
                             &(draw.world * primitive.matrix),
@@ -1155,11 +1229,15 @@ impl Renderer {
                     double_sided: material.double_sided,
                     matrix: placed.matrix,
                     bounds: bounds_of(&source.positions),
+                    placed,
                 });
             }
+            let animated = (!model.skins.is_empty() || !model.animations.is_empty())
+                .then(|| std::sync::Arc::new(model.clone()));
             GpuModel {
                 primitives,
                 blended,
+                animated,
             }
         })?;
         self.models.insert(path.to_owned(), uploaded);
@@ -1178,6 +1256,7 @@ impl Renderer {
     ) -> Result<Frame> {
         let view = choose_camera(scene, camera)?;
         let target = Target::new(gpu, width, height)?;
+        let posed = self.pose(gpu, scene)?;
         let aspect = width as f32 / height as f32;
         let view_proj = view.projection(aspect) * view.view;
         let exposure = exposure_multiplier(scene.ev100);
@@ -1205,7 +1284,7 @@ impl Renderer {
         let Collected {
             draw_list,
             mut warnings,
-        } = self.collect(scene, None);
+        } = self.collect(scene, None, &posed);
         let DrawList {
             mut bytes,
             draws,

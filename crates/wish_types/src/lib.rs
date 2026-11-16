@@ -12,6 +12,7 @@
 //! Nothing here may depend on anything that does not build for
 //! `wasm32-unknown-unknown`.
 
+pub mod anim;
 pub mod audio;
 pub mod input;
 pub mod physics;
@@ -19,6 +20,7 @@ pub mod render;
 pub mod time;
 pub mod transform;
 
+pub use anim::{AnimationFinished, AnimationPlayer};
 pub use audio::{
     AudioBus, AudioListener, AudioOneShot, AudioPlayback, AudioSettings, AudioSource, PlaySound,
     SoundEnded, SoundStarted,

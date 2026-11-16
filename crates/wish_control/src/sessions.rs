@@ -110,6 +110,8 @@ impl LogEntry {
 pub(crate) struct Sessions {
     /// The lengths of the project's sound clips, kept until the file changes.
     pub clips: crate::audio::Clips,
+    /// The animation clips of the project's models, kept until a file changes.
+    pub models: crate::audio::Models,
     pub open: BTreeMap<String, Session>,
     next_id: u32,
     next_seq: u64,
@@ -228,6 +230,7 @@ fn build_app(
     // asked during it (game code's ray casts) see it.
     wish_physics::prepare(app.world_mut())?;
     wish_audio::install(app.world_mut(), workspace.audio_clips());
+    wish_anim::install(app.world_mut(), workspace.animation_clips());
     Ok((app, runtime))
 }
 

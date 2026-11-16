@@ -42,6 +42,10 @@ pub fn explain(name: &str) -> Option<&'static str> {
         "audiolistener" | "listener" | "ears" => {
             "The listener is the AudioListener component (put it on the camera); the first one in entity order is heard from. Loudness and left/right are worked out from its position and orientation."
         }
+        "animator" | "animation" | "animationclip" | "skeleton" | "skinnedmesh"
+        | "animationplayer3d" => {
+            "Animation: give an entity with a glTF Model an AnimationPlayer (clip: the clip's name in the file, time, speed, looping, playing). The engine moves time on every tick and sends AnimationFinished when a clip that does not loop ends."
+        }
         "light" | "pointlight" | "spotlight" | "arealight" | "sunlight" => {
             "Lights: DirectionalLight (the sun: parallel rays along the entity's -Z axis, illuminance_lux), PointLight (a bulb: intensity_lm, range) and SpotLight (a cone along -Z: intensity_lm, range, inner_angle_deg, outer_angle_deg). Fill light is the Ambient resource; capture_frame with view lights shows where each light reaches."
         }

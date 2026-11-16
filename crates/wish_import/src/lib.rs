@@ -20,7 +20,12 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use gltf::mesh::Mode;
-use wish_core::math::{Mat4, Vec2, Vec3, Vec4};
+use wish_core::math::{Mat4, Quat, Vec2, Vec3, Vec4};
+
+mod anim;
+pub mod samples;
+
+pub use anim::{Animation, Channel, Interpolation, MAX_JOINTS, MAX_KEYFRAMES, Property, Skin};
 use wish_core::{Diagnostic, Result};
 
 /// The most nodes one model may nest (hostile files could nest forever).
@@ -47,6 +52,10 @@ pub struct Model {
     /// The nodes of the default scene (or of the first scene) that have no
     /// parent, in file order.
     pub roots: Vec<usize>,
+    /// Skins: the joints that bend skinned meshes.
+    pub skins: Vec<Skin>,
+    /// Animation clips.
+    pub animations: Vec<Animation>,
     /// Things the file asks for that were not imported.
     pub warnings: Vec<Diagnostic>,
 }
@@ -78,6 +87,12 @@ pub struct Primitive {
     pub indices: Vec<u32>,
     /// Index into [`Model::materials`]; `None` uses the default material.
     pub material: Option<usize>,
+    /// For skinned meshes, the four joints bending each vertex (indices
+    /// into the skin's joint list); empty otherwise.
+    pub joints: Vec<[u16; 4]>,
+    /// For skinned meshes, how much each of the four joints bends the
+    /// vertex; empty otherwise.
+    pub weights: Vec<[f32; 4]>,
 }
 
 /// How a surface's alpha is used.
@@ -175,6 +190,15 @@ pub struct Node {
     pub name: Option<String>,
     /// Its placement relative to its parent.
     pub local: Mat4,
+    /// The same placement split into translation, rotation and scale (what
+    /// animations change).
+    pub translation: Vec3,
+    /// See `translation`.
+    pub rotation: Quat,
+    /// See `translation`.
+    pub scale: Vec3,
+    /// The skin that bends its mesh, if any (index into [`Model::skins`]).
+    pub skin: Option<usize>,
     /// The mesh it shows, if any.
     pub mesh: Option<usize>,
     /// Its children (indices into [`Model::nodes`]).
@@ -188,6 +212,8 @@ pub struct Placed {
     pub mesh: usize,
     /// Index into that mesh's primitives.
     pub primitive: usize,
+    /// The node that shows it.
+    pub node: usize,
     /// Primitive space to the model's space.
     pub matrix: Mat4,
 }
@@ -225,6 +251,7 @@ impl Model {
                     out.push(Placed {
                         mesh: mesh.0,
                         primitive,
+                        node: index,
                         matrix,
                     });
                 }
@@ -383,9 +410,19 @@ fn convert(
     }
 
     for node in document.nodes() {
+        let (translation, rotation, scale) = node.transform().decomposed();
+        let rotation = Quat::from_array(rotation);
         model.nodes.push(Node {
             name: node.name().map(str::to_owned),
             local: Mat4::from_cols_array_2d(&node.transform().matrix()),
+            translation: Vec3::from(translation),
+            rotation: if rotation.is_finite() && rotation.length_squared() > 1e-12 {
+                rotation.normalize()
+            } else {
+                Quat::IDENTITY
+            },
+            scale: Vec3::from(scale),
+            skin: node.skin().map(|skin| skin.index()),
             mesh: node.mesh().map(|mesh| mesh.index()),
             children: node.children().map(|child| child.index()).collect(),
         });
@@ -397,6 +434,16 @@ fn convert(
         model.roots = scene.nodes().map(|node| node.index()).collect();
     }
     check_node_forest(file, &model)?;
+    anim::read(&mut model, file, document, buffers)?;
+    {
+        // A skin index on a node must name a skin.
+        let skins = model.skins.len();
+        for node in &mut model.nodes {
+            if node.skin.is_some_and(|skin| skin >= skins) {
+                node.skin = None;
+            }
+        }
+    }
     Ok(model)
 }
 
@@ -706,6 +753,23 @@ fn convert_primitive(
         return None;
     }
 
+    let joints: Vec<[u16; 4]> = reader
+        .read_joints(0)
+        .map(|j| j.into_u16().collect())
+        .unwrap_or_default();
+    let weights: Vec<[f32; 4]> = reader
+        .read_weights(0)
+        .map(|w| w.into_f32().collect())
+        .unwrap_or_default();
+    let (joints, weights) = if !joints.is_empty()
+        && joints.len() == positions.len()
+        && weights.len() == positions.len()
+        && weights.iter().flatten().all(|w| w.is_finite())
+    {
+        (joints, weights)
+    } else {
+        (Vec::new(), Vec::new())
+    };
     let mut out = Primitive {
         positions,
         normals: normals.clone().unwrap_or_default(),
@@ -713,6 +777,8 @@ fn convert_primitive(
         tangents: Vec::new(),
         indices,
         material: primitive.material().index(),
+        joints,
+        weights,
     };
     if normals.is_none() {
         flat_normals(&mut out);
@@ -731,6 +797,9 @@ fn flat_normals(primitive: &mut Primitive) {
     let mut positions = Vec::with_capacity(primitive.indices.len());
     let mut uvs = Vec::with_capacity(primitive.indices.len());
     let mut normals = Vec::with_capacity(primitive.indices.len());
+    let skinned = !primitive.joints.is_empty();
+    let mut joints = Vec::new();
+    let mut weights = Vec::new();
     for triangle in primitive.indices.as_chunks::<3>().0 {
         let [a, b, c] = (*triangle).map(|index| index as usize);
         let (pa, pb, pc) = (
@@ -742,7 +811,21 @@ fn flat_normals(primitive: &mut Primitive) {
         positions.extend([pa, pb, pc]);
         uvs.extend([primitive.uvs[a], primitive.uvs[b], primitive.uvs[c]]);
         normals.extend([normal; 3]);
+        if skinned {
+            joints.extend([
+                primitive.joints[a],
+                primitive.joints[b],
+                primitive.joints[c],
+            ]);
+            weights.extend([
+                primitive.weights[a],
+                primitive.weights[b],
+                primitive.weights[c],
+            ]);
+        }
     }
+    primitive.joints = joints;
+    primitive.weights = weights;
     primitive.indices = (0..u32::try_from(positions.len()).unwrap_or(u32::MAX)).collect();
     primitive.positions = positions;
     primitive.uvs = uvs;

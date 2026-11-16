@@ -62,6 +62,9 @@ pub struct Draw {
     pub model_path: Option<String>,
     /// Its material.
     pub material: MaterialData,
+    /// For a model with an `AnimationPlayer`: the clip's name (empty: the
+    /// first clip) and the time in it.
+    pub animation: Option<(String, f32)>,
 }
 
 /// A camera ready to use.
@@ -368,12 +371,24 @@ pub fn extract(world: &World) -> Result<RenderScene> {
                 Some(asset) => world.text(asset.text()).map(str::to_owned),
                 None => None,
             };
+            let animation = world
+                .get::<wish_types::anim::AnimationPlayer>(entity)
+                .map(|player| {
+                    let clip = world.text(player.clip).unwrap_or_default().to_owned();
+                    let time = if player.time.is_finite() {
+                        player.time
+                    } else {
+                        0.0
+                    };
+                    (clip, time)
+                });
             scene.draws.push(Draw {
                 entity,
                 world: placement,
                 mesh,
                 model_path,
                 material,
+                animation,
             });
         }
     }
