@@ -265,6 +265,11 @@ pub const PARITY: &[Capability] = &[
         "panels::the_console_shows_what_was_logged",
     ),
     query(
+        "activity_get",
+        "The Activity tab: everyone's calls, newest first; Undo this on an edit",
+        "parity_ops::the_activity_tab_shows_what_an_agent_did",
+    ),
+    query(
         "docs_search",
         "Each field's and component's documentation on hover; the guides are files (wish://docs) for any reader",
         "inspector::every_engine_field_has_a_widget",

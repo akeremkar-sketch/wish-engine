@@ -17,6 +17,7 @@ pub(crate) enum Tab {
     Problems,
     Performance,
     History,
+    Activity,
 }
 
 /// How many log entries are kept for the console.
@@ -49,6 +50,8 @@ pub(crate) struct PanelActions {
     pub redo: bool,
     /// Take back one earlier change on its own (its revision).
     pub revert: Option<u64>,
+    /// The same from the activity feed: the scene and the revision.
+    pub revert_in: Option<(String, u64)>,
 }
 
 impl PanelActions {
@@ -60,6 +63,7 @@ impl PanelActions {
             || self.undo
             || self.redo
             || self.revert.is_some()
+            || self.revert_in.is_some()
     }
 }
 
@@ -83,6 +87,7 @@ pub(crate) fn tabs(ui: &mut Ui, current: Tab, problems: usize, actions: &mut Pan
             ),
             (Tab::Performance, t("Performance").to_owned()),
             (Tab::History, t("History").to_owned()),
+            (Tab::Activity, t("Activity").to_owned()),
         ] {
             if ui.selectable_label(current == tab, name).clicked() && current != tab {
                 actions.tab = Some(tab);
@@ -319,6 +324,79 @@ pub(crate) fn history(
                         ui.weak(format!("— {reason}"));
                     }
                 });
+            }
+        });
+}
+
+/// The colour of an actor's name in the activity feed.
+fn actor_color(actor: &str) -> Color32 {
+    if actor.starts_with("agent") {
+        Color32::from_rgb(180, 140, 240)
+    } else if actor == "file" {
+        Color32::from_rgb(230, 190, 80)
+    } else {
+        Color32::from_rgb(170, 180, 190)
+    }
+}
+
+/// The activity feed (`activity_get`): what everyone did, newest first; an
+/// edit's card can be taken back on its own.
+pub(crate) fn activity(
+    ui: &mut Ui,
+    entries: &VecDeque<Value>,
+    agents_only: &mut bool,
+    actions: &mut PanelActions,
+) {
+    ui.horizontal(|ui| {
+        ui.checkbox(agents_only, t("Agents only"));
+        ui.weak(t(
+            "Every change by anyone, and everything agents do (also what they only look at).",
+        ));
+    });
+    egui::ScrollArea::vertical()
+        .id_salt("activity")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            let shown: Vec<&Value> = entries
+                .iter()
+                .rev()
+                .filter(|entry| {
+                    !*agents_only
+                        || entry["actor"]
+                            .as_str()
+                            .is_some_and(|actor| actor.starts_with("agent"))
+                })
+                .collect();
+            if shown.is_empty() {
+                ui.weak(t("Nothing yet."));
+            }
+            for entry in shown {
+                let actor = entry["actor"].as_str().unwrap_or("?");
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(actor).color(actor_color(actor)).strong());
+                    ui.label(entry["tool"].as_str().unwrap_or("?"));
+                    if let Some(summary) = entry["summary"].as_str() {
+                        ui.weak(summary);
+                    }
+                    if entry["ok"] != true {
+                        let message = entry["error"]["message"].as_str().unwrap_or("");
+                        ui.label(RichText::new(message).color(severity_color("error")));
+                    }
+                    if let (Some(scene), Some(revision)) =
+                        (entry["scene"].as_str(), entry["revision"].as_u64())
+                        && ui
+                            .add(egui::Button::new(t("Undo this")).small())
+                            .on_hover_text(t(
+                                "Takes back only this change; later changes stay (refused if one touched the same things)",
+                            ))
+                            .clicked()
+                    {
+                        actions.revert_in = Some((scene.to_owned(), revision));
+                    }
+                });
+                if let Some(reason) = entry["reason"].as_str() {
+                    ui.weak(format!("    {reason}"));
+                }
             }
         });
 }

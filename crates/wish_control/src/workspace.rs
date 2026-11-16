@@ -46,6 +46,8 @@ pub struct Workspace {
     pub(crate) cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     /// The game code (M5).
     pub(crate) scripts: crate::script::Scripts,
+    /// What everyone did (M8b): the activity feed's source.
+    pub(crate) activity: crate::activity::Activity,
 }
 
 impl std::fmt::Debug for Workspace {
@@ -102,6 +104,7 @@ impl Workspace {
             software: std::env::var_os("WISH_SOFTWARE").is_some(),
             cancel: None,
             scripts: crate::script::Scripts::default(),
+            activity: crate::activity::Activity::default(),
         };
         workspace.load_built_module();
         Ok(workspace)
@@ -186,7 +189,12 @@ impl Workspace {
                 "This is a bug in the engine. The project is unchanged; please report the call that caused it.",
             ))
         });
-        envelope(outcome)
+        let answer = envelope(outcome);
+        let mutates = find_tool(tool).is_ok_and(|found| found.mutates);
+        if crate::activity::worth_noting(tool, mutates, actor) {
+            self.activity.record(tool, args, actor, &answer);
+        }
+        answer
     }
 
     fn run(&mut self, name: &str, args: &Value, actor: &Actor) -> Result<Map<String, Value>> {

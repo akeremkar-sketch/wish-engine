@@ -3,6 +3,7 @@
 use crate::param::{Kind, Param};
 use crate::tool::Tool;
 
+mod activity;
 mod asset;
 mod physics;
 mod project;
@@ -53,4 +54,5 @@ pub(crate) const CATALOG: &[Tool] = &[
     replay::REPLAY,
     testing::TEST_RUN,
     settings::PROJECT_SETTINGS,
+    activity::ACTIVITY_GET,
 ];

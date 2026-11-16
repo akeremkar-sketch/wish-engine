@@ -130,6 +130,8 @@ fn examples() -> Vec<(&'static str, Value)> {
             "project_settings",
             json!({ "action": "set", "dry_run": true, "scene": "scenes/main.scene.json" }),
         ),
+        ("activity_get", json!({ "limit": 5 })),
+        ("activity_get", json!({ "since": 2, "actor": "agents" })),
         ("scene_get", json!({ "detail": "normal" })),
         ("asset_info", json!({ "path": "assets/models/tri.glb" })),
         ("sim_step", json!({})),

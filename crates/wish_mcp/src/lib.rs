@@ -52,6 +52,7 @@ const READ_ONLY: &[&str] = &[
     "asset_info",
     "describe_view",
     "logs_get",
+    "activity_get",
 ];
 
 const INSTRUCTIONS: &str = "Wish Engine: a deterministic 3D game engine driven by these tools. Start with project_info, then read the resource wish://docs/guide (short). Change scenes with edit_apply (many operations at once, all or nothing), run them with sim_start and sim_step, and check what is on screen with describe_view and capture_frame. Every error carries a hint that says how to fix the call; read it before retrying. Game code lives in scripts/src/lib.rs (Rust; read wish://docs/sdk, and wish://docs/recipes for working pieces of games): edit it, build with script_build, prove behaviour with a scenario test (test_run). A person may be editing the same project: mind changed_by_others.";

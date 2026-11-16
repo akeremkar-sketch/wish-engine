@@ -104,3 +104,68 @@ fn a_change_is_taken_back_on_its_own_with_tools() {
     );
     assert_eq!(missing["error"]["code"], "missing_parameter");
 }
+
+#[test]
+fn the_activity_log_keeps_every_change_and_what_agents_do() {
+    let mut ws = open("activity");
+    // A person looking is not activity; a person changing is.
+    call(&mut ws, "human", "scene_get", json!({}));
+    call(
+        &mut ws,
+        "human",
+        "edit_apply",
+        json!({ "ops": [{ "op": "rename", "id": "sun", "to": "star" }] }),
+    );
+    // An agent looking and changing, with a reason; a failed call too.
+    call(&mut ws, "agent:helper", "scene_get", json!({}));
+    let edit = call(
+        &mut ws,
+        "agent:helper",
+        "edit_apply",
+        json!({ "ops": [{ "op": "spawn", "id": "crate", "components": { "Transform": {} } },
+                         { "op": "set", "id": "crate", "component": "Transform", "value": {} }],
+            "reason": "a crate to jump on" }),
+    );
+    call(
+        &mut ws,
+        "agent:helper",
+        "edit_apply",
+        json!({ "ops": [{ "op": "despawn", "id": "nobody" }] }),
+    );
+    let all = call(&mut ws, "human", "activity_get", json!({}));
+    let entries = all["entries"].as_array().unwrap();
+    let tools: Vec<(&str, &str)> = entries
+        .iter()
+        .map(|e| (e["actor"].as_str().unwrap(), e["tool"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        tools,
+        [
+            ("human", "edit_apply"),
+            ("agent:helper", "scene_get"),
+            ("agent:helper", "edit_apply"),
+            ("agent:helper", "edit_apply"),
+        ],
+        "{all}"
+    );
+    let card = &entries[2];
+    assert_eq!(card["reason"], "a crate to jump on");
+    assert_eq!(card["revision"], edit["revision"]);
+    assert_eq!(card["summary"], "spawn crate, set crate.Transform");
+    assert_eq!(entries[3]["ok"], false);
+    assert_eq!(entries[3]["error"]["code"], "unknown_entity");
+    // Only what is new, only agents.
+    let last = all["last_seq"].as_u64().unwrap();
+    let newer = call(&mut ws, "human", "activity_get", json!({ "since": last }));
+    assert_eq!(newer["entries"].as_array().unwrap().len(), 0);
+    let agents = call(
+        &mut ws,
+        "human",
+        "activity_get",
+        json!({ "actor": "agents" }),
+    );
+    assert_eq!(agents["entries"].as_array().unwrap().len(), 3);
+    // activity_get itself is not activity.
+    let again = call(&mut ws, "agent:helper", "activity_get", json!({}));
+    assert_eq!(again["last_seq"], last);
+}

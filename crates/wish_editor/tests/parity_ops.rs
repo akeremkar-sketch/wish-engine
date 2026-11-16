@@ -486,3 +486,33 @@ fn one_change_is_taken_back_from_the_history_tab() {
     click(&mut app, undo);
     assert!(wish_editor::ids(app.rows()).contains("crate"));
 }
+
+/// M8b WP2: the Activity tab shows what an agent did, with its reason, and
+/// takes its edit back on its own.
+#[test]
+fn the_activity_tab_shows_what_an_agent_did() {
+    let dir = project("activity");
+    let mut app = open(&dir);
+    app.workspace()
+        .call("scene_get", &json!({}), &parse_actor("agent:helper"));
+    let made = app.workspace().call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "spawn", "id": "crate", "components": { "Transform": {} } }],
+            "reason": "a crate to jump on" }),
+        &parse_actor("agent:helper"),
+    );
+    assert_eq!(made["ok"], true, "{made}");
+    play(&mut app, json!([{ "seconds": 0.5 }, { "idle": 2 }]));
+    let tab = named(&app, "Activity");
+    click(&mut app, tab);
+    play(&mut app, json!([{ "seconds": 0.6 }, { "idle": 2 }]));
+    assert!(has_text(&app, "agent:helper"), "{:?}", app.activity());
+    assert!(has_text(&app, "spawn crate"));
+    assert!(has_text(&app, "a crate to jump on"));
+    let only = named(&app, "Agents only");
+    click(&mut app, only);
+    let undo = named(&app, "Undo this");
+    click(&mut app, undo);
+    assert!(app.status().starts_with("took back r"), "{}", app.status());
+    assert!(!wish_editor::ids(app.rows()).contains("crate"));
+}

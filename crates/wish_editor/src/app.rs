@@ -198,6 +198,11 @@ pub struct EditorApp {
     /// The console's entries (from `logs_get`), and the last one read.
     log: VecDeque<Value>,
     log_seq: u64,
+    /// The activity feed, oldest first, and the last entry read.
+    activity: VecDeque<Value>,
+    activity_seq: u64,
+    /// The feed shows agents only.
+    agents_only: std::cell::Cell<bool>,
     since_log: f64,
     /// What `check` found last.
     found: Vec<Value>,
@@ -403,6 +408,9 @@ impl EditorApp {
             tab: Tab::Assets,
             log: VecDeque::new(),
             log_seq: 0,
+            activity: VecDeque::new(),
+            activity_seq: 0,
+            agents_only: std::cell::Cell::new(false),
             since_log: 0.0,
             found: Vec::new(),
             timings: VecDeque::new(),
@@ -1434,6 +1442,31 @@ impl EditorApp {
         }
     }
 
+    /// Reads what was done since the feed last looked.
+    fn read_activity(&mut self) {
+        let got = self.call(
+            "activity_get",
+            &json!({ "since": self.activity_seq, "limit": 500 }),
+        );
+        if got["ok"] != true {
+            return;
+        }
+        for entry in got["entries"].as_array().into_iter().flatten() {
+            self.activity.push_back(entry.clone());
+            if self.activity.len() > crate::panels::MAX_LOG {
+                self.activity.pop_front();
+            }
+        }
+        if let Some(seq) = got["last_seq"].as_u64() {
+            self.activity_seq = self.activity_seq.max(seq);
+        }
+    }
+
+    /// The activity feed's entries, oldest first.
+    pub fn activity(&self) -> Vec<Value> {
+        self.activity.iter().cloned().collect()
+    }
+
     /// Runs `check` for the problems tab.
     fn run_check(&mut self) {
         let checked = self.call("check", &json!({}));
@@ -2122,13 +2155,21 @@ impl EditorApp {
             if tab == Tab::Console {
                 self.read_log();
             }
+            if tab == Tab::Activity {
+                self.read_activity();
+            }
         }
-        if let Some(revision) = actions.panels.revert
+        let revert = actions
+            .panels
+            .revert
+            .map(|revision| (self.scene.clone(), revision))
+            .or(actions.panels.revert_in.clone());
+        if let Some((scene, revision)) = revert
             && self.play.is_none()
         {
             let done = self.call(
                 "edit_history",
-                &json!({ "scene": self.scene.clone(), "action": "revert", "revision": revision }),
+                &json!({ "scene": scene, "action": "revert", "revision": revision }),
             );
             self.status = if done["ok"] == true {
                 tf("took back r{revision}", &[("revision", &revision)])
@@ -3127,6 +3168,16 @@ impl EditorApp {
                         crate::browser::panel(ui, &view, &mut actions.browser);
                     }
                     Tab::Console => crate::panels::console(ui, &self.log, &mut actions.panels),
+                    Tab::Activity => {
+                        let mut agents_only = self.agents_only.get();
+                        crate::panels::activity(
+                            ui,
+                            &self.activity,
+                            &mut agents_only,
+                            &mut actions.panels,
+                        );
+                        self.agents_only.set(agents_only);
+                    }
                     Tab::Problems => crate::panels::problems(ui, &self.found, &mut actions.panels),
                     Tab::Performance => {
                         crate::panels::performance(ui, &self.timings, self.play.is_some());
@@ -3241,11 +3292,18 @@ impl EditorApp {
         self.since_project_poll += seconds;
         self.since_log += seconds;
         let mut log_changed = false;
-        if (self.tab == Tab::Console || self.play.is_some()) && self.since_log >= 0.5 {
+        if (self.tab == Tab::Console || self.tab == Tab::Activity || self.play.is_some())
+            && self.since_log >= 0.5
+        {
             self.since_log = 0.0;
-            let before = self.log_seq;
+            let before = (self.log_seq, self.activity_seq);
             self.read_log();
-            log_changed = self.log_seq != before && self.tab == Tab::Console;
+            self.read_activity();
+            log_changed = match self.tab {
+                Tab::Console => self.log_seq != before.0,
+                Tab::Activity => self.activity_seq != before.1,
+                _ => false,
+            };
         }
         let mut project_changed = false;
         if self.since_project_poll >= PROJECT_POLL_SECONDS {
