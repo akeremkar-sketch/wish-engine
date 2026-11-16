@@ -170,3 +170,11 @@ Eşlik testi yeni araç için örnek ister (M4 kuralı); tanı kataloğu her yen
 ## 15. Uygulama notları
 
 (Her iş paketi bitince eklenir.)
+
+### WP1 — kanıt işi: Rapier determinizmi, ADR-026, maliyet
+
+- **`wish_physics`** açıldı, `rapier3d 0.36.1` (Apache-2.0), özellikler: `dim3`, `f32`, `std`, `enhanced-determinism` (SIMD ve iş parçacığı yok).
+- **Determinizm:** 6 katlı kutu piramidi + fırlatılan top, 600 tick, her gövdenin konum/dönüş/hız bitleri `StableHasher` ile: `0x8c77d52755b303cb697ba766c515b051`. **Windows debug = Windows release = Linux (CI)** (kayıtlı hash testi; ilk CI koşusunda tuttu). Tutmazsa ilk bakılacak şey Rapier özellikleri (SIMD/paralel).
+- **ADR-026** (uzantılar) uygulandı: `World::insert_extension/extension/extension_mut/remove_extension` (`wish_ecs/src/extension.rs`); anlık görüntü ve `clone` taşır, hash'e girmez. Kanıt: Rapier durumu kopyalanıp devam ettirilince düz koşuyla bit düzeyinde aynı (`a_cloned_state_continues_bit_for_bit`; `PhysicsPipeline` kopyalanamaz, ara belleğidir, yeni bir tane yeterli çıktı).
+- **Maliyet (release, yerleşik piramit, 120 tick ortalaması):** 57 gövde 0,04 ms, 212 gövde 0,12 ms, **992 gövde 2,0 ms (kare bütçesinin %12'si)** → %25 bütçesinin altında.
+- Not: tasarım §3.1'de "App uzantıları" yazıyordu; uzantılar `World`'de tutuldu (anlık görüntüye otomatik girer, sistemler zaten `World`'e erişir).

@@ -23,6 +23,27 @@ struct Sim {
     ccd: CCDSolver,
 }
 
+impl Clone for Sim {
+    /// Everything that carries over between steps, with a new pipeline: the
+    /// pipeline is scratch memory (the test below shows that nothing is lost).
+    fn clone(&self) -> Self {
+        Self {
+            pipeline: PhysicsPipeline::new(),
+            gravity: self.gravity,
+            params: self.params,
+            islands: self.islands.clone(),
+            broad: self.broad.clone(),
+            narrow: self.narrow.clone(),
+            bodies: self.bodies.clone(),
+            colliders: self.colliders.clone(),
+            impulse: self.impulse.clone(),
+            multibody: self.multibody.clone(),
+            soft: self.soft.clone(),
+            ccd: self.ccd.clone(),
+        }
+    }
+}
+
 impl Sim {
     fn new() -> Self {
         Self {
@@ -149,6 +170,33 @@ fn a_pyramid_comes_to_rest_and_the_ball_knocks_it() {
     }
 }
 
+/// ADR-026: Rapier's whole state is cloned with a snapshot; going back and
+/// continuing gives the same bits as never going back, even though the
+/// warm-start impulses and the broad-phase tree are not in any component.
+#[test]
+fn a_cloned_state_continues_bit_for_bit() {
+    let mut straight = Sim::pyramid(6);
+    let mut saved = None;
+    for tick in 0..400 {
+        if tick == 150 {
+            saved = Some(straight.clone());
+        }
+        straight.step();
+    }
+    let mut resumed = saved.unwrap();
+    for _ in 150..400 {
+        resumed.step();
+    }
+    assert_eq!(resumed.hash(), straight.hash());
+    // Not just the bodies: the next steps stay equal too (warm starting and
+    // contact caches were carried over).
+    for _ in 0..200 {
+        straight.step();
+        resumed.step();
+        assert_eq!(resumed.hash(), straight.hash());
+    }
+}
+
 /// The recorded value. It is the same on every platform the engine builds
 /// on; if it ever differs, the first thing to look at is whether a Rapier
 /// feature (SIMD, parallel) changed (ADR-014).
@@ -160,3 +208,26 @@ fn the_recorded_hash_holds() {
 }
 
 const RECORDED: u128 = 0x8c77d52755b303cb697ba766c515b051;
+
+/// `cargo test --release -p wish_physics -- --ignored --nocapture`
+#[test]
+#[ignore = "measurement"]
+fn what_a_step_costs() {
+    for layers in [10usize, 20, 44] {
+        let mut sim = Sim::pyramid(layers);
+        let bodies = sim.bodies.len();
+        for _ in 0..60 {
+            sim.step();
+        }
+        let start = std::time::Instant::now();
+        let ticks = 120;
+        for _ in 0..ticks {
+            sim.step();
+        }
+        let ms = start.elapsed().as_secs_f64() * 1000.0 / f64::from(ticks);
+        println!(
+            "{bodies} bodies: {ms:.3} ms per tick ({:.0}% of a 16.7 ms frame)",
+            ms / 16.667 * 100.0
+        );
+    }
+}

@@ -375,3 +375,11 @@ Tüm değişiklikler (elle ya da ajanla) kontrol düzleminden geçer; arayüzün
 - Crate öneki `wish_`, belge adresleri `wish://…`, proje bildirimi `wish.json`.
 - Komut satırı aracı `wen`dir (**W**ish **En**gine), `wish` **değil**: `wish` adı Tcl/Tk'nin kendi komutudur ve macOS ile Git for Windows'ta hazır gelir; aynı adı kullanmak çakışırdı.
 - 10 Kasım 2026'da yapılan hızlı web aramasında bu adı taşıyan bir oyun motoru bulunmadı. Bu kesin bir marka denetimi değildir; Steam'de yayım öncesinde marka ve alan adı uygunluğu ayrıca doğrulanır (M9).
+
+## ADR-026 — ECS dışı simülasyon durumu: uzantılar
+
+**Karar.** Sütunlara sığmayan çalışma belleği (Rapier'in geniş evre ağacı, temas önbelleği, sıcak başlatma darbeleri) `World` içinde **uzantı** olarak tutulur (`insert_extension`, `extension`, `extension_mut`; `Clone + Send + Sync` bir tür başına bir değer). Kurallar: (1) oyun açısından görünen her değer (konum, dönüş, hız, uyku) her tick ECS bileşenlerine **geri yazılır**; uzantı yalnızca türetilmiş/önbellek durumu taşır. (2) Uzantı dünya hash'ine **girmez** (bileşenler zaten her sapmayı yansıtır). (3) Anlık görüntü uzantıları kopyalar, `restore` geri koyar, `clone` ve çatal kendi kopyasını alır. (4) Geri yükle → devam et, hiç geri dönmemekle bit düzeyinde aynı olmalıdır; her uzantı kullanan alt sistem bunu bir testle kanıtlar.
+
+**Alternatifler.** Her tick durumu ECS'den sıfırdan kurmak (pahalı, sıcak başlatma kaybolur, yığınlar titrer); durumu dünyada bayt dizisi tutmak (sabit boyutlu `Plain` kuralını bozar, her tick serileştirme).
+
+**Kanıt (M6 WP1).** `wish_physics/tests/proof.rs`: Rapier durumu (boru hattı hariç, o ara bellektir) kopyalanır, 150. tickten devam eden kopya 400. ve sonraki 200 tickte düz koşuyla aynı hash'i verir; kayıtlı piramit hash'i Windows ve Linux'ta (CI) aynı, debug ve release aynı.

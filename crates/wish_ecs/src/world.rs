@@ -16,6 +16,7 @@ use crate::archetype::Archetype;
 use crate::column::Column;
 use crate::entities::{Entities, EntityLocation};
 use crate::events::{EventCursor, EventQueue};
+use crate::extension::{Extension, Extensions};
 use crate::internal_error;
 use crate::query::{Access, ChangeTick, Mut, QueryData, QueryFilter, QueryIter};
 use crate::registry::{ComponentId, EventId, Registry, ResourceId, TypeInfo};
@@ -37,6 +38,8 @@ struct WorldState {
     /// Indexed by event id; created on the first event of a type.
     events: Vec<Option<EventQueue>>,
     texts: TextTable,
+    /// Working state of subsystems (ADR-026); not part of the world hash.
+    extensions: Extensions,
     /// Recorded on every write; starts at 1 so that tick 0 precedes everything.
     change_tick: u64,
 }
@@ -192,6 +195,7 @@ impl World {
                 resources: Vec::new(),
                 events: Vec::new(),
                 texts: TextTable::default(),
+                extensions: Extensions::default(),
                 change_tick: 1,
             },
         };
@@ -200,6 +204,27 @@ impl World {
         let registered = world.hierarchy_id().is_ok();
         debug_assert!(registered, "the hierarchy component failed to register");
         world
+    }
+
+    /// Stores an extension (ADR-026), replacing one of the same type.
+    pub fn insert_extension<T: Extension>(&mut self, value: T) {
+        self.state.extensions.insert(value);
+    }
+
+    /// The extension of type `T`, if there is one.
+    pub fn extension<T: Extension>(&self) -> Option<&T> {
+        self.state.extensions.get()
+    }
+
+    /// The extension of type `T`, to change. Not tracked: extensions are
+    /// working state, never gameplay state.
+    pub fn extension_mut<T: Extension>(&mut self) -> Option<&mut T> {
+        self.state.extensions.get_mut()
+    }
+
+    /// Removes the extension of type `T`; whether there was one.
+    pub fn remove_extension<T: Extension>(&mut self) -> bool {
+        self.state.extensions.remove::<T>()
     }
 
     /// The registered component, resource and event types.
