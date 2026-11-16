@@ -57,6 +57,9 @@ xxhash-rust = { version = "0.8", features = ["xxh3"] }
 gltf = { version = "1.4", features = ["KHR_materials_emissive_strength"] }
 naga = { version = "30", features = ["wgsl-in"] }
 png = "0.18"
+# egui: immediate-mode editor UI (ADR-018). No default features: the bundled
+# fonts carry OFL/Ubuntu licenses; the editor uses the engine's Roboto.
+egui = { version = "0.37", default-features = false }
 pollster = "1"
 wgpu = "30"
 

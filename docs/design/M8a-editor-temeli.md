@@ -80,3 +80,14 @@ Veri akışı: UI olayı → panel → **tek** `Workspace::call(tool, args, acto
 ## 7. Kullanıcıya ait kararlar
 
 Yok (teknoloji kararı §2'de gerekçeli). Kullanıcıdan istenecek tek şey, WP2 sonunda çalışan iskeletin düzenine bakıp itiraz etmesi (T1 yerine).
+
+## 8. Uygulama notları
+
+### WP1 — kanıt işi: başsız egui + CPU rasterleyici
+
+- **Crate `wish_editor`** (bağımlılıklar: `egui` 0.37 varsayılan özellikler kapalı, `wish_core`, `wish_text` yalnızca Roboto baytları için). Lisans taraması (`cargo metadata`, 70+ paket): hepsi MIT/Apache-2.0/BSD/Zlib/BSL/Unicode, izinli listede; varsayılan yazı tipi paketleri (OFL/Ubuntu) kapalı olduğundan girmez.
+- **`raster`**: `Canvas` (RGBA8, sRGB, önceden çarpılmış alfa), `Textures` (egui doku farkları, sıralı uygulanır), `paint` (üçgenler). Köşeler 1/256 piksele yuvarlanır, kapsama **tam sayı** kenar fonksiyonları ve üst-sol kuralıyla belirlenir: ortak kenarda çift boyama ya da boşluk olmaz (yarı saydam şekillerde dikiş yok); doğrusal/yakın doku örnekleme; "düz" üçgenler (tek renk, tek doku noktası) enterpolasyonsuz hızlı yoldan çizilir. Ağ kayan nokta işlemleri `+ - * /` ve yuvarlama, makineye bağlı işlev (sin/exp) yok.
+- **`Editor`**: `layout` (egui koşar, girdi olayları verilir, saat yok: süre çağırandan gelir) → `Frame` (üçgenler), `paint(frame, canvas)`, `run_frame` ikisi birden. Yazı tipi: yalnızca Roboto, iki ailede.
+- **Testler (`tests/raster.rs`):** altın görüntü (`inspector.png`: başlık, sürükle kutusu, onay kutusu, metin alanı, kaydırıcı, düğme; **bayt bayt eşit**), iki editör aynı resmi çizer, bir fare tıklaması onay kutusunu değiştirir, kare süresi ölçümü (`--ignored`, release).
+- **Ölçüm (release, 1920×1080, 60 etiket + 8 denetçi paneli, 6.524 üçgen):** düzen 0,6 ms, çizim 4,3 ms (ilk sürüm 11,7 ms'ydi; düz üçgen yolu ve artımlı kenar fonksiyonları 2,7 kat kazandırdı), tuval ayırma 2,4 ms (gerçekte yeniden kullanılır). Bütçe (düzen + çizim ≤ 6 ms) tutuyor; kirli bölge çizimi gerekirse WP2'de.
+- **egui 0.37 notları:** `SidePanel` → `Panel::left/right(..).show(ui, ..)`; `Context::run_ui`; uygulanan `TexturesDelta` `clear()` ile boşaltılmalı (debug'da `Drop` denetler).
