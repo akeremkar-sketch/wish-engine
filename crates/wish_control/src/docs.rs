@@ -313,6 +313,18 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "Too many point and spot lights reach the same part of the picture (more than 128); some were left out there, so it is darker than it should be. Spread lights out or give them a smaller range.",
     ),
     (
+        "live_edit",
+        "A note in a session's log: someone changed the running game with edit_apply and session. It lasts while the session runs; the scene file is not changed.",
+    ),
+    (
+        "live_edit_unsupported",
+        "An operation that only means something in a scene file (instantiate, overrides, notes) was sent to a running game. Make it in the scene and start the game again.",
+    ),
+    (
+        "live_edit_while_recording",
+        "A running game that is recording a replay refuses live edits (they are not input, so the replay would not play the same). Save the recording first.",
+    ),
+    (
         "managed_component",
         "The engine keeps this component itself (such as GlobalTransform or Hierarchy). Change the component it is derived from instead, such as Transform or the parent.",
     ),

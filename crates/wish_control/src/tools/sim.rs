@@ -151,7 +151,7 @@ pub(crate) const LOGS_GET: Tool = Tool {
         Param::optional(
             "kinds",
             Kind::StringList,
-            "Only these kinds: session, system, inspector, script (game code logs and reloads).",
+            "Only these kinds: session, system, inspector, script (game code logs and reloads), audio (what was heard), edit (live edits of the running game).",
         ),
         Param::optional(
             "limit",
@@ -395,7 +395,7 @@ fn logs_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<Str
         _ => 0,
     };
     let kinds = args.strings("kinds");
-    const KNOWN: &[&str] = &["session", "system", "inspector", "script", "audio"];
+    const KNOWN: &[&str] = &["session", "system", "inspector", "script", "audio", "edit"];
     for kind in &kinds {
         if !KNOWN.contains(&kind.as_str()) {
             return Err(Diagnostic::error(

@@ -396,3 +396,122 @@ fn a_prefab_is_made_and_edited_and_its_instances_follow() {
     // `check` still passes.
     assert_eq!(call(&mut ws, "check", json!({}))["passed"], true);
 }
+
+/// M8a WP7 (from M5): `edit_apply` with `session` changes the running game,
+/// all or nothing, and leaves the scene file and its history alone.
+#[test]
+fn edit_apply_changes_a_running_game_and_not_the_file() {
+    let (dir, mut ws) = project("live-edit");
+    let file = std::fs::read_to_string(dir.join("scenes/main.scene.json")).unwrap();
+    let started = call(&mut ws, "sim_start", json!({}));
+    let session = started["session"].as_str().unwrap().to_owned();
+    call(
+        &mut ws,
+        "sim_step",
+        json!({ "session": session, "frames": 5 }),
+    );
+    let live = |ws: &mut Workspace, ops: Value| {
+        call(ws, "edit_apply", json!({ "session": session, "ops": ops }))
+    };
+    // Set, spawn (with a parent), rename: one call, all applied.
+    let done = live(
+        &mut ws,
+        json!([
+            { "op": "set", "id": "ground", "component": "Material", "value": { "metallic": 1.0 } },
+            { "op": "spawn", "id": "box", "parent": "ground", "components": {
+                "Transform": { "translation": [0, 2, 0] }, "Primitive": { "shape": "Cube" } } },
+            { "op": "rename", "id": "sun", "to": "lamp" }
+        ]),
+    );
+    assert_eq!(done["ok"], true, "{done}");
+    assert_eq!(done["changes"]["count"], 4);
+    let got = call(
+        &mut ws,
+        "entity_get",
+        json!({ "session": session, "ids": ["ground", "box", "lamp"] }),
+    );
+    assert_eq!(got["ok"], true, "{got}");
+    assert_eq!(
+        got["entities"][0]["components"]["Material"]["metallic"],
+        1.0
+    );
+    assert_eq!(
+        got["entities"][1]["components"]["Transform"]["translation"],
+        json!([0.0, 2.0, 0.0])
+    );
+    // The world goes on with it.
+    let stepped = call(
+        &mut ws,
+        "sim_step",
+        json!({ "session": session, "frames": 3 }),
+    );
+    assert_eq!(stepped["ok"], true, "{stepped}");
+    // The file and the scene's history are untouched.
+    assert_eq!(
+        std::fs::read_to_string(dir.join("scenes/main.scene.json")).unwrap(),
+        file
+    );
+    assert_eq!(
+        call(&mut ws, "edit_history", json!({ "action": "list" }))["can_undo"],
+        false
+    );
+    // The session's log says who changed what.
+    let logs = call(
+        &mut ws,
+        "logs_get",
+        json!({ "session": session, "kinds": ["edit"] }),
+    );
+    assert!(logs.to_string().contains("live_edit"), "{logs}");
+    // All or nothing: the second operation fails, the first is not kept.
+    let refused = live(
+        &mut ws,
+        json!([
+            { "op": "despawn", "id": "box" },
+            { "op": "set", "id": "nobody", "component": "Transform", "value": {} }
+        ]),
+    );
+    assert_eq!(refused["error"]["code"], "unknown_entity");
+    assert_eq!(refused["error"]["location"]["op"], 1);
+    let still = call(
+        &mut ws,
+        "entity_get",
+        json!({ "session": session, "ids": ["box"] }),
+    );
+    assert_eq!(still["ok"], true, "box is still there: {still}");
+    // A dry run changes nothing.
+    let dry = call(
+        &mut ws,
+        "edit_apply",
+        json!({ "session": session, "dry_run": true, "ops": [{ "op": "despawn", "id": "box" }] }),
+    );
+    assert_eq!(dry["dry_run"], true, "{dry}");
+    assert_eq!(
+        call(
+            &mut ws,
+            "entity_get",
+            json!({ "session": session, "ids": ["box"] })
+        )["ok"],
+        true
+    );
+    // What only means something in a file is refused, with a hint.
+    let placed = live(
+        &mut ws,
+        json!([{ "op": "set_notes", "id": "box", "notes": "x" }]),
+    );
+    assert_eq!(placed["error"]["code"], "live_edit_unsupported");
+    // A recording session refuses live edits.
+    call(&mut ws, "sim_stop", json!({ "session": session }));
+    let fresh = call(&mut ws, "sim_start", json!({}));
+    let fresh = fresh["session"].as_str().unwrap().to_owned();
+    call(
+        &mut ws,
+        "replay",
+        json!({ "action": "record", "session": fresh }),
+    );
+    let recording = call(
+        &mut ws,
+        "edit_apply",
+        json!({ "session": fresh, "ops": [{ "op": "despawn", "id": "sun" }] }),
+    );
+    assert_eq!(recording["error"]["code"], "live_edit_while_recording");
+}

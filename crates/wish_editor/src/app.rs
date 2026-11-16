@@ -31,6 +31,45 @@ use crate::raster::Canvas;
 const POLL_SECONDS: f64 = 0.4;
 /// How often the project as a whole is (problems, rebuilt game code).
 const PROJECT_POLL_SECONDS: f64 = 2.0;
+/// The game's tick rate while playing in the editor.
+const TICK_RATE: f64 = 60.0;
+/// At most this many ticks are run in one frame (a slow frame does not
+/// make the game race to catch up).
+const MAX_CATCH_UP: u64 = 8;
+/// A snapshot for the timeline every this many seconds of game time.
+const SNAPSHOT_SECONDS: f64 = 2.0;
+/// At most this many timeline snapshots (a session holds 32).
+const MAX_TIMELINE: usize = 30;
+
+/// The game running in the editor.
+struct Play {
+    session: String,
+    paused: bool,
+    /// Ticks owed to real time.
+    owed: f64,
+    /// Keys and buttons held (by `input.json` name), sent to the game.
+    held: BTreeSet<String>,
+    /// Game time since the last timeline snapshot.
+    since_snapshot: f64,
+    /// The timeline: snapshot labels and their ticks.
+    snapshots: Vec<(String, u64)>,
+    /// Where the timeline slider is (an index into `snapshots`).
+    cursor: usize,
+    tick: u64,
+    /// Real time since the inspector last read the live values.
+    since_read: f64,
+}
+
+/// The game's name for a key, from egui's (the same, but arrows are short).
+fn game_key(name: &str) -> &str {
+    match name {
+        "ArrowUp" => "Up",
+        "ArrowDown" => "Down",
+        "ArrowLeft" => "Left",
+        "ArrowRight" => "Right",
+        other => other,
+    }
+}
 /// The window's backdrop where nothing is drawn.
 const BACKDROP: [u8; 4] = [24, 24, 27, 255];
 /// A viewport smaller than this is not drawn (a window being squeezed).
@@ -60,6 +99,8 @@ pub struct Row {
 struct UiState {
     /// The row being renamed and the name typed so far.
     rename: Option<(String, String)>,
+    /// Where the timeline slider was put while the button is still down.
+    timeline: Option<usize>,
 }
 
 /// The editor as a window's content.
@@ -120,6 +161,8 @@ pub struct EditorApp {
     target_for: (Vec<String>, u64),
     hovered: Option<Handle>,
     drag: Option<ActiveDrag>,
+    /// The game, while it plays in the editor.
+    play: Option<Play>,
     /// Component schemas from `schema_get`, by name.
     schemas: BTreeMap<String, Value>,
     /// The project's files, for asset fields.
@@ -181,6 +224,12 @@ struct Actions {
     drop: Option<(String, Pos2)>,
     /// Make a prefab of this entity and its children.
     make_prefab: Option<String>,
+    play_start: bool,
+    play_pause: bool,
+    play_step: bool,
+    play_stop: bool,
+    /// Go back to this point of the timeline.
+    rewind_to: Option<usize>,
 }
 
 impl Actions {
@@ -206,6 +255,11 @@ impl Actions {
             || self.browser.any()
             || self.drop.is_some()
             || self.make_prefab.is_some()
+            || self.play_start
+            || self.play_pause
+            || self.play_step
+            || self.play_stop
+            || self.rewind_to.is_some()
     }
 }
 
@@ -254,6 +308,7 @@ impl EditorApp {
             target_for: (Vec::new(), u64::MAX),
             hovered: None,
             drag: None,
+            play: None,
             schemas: BTreeMap::new(),
             assets: Vec::new(),
             inspected: Vec::new(),
@@ -352,10 +407,11 @@ impl EditorApp {
         if self.selected.is_empty() {
             return;
         }
-        let got = self.call(
-            "entity_get",
-            &json!({ "scene": self.scene.clone(), "ids": self.selected.clone() }),
-        );
+        let args = match &self.play {
+            Some(play) => json!({ "session": play.session.clone(), "ids": self.selected.clone() }),
+            None => json!({ "scene": self.scene.clone(), "ids": self.selected.clone() }),
+        };
+        let got = self.call("entity_get", &args);
         if got["ok"] != true {
             return;
         }
@@ -393,6 +449,12 @@ impl EditorApp {
     /// handles would have to write overrides).
     fn refresh_target(&mut self) {
         let key = (self.selected.clone(), self.revision);
+        if self.play.is_some() {
+            // No handles on a running game.
+            self.target = None;
+            self.target_for = (Vec::new(), u64::MAX);
+            return;
+        }
         if key == self.target_for || self.drag.is_some() {
             return;
         }
@@ -719,6 +781,26 @@ impl EditorApp {
         self.editor.as_ref().map_or(&[], |editor| editor.widgets())
     }
 
+    /// Whether the game is running in the editor (paused or not).
+    pub fn playing(&self) -> bool {
+        self.play.is_some()
+    }
+
+    /// The running game's session and tick, and whether it is paused.
+    pub fn play_state(&self) -> Option<(&str, u64, bool)> {
+        self.play
+            .as_ref()
+            .map(|play| (play.session.as_str(), play.tick, play.paused))
+    }
+
+    /// The timeline: snapshot labels and ticks.
+    pub fn timeline(&self) -> Vec<(String, u64)> {
+        self.play
+            .as_ref()
+            .map(|play| play.snapshots.clone())
+            .unwrap_or_default()
+    }
+
     /// What the handles do now.
     pub fn handle_mode(&self) -> &'static str {
         match self.mode {
@@ -904,13 +986,20 @@ impl EditorApp {
     /// One change to the scene: `ops` as one `edit_apply`, made against the
     /// revision the person is looking at. Returns whether it was applied.
     fn edit(&mut self, what: &str, ops: Vec<Value>) -> bool {
-        let mut args = json!({ "scene": self.scene.clone(), "ops": ops });
-        if self.revision != u64::MAX {
+        // While the game plays, a change is made to the running game (live,
+        // not kept), never to the file.
+        let mut args = match &self.play {
+            Some(play) => json!({ "session": play.session.clone(), "ops": ops }),
+            None => json!({ "scene": self.scene.clone(), "ops": ops }),
+        };
+        if self.play.is_none() && self.revision != u64::MAX {
             args["base_revision"] = json!(self.revision);
         }
         let done = self.call("edit_apply", &args);
         let applied = done["ok"] == true;
-        self.status = if applied {
+        self.status = if applied && self.play.is_some() {
+            format!("{what} (live: not kept when the game stops)")
+        } else if applied {
             what.to_owned()
         } else {
             let message = done["error"]["message"]
@@ -923,7 +1012,184 @@ impl EditorApp {
         // person saw.
         self.revision = u64::MAX;
         self.refresh_scene();
+        self.inspected_for = (Vec::new(), u64::MAX);
+        self.picture_stale = true;
         applied
+    }
+
+    /// Starts the game from the scene being edited.
+    fn start_play(&mut self) {
+        if self.scene.ends_with(".prefab.json") {
+            self.status = "a prefab cannot be played; open a scene".to_owned();
+            return;
+        }
+        let started = self.call("sim_start", &json!({ "scene": self.scene.clone() }));
+        let Some(session) = started["session"].as_str().map(str::to_owned) else {
+            let message = started["error"]["message"]
+                .as_str()
+                .unwrap_or("it did not start");
+            let hint = started["error"]["hint"].as_str().unwrap_or("");
+            self.status = format!("play failed: {message} {hint}");
+            return;
+        };
+        self.drag = None;
+        self.play = Some(Play {
+            session,
+            paused: false,
+            owed: 0.0,
+            held: BTreeSet::new(),
+            since_snapshot: 0.0,
+            snapshots: Vec::new(),
+            cursor: 0,
+            tick: 0,
+            since_read: 0.0,
+        });
+        self.snapshot();
+        self.status = "playing".to_owned();
+        self.inspected_for = (Vec::new(), u64::MAX);
+        self.picture_stale = true;
+    }
+
+    /// Stops the game: the session is closed and the scene is shown again
+    /// (live changes are gone with it).
+    fn stop_play(&mut self) {
+        if let Some(play) = self.play.take() {
+            self.call("sim_stop", &json!({ "session": play.session }));
+            self.status = "stopped (live changes were not kept)".to_owned();
+            self.inspected_for = (Vec::new(), u64::MAX);
+            self.target_for = (Vec::new(), u64::MAX);
+            self.picture_stale = true;
+        }
+    }
+
+    /// Saves a timeline snapshot of the running game (while there is room).
+    fn snapshot(&mut self) {
+        let Some(play) = self.play.as_ref() else {
+            return;
+        };
+        if play.snapshots.len() >= MAX_TIMELINE {
+            return;
+        }
+        let label = format!("t{}", play.tick);
+        let session = play.session.clone();
+        let saved = self.call(
+            "sim_snapshot",
+            &json!({ "session": session, "action": "save", "label": label.clone() }),
+        );
+        if let Some(play) = self.play.as_mut()
+            && saved["ok"] == true
+        {
+            play.snapshots.push((label, play.tick));
+            play.cursor = play.snapshots.len() - 1;
+        }
+    }
+
+    /// Lets `ticks` of game time pass with the held keys and the pointer.
+    fn run_ticks(&mut self, ticks: u64) {
+        let Some(play) = self.play.as_ref() else {
+            return;
+        };
+        let session = play.session.clone();
+        let held = play.held.clone();
+        let pointer = self
+            .pointer
+            .filter(|(x, y)| self.viewport.contains(pos2(*x, *y)))
+            .map(|(x, y)| wish_control::PointerAt {
+                x: x - self.viewport.min.x,
+                y: y - self.viewport.min.y,
+                width: self.viewport.width(),
+                height: self.viewport.height(),
+            });
+        match self.workspace.play_step(&session, ticks, &held, pointer) {
+            Ok(problems) => {
+                if let Some(problem) = problems.first() {
+                    self.status = format!("{problem}");
+                }
+            }
+            Err(problem) => {
+                self.status = format!("{problem}");
+                if let Some(play) = self.play.as_mut() {
+                    play.paused = true;
+                }
+            }
+        }
+        let tick = self.call(
+            "sim_snapshot",
+            &json!({ "session": session, "action": "list" }),
+        )["tick"]
+            .as_u64();
+        if let Some(play) = self.play.as_mut() {
+            play.tick = tick.unwrap_or(play.tick + ticks);
+            play.since_snapshot += ticks as f64 / TICK_RATE;
+        }
+        self.picture_stale = true;
+    }
+
+    /// One frame of the running game: real time becomes ticks.
+    fn tick_play(&mut self, seconds: f64) {
+        let Some(play) = self.play.as_mut() else {
+            return;
+        };
+        play.since_read += seconds;
+        if play.since_read >= 0.25 {
+            play.since_read = 0.0;
+            self.inspected_for = (Vec::new(), u64::MAX);
+        }
+        let Some(play) = self.play.as_mut() else {
+            return;
+        };
+        if play.paused {
+            return;
+        }
+        play.owed += seconds * TICK_RATE;
+        let whole = play.owed.floor();
+        play.owed -= whole;
+        let ticks = (whole as u64).min(MAX_CATCH_UP);
+        if ticks == 0 {
+            return;
+        }
+        self.run_ticks(ticks);
+        if self
+            .play
+            .as_ref()
+            .is_some_and(|p| p.since_snapshot >= SNAPSHOT_SECONDS)
+        {
+            if let Some(play) = self.play.as_mut() {
+                play.since_snapshot = 0.0;
+            }
+            self.snapshot();
+        }
+    }
+
+    /// Goes back to a point of the timeline; the game is paused there.
+    fn rewind(&mut self, index: usize) {
+        let Some(play) = self.play.as_ref() else {
+            return;
+        };
+        let Some((label, tick)) = play.snapshots.get(index).cloned() else {
+            return;
+        };
+        let restored = self.call(
+            "sim_restore",
+            &json!({ "session": play.session.clone(), "snapshot": label.clone() }),
+        );
+        if restored["ok"] == true {
+            if let Some(play) = self.play.as_mut() {
+                play.paused = true;
+                play.tick = tick;
+                play.cursor = index;
+                play.owed = 0.0;
+                play.since_snapshot = 0.0;
+            }
+            self.status = format!("back at tick {tick}");
+        } else {
+            let message = restored["error"]["message"]
+                .as_str()
+                .unwrap_or("it did not work");
+            self.status = format!("rewind failed: {message}");
+        }
+        self.inspected_for = (Vec::new(), u64::MAX);
+        self.picture_stale = true;
     }
 
     /// A scene id made from a file's name.
@@ -1155,6 +1421,26 @@ impl EditorApp {
         if let Some(id) = actions.make_prefab {
             self.make_prefab(&id);
         }
+        if actions.play_start && self.play.is_none() {
+            self.start_play();
+        }
+        if actions.play_pause
+            && let Some(play) = self.play.as_mut()
+        {
+            play.paused = !play.paused;
+            play.owed = 0.0;
+            self.status = if play.paused { "paused" } else { "playing" }.to_owned();
+        }
+        if actions.play_step && self.play.as_ref().is_some_and(|p| p.paused) {
+            self.run_ticks(1);
+            self.inspected_for = (Vec::new(), u64::MAX);
+        }
+        if let Some(index) = actions.rewind_to {
+            self.rewind(index);
+        }
+        if actions.play_stop {
+            self.stop_play();
+        }
         if let Some(mode) = actions.mode {
             self.mode = mode;
             self.hovered = None;
@@ -1292,6 +1578,57 @@ impl EditorApp {
                 ShellEvent::PointerLeft => self.pointer = None,
                 _ => {}
             }
+            // While the game plays, the view's keys and buttons are the game's.
+            if self.play.is_some() {
+                let over = self
+                    .pointer
+                    .is_some_and(|(x, y)| self.viewport.contains(pos2(x, y)));
+                let typing = self
+                    .editor
+                    .as_ref()
+                    .is_some_and(|e| e.context().egui_wants_keyboard_input());
+                if let Some(play) = self.play.as_mut() {
+                    match event {
+                        ShellEvent::Key { name, pressed, .. } if !typing => {
+                            let key = game_key(name).to_owned();
+                            if *pressed && over {
+                                play.held.insert(key);
+                            } else if !*pressed {
+                                play.held.remove(&key);
+                            }
+                        }
+                        ShellEvent::Modifiers(modifiers) => {
+                            for (on, name) in [
+                                (modifiers.shift, "Shift"),
+                                (modifiers.ctrl, "Ctrl"),
+                                (modifiers.alt, "Alt"),
+                            ] {
+                                if on && over {
+                                    play.held.insert(name.to_owned());
+                                } else {
+                                    play.held.remove(name);
+                                }
+                            }
+                        }
+                        ShellEvent::Button {
+                            button, pressed, ..
+                        } => {
+                            let name = match button {
+                                Button::Primary => "MouseLeft",
+                                Button::Secondary => "MouseRight",
+                                Button::Middle => "MouseMiddle",
+                            };
+                            if *pressed && over {
+                                play.held.insert(name.to_owned());
+                            } else if !*pressed {
+                                play.held.remove(name);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                continue;
+            }
             // The handles first: a press on one is not a click on the view.
             let took = self.gizmo_input(event);
             match event {
@@ -1402,13 +1739,21 @@ impl EditorApp {
             // While a handle is dragged the picture shows the change as it
             // would be, without making it.
             let preview = self.drag.as_ref().and_then(|active| active.ops.clone());
-            let source = match &preview {
-                Some(ops) => PictureSource::Preview(Some(&scene), ops),
-                None => PictureSource::Scene(Some(&scene)),
+            let session = self.play.as_ref().map(|play| play.session.clone());
+            let source = match (&session, &preview) {
+                (Some(id), _) => PictureSource::Session(id),
+                (None, Some(ops)) => PictureSource::Preview(Some(&scene), ops),
+                (None, None) => PictureSource::Scene(Some(&scene)),
             };
-            let drawn =
-                self.workspace
-                    .render_picture(source, Some(&camera), width, height, self.view);
+            // A running game is seen through its own camera.
+            let eye_camera: Option<&dyn Fn(&CameraView) -> CameraView> = if session.is_some() {
+                None
+            } else {
+                Some(&camera)
+            };
+            let drawn = self
+                .workspace
+                .render_picture(source, eye_camera, width, height, self.view);
             match drawn {
                 Ok(picture) => {
                     self.picture = Some(picture.image);
@@ -1433,12 +1778,18 @@ impl EditorApp {
             self.outlines.clear();
             return false;
         }
-        let ids = self.workspace.render_ids(
-            PictureSource::Scene(Some(&scene)),
-            Some(&camera),
-            width,
-            height,
-        );
+        let session = self.play.as_ref().map(|play| play.session.clone());
+        let ids = match &session {
+            Some(id) => self
+                .workspace
+                .render_ids(PictureSource::Session(id), None, width, height),
+            None => self.workspace.render_ids(
+                PictureSource::Scene(Some(&scene)),
+                Some(&camera),
+                width,
+                height,
+            ),
+        };
         let Ok(ids) = ids else {
             self.outlines.clear();
             return false;
@@ -1508,7 +1859,7 @@ impl EditorApp {
             });
         });
         ui.separator();
-        let typing = self.ui_state.borrow().rename.is_some();
+        let typing = self.ui_state.borrow().rename.is_some() || self.play.is_some();
         if !typing
             && ui.input(|input| input.key_pressed(egui::Key::Delete))
             && !ui.ctx().egui_wants_keyboard_input()
@@ -1665,6 +2016,58 @@ impl EditorApp {
                             }
                         }
                     });
+                match &self.play {
+                    None => {
+                        if ui
+                            .add_enabled(
+                                !self.scene.ends_with(".prefab.json"),
+                                egui::Button::new("Play"),
+                            )
+                            .on_hover_text(
+                                "Run the game here; changes made while it runs are not kept",
+                            )
+                            .clicked()
+                        {
+                            actions.play_start = true;
+                        }
+                    }
+                    Some(play) => {
+                        let pause = if play.paused { "Resume" } else { "Pause" };
+                        if ui.button(pause).clicked() {
+                            actions.play_pause = true;
+                        }
+                        if ui
+                            .add_enabled(play.paused, egui::Button::new("Step"))
+                            .on_hover_text("One tick")
+                            .clicked()
+                        {
+                            actions.play_step = true;
+                        }
+                        if ui.button("Stop").clicked() {
+                            actions.play_stop = true;
+                        }
+                        ui.label(format!("tick {}", play.tick));
+                        if play.snapshots.len() > 1 {
+                            let pending = self.ui_state.borrow().timeline;
+                            let mut cursor = pending.unwrap_or(play.cursor);
+                            let response = ui
+                                .add(
+                                    egui::Slider::new(&mut cursor, 0..=play.snapshots.len() - 1)
+                                        .show_value(false),
+                                )
+                                .on_hover_text("Timeline: let go to go back to that moment");
+                            // Where it is put counts when the button is let go.
+                            let down = ui.input(|input| input.pointer.any_down());
+                            if response.changed() {
+                                self.ui_state.borrow_mut().timeline = Some(cursor);
+                            }
+                            if !down && let Some(to) = self.ui_state.borrow_mut().timeline.take() {
+                                actions.rewind_to = Some(to);
+                            }
+                        }
+                    }
+                }
+                ui.separator();
                 if ui.button("Reset camera").clicked() {
                     actions.reset_camera = true;
                 }
@@ -1784,6 +2187,7 @@ impl EditorApp {
         }
         let mut changed = !events.is_empty()
             || project_changed
+            || self.play.as_ref().is_some_and(|play| !play.paused)
             || self.frames < 3
             || self.movement.any()
             || self.editor.as_ref().is_some_and(Editor::wants_repaint);
@@ -1793,6 +2197,7 @@ impl EditorApp {
         }
         self.refresh_target();
         self.view_input(&events);
+        self.tick_play(seconds);
         self.refresh_inspected();
         if changed || self.picture_stale || self.pending_pick.is_some() {
             let egui_events = convert(&events, self.pointer);

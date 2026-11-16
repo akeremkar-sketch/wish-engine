@@ -129,9 +129,14 @@ pub(crate) const ENTITY_GET: Tool = Tool {
 pub(crate) const EDIT_APPLY: Tool = Tool {
     name: "edit_apply",
     title: "Change the scene",
-    description: "Applies a list of operations to a scene, all or nothing, and writes the file. Operations: spawn {id, parent?, order?, components?, notes?}, instantiate {id, prefab, ...}, despawn {id}, set {id, component, value} (merges fields), replace {id, component, value}, remove {id, component}, reparent {id, parent, order?}, rename {id, to}, set_notes {id, notes}, set_resource / replace_resource {name, value}, remove_resource {name}, set_override / replace_override / remove_override {id, entity, component, value?}. In Transform values, \"euler_deg\": [x, y, z] may stand for rotation. Siblings keep the order of their \"order\" (then by id): give order where it matters, as in an interface column. A failed operation changes nothing and says which one (location.op). Answers the new revision, what changed, and what others changed since you last looked.",
+    description: "Applies a list of operations to a scene, all or nothing, and writes the file. Operations: spawn {id, parent?, order?, components?, notes?}, instantiate {id, prefab, ...}, despawn {id}, set {id, component, value} (merges fields), replace {id, component, value}, remove {id, component}, reparent {id, parent, order?}, rename {id, to}, set_notes {id, notes}, set_resource / replace_resource {name, value}, remove_resource {name}, set_override / replace_override / remove_override {id, entity, component, value?}. In Transform values, \"euler_deg\": [x, y, z] may stand for rotation. Siblings keep the order of their \"order\" (then by id): give order where it matters, as in an interface column. A failed operation changes nothing and says which one (location.op). Answers the new revision, what changed, and what others changed since you last looked. With session, the operations change that running game's world instead (not the file, not its history; it lasts while the session runs): spawn, despawn, set, replace, remove, reparent, rename and the resource operations.",
     params: &[
         SCENE,
+        Param::optional(
+            "session",
+            Kind::String,
+            "Change this running game (from sim_start) instead of the scene file. Not kept: make the change in the scene to keep it.",
+        ),
         Param::required(
             "ops",
             Kind::Array,
@@ -728,6 +733,11 @@ fn refuse_if_file_invalid(workspace: &Workspace, path: &str) -> Result<()> {
 }
 
 fn edit_apply(workspace: &mut Workspace, args: &Args, actor: &Actor) -> Result<Map<String, Value>> {
+    if let Some(session) = args.str("session") {
+        let id = workspace.session_id(Some(session))?;
+        let ops = crate::ops::parse_ops(args.value("ops").unwrap_or(&Value::Null))?;
+        return workspace.edit_session(&id, &ops, actor, args.flag("dry_run"));
+    }
     let create = args.flag("create");
     let (path, notes) = open(workspace, args, create)?;
     refuse_if_file_invalid(workspace, &path)?;
