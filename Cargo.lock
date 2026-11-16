@@ -3708,6 +3708,7 @@ dependencies = [
  "wish_core",
  "wish_ecs",
  "wish_schema",
+ "wish_types",
 ]
 
 [[package]]
@@ -3834,6 +3835,7 @@ dependencies = [
  "wish_scene",
  "wish_schema",
  "wish_transform",
+ "wish_types",
 ]
 
 [[package]]
@@ -3871,9 +3873,36 @@ dependencies = [
 name = "wish_script"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "wasmtime",
  "wat",
+ "wish_app",
  "wish_core",
+ "wish_ecs",
+ "wish_schema",
+ "wish_sdk",
+ "wish_transform",
+ "wish_types",
+]
+
+[[package]]
+name = "wish_sdk"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wish_core",
+ "wish_schema",
+ "wish_sdk_macros",
+ "wish_types",
+]
+
+[[package]]
+name = "wish_sdk_macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.10",
 ]
 
 [[package]]
@@ -3883,6 +3912,16 @@ dependencies = [
  "serde_json",
  "wish_core",
  "wish_ecs",
+ "wish_schema",
+ "wish_types",
+]
+
+[[package]]
+name = "wish_types"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wish_core",
  "wish_schema",
 ]
 

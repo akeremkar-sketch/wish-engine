@@ -743,13 +743,10 @@ impl World {
         Ok(())
     }
 
-    /// Adds or replaces a component from raw bytes, for data from outside
-    /// native code (script modules). The bytes are checked first: a value
-    /// whose `bool` or enum fields hold invalid bytes, or whose text handles
-    /// are not in this world's text table, is rejected.
-    pub fn insert_bytes(&mut self, entity: Entity, id: ComponentId, bytes: &[u8]) -> Result<()> {
-        self.check_writable(id)?;
-        let info = self.component_info(id)?;
+    /// Checks raw bytes from outside native code against a type: `bool` and
+    /// enum fields must hold valid bytes, and text handles must be in this
+    /// world's text table.
+    fn check_outside_bytes(&self, info: &TypeInfo, bytes: &[u8]) -> Result<()> {
         validate_bytes(info.schema(), bytes)?;
         for offset in info.text_offsets() {
             let handle = bytes
@@ -768,7 +765,38 @@ impl World {
                 ));
             }
         }
+        Ok(())
+    }
+
+    /// Adds or replaces a component from raw bytes, for data from outside
+    /// native code (script modules). The bytes are checked first: a value
+    /// whose `bool` or enum fields hold invalid bytes, or whose text handles
+    /// are not in this world's text table, is rejected.
+    pub fn insert_bytes(&mut self, entity: Entity, id: ComponentId, bytes: &[u8]) -> Result<()> {
+        self.check_writable(id)?;
+        let info = self.component_info(id)?;
+        self.check_outside_bytes(info, bytes)?;
         self.put_component(entity, id, bytes)
+    }
+
+    /// Copies the entity's component into `out` (exactly the component's
+    /// size), padding zeroed. Returns `Ok(false)` when the entity exists but
+    /// does not have it. Unlike [`World::component_bytes`] it allocates
+    /// nothing, for copying many values in a row.
+    pub fn component_bytes_into(
+        &self,
+        entity: Entity,
+        id: ComponentId,
+        out: &mut [u8],
+    ) -> Result<bool> {
+        let location = self.location(entity)?;
+        let Some(column) = self.archetype(location.archetype)?.column(id) else {
+            return Ok(false);
+        };
+        let info = self.component_info(id)?;
+        out.fill(0);
+        column.read_into(location.row, info.spans(), out)?;
+        Ok(true)
     }
 
     /// The entity's component in JSON form.
@@ -874,6 +902,39 @@ impl World {
         // SAFETY: as in `resource`; the references borrow the world mutably.
         let (value, changed) = unsafe { column.get_mut::<T>(0) };
         Some(Mut::new(value, changed, tick))
+    }
+
+    fn resource_info(&self, id: ResourceId) -> Result<&TypeInfo> {
+        self.registry.resource(id).ok_or_else(|| {
+            Diagnostic::error(
+                "unknown_resource_id",
+                format!("No resource has the id {}.", id.index()),
+                "Look resource ids up by name in this world; ids are not shared between worlds.",
+            )
+        })
+    }
+
+    /// A copy of the resource's value as bytes, padding zeroed; `Ok(None)`
+    /// when it has no value.
+    pub fn resource_bytes(&self, id: ResourceId) -> Result<Option<Vec<u8>>> {
+        let info = self.resource_info(id)?;
+        let Some(column) = self.resource_column(id) else {
+            return Ok(None);
+        };
+        let mut bytes = vec![0u8; info.size()];
+        column.read_into(0, info.spans(), &mut bytes)?;
+        Ok(Some(bytes))
+    }
+
+    /// Sets a resource from raw bytes, for data from outside native code
+    /// (script modules), checked like [`World::insert_bytes`].
+    pub fn insert_resource_bytes(&mut self, id: ResourceId, bytes: &[u8]) -> Result<()> {
+        let info = self.resource_info(id)?;
+        if bytes.len() != info.size() {
+            return Err(internal_error("resource bytes have the wrong length"));
+        }
+        self.check_outside_bytes(info, bytes)?;
+        self.put_resource(id, bytes)
     }
 
     /// Removes the resource's value and returns it.
@@ -1010,6 +1071,48 @@ impl World {
             .iter()
             .map(|bytes| {
                 E::decode(bytes).ok_or_else(|| internal_error("a stored event did not decode"))
+            })
+            .collect()
+    }
+
+    fn event_info(&self, id: EventId) -> Result<&TypeInfo> {
+        self.registry.event(id).ok_or_else(|| {
+            Diagnostic::error(
+                "unknown_event_id",
+                format!("No event has the id {}.", id.index()),
+                "Look event ids up by name in this world; ids are not shared between worlds.",
+            )
+        })
+    }
+
+    /// Sends an event from raw bytes, for data from outside native code
+    /// (script modules), checked like [`World::insert_bytes`].
+    pub fn send_bytes(&mut self, id: EventId, bytes: &[u8]) -> Result<()> {
+        let info = self.event_info(id)?;
+        if bytes.len() != info.size() {
+            return Err(internal_error("event bytes have the wrong length"));
+        }
+        self.check_outside_bytes(info, bytes)?;
+        self.push_event(id, bytes)
+    }
+
+    /// The buffered events of type `id` sent after change tick `since`, as
+    /// bytes (padding zeroed), oldest first. For readers that remember where
+    /// they are as a change tick: a game module's system sees the events
+    /// sent since its previous run (`SystemContext::last_run`), and that
+    /// position is part of the app's snapshot.
+    pub fn event_bytes_since(&self, id: EventId, since: ChangeTick) -> Result<Vec<Vec<u8>>> {
+        let info = self.event_info(id)?;
+        let Some(queue) = self.state.events.get(id.index()).and_then(Option::as_ref) else {
+            return Ok(Vec::new());
+        };
+        queue
+            .rows_from(0)
+            .filter(|(column, row)| column.ticks(*row).is_some_and(|(added, _)| added > since.0))
+            .map(|(column, row)| {
+                let mut bytes = vec![0u8; info.size()];
+                column.read_into(row, info.spans(), &mut bytes)?;
+                Ok(bytes)
             })
             .collect()
     }

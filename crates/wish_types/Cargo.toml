@@ -1,0 +1,18 @@
+[package]
+name = "wish_types"
+description = "The engine's own component, resource and event declarations for Wish Engine: plain data shared by the engine and by game code compiled to WebAssembly."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+wish_core.workspace = true
+wish_schema.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

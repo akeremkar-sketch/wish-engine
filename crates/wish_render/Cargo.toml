@@ -16,6 +16,7 @@ wish_core.workspace = true
 wish_ecs.workspace = true
 wish_import.workspace = true
 wish_schema.workspace = true
+wish_types.workspace = true
 wish_transform.workspace = true
 
 [dev-dependencies]

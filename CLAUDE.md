@@ -35,7 +35,8 @@ Wish Engine: yapay zekâya tamamen entegre ama yapay zekâsız da eksiksiz kulla
   - M4'ten devirler: `edit_apply` canlı oturuma ve oyun kodu değerlendirme görevleri (M5); `until` maliyeti (M6); HTTP, `wen view/watch/shaders` araçlaşması, prefab düzenleme (M8a). Ayrıntı: tasarım §15.
 - **Süren: M5 (oyun mantığı: Wasm ev sahibi, SDK, sıcak yükleme, girdi, senaryo testleri)**, `m5-logic` dalında. Tasarım notu: [docs/design/M5-oyun-mantigi.md](docs/design/M5-oyun-mantigi.md) — M5'te kod yazmadan önce oku (§3 ABI, §5 derleme yolu, §6 korumalı alan, §13 iş paketleri ve modeller). `wasmtime` yalnızca `wish_script`'te; konuk yalnızca `wish` içe aktarmalarını kullanabilir; yakıt belirlenimcidir, duvar saatiyle kesme yok.
   - M5 WP1 bitti (kanıt işi): `wish_script` ilk hali (yakıt, bellek sınırı, tuzak → ipuçlu tanı + oyun kodunun dosya:satırı), **ADR-025**: oyun kodu cargo'suz tek `rustc` çağrısıyla, önceden derlenmiş SDK'ya karşı derlenir (ev sahibi bağlayıcısı yok; boş ortamda kanıtlandı, düzenleme sonrası 0,18 sn), modül başına tick başına taze örnek. `wasm32-unknown-unknown` kullanıcı onayıyla kuruldu, `rust-toolchain.toml`'da. Ölçüm testleri `#[ignore]` (release'te elle). Ayrıntı: tasarım §17 WP1.
-  - **Sıradaki: M5 WP2** (ABI v1: `wish_sdk` + makrolar, manifest, tür/düzen doğrulama, çerçeve, komutlar, `wish_app` dinamik sistemler, tick başına örnek). Önerilen model · efor: Opus 5.5 · high.
+  - M5 WP2 bitti: ABI v1 — konuk motorun kendi şema makrolarını ve yeni **`wish_types`** crate'ini (motor bileşen bildirimleri; ECS'siz, wasm32'de derlenir) kullanır; `wish_schema::wire` (şema JSON'u), `wish_sdk` (`Query`/`Res`/`ResMut`/`Commands`/`EventReader`/`EventWriter`, `export!`) + `wish_sdk_macros` (`#[system]`), ev sahibinde `GameModule` + `ScriptRuntime` (manifest, tür kaydı, çerçeve, dürüst geri yazma, komutlar, tick başına örnek), `wish_app` dinamik sistemler (`replace_system` durumu korur). Çerçeve ve komut kodlaması iki tarafın ortak kodu (`wish_sdk::frame`, `wish_sdk::command`). Mini oyun testi `wish_script/tests/game.rs`. Ayrıntı: tasarım §17 WP2.
+  - **Sıradaki: M5 WP3** (derleme sürücüsü + tanı eşleme, `script_build`/`wen build`, çalışma alanı türleri manifestten, `wen new` iskeleti, sıcak yükleme + şema göçü). Önerilen model · efor: Opus 5.5 · high.
 - **`wen`'i çalıştırmak:** `cargo run -p wish_cli --release -- run --example bounce --frames 10000 --seed 7 --json`. Derlenmiş ikili `C:\wish-build\target\release\wen.exe` altında.
 - **Hash'leri değiştirme konusunda dikkat:** `wish_ecs/tests/snapshot.rs` ve `wish_core` testlerinde kayıtlı hash/rastgelelik değerleri var. Bunlar kırılırsa önce bilinçli bir format değişikliği olup olmadığını düşün; bilinçliyse sürüm etiketini (`wish-world-hash-v1` vb.) artır.
 - **Git:** M1 (`m1-core`) ve M2 (`m2-data`) kendi dallarında geliştirilip `main`'e birleştirildi. Her kilometre taşı kendi dalında (`m2-...`) yürür, bitince `main`'e birleştirilir. Commit kimliği depoya özel proje kimliğidir (kullanıcı kararı); kişisel e-posta kullanma.
@@ -90,7 +91,7 @@ Bir değişiklik bunlardan birini bozuyorsa değişiklik yanlıştır. Gerekçel
 - Crate öneki `wish_`; komut satırı aracı `wen` (`wish` değil: o ad Tcl/Tk'nin komutudur ve çakışır).
 - Lisans: MIT + Apache-2.0 (açık kaynak). Her crate'in `Cargo.toml` dosyasında `license = "MIT OR Apache-2.0"`.
 - `cargo fmt` ve uyarısız `cargo clippy` zorunlu.
-- `unsafe` yalnızca `wish_ecs` ve `wish_script` içinde, bir de `wish_schema`'daki `Plain` sözleşmesinin bildiriminde (ve makronun ürettiği `unsafe impl Plain`'de); her blokta neden güvenli olduğunu açıklayan `// SAFETY:` yorumu; Miri ile test. Diğer her yerde çalışma alanı lint'i `unsafe_code = "deny"`.
+- `unsafe` yalnızca `wish_ecs`, `wish_script` ve `wish_sdk` (yalnızca konuk sınırı: çerçeve işaretçisi, içe aktarmalar) içinde, bir de `wish_schema`'daki `Plain` sözleşmesinin bildiriminde (ve makronun ürettiği `unsafe impl Plain`'de); her blokta neden güvenli olduğunu açıklayan `// SAFETY:` yorumu; Miri ile test. Diğer her yerde çalışma alanı lint'i `unsafe_code = "deny"`.
 - Kütüphane kodunda `unwrap`/`expect`/`panic!` yok (testler hariç); hatalar `Diagnostic` olarak döner. Bunu clippy zorlar (`Cargo.toml` içindeki `[workspace.lints]`).
 - Simülasyon kodunda `HashMap`/`HashSet` üzerinde gezinme yasak (clippy `iter_over_hash_type`); sıralı gezinme gerekiyorsa `BTreeMap` ya da `Vec` kullan.
 - Kararlı hash gereken her yerde (dünya hash'i, parmak izi, diske yazılan her şey) `wish_core::StableHasher` kullan; standart kitaplığın hash'leyicilerini asla.
@@ -118,11 +119,12 @@ Commit iletisini her zaman dosyadan ver (`git commit -F <dosya>`): PowerShell, `
 
 Bağımlılık eklediysen lisansını gör: `cargo metadata --format-version 1 | ConvertFrom-Json` çıktısındaki `packages[].license` alanı; izinli liste `deny.toml` içinde.
 
-`unsafe` içeren bir crate'e (şu an `wish_ecs`) dokunduysan Miri de temiz olmalı (nightly kurulu; ilk çalıştırma birkaç dakika sürer, arka planda çalıştır):
+`unsafe` içeren bir crate'e (`wish_ecs`, `wish_sdk`) dokunduysan Miri de temiz olmalı (nightly kurulu; ilk çalıştırma birkaç dakika sürer, arka planda çalıştır):
 
 ```powershell
 $env:MIRIFLAGS = '-Zmiri-strict-provenance'
 cargo +nightly miri test -p wish_ecs
+cargo +nightly miri test -p wish_sdk --test frame
 ```
 
 Determinizm testi ve kıyaslama (`wen bench`) M1'de eklendi; `cargo test --workspace` derleme hatası testlerini (`trybuild`) de çalıştırır.

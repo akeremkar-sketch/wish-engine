@@ -1,0 +1,168 @@
+//! The module's side of the ABI: the `wish` imports, the exports'
+//! bodies (called from `wish_sdk::export!`), and the per-call command buffer.
+
+#![allow(unsafe_code)]
+
+use std::cell::RefCell;
+
+use crate::command::Command;
+use crate::frame::FrameReader;
+
+#[cfg(target_arch = "wasm32")]
+mod imports {
+    #[link(wasm_import_module = "wish")]
+    unsafe extern "C" {
+        pub fn log(severity: i32, ptr: *const u8, len: i32);
+        pub fn panic(
+            ptr: *const u8,
+            len: i32,
+            file: *const u8,
+            file_len: i32,
+            line: i32,
+            column: i32,
+        );
+        pub fn rng_next() -> i64;
+    }
+}
+
+thread_local! {
+    /// Commands of the call in progress.
+    static COMMANDS: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+    /// How many entities the call has spawned so far.
+    static SPAWNED: RefCell<u32> = const { RefCell::new(0) };
+    /// Off the engine (the SDK's own tests): a stand-in random stream.
+    #[cfg(not(target_arch = "wasm32"))]
+    static RNG: RefCell<wish_core::Rng> = RefCell::new(wish_core::Rng::from_seed(0));
+}
+
+/// Adds a command to the call's buffer.
+pub(crate) fn push_command(command: &Command) {
+    COMMANDS.with(|buffer| command.encode(&mut buffer.borrow_mut()));
+}
+
+/// The index the next spawn of this call gets.
+pub(crate) fn next_spawn() -> u32 {
+    SPAWNED.with(|count| {
+        let mut count = count.borrow_mut();
+        let index = *count;
+        *count += 1;
+        index
+    })
+}
+
+/// The commands given so far in this call (tests).
+pub fn take_commands() -> Vec<u8> {
+    SPAWNED.with(|count| *count.borrow_mut() = 0);
+    COMMANDS.with(|buffer| std::mem::take(&mut *buffer.borrow_mut()))
+}
+
+/// Stops the call with a message. In a game module a panic is how a
+/// failure reaches the engine: the panic hook sends the message and the
+/// line, the module traps, and the engine turns that into a diagnostic and
+/// turns the system off (the world keeps running).
+#[allow(clippy::panic)]
+#[track_caller]
+pub fn fail(message: &str) -> ! {
+    panic!("{message}")
+}
+
+/// Writes a message to the engine's log (severity 0 info, 1 warning, 2 error).
+pub fn log(severity: i32, message: &str) {
+    #[cfg(target_arch = "wasm32")]
+    // SAFETY: the engine reads `len` bytes at `ptr` from this module's memory.
+    unsafe {
+        imports::log(severity, message.as_ptr(), message.len() as i32)
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = (severity, message);
+    }
+}
+
+/// The next number from this system's own random stream (seeded by the
+/// engine from the app's seed and the system's name: deterministic).
+pub fn random_u64() -> u64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        // SAFETY: an import without arguments.
+        let value = unsafe { imports::rng_next() };
+        u64::from_ne_bytes(value.to_ne_bytes())
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        RNG.with(|rng| rng.borrow_mut().next_u64())
+    }
+}
+
+/// Sends panics to the engine with their location, once per instance.
+fn report_panics() {
+    static HOOK: std::sync::Once = std::sync::Once::new();
+    HOOK.call_once(|| {
+        std::panic::set_hook(Box::new(|info| {
+            let message = info
+                .payload_as_str()
+                .map_or_else(|| "a panic without a message".to_owned(), str::to_owned);
+            let (file, line, column) = info
+                .location()
+                .map_or(("", 0, 0), |l| (l.file(), l.line(), l.column()));
+            #[cfg(target_arch = "wasm32")]
+            // SAFETY: the engine reads the given byte ranges from this
+            // module's memory.
+            unsafe {
+                imports::panic(
+                    message.as_ptr(),
+                    message.len() as i32,
+                    file.as_ptr(),
+                    file.len() as i32,
+                    line as i32,
+                    column as i32,
+                )
+            };
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let _ = (message, file, line, column);
+            }
+        }));
+    });
+}
+
+/// Memory for a frame. Never freed: the instance is thrown away after the
+/// tick.
+pub fn alloc(len: i32) -> i32 {
+    let Ok(layout) = std::alloc::Layout::from_size_align(len.max(1) as usize, 8) else {
+        return 0;
+    };
+    // SAFETY: the layout has a non-zero size.
+    let ptr = unsafe { std::alloc::alloc_zeroed(layout) };
+    ptr as usize as i32
+}
+
+/// Packs a pointer and a length into the `i64` `wish_manifest` returns.
+pub fn manifest(text: String) -> i64 {
+    let bytes = text.into_bytes().leak();
+    ((bytes.as_ptr() as usize as i64) << 32) | (bytes.len() as i64 & 0xffff_ffff)
+}
+
+/// The body of `wish_run`: runs system `system` on the frame at `frame` and
+/// returns where its commands are (0 for none, -1 for an unknown system or
+/// frame).
+pub fn run(systems: &[fn(&mut FrameReader)], system: i32, frame: i32) -> i32 {
+    report_panics();
+    let Some(run) = usize::try_from(system).ok().and_then(|i| systems.get(i)) else {
+        return -1;
+    };
+    // SAFETY: `frame` is the pointer the engine passed to `wish_run`.
+    let Some(mut reader) = (unsafe { FrameReader::from_ptr(frame as usize as *mut u8) }) else {
+        return -1;
+    };
+    take_commands();
+    run(&mut reader);
+    let commands = take_commands();
+    if commands.is_empty() {
+        return 0;
+    }
+    let mut out = Vec::with_capacity(commands.len() + 4);
+    out.extend((commands.len() as u32).to_le_bytes());
+    out.extend(commands);
+    out.leak().as_ptr() as usize as i32
+}

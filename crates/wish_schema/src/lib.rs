@@ -43,6 +43,7 @@ pub mod json;
 pub mod json_schema;
 pub mod model;
 pub mod plain;
+pub mod wire;
 
 pub use fingerprint::{fingerprint, write_fingerprint};
 pub use json::{

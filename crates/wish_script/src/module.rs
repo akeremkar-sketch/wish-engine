@@ -119,7 +119,7 @@ impl ScriptModule {
         self.fingerprint
     }
 
-    fn store(&self, rng: Rng) -> Result<wasmtime::Store<HostState>> {
+    pub(crate) fn store(&self, rng: Rng) -> Result<wasmtime::Store<HostState>> {
         let limits = self.engine.limits;
         let mut store = wasmtime::Store::new(
             &self.engine.engine,
@@ -145,51 +145,176 @@ impl ScriptModule {
         Ok(version)
     }
 
+    /// A fresh instance, for any number of calls. The engine makes one per
+    /// tick (ADR-025) and throws it away after a failed call.
+    pub(crate) fn live(&self) -> Result<Live> {
+        let mut store = self.store(Rng::from_seed(0))?;
+        let parts = (|| -> wasmtime::Result<_> {
+            let instance = self.pre.instantiate(&mut store)?;
+            let memory = instance
+                .get_memory(&mut store, "memory")
+                .ok_or_else(|| wasmtime::format_err!("the module has no memory"))?;
+            let alloc = instance.get_typed_func::<i32, i32>(&mut store, "wish_alloc")?;
+            let run = instance.get_typed_func::<(i32, i32), i32>(&mut store, "wish_run")?;
+            let manifest = instance
+                .get_typed_func::<(), i64>(&mut store, "wish_manifest")
+                .ok();
+            Ok((memory, alloc, run, manifest))
+        })();
+        let (memory, alloc, run, manifest) =
+            parts.map_err(|error| call_failed(&self.name, "start", &error, store.data()))?;
+        Ok(Live {
+            name: self.name.clone(),
+            fuel: self.engine.limits.fuel_per_call,
+            store,
+            memory,
+            alloc,
+            run,
+            manifest,
+        })
+    }
+
     /// Runs `wish_run(system, frame)` in a fresh instance: the frame is
     /// copied into the guest, the guest may change it in place, and the
     /// changed bytes are copied back into `frame`. `rng` is the system's
     /// random stream; it advances by what the guest drew.
     pub fn run(&self, system: i32, frame: &mut [u8], rng: &mut Rng) -> Result<CallReport> {
-        let mut store = self.store(*rng)?;
-        let result = self.run_in(&mut store, system, frame);
-        *rng = store.data().rng;
-        let returned =
-            result.map_err(|error| call_failed(&self.name, "wish_run", &error, store.data()))?;
-        let fuel_left = store.get_fuel().unwrap_or(0);
-        let state = store.into_data();
-        Ok(CallReport {
-            fuel_used: self.engine.limits.fuel_per_call.saturating_sub(fuel_left),
-            logs: state.logs,
-            logs_dropped: state.logs_dropped,
-            returned,
-        })
+        let mut live = self.live()?;
+        live.call(system, frame, rng).map(|(report, _)| report)
+    }
+}
+
+/// The most command bytes one call may return.
+const MAX_COMMAND_BYTES: usize = 16 * 1024 * 1024;
+/// The longest manifest a module may have.
+const MAX_MANIFEST_BYTES: usize = 4 * 1024 * 1024;
+
+/// An instance that lives for several calls (one tick).
+pub(crate) struct Live {
+    name: String,
+    fuel: u64,
+    store: wasmtime::Store<HostState>,
+    memory: wasmtime::Memory,
+    alloc: wasmtime::TypedFunc<i32, i32>,
+    run: wasmtime::TypedFunc<(i32, i32), i32>,
+    manifest: Option<wasmtime::TypedFunc<(), i64>>,
+}
+
+impl Live {
+    fn reset(&mut self, rng: Rng) -> Result<()> {
+        let state = self.store.data_mut();
+        state.panic = None;
+        state.memory_denied = None;
+        state.logs.clear();
+        state.logs_dropped = 0;
+        state.rng = rng;
+        let fuel = self.fuel;
+        let name = self.name.clone();
+        let result = self.store.set_fuel(fuel);
+        result.map_err(|error| call_failed(&name, "set up", &error, self.store.data()))
     }
 
-    fn run_in(
-        &self,
-        store: &mut wasmtime::Store<HostState>,
+    /// Calls `wish_run(system, frame)`; returns the report and the command
+    /// bytes the system gave.
+    pub(crate) fn call(
+        &mut self,
         system: i32,
         frame: &mut [u8],
-    ) -> wasmtime::Result<i32> {
-        let instance = self.pre.instantiate(&mut *store)?;
-        let memory = instance
-            .get_memory(&mut *store, "memory")
-            .ok_or_else(|| wasmtime::format_err!("the module has no memory"))?;
-        let alloc = instance.get_typed_func::<i32, i32>(&mut *store, "wish_alloc")?;
-        let run = instance.get_typed_func::<(i32, i32), i32>(&mut *store, "wish_run")?;
+        rng: &mut Rng,
+    ) -> Result<(CallReport, Vec<u8>)> {
+        self.reset(*rng)?;
+        let result = self.call_in(system, frame);
+        *rng = self.store.data().rng;
+        let (returned, commands) = result
+            .map_err(|error| call_failed(&self.name, "wish_run", &error, self.store.data()))?;
+        if returned == -1 {
+            return Err(Diagnostic::error(
+                "script_call_failed",
+                format!(
+                    "'{}' does not know system number {system}, or could not read its frame.",
+                    self.name
+                ),
+                "Rebuild the game code with this engine's SDK (script_build); the module and the engine disagree about the call.",
+            )
+            .at_file(&self.name));
+        }
+        let fuel_left = self.store.get_fuel().unwrap_or(0);
+        let state = self.store.data_mut();
+        Ok((
+            CallReport {
+                fuel_used: self.fuel.saturating_sub(fuel_left),
+                logs: std::mem::take(&mut state.logs),
+                logs_dropped: state.logs_dropped,
+                returned,
+            },
+            commands,
+        ))
+    }
+
+    fn call_in(&mut self, system: i32, frame: &mut [u8]) -> wasmtime::Result<(i32, Vec<u8>)> {
         let len = i32::try_from(frame.len())
             .map_err(|_| wasmtime::format_err!("the frame is larger than 2 GiB"))?;
-        let ptr = alloc.call(&mut *store, len)?;
+        let ptr = self.alloc.call(&mut self.store, len)?;
         let start = usize::try_from(ptr)
             .map_err(|_| wasmtime::format_err!("wish_alloc returned a negative pointer"))?;
-        memory
-            .write(&mut *store, start, frame)
+        self.memory
+            .write(&mut self.store, start, frame)
             .map_err(|_| wasmtime::format_err!("wish_alloc returned memory outside the module"))?;
-        let returned = run.call(&mut *store, (system, ptr))?;
-        memory
-            .read(&*store, start, frame)
+        let returned = self.run.call(&mut self.store, (system, ptr))?;
+        self.memory
+            .read(&self.store, start, frame)
             .map_err(|_| wasmtime::format_err!("the frame was freed or moved during the call"))?;
-        Ok(returned)
+        let mut commands = Vec::new();
+        if returned > 0 {
+            let at = usize::try_from(returned).unwrap_or(usize::MAX);
+            let mut len = [0u8; 4];
+            self.memory
+                .read(&self.store, at, &mut len)
+                .map_err(|_| wasmtime::format_err!("the command buffer is outside the module"))?;
+            let len = u32::from_le_bytes(len) as usize;
+            if len > MAX_COMMAND_BYTES {
+                return Err(wasmtime::format_err!(
+                    "the system gave {len} bytes of commands; the limit is {MAX_COMMAND_BYTES}"
+                ));
+            }
+            commands = vec![0u8; len];
+            self.memory
+                .read(&self.store, at + 4, &mut commands)
+                .map_err(|_| wasmtime::format_err!("the command buffer is outside the module"))?;
+        }
+        Ok((returned, commands))
+    }
+
+    /// Calls `wish_manifest` and returns the manifest text.
+    pub(crate) fn manifest(&mut self) -> Result<String> {
+        self.reset(Rng::from_seed(0))?;
+        let Some(manifest) = self.manifest.clone() else {
+            return Err(Diagnostic::error(
+                "script_missing_export",
+                format!(
+                    "'{}' has no 'wish_manifest' export, so the engine cannot see its types and systems.",
+                    self.name
+                ),
+                "End lib.rs with wish_sdk::export! { systems: [...] }; it writes the export.",
+            )
+            .at_file(&self.name));
+        };
+        let result = (|| -> wasmtime::Result<String> {
+            let packed = manifest.call(&mut self.store, ())?;
+            let ptr = usize::try_from((packed >> 32) & 0xffff_ffff).unwrap_or(usize::MAX);
+            let len = usize::try_from(packed & 0xffff_ffff).unwrap_or(usize::MAX);
+            if len > MAX_MANIFEST_BYTES {
+                return Err(wasmtime::format_err!(
+                    "the manifest is {len} bytes; the limit is {MAX_MANIFEST_BYTES}"
+                ));
+            }
+            let mut bytes = vec![0u8; len];
+            self.memory
+                .read(&self.store, ptr, &mut bytes)
+                .map_err(|_| wasmtime::format_err!("the manifest is outside the module"))?;
+            String::from_utf8(bytes).map_err(|_| wasmtime::format_err!("the manifest is not UTF-8"))
+        })();
+        result.map_err(|error| call_failed(&self.name, "wish_manifest", &error, self.store.data()))
     }
 }
 

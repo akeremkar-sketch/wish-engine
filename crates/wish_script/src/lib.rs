@@ -16,10 +16,15 @@
 
 mod engine;
 mod failure;
+mod game;
 mod host;
 mod module;
 
 pub use engine::{Limits, ScriptEngine};
+pub use game::{
+    ColumnSpec, GameModule, Manifest, ModuleType, ParamSpec, Role, ScriptLog, ScriptRuntime,
+    SystemSpec,
+};
 pub use module::{CallReport, GuestLog, ScriptModule};
 
 /// The ABI version this host speaks (design note §3). A module reports its
