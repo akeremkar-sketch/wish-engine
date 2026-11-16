@@ -157,7 +157,8 @@ A Wish Engine project. You work on it through the engine's tools (MCP server `wi
 \n\
 ## Game systems\n\
 \n\
-Built in, set up with components (`schema_get` and `docs_search` say how; `wish://docs/sdk` for game code):\n\
+Built in, set up with components (`schema_get` and `docs_search` say how; `wish://docs/sdk` for game code,\n\
+`wish://docs/recipes` for working pieces of games to start from):\n\
 \n\
 - Physics: `Collider` (+ `RigidBody` to move), `CharacterController` for characters, `CollisionStarted` events,\n\
   `physics_query` to ask what a ray hits.\n\

@@ -59,6 +59,16 @@ pub fn explain(name: &str) -> Option<&'static str> {
         | "gpuparticles" | "particles2d" | "particles3d" | "vfx" => {
             "Particles: put a ParticleEmitter on an entity (rate, burst, lifetime, speed, spread_deg, gravity, size_start/size_end, color_start/color_end, seed). Particles keep no state; restart by writing start_time = Time.elapsed. ParticleState.alive counts them."
         }
+        "followcamera" | "cameracontroller" | "thirdpersoncamera" | "camerafollow"
+        | "springarm" | "cinemachine" | "virtualcamera" => {
+            "No camera controller is built in: game code moves the camera (a FollowCamera component and a follow system). wish://docs/recipes has a working one to copy (\"A camera that follows\")."
+        }
+        "movingplatform" | "platform" | "elevator" | "lift" | "pathfollow" | "pathfollow3d" => {
+            "A moving platform is a kinematic RigidBody whose Transform game code changes every tick; characters standing on it are carried. wish://docs/recipes has one to copy (\"A moving platform\")."
+        }
+        "checkpoint" | "respawn" | "spawnpoint" | "killzone" | "deathzone" => {
+            "Checkpoints and respawning are game code: a sensor Collider and CollisionStarted, and a fall line. wish://docs/recipes has them (\"Falling off and checkpoints\")."
+        }
         "light" | "pointlight" | "spotlight" | "arealight" | "sunlight" => {
             "Lights: DirectionalLight (the sun: parallel rays along the entity's -Z axis, illuminance_lux), PointLight (a bulb: intensity_lm, range) and SpotLight (a cone along -Z: intensity_lm, range, inner_angle_deg, outer_angle_deg). Fill light is the Ambient resource; capture_frame with view lights shows where each light reaches."
         }

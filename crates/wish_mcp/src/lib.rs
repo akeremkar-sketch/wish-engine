@@ -49,7 +49,7 @@ const READ_ONLY: &[&str] = &[
     "logs_get",
 ];
 
-const INSTRUCTIONS: &str = "Wish Engine: a deterministic 3D game engine driven by these tools. Start with project_info, then read the resource wish://docs/guide (short). Change scenes with edit_apply (many operations at once, all or nothing), run them with sim_start and sim_step, and check what is on screen with describe_view and capture_frame. Every error carries a hint that says how to fix the call; read it before retrying. Game code lives in scripts/src/lib.rs (Rust; read wish://docs/sdk): edit it, build with script_build, prove behaviour with a scenario test (test_run). A person may be editing the same project: mind changed_by_others.";
+const INSTRUCTIONS: &str = "Wish Engine: a deterministic 3D game engine driven by these tools. Start with project_info, then read the resource wish://docs/guide (short). Change scenes with edit_apply (many operations at once, all or nothing), run them with sim_start and sim_step, and check what is on screen with describe_view and capture_frame. Every error carries a hint that says how to fix the call; read it before retrying. Game code lives in scripts/src/lib.rs (Rust; read wish://docs/sdk, and wish://docs/recipes for working pieces of games): edit it, build with script_build, prove behaviour with a scenario test (test_run). A person may be editing the same project: mind changed_by_others.";
 
 /// One MCP session over one workspace.
 pub struct Server {
@@ -382,6 +382,7 @@ impl Server {
         let mut resources = vec![
             json!({ "uri": "wish://docs/guide", "name": "guide", "title": "Engine guide", "description": "How to work with the engine: the loop, the tools, scenes, rules. Read first.", "mimeType": "text/markdown" }),
             json!({ "uri": "wish://docs/sdk", "name": "sdk", "title": "Game code SDK", "description": "Writing game code in scripts/src/lib.rs: components, systems, queries, commands, input, export.", "mimeType": "text/markdown" }),
+            json!({ "uri": "wish://docs/recipes", "name": "recipes", "title": "Game recipes", "description": "Working pieces of games (character, camera, pickups, checkpoints, moving platforms, interface, 2D, tests): code and scene operations that are tested to work.", "mimeType": "text/markdown" }),
             json!({ "uri": "wish://project/status", "name": "status", "title": "Project status", "description": "The project's current overview (the project_info answer).", "mimeType": "application/json" }),
         ];
         for name in self.type_names() {
@@ -401,6 +402,9 @@ impl Server {
         }
         if uri == "wish://docs/sdk" {
             return Ok(("text/markdown", docs::sdk_page()));
+        }
+        if uri == "wish://docs/recipes" {
+            return Ok(("text/markdown", docs::recipes_page().to_owned()));
         }
         if uri == "wish://project/status" {
             let answer = self
