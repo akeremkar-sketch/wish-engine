@@ -52,6 +52,7 @@ USAGE:
     wen shaders [--dir <folder>] [--json]
     wen new <folder> [--name <name>] [--json]
     wen build [--root <folder>] [--dry-run] [--json]
+    wen replay <name> [--root <folder>] [--json]
     wen play [--root <folder>] [--scene <file>] [--size <w>x<h>] [--software] [--exit-after <frames>]
     wen sdk [--out <folder>] [--json]
     wen mcp [--root <folder>] [--software]
@@ -108,6 +109,9 @@ COMMANDS:
                scripts/src/lib.rs builds the new code and switches to it without stopping the game
                or losing its state; a compile error is shown and the old code keeps running. Escape
                closes the window. Needs a desktop session. Edits to scenes need a restart.
+    replay     Play a recorded replay (replays/<name>.replay.jsonl) back in a new session and compare
+               the world after every tick with the recording: passes when the game plays out exactly
+               as it did, otherwise says the first tick that differs. Exits with failure if it differs.
     sdk        Engine development: build the game SDK pack from the engine's sources (needs cargo).
                Packaged engines ship it; game builds look for it next to wen or in WISH_SDK.
     mcp        Serve the tools over MCP (Model Context Protocol, stdio). Claude Code and other MCP
@@ -227,6 +231,18 @@ fn execute_any(args: Args) -> Result<Outcome> {
             args.json,
             tool_cmds::build_text,
         )),
+        Command::Replay { name, root } => Ok(tool_cmds::shortcut(
+            "replay",
+            &serde_json::json!({ "action": "run", "name": name }),
+            &args::ToolContext {
+                root: root.clone(),
+                example: None,
+                actor: None,
+                software: false,
+            },
+            args.json,
+            tool_cmds::replay_text,
+        )),
         Command::Sdk { out } => {
             tool_cmds::pack_sdk(out.as_deref(), args.json).map(|text| Outcome {
                 text,
@@ -282,6 +298,7 @@ fn execute(args: Args) -> Result<String> {
         | Command::Shaders { .. }
         | Command::New { .. }
         | Command::Build { .. }
+        | Command::Replay { .. }
         | Command::Sdk { .. }
         | Command::Capture(_)
         | Command::Describe(_)

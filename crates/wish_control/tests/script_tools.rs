@@ -426,3 +426,188 @@ fn held_keys_drive_a_session_the_way_the_play_window_does() {
     assert_eq!(scene.draws.len(), 2, "the ground and the hero");
     assert_eq!(scene.cameras.len(), 1);
 }
+
+/// A project with the walking game and a hero, and a session at tick 0.
+fn walking_project(name: &str) -> (PathBuf, Workspace) {
+    let (dir, mut ws) = project(name);
+    let agent = parse_actor("agent");
+    std::fs::write(dir.join(SCRIPTS_ENTRY), WALKER).unwrap();
+    assert_eq!(ws.call("script_build", &json!({}), &agent)["passed"], true);
+    ws.call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "spawn", "id": "hero", "components": { "Transform": {}, "Walker": {} } }] }),
+        &agent,
+    );
+    (dir, ws)
+}
+
+#[test]
+fn a_ten_thousand_tick_replay_plays_back_bit_for_bit_and_notices_a_changed_game() {
+    let (dir, mut ws) = walking_project("replay-long");
+    let agent = parse_actor("agent");
+
+    // Recording starts at tick 0, not later.
+    ws.call("sim_start", &json!({ "seed": 3 }), &agent);
+    ws.call("sim_step", &json!({}), &agent);
+    let late = ws.call("replay", &json!({ "action": "record" }), &agent);
+    assert_eq!(late["error"]["code"], "replay_not_at_start", "{late}");
+    ws.call("sim_stop", &json!({ "session": "s1" }), &agent);
+
+    let started = ws.call("sim_start", &json!({ "seed": 3 }), &agent);
+    let id = started["session"].as_str().unwrap().to_owned();
+    assert_eq!(
+        ws.call("replay", &json!({ "action": "record" }), &agent)["ok"],
+        true
+    );
+    let unsaved = ws.call(
+        "replay",
+        &json!({ "action": "save", "name": "walk" }),
+        &agent,
+    );
+    assert_eq!(unsaved["error"]["code"], "replay_empty");
+    let moves = [
+        json!({ "move": [0, 1] }),
+        json!({ "move": [1, 0], "jump": true }),
+        json!({}),
+        json!({ "move": [-1, -1] }),
+        json!({ "jump": true }),
+    ];
+    let mut last = Value::Null;
+    for chunk in 0..10 {
+        last = ws.call(
+            "sim_step",
+            &json!({ "session": id, "frames": 1000, "input": moves[chunk % moves.len()] }),
+            &agent,
+        );
+        assert_eq!(last["ok"], true, "{last}");
+    }
+    assert_eq!(last["tick"], 10_000);
+    let saved = ws.call(
+        "replay",
+        &json!({ "action": "save", "name": "walk" }),
+        &agent,
+    );
+    assert_eq!(saved["ticks"], 10_000, "{saved}");
+    assert_eq!(saved["path"], "replays/walk.replay.jsonl");
+    assert_eq!(
+        ws.call(
+            "replay",
+            &json!({ "action": "save", "name": "walk" }),
+            &agent
+        )["error"]["code"],
+        "replay_exists"
+    );
+
+    // It plays back bit for bit; the session is closed when it passed.
+    let ran = ws.call(
+        "replay",
+        &json!({ "action": "run", "name": "walk" }),
+        &agent,
+    );
+    assert_eq!(ran["passed"], true, "{ran}");
+    assert_eq!(ran["ticks_run"], 10_000);
+    assert_eq!(ran["final_hash"], saved["final_hash"]);
+    assert!(ran.get("session").is_none());
+
+    // In a workspace of its own (what another process would see): same.
+    let mut other = open(&dir);
+    let again = other.call(
+        "replay",
+        &json!({ "action": "run", "name": "walk" }),
+        &agent,
+    );
+    assert_eq!(again["passed"], true, "{again}");
+
+    // Change how the game plays: the replay says where it parts ways.
+    let source = std::fs::read_to_string(dir.join(SCRIPTS_ENTRY)).unwrap();
+    std::fs::write(
+        dir.join(SCRIPTS_ENTRY),
+        source.replace(
+            "walker.speed * time.delta",
+            "walker.speed * 1.5 * time.delta",
+        ),
+    )
+    .unwrap();
+    assert_eq!(ws.call("script_build", &json!({}), &agent)["passed"], true);
+    let changed = ws.call(
+        "replay",
+        &json!({ "action": "run", "name": "walk" }),
+        &agent,
+    );
+    assert_eq!(changed["passed"], false, "{changed}");
+    assert_eq!(changed["diverged_at"], 0);
+    assert_ne!(changed["expected_hash"], changed["actual_hash"]);
+    let codes: Vec<&str> = changed["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|d| d["code"].as_str())
+        .collect();
+    assert!(
+        codes.contains(&"replay_diverged") && codes.contains(&"replay_code_changed"),
+        "{changed}"
+    );
+    // The session is left open at that tick, to look at.
+    let session = changed["session"].as_str().unwrap();
+    let there = ws.call(
+        "entity_get",
+        &json!({ "session": session, "ids": ["hero"] }),
+        &agent,
+    );
+    assert_eq!(there["ok"], true, "{there}");
+}
+
+#[test]
+fn going_back_to_a_snapshot_rewinds_the_recording_too() {
+    let (_dir, mut ws) = walking_project("replay-rewind");
+    let agent = parse_actor("agent");
+    ws.call("sim_start", &json!({}), &agent);
+    ws.call("replay", &json!({ "action": "record" }), &agent);
+    ws.call(
+        "sim_step",
+        &json!({ "frames": 20, "input": { "move": [0, 1] } }),
+        &agent,
+    );
+    ws.call("sim_snapshot", &json!({ "label": "a" }), &agent);
+    // A wrong turn, taken back.
+    ws.call(
+        "sim_step",
+        &json!({ "frames": 30, "input": { "move": [1, 0], "jump": true } }),
+        &agent,
+    );
+    ws.call("sim_restore", &json!({ "snapshot": "a" }), &agent);
+    ws.call(
+        "sim_step",
+        &json!({ "frames": 15, "input": { "move": [0, -1] } }),
+        &agent,
+    );
+    let saved = ws.call(
+        "replay",
+        &json!({ "action": "save", "name": "detour" }),
+        &agent,
+    );
+    assert_eq!(saved["ticks"], 35, "{saved}");
+    let ran = ws.call(
+        "replay",
+        &json!({ "action": "run", "name": "detour" }),
+        &agent,
+    );
+    assert_eq!(ran["passed"], true, "{ran}");
+
+    // Mistakes are explained.
+    let bad = ws.call(
+        "replay",
+        &json!({ "action": "run", "name": "Detour!" }),
+        &agent,
+    );
+    assert_eq!(bad["error"]["code"], "invalid_parameter");
+    let missing = ws.call(
+        "replay",
+        &json!({ "action": "run", "name": "detur" }),
+        &agent,
+    );
+    assert_eq!(missing["error"]["code"], "replay_not_found");
+    assert_eq!(missing["error"]["hint"], "Did you mean 'detour'?");
+    let nameless = ws.call("replay", &json!({ "action": "run" }), &agent);
+    assert_eq!(nameless["error"]["code"], "missing_parameter");
+}

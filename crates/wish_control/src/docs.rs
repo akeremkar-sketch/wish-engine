@@ -205,6 +205,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "A project name must be 1 to 80 characters without control characters.",
     ),
     (
+        "invalid_replay_file",
+        "A replay file is damaged or not a replay (the message gives the line). Replays are written by `replay save`; record the run again rather than editing the file.",
+    ),
+    (
         "invalid_scene_id",
         "An entity id is not valid: use letters, digits, '_' and '-', start with a letter or '_', at most 64 characters.",
     ),
@@ -388,6 +392,46 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "The folder already has a wish.json. wen new never overwrites a project.",
     ),
     ("project_not_found", "The project folder does not exist."),
+    (
+        "replay_code_changed",
+        "The game code is not the code the replay was recorded with. The replay still plays: if it passes, the change did not alter the run.",
+    ),
+    (
+        "replay_diverged",
+        "The replay and the game parted ways: from this tick the world is not the one that was recorded. The session is left open at that tick to look at.",
+    ),
+    (
+        "replay_empty",
+        "Nothing was recorded yet; run some ticks with sim_step before saving.",
+    ),
+    (
+        "replay_exists",
+        "A replay of that name exists. Choose another name or pass overwrite.",
+    ),
+    (
+        "replay_not_at_start",
+        "A replay is recorded from tick 0; start a new session and call replay with record before the first sim_step.",
+    ),
+    (
+        "replay_not_found",
+        "There is no replay of that name; the hint lists the ones there are.",
+    ),
+    (
+        "replay_not_recording",
+        "The session is not recording; call replay with action record on a session at tick 0 first.",
+    ),
+    (
+        "replay_scene_changed",
+        "The scene has changed since the replay was recorded; a different scene usually plays out differently.",
+    ),
+    (
+        "replay_scene_missing",
+        "The replay's scene file does not exist any more.",
+    ),
+    (
+        "replay_too_long",
+        "A replay can have at most 54 000 ticks (a quarter of an hour at 60 ticks a second).",
+    ),
     (
         "resource_not_found",
         "The resource is not set in the scene or world.",
@@ -862,7 +906,8 @@ Compile errors come back with file and line; a failed build keeps the old code. 
 the new code between two ticks without losing their state, and its types are usable in `edit_apply` at once.\n\
 All state lives in components and resources (the module restarts every tick). No clock, files or network: time is\n\
 `Res<Time>`, randomness `random_f32()`; a panic or an endless loop turns that system off and is reported with its line.\n\
-Input is actions (`input.json`: `move`, `jump`, ...); systems take `actions: Actions`. Play with `sim_step` `input`: `{{ \"move\": [0, 1], \"jump\": true }}` is held for the ticks of that call.\n\
+Replays: `replay` records a session from tick 0, saves it, and `run` plays it back checking the world after every tick; run them after changing the code to see whether the game still plays the same.
+\nInput is actions (`input.json`: `move`, `jump`, ...); systems take `actions: Actions`. Play with `sim_step` `input`: `{{ \"move\": [0, 1], \"jump\": true }}` is held for the ticks of that call.\n\
 \n\
 ## Rules\n\
 \n\

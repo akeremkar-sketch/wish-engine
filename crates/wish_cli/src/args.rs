@@ -10,8 +10,8 @@ use wish_core::{Diagnostic, Result};
 /// The commands `wen` understands.
 pub const COMMANDS: &[&str] = &[
     "run", "bench", "schema", "mv", "check", "fmt", "migrate", "watch", "capture", "describe",
-    "shaders", "view", "call", "do", "new", "build", "play", "sdk", "mcp", "examples", "help",
-    "version",
+    "shaders", "view", "call", "do", "new", "build", "play", "replay", "sdk", "mcp", "examples",
+    "help", "version",
 ];
 
 /// A parsed command line.
@@ -104,6 +104,13 @@ pub enum Command {
     },
     /// Play the project's game in a window.
     Play(PlayArgs),
+    /// Play a recorded replay back and compare every tick (the `replay` tool's run).
+    Replay {
+        /// The replay's name.
+        name: String,
+        /// The project folder.
+        root: Option<String>,
+    },
     /// Build the project's game code (the `script_build` tool).
     Build {
         /// The project folder.
@@ -444,6 +451,7 @@ fn flags_of(command: &str) -> &'static [(&'static str, bool)] {
         "shaders" => &[("--dir", true), ("--json", false)],
         "new" => &[("--name", true), ("--json", false)],
         "build" => &[("--root", true), ("--dry-run", false), ("--json", false)],
+        "replay" => &[("--root", true), ("--json", false)],
         "play" => &[
             ("--root", true),
             ("--scene", true),
@@ -686,6 +694,18 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
                     seconds: value_of("--seconds")
                         .map_or(Ok(0), |value| parse_number("--seconds", value))?,
                 },
+            }
+        }
+        "replay" => {
+            if positional.len() != 1 {
+                return Err(usage_error(
+                    "'wen replay' needs the name of the replay to play back.".to_owned(),
+                    "Write it like: wen replay jump_test [--root <folder>]. Replays are recorded with the replay tool (record, sim_step, save).".to_owned(),
+                ));
+            }
+            Command::Replay {
+                name: positional[0].to_owned(),
+                root: value_of("--root").map(str::to_owned),
             }
         }
         "play" => Command::Play(PlayArgs {

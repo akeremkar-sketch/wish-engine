@@ -5,6 +5,7 @@ use crate::tool::Tool;
 
 mod asset;
 mod project;
+mod replay;
 mod scene;
 mod script;
 mod sim;
@@ -41,4 +42,5 @@ pub(crate) const CATALOG: &[Tool] = &[
     view::CAPTURE_FRAME,
     view::DESCRIBE_VIEW,
     script::SCRIPT_BUILD,
+    replay::REPLAY,
 ];

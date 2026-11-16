@@ -25,6 +25,7 @@ pub mod ops;
 pub mod param;
 pub mod project;
 pub mod render;
+mod replays;
 pub mod scaffold;
 mod script;
 mod sessions;

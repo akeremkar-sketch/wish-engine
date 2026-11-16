@@ -43,6 +43,34 @@ pub(crate) struct Session {
     pub script: Option<wish_script::ScriptRuntime>,
     /// The project's actions (`input.json`) as they were when the session started.
     pub input: wish_input::InputMap,
+    /// What the session is recording for a replay, if anything.
+    pub recording: Option<Trail>,
+}
+
+/// What a replay needs of a session that was recorded from tick 0: what the
+/// player did, and the world's hash after every tick.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Trail {
+    /// From each listed tick on, until the next entry, the player does this.
+    pub inputs: Vec<(u64, wish_input::Values)>,
+    /// What the player did at the last tick run.
+    pub current: wish_input::Values,
+    /// The world's hash after tick `i`, at index `i`.
+    pub hashes: Vec<wish_core::Hash128>,
+}
+
+impl Trail {
+    /// Forgets everything from `tick` on (the session went back to a snapshot).
+    pub fn rewind(&mut self, tick: u64) {
+        self.hashes
+            .truncate(usize::try_from(tick).unwrap_or(usize::MAX));
+        self.inputs.retain(|(at, _)| *at < tick);
+        self.current = self
+            .inputs
+            .last()
+            .map(|(_, values)| values.clone())
+            .unwrap_or_default();
+    }
 }
 
 /// One entry of the structured log.
@@ -261,7 +289,16 @@ fn step_app(
         if !session.input.is_empty() {
             wish_input::apply(session.app.world_mut(), &session.input, input)?;
         }
+        if let Some(trail) = session.recording.as_mut()
+            && input != &trail.current
+        {
+            trail.inputs.push((session.app.tick(), input.clone()));
+            trail.current.clone_from(input);
+        }
         let report = session.app.step()?;
+        if let Some(trail) = session.recording.as_mut() {
+            trail.hashes.push(session.app.hash());
+        }
         ticks_run += 1;
         diagnostics.extend(report.failures);
         if let Some(until) = until {
@@ -441,6 +478,7 @@ impl Workspace {
                 reported: BTreeSet::new(),
                 script,
                 input,
+                recording: None,
             },
         );
         let started = Diagnostic::info(

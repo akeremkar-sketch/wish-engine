@@ -318,6 +318,10 @@ fn sim_restore(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<
             .map(|s| s.snapshot.clone())
             .ok_or_else(|| unknown_snapshot(&label, &session.saved))?;
         session.app.restore(&snapshot)?;
+        let tick = session.app.tick();
+        if let Some(trail) = session.recording.as_mut() {
+            trail.rewind(tick);
+        }
         // Same state, same reports: what the inspector already said after
         // the snapshot is forgotten with the rest.
         session.reported.clear();

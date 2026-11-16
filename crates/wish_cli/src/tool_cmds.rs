@@ -509,3 +509,31 @@ pub fn pack_sdk(out: Option<&str>, as_json: bool) -> wish_core::Result<String> {
         )
     })
 }
+
+/// Text for a `replay` run answer.
+pub fn replay_text(answer: &Value) -> String {
+    let mut text = String::new();
+    for entry in answer["diagnostics"].as_array().into_iter().flatten() {
+        if let Ok(problem) = serde_json::from_value::<Diagnostic>(entry.clone()) {
+            text.push_str(&format!("{problem}\n"));
+        }
+    }
+    let name = answer["name"].as_str().unwrap_or_default();
+    if answer["passed"] == true {
+        text.push_str(&format!(
+            "Replay '{name}' passed: {} tick(s) played back bit for bit (final hash {}).",
+            answer["ticks_run"],
+            answer["final_hash"].as_str().unwrap_or("?")
+        ));
+    } else if answer["diverged_at"].is_number() {
+        text.push_str(&format!(
+            "Replay '{name}' diverged at tick {}: expected {}, got {}.",
+            answer["diverged_at"],
+            answer["expected_hash"].as_str().unwrap_or("?"),
+            answer["actual_hash"].as_str().unwrap_or("?")
+        ));
+    } else {
+        text.push_str(&format!("Replay '{name}' was stopped before it ended."));
+    }
+    text
+}
