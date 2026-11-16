@@ -67,6 +67,17 @@ impl WorldSnapshot {
     }
 }
 
+/// What changing a type's layout did to the values stored in a world
+/// (`World::retype_component` and its kin).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Retyped {
+    /// How many values were moved to the new layout.
+    pub values: usize,
+    /// Fields whose values could not be kept, each named once: gone from
+    /// the new layout, or holding a value the new field does not accept.
+    pub dropped: Vec<String>,
+}
+
 /// Entities, their components, resources, events and text.
 ///
 /// Typed access (`insert`, `get`, `query`) works with Rust types declared
@@ -848,6 +859,191 @@ impl World {
             );
         }
         Ok(Value::Object(components))
+    }
+
+    // -----------------------------------------------------------------------
+    // Changing a type's layout (game code reloaded during a game)
+    // -----------------------------------------------------------------------
+
+    /// One value moved from `old` to `new` by field name: fields with the
+    /// same name keep their value if it fits the new field; new fields take
+    /// their defaults; the rest are named in `dropped`.
+    fn moved_value(
+        &mut self,
+        old: &TypeSchema,
+        old_bytes: &[u8],
+        new: &TypeInfo,
+        dropped: &mut std::collections::BTreeSet<String>,
+    ) -> Result<Vec<u8>> {
+        let value = to_json(old, old_bytes, &self.state.texts)?;
+        let mut bytes = new.default_bytes().to_vec();
+        let patches: Vec<(Option<String>, Value)> = match (&value, &new.schema().kind) {
+            (Value::Object(fields), wish_schema::TypeKind::Struct(new_fields)) => fields
+                .iter()
+                .map(|(name, field)| {
+                    let patch = if new_fields.iter().any(|f| &f.name == name) {
+                        Value::Object(Map::from_iter([(name.clone(), field.clone())]))
+                    } else {
+                        Value::Null
+                    };
+                    (Some(name.clone()), patch)
+                })
+                .collect(),
+            _ => vec![(None, value)],
+        };
+        for (name, patch) in patches {
+            let label = name.unwrap_or_else(|| "(value)".to_owned());
+            if patch.is_null() {
+                dropped.insert(label);
+                continue;
+            }
+            let mut attempt = bytes.clone();
+            match apply_json_pending(new.schema(), &patch, &mut attempt, &self.state.texts) {
+                Ok(added) => {
+                    self.commit_texts(added)?;
+                    bytes = attempt;
+                }
+                Err(_) => {
+                    dropped.insert(label);
+                }
+            }
+        }
+        Ok(bytes)
+    }
+
+    fn check_retype(info: &TypeInfo, schema: &TypeSchema) -> Result<TypeInfo> {
+        if info.is_native() || info.is_managed() || info.name() != schema.name {
+            return Err(Diagnostic::error(
+                "retype_refused",
+                format!(
+                    "'{}' is the engine's own type; its layout cannot change while the world exists.",
+                    info.name()
+                ),
+                "Only types declared by game code can change their fields during a game. Rename the game's type if it clashes with an engine type.",
+            ));
+        }
+        TypeInfo::new(schema.clone(), None)
+    }
+
+    /// Changes the layout of a component declared by game code, moving every
+    /// stored value field by field (same name, a value that fits: kept; new
+    /// fields: their defaults; the others: reported in
+    /// [`Retyped::dropped`]). When each value was added and last changed is
+    /// kept. Engine types (bound to a Rust type) are refused.
+    pub fn retype_component(&mut self, id: ComponentId, schema: TypeSchema) -> Result<Retyped> {
+        schema.validate()?;
+        let old = self.component_info(id)?.clone();
+        let new = Self::check_retype(&old, &schema)?;
+        let mut stored = Vec::new();
+        for (a, archetype) in self.state.archetypes.iter().enumerate() {
+            let Some(c) = archetype.components().iter().position(|x| *x == id) else {
+                continue;
+            };
+            let column = archetype
+                .columns
+                .get(c)
+                .ok_or_else(|| internal_error("an archetype lacks a column"))?;
+            let mut rows = Vec::with_capacity(column.len());
+            for row in 0..column.len() {
+                let mut bytes = vec![0u8; old.size()];
+                column.read_into(row, old.spans(), &mut bytes)?;
+                let (added, changed) = column
+                    .ticks(row)
+                    .ok_or_else(|| internal_error("a row has no ticks"))?;
+                rows.push((bytes, added, changed));
+            }
+            stored.push((a, c, rows));
+        }
+        let mut dropped = std::collections::BTreeSet::new();
+        let mut values = 0;
+        let mut columns = Vec::with_capacity(stored.len());
+        for (a, c, rows) in stored {
+            let mut column = Column::new(new.size());
+            for (bytes, added, changed) in rows {
+                let moved = self.moved_value(old.schema(), &bytes, &new, &mut dropped)?;
+                column.push_with_ticks(&moved, added, changed)?;
+                values += 1;
+            }
+            columns.push((a, c, column));
+        }
+        self.registry.replace_component_schema(id, schema)?;
+        for (a, c, column) in columns {
+            if let Some(slot) = self
+                .state
+                .archetypes
+                .get_mut(a)
+                .and_then(|archetype| archetype.columns.get_mut(c))
+            {
+                *slot = column;
+            }
+        }
+        Ok(Retyped {
+            values,
+            dropped: dropped.into_iter().collect(),
+        })
+    }
+
+    /// Changes the layout of a resource declared by game code, moving its
+    /// value like [`World::retype_component`].
+    pub fn retype_resource(&mut self, id: ResourceId, schema: TypeSchema) -> Result<Retyped> {
+        schema.validate()?;
+        let old = self.resource_info(id)?.clone();
+        let new = Self::check_retype(&old, &schema)?;
+        let current = match self.resource_column(id) {
+            Some(column) => {
+                let mut bytes = vec![0u8; old.size()];
+                column.read_into(0, old.spans(), &mut bytes)?;
+                let ticks = column
+                    .ticks(0)
+                    .ok_or_else(|| internal_error("a resource has no ticks"))?;
+                Some((bytes, ticks))
+            }
+            None => None,
+        };
+        let mut dropped = std::collections::BTreeSet::new();
+        let moved = match &current {
+            Some((bytes, (added, changed))) => {
+                let moved = self.moved_value(old.schema(), bytes, &new, &mut dropped)?;
+                let mut column = Column::new(new.size());
+                column.push_with_ticks(&moved, *added, *changed)?;
+                Some(column)
+            }
+            None => None,
+        };
+        self.registry.replace_resource_schema(id, schema)?;
+        let values = usize::from(moved.is_some());
+        if let Some(column) = moved
+            && let Some(slot) = self.state.resources.get_mut(id.index())
+        {
+            *slot = Some(column);
+        }
+        Ok(Retyped {
+            values,
+            dropped: dropped.into_iter().collect(),
+        })
+    }
+
+    /// Changes the layout of an event declared by game code. Events still
+    /// buffered in the old layout are dropped (they were for the old code).
+    pub fn retype_event(&mut self, id: EventId, schema: TypeSchema) -> Result<Retyped> {
+        schema.validate()?;
+        let old = self.event_info(id)?.clone();
+        Self::check_retype(&old, &schema)?;
+        self.registry.replace_event_schema(id, schema)?;
+        let had = self
+            .state
+            .events
+            .get_mut(id.index())
+            .and_then(Option::take)
+            .is_some();
+        Ok(Retyped {
+            values: 0,
+            dropped: if had {
+                vec!["(buffered events)".to_owned()]
+            } else {
+                Vec::new()
+            },
+        })
     }
 
     // -----------------------------------------------------------------------

@@ -102,6 +102,7 @@ fn project_info(workspace: &mut Workspace, _: &Args, _: &Actor) -> Result<Map<St
     out.insert("scenes".to_owned(), json!(of_kind(".scene.json")));
     out.insert("prefabs".to_owned(), json!(of_kind(".prefab.json")));
     out.insert("assets".to_owned(), json!(assets));
+    out.insert("scripts".to_owned(), workspace.script_status());
     out.insert(
         "problems".to_owned(),
         json!({ "errors": errors, "warnings": warnings }),

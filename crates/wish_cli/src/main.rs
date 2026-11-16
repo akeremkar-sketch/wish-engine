@@ -50,6 +50,8 @@ USAGE:
              [--view lit|ids|depth|normals|wireframe] [--software] [--shaders <folder>] [--exit-after <frames>]
     wen shaders [--dir <folder>] [--json]
     wen new <folder> [--name <name>] [--json]
+    wen build [--root <folder>] [--dry-run] [--json]
+    wen sdk [--out <folder>] [--json]
     wen mcp [--root <folder>] [--software]
     wen call <tool> ['{json args}' | --<param> <value> ...] [--root <folder>] [--actor <name>]
     wen do [<file> | -] [--root <folder>] [--actor <name>]
@@ -94,7 +96,13 @@ COMMANDS:
                a folder of <name>.wgsl files in place of the built-in ones. Pass the same folder
                as --shaders to capture/describe to draw with them. Fails if there is any problem.
     new        Create a project folder: wish.json, a starting scene (camera, sun, ground), assets/,
-               .mcp.json (connects Claude Code and other MCP clients) and a project CLAUDE.md.
+               scripts/src/lib.rs (game code), .mcp.json (connects Claude Code and other MCP clients)
+               and a project CLAUDE.md.
+    build      Compile the project's game code (scripts/src/lib.rs) to WebAssembly: compiler errors
+               with file, line and hint; a failed build keeps the last good code. --dry-run only
+               checks that it compiles. Same as the script_build tool.
+    sdk        Engine development: build the game SDK pack from the engine's sources (needs cargo).
+               Packaged engines ship it; game builds look for it next to wen or in WISH_SDK.
     mcp        Serve the tools over MCP (Model Context Protocol, stdio). Claude Code and other MCP
                clients start it themselves from .mcp.json (wen new writes it); --software draws
                with the CPU adapter. Standard output carries only the protocol.
@@ -200,6 +208,24 @@ fn execute_any(args: Args) -> Result<Outcome> {
                 success: true,
             })
         }
+        Command::Build { root, dry_run } => Ok(tool_cmds::shortcut(
+            "script_build",
+            &serde_json::json!({ "dry_run": dry_run }),
+            &args::ToolContext {
+                root: root.clone(),
+                example: None,
+                actor: None,
+                software: false,
+            },
+            args.json,
+            tool_cmds::build_text,
+        )),
+        Command::Sdk { out } => {
+            tool_cmds::pack_sdk(out.as_deref(), args.json).map(|text| Outcome {
+                text,
+                success: true,
+            })
+        }
         Command::Call(call) => Ok(tool_cmds::call(call)),
         Command::Do(calls) => Ok(tool_cmds::run_calls(calls)),
         Command::Migrate { paths, root } => project_cmds::migrate(paths, &root_of(root), args.json),
@@ -248,6 +274,8 @@ fn execute(args: Args) -> Result<String> {
         | Command::Migrate { .. }
         | Command::Shaders { .. }
         | Command::New { .. }
+        | Command::Build { .. }
+        | Command::Sdk { .. }
         | Command::Capture(_)
         | Command::Describe(_)
         | Command::Mcp(_)

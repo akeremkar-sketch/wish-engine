@@ -6,6 +6,7 @@ use crate::tool::Tool;
 mod asset;
 mod project;
 mod scene;
+mod script;
 mod sim;
 mod view;
 
@@ -39,4 +40,5 @@ pub(crate) const CATALOG: &[Tool] = &[
     sim::LOGS_GET,
     view::CAPTURE_FRAME,
     view::DESCRIBE_VIEW,
+    script::SCRIPT_BUILD,
 ];

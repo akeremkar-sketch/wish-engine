@@ -4,6 +4,7 @@
 //! wish.json                 the project file
 //! scenes/main.scene.json    a camera, a sun and a ground: something to see
 //! assets/                   models and images go here
+//! scripts/src/lib.rs        game code (Rust with wish_sdk; built by the engine)
 //! .mcp.json                 connects Claude Code and other MCP clients (`wen mcp`)
 //! CLAUDE.md                 how an agent should work in this project
 //! .gitignore
@@ -56,6 +57,38 @@ fn starting_scene() -> Result<String> {
     }))
 }
 
+/// The game code a new project starts with: one component and one system,
+/// small enough to read at a glance, real enough to build on.
+const STARTING_CODE: &str =
+    "//! The game's code: components and systems, in Rust, with the engine's SDK.
+//! The engine compiles it to WebAssembly with `script_build` (or `wen build`);
+//! no Cargo or other tools are needed. A running game picks up the new code
+//! between two ticks and keeps its state.
+
+use wish_sdk::prelude::*;
+
+/// Turns an entity around its up (Y) axis.
+#[component]
+pub struct Spin {
+    /// How fast it turns.
+    #[schema(unit = \"rad/s\", range = -50.0..=50.0, default = 1.0)]
+    pub speed: f32,
+}
+
+/// Turns every entity that has a `Spin`.
+#[system]
+fn spin(mut spinning: Query<(&mut Transform, &Spin)>, time: Res<Time>) {
+    for (transform, spin) in spinning.iter_mut() {
+        transform.rotation = Quat::from_rotation_y(spin.speed * time.delta) * transform.rotation;
+    }
+}
+
+wish_sdk::export! {
+    components: [Spin],
+    systems: [spin],
+}
+";
+
 fn mcp_config(command: &str) -> String {
     let text = serde_json::to_string_pretty(&json!({
         "mcpServers": { "wish": { "command": command, "args": ["mcp"] } }
@@ -87,7 +120,18 @@ A Wish Engine project. You work on it through the engine's tools (MCP server `wi
 - A person may edit the files or the scene by hand at the same time. `edit_apply` tells you what changed\n\
   (`changed_by_others`); never overwrite their work: use `base_revision` when you prepared changes earlier.\n\
 - Scene files are canonical JSON written by the engine. If you must edit one as text, run `wen fmt` after.\n\
-- `check` verifies the whole project; run it before you finish.\n"
+- `check` verifies the whole project; run it before you finish.\n\
+\n\
+## Game code\n\
+\n\
+- Behaviour lives in `scripts/src/lib.rs`: Rust with `use wish_sdk::prelude::*;`. Declare data with\n\
+  `#[component]` / `#[resource]` / `#[event]` (every field gets a `///` comment), logic with `#[system]`\n\
+  functions taking `Query`, `Res`, `ResMut`, `Commands`, `EventReader`, `EventWriter`; list them in\n\
+  `wish_sdk::export! {{ components: [...], systems: [...] }}` at the end.\n\
+- Edit the file, then `script_build`: errors come back with file, line and hint; running sessions switch\n\
+  to the new code without losing their state. Then `sim_start` / `sim_step` and look.\n\
+- All state lives in components and resources (the module starts fresh every tick). No clock, files or\n\
+  network: time comes from `Res<Time>`, randomness from `wish_sdk::random_f32()` (deterministic).\n"
     )
 }
 
@@ -124,9 +168,15 @@ pub fn create_project(dir: &Path, name: &str, command: &str) -> Result<Vec<Strin
         &mut written,
     )?;
     write(dir, "assets/.gitkeep", "", &mut written)?;
+    write(dir, "scripts/src/lib.rs", STARTING_CODE, &mut written)?;
     write(dir, ".mcp.json", &mcp_config(command), &mut written)?;
     write(dir, "CLAUDE.md", &guide(name), &mut written)?;
-    write(dir, ".gitignore", "target/\n*.wish-tmp\n", &mut written)?;
+    write(
+        dir,
+        ".gitignore",
+        ".wish/\ntarget/\n*.wish-tmp\n",
+        &mut written,
+    )?;
     Ok(written)
 }
 

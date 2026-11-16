@@ -14,6 +14,7 @@
 //!
 //! Design: `docs/design/M5-oyun-mantigi.md` §3 (ABI) and §6 (sandbox).
 
+pub mod build;
 mod engine;
 mod failure;
 mod game;

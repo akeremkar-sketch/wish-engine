@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use serde_json::{Value, json};
-use wish_app::{App, AppConfig, AppSnapshot, System, SystemContext};
+use wish_app::{App, AppConfig, AppSnapshot};
 use wish_core::{Diagnostic, Entity, Result, Severity};
 use wish_ecs::World;
 use wish_scene::SceneId;
@@ -39,6 +39,8 @@ pub(crate) struct Session {
     pub saved: Vec<Saved>,
     /// (code, entity) pairs already reported by the inspector.
     pub reported: BTreeSet<(String, String)>,
+    /// The game code running in this session, if the project has any.
+    pub script: Option<wish_script::ScriptRuntime>,
 }
 
 /// One entry of the structured log.
@@ -148,37 +150,35 @@ impl Subject for LiveSubject<'_> {
     }
 }
 
-fn propagate(world: &mut World, _: &mut SystemContext<'_>) -> Result<()> {
-    wish_transform::update_global_transforms(world)
-}
-
 /// Builds the world of a session: the project's types, the example's
-/// systems (if the project names one), the scene's entities.
-fn build_app(workspace: &mut Workspace, scene: &str, seed: u64) -> Result<App> {
+/// systems (if the project names one), the game code's systems, the
+/// scene's entities.
+fn build_app(
+    workspace: &mut Workspace,
+    scene: &str,
+    seed: u64,
+) -> Result<(App, Option<wish_script::ScriptRuntime>)> {
     let example = workspace.example().map(str::to_owned);
     let mut app = App::new(AppConfig {
         seed,
         ..AppConfig::default()
     });
-    crate::types::register_project_types(example.as_deref(), app.world_mut())?;
+    workspace.register_types(app.world_mut())?;
     // The scene first, so that its resource values win over system defaults.
     let open = workspace.document(scene)?;
     open.doc.instantiate(app.world_mut())?;
     if let Some(name) = &example {
         wish_examples::add_systems(name, &mut app)?;
     }
-    let mut names: Vec<String> = app
-        .system_states()
-        .map(|(name, _)| name.to_owned())
-        .collect();
-    names.sort();
-    let mut propagation = System::new("transform_propagation", propagate);
-    for name in &names {
-        propagation = propagation.after(name);
+    let runtime = workspace
+        .game_module()
+        .map(|module| wish_script::ScriptRuntime::new(std::sync::Arc::clone(module)));
+    if let Some(runtime) = &runtime {
+        crate::script::add_game_systems(&mut app, runtime)?;
     }
-    app.add_system(propagation)?;
+    crate::script::propagation_after_all(&mut app)?;
     wish_transform::update_global_transforms(app.world_mut())?;
-    Ok(app)
+    Ok((app, runtime))
 }
 
 /// What a run of ticks did.
@@ -419,7 +419,7 @@ impl Workspace {
                 "Close one with sim_stop first.",
             ));
         }
-        let app = build_app(self, scene, seed)?;
+        let (app, script) = build_app(self, scene, seed)?;
         let id = self.sessions.new_id();
         let tick = app.tick();
         self.sessions.open.insert(
@@ -430,6 +430,7 @@ impl Workspace {
                 app,
                 saved: Vec::new(),
                 reported: BTreeSet::new(),
+                script,
             },
         );
         let started = Diagnostic::info(
@@ -479,6 +480,22 @@ impl Workspace {
         let tick = session.app.tick();
         let hash = session.app.hash().to_string();
         let entities = session.app.world().entities().count();
+        let logs = session
+            .script
+            .as_ref()
+            .map(wish_script::ScriptRuntime::take_logs)
+            .unwrap_or_default();
+        for log in logs {
+            let message = format!("[{}] {}", log.system, log.message);
+            let hint = "Logged by game code (wish_sdk::info!, warn! or error!).";
+            let entry = match log.severity {
+                Severity::Error => Diagnostic::error("script_log", message, hint),
+                Severity::Warning => Diagnostic::warning("script_log", message, hint),
+                Severity::Info => Diagnostic::info("script_log", message, hint),
+            };
+            self.sessions
+                .record(Some(id), Some(log.tick), "script", &entry);
+        }
         for diagnostic in &stepped.diagnostics {
             let kind = if diagnostic.code == "system_failed" {
                 "system"

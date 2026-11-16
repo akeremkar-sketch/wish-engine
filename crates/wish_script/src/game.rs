@@ -296,27 +296,83 @@ impl GameModule {
         self.module.fingerprint()
     }
 
-    /// Registers the module's types in `world`. A type with the name of one
-    /// the world already has must have exactly its layout (this is how the
-    /// engine's own types — `Transform` — are checked against the engine).
-    pub fn install(&self, world: &mut World) -> Result<()> {
+    /// Registers the module's types in `world`. A type the world already
+    /// has is checked: the engine's own types (`Transform`) must have
+    /// exactly the engine's layout; a type the game declared earlier and has
+    /// now changed (new code during a game) is moved to the new layout field
+    /// by field, and a note says what was kept (`script_type_changed`).
+    pub fn install(&self, world: &mut World) -> Result<Vec<Diagnostic>> {
+        // Check everything first, so that a refusal changes nothing: an
+        // engine type (bound to a Rust type) must match exactly.
         for ty in &self.manifest.types {
-            let registered = match ty.role {
-                Role::Component => world
-                    .register_component_schema(ty.schema.clone())
-                    .map(|_| ()),
-                Role::Resource => world
-                    .register_resource_schema(ty.schema.clone())
-                    .map(|_| ()),
-                Role::Event => world.register_event_schema(ty.schema.clone()).map(|_| ()),
+            let registry = world.registry();
+            let name = ty.schema.name.as_str();
+            let info = match ty.role {
+                Role::Component => registry
+                    .component_id(name)
+                    .and_then(|id| registry.component(id)),
+                Role::Resource => registry
+                    .resource_id(name)
+                    .and_then(|id| registry.resource(id)),
+                Role::Event => registry.event_id(name).and_then(|id| registry.event(id)),
             };
-            registered.map_err(|cause| {
+            if let Some(info) = info
+                && (info.is_native() || info.is_managed())
+                && !info.schema().same_layout(&ty.schema)
+            {
+                return Err(Diagnostic::error(
+                    "script_type_mismatch",
+                    format!(
+                        "'{}' describes the engine type '{name}' differently from the engine.",
+                        self.name()
+                    ),
+                    "Rebuild the game code with this engine's SDK (script_build); if the game declares its own type with this name, rename it.",
+                )
+                .at_file(self.name()));
+            }
+        }
+        let mut notes = Vec::new();
+        for ty in &self.manifest.types {
+            let name = ty.schema.name.as_str();
+            let registry = world.registry();
+            let existing = match ty.role {
+                Role::Component => registry.component_id(name).and_then(|id| {
+                    registry
+                        .component(id)
+                        .map(|info| (info.schema().clone(), id.index()))
+                }),
+                Role::Resource => registry.resource_id(name).and_then(|id| {
+                    registry
+                        .resource(id)
+                        .map(|info| (info.schema().clone(), id.index()))
+                }),
+                Role::Event => registry.event_id(name).and_then(|id| {
+                    registry
+                        .event(id)
+                        .map(|info| (info.schema().clone(), id.index()))
+                }),
+            };
+            let result = match existing {
+                Some((schema, _)) if schema.same_layout(&ty.schema) && schema == ty.schema => {
+                    continue;
+                }
+                Some(_) => self.retype(world, ty).map(|note| notes.extend(note)),
+                None => match ty.role {
+                    Role::Component => world
+                        .register_component_schema(ty.schema.clone())
+                        .map(|_| ()),
+                    Role::Resource => world
+                        .register_resource_schema(ty.schema.clone())
+                        .map(|_| ()),
+                    Role::Event => world.register_event_schema(ty.schema.clone()).map(|_| ()),
+                },
+            };
+            result.map_err(|cause| {
                 Diagnostic::error(
                     "script_type_mismatch",
                     format!(
-                        "'{}' describes '{}' differently from the world: {}",
+                        "'{}' describes '{name}' differently from the world: {}",
                         self.name(),
-                        ty.schema.name,
                         cause.message
                     ),
                     "If it is an engine type, rebuild the game code with this engine's SDK. If it is the game's own type, two declarations share the name: rename one.",
@@ -324,7 +380,43 @@ impl GameModule {
                 .at_file(self.name())
             })?;
         }
-        Ok(())
+        Ok(notes)
+    }
+
+    /// Moves a changed game type to its new layout.
+    fn retype(&self, world: &mut World, ty: &ModuleType) -> Result<Option<Diagnostic>> {
+        let name = ty.schema.name.as_str();
+        let registry = world.registry();
+        let moved = match ty.role {
+            Role::Component => {
+                let id = registry.component_id(name).ok_or_else(poisoned)?;
+                world.retype_component(id, ty.schema.clone())?
+            }
+            Role::Resource => {
+                let id = registry.resource_id(name).ok_or_else(poisoned)?;
+                world.retype_resource(id, ty.schema.clone())?
+            }
+            Role::Event => {
+                let id = registry.event_id(name).ok_or_else(poisoned)?;
+                world.retype_event(id, ty.schema.clone())?
+            }
+        };
+        if moved.values == 0 && moved.dropped.is_empty() {
+            return Ok(None);
+        }
+        let dropped = if moved.dropped.is_empty() {
+            String::new()
+        } else {
+            format!(" Not kept: {}.", moved.dropped.join(", "))
+        };
+        Ok(Some(Diagnostic::info(
+            "script_type_changed",
+            format!(
+                "'{name}' changed in the new code; {} value(s) were moved to its new fields.{dropped}",
+                moved.values
+            ),
+            "Fields keep their values when the name stays and the value still fits; new fields start at their defaults. Rename a field back if a value was lost by mistake.",
+        )))
     }
 }
 

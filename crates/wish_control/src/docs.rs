@@ -389,6 +389,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "The resource is not set in the scene or world.",
     ),
     (
+        "retype_refused",
+        "An engine type's layout cannot change while a world exists; only types declared by game code can. Rename the game's type if it clashes with an engine type.",
+    ),
+    (
         "scene_file_invalid",
         "Changes are refused because the scene file on disk is currently invalid (edited by hand). Fix the file first; nothing will overwrite it.",
     ),
@@ -413,12 +417,24 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "The game module's manifest (its list of types and systems) is malformed. Rebuild the game code with this engine's SDK (script_build).",
     ),
     (
+        "script_build_failed",
+        "The game code build could not run (a file could not be read or written, or the SDK could not be built). The message names the file; the previous build stays in use.",
+    ),
+    (
         "script_call_failed",
         "Calling into the game module failed for a reason that is not a trap (for example an export with the wrong type). Rebuild with this engine's SDK.",
     ),
     (
         "script_command_failed",
         "A command a game system gave (spawn, insert, despawn, send, parent) could not be applied; the commands before it were applied. The message names the command and the cause.",
+    ),
+    (
+        "script_compile_error",
+        "The Rust compiler rejected the game code. The location is the line in scripts/; the message carries the compiler's code (E0308 ...) and the hint its help. The previous build stays in use.",
+    ),
+    (
+        "script_compile_warning",
+        "The compiler warned about the game code; the build still succeeded. Worth fixing: warnings often point at real mistakes (an unused variable, an unreachable branch).",
     ),
     (
         "script_duplicate_system",
@@ -437,6 +453,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "The file is not a valid WebAssembly module. Build game code with script_build instead of editing the .wasm file.",
     ),
     (
+        "script_log",
+        "A message logged by game code (wish_sdk::info!, warn! or error!), with the system's name.",
+    ),
+    (
         "script_missing_export",
         "The module lacks an export every game module has (memory, wish_abi_version, wish_alloc, wish_run). Build it with the SDK, which adds them (wish_sdk::export!).",
     ),
@@ -453,12 +473,40 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "Game code panicked; the message and location name the cause. The system is turned off until the code is rebuilt.",
     ),
     (
+        "script_reload_failed",
+        "A running session could not switch to the new game code and keeps the old one. Restart it (sim_stop, sim_start) to use the new code; the message says why.",
+    ),
+    (
+        "script_reloaded",
+        "A running session switched to the new game code between two ticks; its state (entities, components, resources) was kept.",
+    ),
+    (
+        "script_sdk_missing",
+        "The game SDK the engine compiles game code against was not found. Packaged engines ship it in their 'sdk' folder; for engine development run `wen sdk` or set WISH_SDK.",
+    ),
+    (
+        "script_sources_missing",
+        "The project has no game code yet: scripts/src/lib.rs does not exist. Projects made with `wen new` have one.",
+    ),
+    (
         "script_stack_overflow",
         "Game code overflowed its stack, usually through recursion without a base case.",
     ),
     (
+        "script_toolchain_mismatch",
+        "The game SDK and the compiler come from different versions. They must come from the same engine package; reinstall, or rebuild the SDK pack with `wen sdk`.",
+    ),
+    (
+        "script_toolchain_missing",
+        "The compiler for game code could not be run. Packaged engines ship it in their 'toolchain' folder; for engine development WISH_RUSTC can point at a rustc.",
+    ),
+    (
         "script_trap",
         "Game code stopped with a WebAssembly trap (index out of range, division by zero, unreachable). The location points to the line.",
+    ),
+    (
+        "script_type_changed",
+        "A type of the game code changed its fields while a game was running; values were moved field by field (same name and still fitting: kept; new fields: defaults). The message lists what was not kept.",
     ),
     (
         "script_type_mismatch",
@@ -794,6 +842,18 @@ A scene is a file of entities, each an id and components: `{{ \"op\": \"spawn\",
 Component values are patches on defaults: give only the fields you change. `parent` puts an entity under another; transforms combine down the tree.\n\
 Prefabs are reusable parts: the `instantiate` operation places one (`\"prefab\": \"prefabs/crate.prefab.json\"`, with the instance's own `components`); look inside a prefab with `scene_get` and `\"scene\": \"prefabs/crate.prefab.json\"`.\n\
 Something to see needs a `Camera` (with a `Transform`), a `DirectionalLight` for light, and `Primitive` or `Model` entities to draw.\n\
+\n\
+## Game code\n\
+\n\
+Behaviour is Rust in `scripts/src/lib.rs` (edit the file directly), compiled by `script_build`:\n\
+`use wish_sdk::prelude::*;`, data as `#[component]` / `#[resource]` / `#[event]` structs (every field with a `///` comment),\n\
+logic as `#[system]` functions taking `Query<(&mut Transform, &Velocity), With<Player>>`, `Res<Time>`, `ResMut<Score>`,\n\
+`Commands` (spawn/insert/despawn), `EventReader<E>` / `EventWriter<E>`; order with `#[system(after = \"other\")]`; end with\n\
+`wish_sdk::export! {{ components: [...], resources: [...], systems: [...] }}`.\n\
+Compile errors come back with file and line; a failed build keeps the old code. A good build switches running sessions to\n\
+the new code between two ticks without losing their state, and its types are usable in `edit_apply` at once.\n\
+All state lives in components and resources (the module restarts every tick). No clock, files or network: time is\n\
+`Res<Time>`, randomness `random_f32()`; a panic or an endless loop turns that system off and is reported with its line.\n\
 \n\
 ## Rules\n\
 \n\

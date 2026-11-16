@@ -446,3 +446,66 @@ pub fn serve_mcp(context: &ToolContext) -> std::process::ExitCode {
         }
     }
 }
+
+/// Text for a `script_build` answer.
+pub fn build_text(answer: &Value) -> String {
+    let mut text = String::new();
+    for entry in answer["diagnostics"].as_array().into_iter().flatten() {
+        if let Ok(problem) = serde_json::from_value::<Diagnostic>(entry.clone()) {
+            text.push_str(&format!("{problem}\n"));
+        }
+    }
+    let seconds = answer["seconds"].as_f64().unwrap_or(0.0);
+    if answer["passed"] == true {
+        let systems = answer["systems"]
+            .as_array()
+            .map(|s| {
+                s.iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_default();
+        let verb = if answer["dry_run"] == true {
+            "Compiles"
+        } else {
+            "Built"
+        };
+        text.push_str(&format!("{verb} in {seconds:.2} s; systems: {systems}."));
+    } else {
+        text.push_str(&format!(
+            "Build failed: {} error(s), {} warning(s); the previous build stays in use.",
+            answer["errors"], answer["warnings"]
+        ));
+    }
+    text
+}
+
+/// `wen sdk`: builds the game SDK pack from the engine's own sources.
+pub fn pack_sdk(out: Option<&str>, as_json: bool) -> wish_core::Result<String> {
+    let beside = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf))
+        .unwrap_or_default();
+    let out = out.map_or_else(|| beside.join("sdk"), std::path::PathBuf::from);
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml");
+    if !manifest.is_file() {
+        return Err(Diagnostic::error(
+            "script_sdk_missing",
+            "`wen sdk` builds the SDK from the engine's sources, which are not on this machine.",
+            "Packaged engines ship the SDK in their 'sdk' folder; this command is for engine development.",
+        ));
+    }
+    let cargo = std::env::var_os("CARGO").map_or_else(|| "cargo".into(), std::path::PathBuf::from);
+    let target = beside.join("sdk-target");
+    let description = wish_script::build::pack_sdk(&cargo, &manifest, &target, &out)?;
+    Ok(if as_json {
+        serde_json::json!({ "out": out.display().to_string(), "sdk": description }).to_string()
+    } else {
+        format!(
+            "SDK pack written to {} (for {}).",
+            out.display(),
+            description["rustc"].as_str().unwrap_or("?")
+        )
+    })
+}

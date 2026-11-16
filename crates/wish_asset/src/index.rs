@@ -8,6 +8,10 @@ use wish_core::asset::{split_asset_ref, validate_asset_ref};
 use wish_core::suggest::closest_match;
 use wish_core::{Diagnostic, Result};
 
+/// The folder of a project's game code (M5): Rust sources the engine
+/// compiles, not assets.
+pub const SCRIPTS_FOLDER: &str = "scripts/";
+
 /// Whether a file name is an engine document rather than an asset: a scene,
 /// a prefab or a meta file.
 pub fn is_document(name: &str) -> bool {
@@ -93,11 +97,12 @@ pub struct AssetIndex {
 }
 
 impl AssetIndex {
-    /// Scans a project folder.
+    /// Scans a project folder. Game code (`scripts/`) is source, not an
+    /// asset, and is left out.
     pub fn scan(root: &Path) -> Result<Self> {
         let files = walk_files(root)?
             .into_iter()
-            .filter(|(path, _)| !is_document(path))
+            .filter(|(path, _)| !is_document(path) && !path.starts_with(SCRIPTS_FOLDER))
             .map(|(path, _)| path)
             .collect();
         Ok(Self { files })

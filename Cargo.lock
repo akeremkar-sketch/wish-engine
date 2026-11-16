@@ -3739,6 +3739,7 @@ dependencies = [
  "wish_render",
  "wish_scene",
  "wish_schema",
+ "wish_script",
  "wish_transform",
  "wish_window",
 ]
@@ -3757,6 +3758,7 @@ dependencies = [
  "wish_render",
  "wish_scene",
  "wish_schema",
+ "wish_script",
  "wish_transform",
 ]
 

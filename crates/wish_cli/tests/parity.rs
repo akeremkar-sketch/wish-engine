@@ -135,6 +135,10 @@ fn examples() -> Vec<(&'static str, Value)> {
         ("logs_get", json!({})),
         ("sim_stop", json!({ "session": "s2" })),
         ("sim_stop", json!({ "session": "s1" })),
+        // Building needs the SDK pack and the compiler, which differ between
+        // machines; the parity of the answer is shown on a mistake (building
+        // itself is tested in wish_control/tests/script_tools.rs).
+        ("script_build", json!({ "reload": "yes" })),
     ]
 }
 

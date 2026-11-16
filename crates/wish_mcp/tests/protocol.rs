@@ -115,7 +115,11 @@ fn every_catalogue_tool_is_listed_with_its_schema() {
     );
     let tools = answer["result"]["tools"].as_array().unwrap();
     assert_eq!(tools.len(), catalog().len());
-    assert_eq!(tools.len(), 20, "the M4 tool count (design note §5)");
+    assert_eq!(
+        tools.len(),
+        21,
+        "20 tools of M4 (design note §5) and script_build (M5)"
+    );
     for (listed, tool) in tools.iter().zip(catalog()) {
         assert_eq!(listed["name"], tool.name);
         assert_eq!(listed["inputSchema"]["type"], "object");

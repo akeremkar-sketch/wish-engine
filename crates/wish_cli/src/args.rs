@@ -10,7 +10,7 @@ use wish_core::{Diagnostic, Result};
 /// The commands `wen` understands.
 pub const COMMANDS: &[&str] = &[
     "run", "bench", "schema", "mv", "check", "fmt", "migrate", "watch", "capture", "describe",
-    "shaders", "view", "call", "do", "new", "mcp", "examples", "help", "version",
+    "shaders", "view", "call", "do", "new", "build", "sdk", "mcp", "examples", "help", "version",
 ];
 
 /// A parsed command line.
@@ -100,6 +100,18 @@ pub enum Command {
         root: Option<String>,
         /// Stop after this many seconds (0: run until interrupted).
         seconds: u64,
+    },
+    /// Build the project's game code (the `script_build` tool).
+    Build {
+        /// The project folder.
+        root: Option<String>,
+        /// Only check that it compiles.
+        dry_run: bool,
+    },
+    /// Build the game SDK pack from the engine's sources (engine development).
+    Sdk {
+        /// Where to put it (default: `sdk` next to wen).
+        out: Option<String>,
     },
     /// Create a new project folder.
     New {
@@ -413,6 +425,8 @@ fn flags_of(command: &str) -> &'static [(&'static str, bool)] {
         ],
         "shaders" => &[("--dir", true), ("--json", false)],
         "new" => &[("--name", true), ("--json", false)],
+        "build" => &[("--root", true), ("--dry-run", false), ("--json", false)],
+        "sdk" => &[("--out", true), ("--json", false)],
         "view" => &[
             ("--example", true),
             ("--scene", true),
@@ -648,6 +662,13 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
                 },
             }
         }
+        "build" => Command::Build {
+            root: value_of("--root").map(str::to_owned),
+            dry_run: values.iter().any(|(flag, _)| *flag == "--dry-run"),
+        },
+        "sdk" => Command::Sdk {
+            out: value_of("--out").map(str::to_owned),
+        },
         "new" => {
             if positional.len() != 1 {
                 return Err(usage_error(
