@@ -638,12 +638,16 @@ impl Workspace {
     /// revision).
     pub(crate) fn view(&mut self, path: &str) -> Result<&WorldView> {
         let example = self.example().map(str::to_owned);
+        let module = self.game_module().cloned();
+        let generation = self.scripts.generation;
         let open = self.document_mut(path)?;
-        let revision = open.doc.revision();
+        // A new game module can add types the scene uses: the view is
+        // rebuilt when either the document or the module changed.
+        let revision = open.doc.revision() ^ (generation << 48);
         let fresh = open.view.as_ref().is_some_and(|(at, _)| *at == revision);
         if !fresh {
             let mut world = World::new();
-            crate::types::register_project_types(example.as_deref(), &mut world)?;
+            crate::types::register_all(example.as_deref(), module.as_deref(), &mut world)?;
             let ids = open.doc.instantiate(&mut world)?;
             wish_transform::update_global_transforms(&mut world)?;
             open.view = Some((revision, WorldView { world, ids }));

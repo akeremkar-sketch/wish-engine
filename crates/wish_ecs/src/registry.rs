@@ -66,7 +66,7 @@ pub struct TypeInfo {
 }
 
 impl TypeInfo {
-    fn new(schema: TypeSchema, type_id: Option<TypeId>) -> Result<Self> {
+    pub(crate) fn new(schema: TypeSchema, type_id: Option<TypeId>) -> Result<Self> {
         schema.validate()?;
         let default = default_bytes(&schema)?;
         let mut spans = Vec::new();
@@ -295,6 +295,29 @@ impl Table {
         Ok(index)
     }
 
+    /// Replaces the description of a type registered from a schema alone
+    /// (game code). Types bound to a Rust type, and managed ones, keep
+    /// theirs: native code views their bytes directly.
+    fn replace_schema(&mut self, index: u32, schema: TypeSchema) -> Result<()> {
+        schema.validate()?;
+        let Some(info) = self.infos.get_mut(index as usize) else {
+            return Err(internal_error("replacing an unregistered type"));
+        };
+        if info.type_id.is_some() || info.managed || info.name() != schema.name {
+            return Err(Diagnostic::error(
+                "retype_refused",
+                format!(
+                    "The {} '{}' is the engine's own type; its layout cannot change while the world exists.",
+                    self.kind,
+                    info.name()
+                ),
+                "Only types declared by game code can change their fields during a game. Rename the game's type if it clashes with an engine type.",
+            ));
+        }
+        *info = TypeInfo::new(schema, None)?;
+        Ok(())
+    }
+
     fn conflict(&self, name: &str) -> Diagnostic {
         Diagnostic::error(
             "type_name_conflict",
@@ -447,6 +470,26 @@ impl Registry {
 
     pub(crate) fn register_event_schema(&mut self, schema: TypeSchema) -> Result<EventId> {
         self.events.register_schema(schema).map(EventId)
+    }
+
+    pub(crate) fn replace_component_schema(
+        &mut self,
+        id: ComponentId,
+        schema: TypeSchema,
+    ) -> Result<()> {
+        self.components.replace_schema(id.0, schema)
+    }
+
+    pub(crate) fn replace_resource_schema(
+        &mut self,
+        id: ResourceId,
+        schema: TypeSchema,
+    ) -> Result<()> {
+        self.resources.replace_schema(id.0, schema)
+    }
+
+    pub(crate) fn replace_event_schema(&mut self, id: EventId, schema: TypeSchema) -> Result<()> {
+        self.events.replace_schema(id.0, schema)
     }
 
     pub(crate) fn unknown_event(&self, name: &str) -> Diagnostic {

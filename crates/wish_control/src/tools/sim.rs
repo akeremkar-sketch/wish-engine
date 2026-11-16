@@ -69,6 +69,11 @@ pub(crate) const SIM_STEP: Tool = Tool {
             "The most ticks to run when stopping on until.",
         )
         .or("10000"),
+        Param::optional(
+            "input",
+            Kind::Object,
+            "What the player does during these ticks, by action name (input.json): a button is true or false, an axis a number from -1 to 1, a two-axis action [x, y] such as {\"move\": [0, 1], \"jump\": true}. Held for every tick of the call and released afterwards; game code sees it through Actions.",
+        ),
     ],
     mutates: false,
     run: sim_step,
@@ -146,7 +151,7 @@ pub(crate) const LOGS_GET: Tool = Tool {
         Param::optional(
             "kinds",
             Kind::StringList,
-            "Only these kinds: session, system, inspector.",
+            "Only these kinds: session, system, inspector, script (game code logs and reloads).",
         ),
         Param::optional(
             "limit",
@@ -207,7 +212,9 @@ fn sim_step(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<Str
         (None, None) => 1,
     };
     let frames = u64::try_from(frames).unwrap_or(1);
-    let (stepped, tick, hash, entities) = workspace.step_session(&id, frames, until.as_ref())?;
+    let input = parse_input(workspace, &id, args.value("input"))?;
+    let (stepped, tick, hash, entities) =
+        workspace.step_session(&id, frames, until.as_ref(), &input)?;
     let mut out = Map::new();
     out.insert("session".to_owned(), json!(id));
     out.insert("tick".to_owned(), json!(tick));
@@ -311,6 +318,28 @@ fn sim_restore(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<
             .map(|s| s.snapshot.clone())
             .ok_or_else(|| unknown_snapshot(&label, &session.saved))?;
         session.app.restore(&snapshot)?;
+        let tick = session.app.tick();
+        let recorded = session
+            .recording
+            .as_ref()
+            .map(|trail| trail.hashes.len() as u64);
+        match recorded {
+            Some(len) if tick <= len => {
+                if let Some(trail) = session.recording.as_mut() {
+                    trail.rewind(tick);
+                }
+            }
+            Some(_) => {
+                // A snapshot later than what is recorded now (ticks in
+                // between were undone): the recording cannot continue.
+                session.recording = None;
+                out.insert(
+                    "recording_stopped".to_owned(),
+                    json!("The snapshot is later than the recording (the ticks before it were undone since), so recording stopped. Record again from tick 0."),
+                );
+            }
+            None => {}
+        }
         // Same state, same reports: what the inspector already said after
         // the snapshot is forgotten with the rest.
         session.reported.clear();
@@ -366,7 +395,7 @@ fn logs_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<Str
         _ => 0,
     };
     let kinds = args.strings("kinds");
-    const KNOWN: &[&str] = &["session", "system", "inspector"];
+    const KNOWN: &[&str] = &["session", "system", "inspector", "script"];
     for kind in &kinds {
         if !KNOWN.contains(&kind.as_str()) {
             return Err(Diagnostic::error(
@@ -404,4 +433,64 @@ fn logs_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<Str
         json!(workspace.sessions.log.back().map_or(0, |e| e.seq)),
     );
     Ok(out)
+}
+
+/// What the player does during a `sim_step`: `{ "move": [0, 1], "jump": true }`
+/// against the session's action names.
+pub(crate) fn parse_input(
+    workspace: &Workspace,
+    session: &str,
+    given: Option<&Value>,
+) -> Result<wish_input::Values> {
+    let mut values = wish_input::Values::new();
+    let given = match given {
+        None | Some(Value::Null) => return Ok(values),
+        Some(Value::Object(given)) => given,
+        Some(other) => {
+            return Err(Diagnostic::error(
+                "invalid_parameter",
+                format!("'input' must be an object of actions and values, not {other}."),
+                "Write it like {\"move\": [0, 1], \"jump\": true}: each action of input.json with its value (true for a button, a number for an axis, [x, y] for a 2D axis).",
+            )
+            .at_path("/input"));
+        }
+    };
+    let map = &workspace.session(session)?.input;
+    let names: Vec<&str> = map.names().collect();
+    for (name, value) in given {
+        let path = format!("/input/{name}");
+        if map.binding(name).is_none() {
+            let hint = if names.is_empty() {
+                "The project has no actions yet: create input.json (wen new writes one) with actions such as \"jump\" and \"move\", then start a new session.".to_owned()
+            } else {
+                wish_core::suggest::unknown_name_hint(name, &names)
+            };
+            return Err(Diagnostic::error(
+                "unknown_action",
+                format!("The project has no action '{name}'."),
+                hint,
+            )
+            .at_path(path)
+            .with_candidates(names));
+        }
+        let number = |v: &Value| v.as_f64().filter(|n| n.is_finite() && n.abs() <= 1.0);
+        let parsed = match value {
+            Value::Bool(down) => Some([f32::from(u8::from(*down)), 0.0]),
+            Value::Number(_) => number(value).map(|n| [n as f32, 0.0]),
+            Value::Array(items) if items.len() == 2 => number(&items[0])
+                .zip(number(&items[1]))
+                .map(|(x, y)| [x as f32, y as f32]),
+            _ => None,
+        };
+        let Some(parsed) = parsed else {
+            return Err(Diagnostic::error(
+                "invalid_parameter",
+                format!("The value for action '{name}' is not understood: {value}."),
+                "Use true or false for a button, a number from -1 to 1 for an axis, or [x, y] (each from -1 to 1) for a two-axis action.",
+            )
+            .at_path(path));
+        };
+        values.insert(name.clone(), parsed);
+    }
+    Ok(values)
 }

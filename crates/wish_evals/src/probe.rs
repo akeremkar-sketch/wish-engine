@@ -38,6 +38,11 @@ impl Probe {
         Ok(Self { ws })
     }
 
+    /// The project folder.
+    pub fn root(&self) -> std::path::PathBuf {
+        self.ws.root().to_path_buf()
+    }
+
     /// Calls a tool as the checker; a failed call is an `Err` with its message.
     pub fn call(&mut self, tool: &str, args: Value) -> Result<Value, String> {
         let answer = self.ws.call(tool, &args, &parse_actor("checker"));

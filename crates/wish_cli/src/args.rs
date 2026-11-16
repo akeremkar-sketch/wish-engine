@@ -10,7 +10,8 @@ use wish_core::{Diagnostic, Result};
 /// The commands `wen` understands.
 pub const COMMANDS: &[&str] = &[
     "run", "bench", "schema", "mv", "check", "fmt", "migrate", "watch", "capture", "describe",
-    "shaders", "view", "call", "do", "new", "mcp", "examples", "help", "version",
+    "shaders", "view", "call", "do", "new", "build", "play", "replay", "test", "sdk", "package",
+    "mcp", "examples", "help", "version",
 ];
 
 /// A parsed command line.
@@ -49,6 +50,8 @@ pub enum Command {
         ticks: u64,
         /// The random seed.
         seed: u64,
+        /// Measure game code (WebAssembly) against native systems instead.
+        script: bool,
     },
     /// Move an asset file or folder and update the scenes that refer to it.
     Move {
@@ -100,6 +103,41 @@ pub enum Command {
         root: Option<String>,
         /// Stop after this many seconds (0: run until interrupted).
         seconds: u64,
+    },
+    /// Play the project's game in a window.
+    Play(PlayArgs),
+    /// Run the project's scenario tests (the `test_run` tool).
+    Test {
+        /// Only these test files (all when empty).
+        paths: Vec<String>,
+        /// The project folder.
+        root: Option<String>,
+        /// Save the pictures as the golden images.
+        update_golden: bool,
+    },
+    /// Play a recorded replay back and compare every tick (the `replay` tool's run).
+    Replay {
+        /// The replay's name.
+        name: String,
+        /// The project folder.
+        root: Option<String>,
+    },
+    /// Build the project's game code (the `script_build` tool).
+    Build {
+        /// The project folder.
+        root: Option<String>,
+        /// Only check that it compiles.
+        dry_run: bool,
+    },
+    /// Build a package for machines without developer tools (engine development).
+    Package {
+        /// Where to put it (default: `package` next to wen).
+        out: Option<String>,
+    },
+    /// Build the game SDK pack from the engine's sources (engine development).
+    Sdk {
+        /// Where to put it (default: `sdk` next to wen).
+        out: Option<String>,
     },
     /// Create a new project folder.
     New {
@@ -159,6 +197,21 @@ pub struct CaptureArgs {
     pub shaders: Option<String>,
     /// Where to write the PNG.
     pub out: String,
+}
+
+/// The options of `wen play`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlayArgs {
+    /// The project folder (default: the current folder).
+    pub root: Option<String>,
+    /// The scene to play (default: the project's own).
+    pub scene: Option<String>,
+    /// The window's size in pixels.
+    pub size: (u32, u32),
+    /// Use the software adapter.
+    pub software: bool,
+    /// Close after this many frames (for scripts).
+    pub exit_after: Option<u64>,
 }
 
 /// The options of `wen view`.
@@ -375,6 +428,7 @@ fn flags_of(command: &str) -> &'static [(&'static str, bool)] {
             ("--entities", true),
             ("--ticks", true),
             ("--seed", true),
+            ("--script", false),
             ("--json", false),
         ],
         "schema" => &[("--example", true), ("--json", false)],
@@ -413,6 +467,23 @@ fn flags_of(command: &str) -> &'static [(&'static str, bool)] {
         ],
         "shaders" => &[("--dir", true), ("--json", false)],
         "new" => &[("--name", true), ("--json", false)],
+        "build" => &[("--root", true), ("--dry-run", false), ("--json", false)],
+        "replay" => &[("--root", true), ("--json", false)],
+        "test" => &[
+            ("--root", true),
+            ("--update-golden", false),
+            ("--json", false),
+        ],
+        "play" => &[
+            ("--root", true),
+            ("--scene", true),
+            ("--size", true),
+            ("--software", false),
+            ("--exit-after", true),
+            ("--json", false),
+        ],
+        "sdk" => &[("--out", true), ("--json", false)],
+        "package" => &[("--out", true), ("--json", false)],
         "view" => &[
             ("--example", true),
             ("--scene", true),
@@ -490,8 +561,10 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
     let mut index = 0;
     while let Some(argument) = rest.get(index) {
         index += 1;
-        if matches!(command, "mv" | "check" | "fmt" | "migrate" | "new")
-            && !argument.starts_with('-')
+        if matches!(
+            command,
+            "mv" | "check" | "fmt" | "migrate" | "new" | "test" | "replay"
+        ) && !argument.starts_with('-')
         {
             positional.push(argument);
             continue;
@@ -576,6 +649,7 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
                 })?,
             ticks: value_of("--ticks").map_or(Ok(600), |value| parse_number("--ticks", value))?,
             seed: value_of("--seed").map_or(Ok(0), |value| parse_number("--seed", value))?,
+            script: values.iter().any(|(flag, _)| *flag == "--script"),
         },
         "schema" => Command::Schema {
             example: value_of("--example").map(str::to_owned),
@@ -648,6 +722,42 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
                 },
             }
         }
+        "test" => Command::Test {
+            paths: positional.iter().map(|path| (*path).to_owned()).collect(),
+            root: value_of("--root").map(str::to_owned),
+            update_golden: values.iter().any(|(flag, _)| *flag == "--update-golden"),
+        },
+        "replay" => {
+            if positional.len() != 1 {
+                return Err(usage_error(
+                    "'wen replay' needs the name of the replay to play back.".to_owned(),
+                    "Write it like: wen replay jump_test [--root <folder>]. Replays are recorded with the replay tool (record, sim_step, save).".to_owned(),
+                ));
+            }
+            Command::Replay {
+                name: positional[0].to_owned(),
+                root: value_of("--root").map(str::to_owned),
+            }
+        }
+        "play" => Command::Play(PlayArgs {
+            root: value_of("--root").map(str::to_owned),
+            scene: value_of("--scene").map(str::to_owned),
+            size: value_of("--size").map_or(Ok((1280, 720)), parse_size)?,
+            software: values.iter().any(|(flag, _)| *flag == "--software"),
+            exit_after: value_of("--exit-after")
+                .map(|value| parse_number("--exit-after", value))
+                .transpose()?,
+        }),
+        "build" => Command::Build {
+            root: value_of("--root").map(str::to_owned),
+            dry_run: values.iter().any(|(flag, _)| *flag == "--dry-run"),
+        },
+        "package" => Command::Package {
+            out: value_of("--out").map(str::to_owned),
+        },
+        "sdk" => Command::Sdk {
+            out: value_of("--out").map(str::to_owned),
+        },
         "new" => {
             if positional.len() != 1 {
                 return Err(usage_error(

@@ -1,0 +1,20 @@
+[package]
+name = "wish_sdk"
+description = "The game code SDK for Wish Engine: queries, resources, commands and events for systems compiled to WebAssembly."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Everything here must build for wasm32-unknown-unknown: the engine builds
+# this crate in advance and ships it with the embedded toolchain (ADR-025).
+[dependencies]
+serde_json.workspace = true
+wish_core.workspace = true
+wish_schema.workspace = true
+wish_sdk_macros.workspace = true
+wish_types.workspace = true
+
+[lints]
+workspace = true

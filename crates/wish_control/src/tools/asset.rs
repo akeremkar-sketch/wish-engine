@@ -90,7 +90,10 @@ fn asset_list(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<S
     let limit = usize::try_from(args.int("limit").unwrap_or(100)).unwrap_or(100);
     let matching: Vec<&str> = index
         .paths()
-        .filter(|path| !path.ends_with(".meta.json") && !matches!(*path, "wish.json" | "CLAUDE.md"))
+        .filter(|path| {
+            !path.ends_with(".meta.json")
+                && !matches!(*path, "wish.json" | "CLAUDE.md" | "input.json")
+        })
         .filter(|path| kind == "all" || kind_of(path) == kind)
         .filter(|path| {
             search

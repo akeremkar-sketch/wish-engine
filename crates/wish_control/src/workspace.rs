@@ -44,6 +44,8 @@ pub struct Workspace {
     pub(crate) software: bool,
     /// Raised by the MCP server when the client cancels the running call.
     pub(crate) cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// The game code (M5).
+    pub(crate) scripts: crate::script::Scripts,
 }
 
 impl std::fmt::Debug for Workspace {
@@ -87,7 +89,7 @@ impl Workspace {
             .or_else(|| config.as_ref().and_then(|config| config.example.clone()));
         let mut types = App::new(AppConfig::default());
         crate::types::register_project_types(example.as_deref(), types.world_mut())?;
-        Ok(Self {
+        let mut workspace = Self {
             root: options.root,
             config,
             config_problem,
@@ -99,7 +101,10 @@ impl Workspace {
             renderer: None,
             software: std::env::var_os("WISH_SOFTWARE").is_some(),
             cancel: None,
-        })
+            scripts: crate::script::Scripts::default(),
+        };
+        workspace.load_built_module();
+        Ok(workspace)
     }
 
     /// The project folder.
@@ -229,6 +234,11 @@ pub fn parse_actor(name: &str) -> Actor {
 }
 
 impl Workspace {
+    /// Whether tools draw on the software adapter.
+    pub fn software(&self) -> bool {
+        self.software
+    }
+
     /// Chooses the software (CPU) adapter for tools that draw: the same
     /// picture on every machine, and it works without a GPU. Also on when
     /// the environment variable `WISH_SOFTWARE` is set.

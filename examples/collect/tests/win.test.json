@@ -1,0 +1,15 @@
+{
+  "format": 1,
+  "scene": "scenes/main.scene.json",
+  "seed": 1,
+  "steps": [
+    { "expect": "Score.points == 0", "message": "nothing is collected before the player moves" },
+    { "input": { "move": [1, 0] }, "until": "Score.points >= 1", "max_frames": 120 },
+    { "input": { "move": [0, 1] }, "until": "Score.points >= 2", "max_frames": 120 },
+    { "input": { "move": [-1, 0] }, "until": "GameState.won == true", "max_frames": 120 },
+    { "expect": "Score.points == 3 && Score.coins == 3", "message": "all three coins were collected" },
+    { "expect": "count(Coin) == 0", "message": "no coin is left in the world" },
+    { "frames": 30 },
+    { "expect": "GameState.won == true", "message": "the game stays won" }
+  ]
+}

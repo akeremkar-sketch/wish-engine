@@ -102,6 +102,7 @@ fn project_info(workspace: &mut Workspace, _: &Args, _: &Actor) -> Result<Map<St
     out.insert("scenes".to_owned(), json!(of_kind(".scene.json")));
     out.insert("prefabs".to_owned(), json!(of_kind(".prefab.json")));
     out.insert("assets".to_owned(), json!(assets));
+    out.insert("scripts".to_owned(), workspace.script_status());
     out.insert(
         "problems".to_owned(),
         json!({ "errors": errors, "warnings": warnings }),
@@ -350,13 +351,22 @@ fn check(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<String
             .filter(|d| d.location.file.as_deref().is_none_or(&selected))
             .cloned(),
     );
+    // The action map is a project file like wish.json.
+    let has_input = root.join(wish_input::INPUT_FILE).is_file();
+    if has_input
+        && selected(wish_input::INPUT_FILE)
+        && let Err(problem) = workspace.input_map()
+    {
+        diagnostics.push(problem);
+    }
     let errors = diagnostics.iter().filter(|d| d.is_error()).count();
     let files = project
         .files
         .iter()
         .filter(|file| selected(&file.path))
         .count()
-        + usize::from(root.join(PROJECT_FILE).is_file() && selected(PROJECT_FILE));
+        + usize::from(root.join(PROJECT_FILE).is_file() && selected(PROJECT_FILE))
+        + usize::from(has_input && selected(wish_input::INPUT_FILE));
     let mut out = Map::new();
     out.insert("passed".to_owned(), json!(errors == 0));
     out.insert("files".to_owned(), json!(files));

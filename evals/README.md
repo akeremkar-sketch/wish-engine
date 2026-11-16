@@ -30,3 +30,9 @@ C:\wish-build\target\release\wish-evals.exe run --tries 3 --model sonnet --effor
 `wish-evals recheck --label <name>` runs the current checks again on a finished run (each try keeps `baseline.json`), without running the agent.
 
 Exit criterion (M4): Sonnet 5.5 · medium passes at least 80 %. First results (16 November 2026): 30/30 twice; see `results/` and the design note §14 WP7.
+
+## Oyun kodu görevleri (M5)
+
+- `11_walk_code` (oyuncuyu `move` eylemiyle yürüt) ve `12_collect_game` (toplama oyunu: `Coin`, `Score.points`, `GameState.won`). Bu görevlerde ajan proje dosyalarını **okuyup düzenleyebilir** (`Read`, `Edit`, `Write`, `Glob`, `Grep`; `Bash` asla), oyun kodunu yazar, `script_build` ile derler, sahneyi araçlarla düzenler ve davranışı kendi senaryo testiyle kanıtlar.
+- Denetim: oyun kodu derlenir, `check` geçer, ajanın kendi testleri (en az bir tane) geçer, ve ajanın **görmediği** gizli bir senaryo testi (`tests/zz_check.test.json`, denetimden sonra silinir) oyunu oynar: yürüme hızı/yönü, girdi yokken durma; paraların toplanması, puan, kazanma.
+- `wish-evals run` için SDK paketi `wish-evals.exe`'nin yanında olmalı: `wen sdk` (aynı `target/release` klasörü).

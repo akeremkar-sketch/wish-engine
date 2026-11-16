@@ -348,3 +348,60 @@ fn update_turns_real_time_into_whole_ticks() {
     assert_eq!(app.update(f64::NAN).unwrap().steps, 0);
     assert_eq!(app.update(-1.0).unwrap().steps, 0);
 }
+
+#[test]
+fn a_dynamic_system_can_be_replaced_and_keeps_its_random_stream() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    let make = |label: u64, seen: Arc<AtomicU64>| {
+        System::dynamic(
+            "game",
+            Arc::new(move |_: &mut World, ctx: &mut SystemContext<'_>| {
+                seen.store(
+                    label * 1000 + u64::from(ctx.rng.below(1000)),
+                    Ordering::SeqCst,
+                );
+                Ok(())
+            }),
+        )
+    };
+    // The same three ticks, once without a reload and once with the code
+    // replaced after tick 1: the random stream continues where it was.
+    let draws = |reload: bool| {
+        let seen = Arc::new(AtomicU64::new(0));
+        let mut app = App::new(AppConfig::default());
+        app.add_system(make(1, Arc::clone(&seen))).unwrap();
+        let mut out = Vec::new();
+        for tick in 0..3 {
+            if reload && tick == 2 {
+                app.replace_system(make(1, Arc::clone(&seen))).unwrap();
+            }
+            app.step().unwrap();
+            out.push(seen.load(Ordering::SeqCst));
+        }
+        out
+    };
+    assert_eq!(draws(false), draws(true));
+
+    // Replacing re-enables a failed system; removing takes it out.
+    let mut app = App::new(AppConfig::default());
+    app.add_system(System::dynamic(
+        "broken",
+        Arc::new(|_: &mut World, _: &mut SystemContext<'_>| {
+            Err(Diagnostic::error("boom", "It broke.", "Fix it."))
+        }),
+    ))
+    .unwrap();
+    assert_eq!(app.step().unwrap().failures.len(), 1);
+    assert_eq!(app.disabled_systems().len(), 1);
+    app.replace_system(System::dynamic(
+        "broken",
+        Arc::new(|_: &mut World, _: &mut SystemContext<'_>| Ok(())),
+    ))
+    .unwrap();
+    assert!(app.disabled_systems().is_empty());
+    assert!(app.step().unwrap().failures.is_empty());
+    assert!(app.remove_system("broken"));
+    assert!(!app.remove_system("broken"));
+    assert!(app.system_order().unwrap().is_empty());
+}

@@ -33,6 +33,7 @@ Bir kararı değiştirmek serbesttir; sessizce çiğnemek değildir. Değişikli
 | 022 | Güvenlik | Proje klasörüne sınırlı yazma, yalnızca yerel ağ, Wasm kaynak sınırları | Kabul |
 | 023 | Ürün ve dağıtım | Açık kaynak (MIT + Apache-2.0), ücretsiz, komisyonsuz; Steam + web; sıfır kurulum; oyun dışa aktarma | Kabul |
 | 024 | Yapay zekâ bağlantısı | Kullanıcı kendi yapay zekâsını getirir; sağlayıcıdan bağımsız bağdaştırıcı, ilk sağlayıcı Claude | Kabul (yöntem Geçici) |
+| 025 | Oyun kodunun derlenmesi ve örneklenmesi | cargo'suz tek `rustc` çağrısı + motorla gelen önceden derlenmiş SDK; ev sahibi bağlayıcısı yok; modül başına tick başına taze örnek | Kabul (M5 WP1 ölçümüyle) |
 
 ---
 
@@ -179,6 +180,8 @@ Taslak araç listesi: [MCP_API.md](MCP_API.md).
 **Risk ve önlem.** Ev sahibi–konuk sınır maliyeti → toplu veri aktarımı; M5'te kıyaslama. Rust konuk kodunun derleme süresi → küçük crate, artımlı derleme, hedef < 10 sn. Rust bilmeyen kullanıcı → kodu ağırlıklı olarak ajan yazar; ikinci konuk dili 1.0 sonrası.
 
 **Tetikleyici.** M5 kıyaslamasında sınır maliyeti kare bütçesinin %20'sini aşarsa paylaşımlı bellek görünümleri tasarlanır.
+
+**Ölçüm (M5 WP7, 16 Kasım 2026, `wen bench --script`):** aynı sistem 10.000 varlıkta yerel 0,014 ms, oyun kodu 1,87 ms → sınır **kare bütçesinin %11,2'si** (tetikleyicinin altında); tick başına sabit maliyet 0,04 ms. Ayrıntı ve iyileştirme notları: `docs/design/M5-oyun-mantigi.md` §17 WP7. **Kapanıştan sonra (M5 WP9):** geri yazma her değeri denetliyor (sonlu float, geçerli bool/enum) ve yalnızca gönderilenden farklı satırları yazıyor; aynı ölçüm ~240 ns/varlık, **%14** (tetikleyicinin altında).
 
 ## ADR-012 — Render
 
@@ -336,6 +339,27 @@ Tüm değişiklikler (elle ya da ajanla) kontrol düzleminden geçer; arayüzün
 **Neden.** "Komisyon yok" ilkesi yapay zekâ kullanımını da kapsar. Sağlayıcıdan bağımsızlık, motorun tek bir şirkete bağımlı kalmamasını sağlar; Claude önceliği, ilk ve en iyi sınanan bağdaştırıcı olmasıyla korunur.
 
 **Geçici kısım.** Kokpit içi Claude bağdaştırıcısının kesin yöntemi (Claude Code'u alt süreç olarak sürmek, Claude Agent SDK ya da doğrudan API) M8 başında, o günün güncel belgelerine göre seçilir.
+
+## ADR-025 — Oyun kodunun derlenmesi ve örneklenmesi
+
+**Karar.**
+- **Derleme yolu C:** oyun kodu (`scripts/`) **cargo olmadan, tek bir `rustc` çağrısıyla** `wasm32-unknown-unknown` için derlenir. `wish_sdk` (wasm32 rlib) ve `wish_sdk_macros` (ev sahibi proc-macro kütüphanesi) motorun kendi derlemesinde üretilir ve motorla birlikte gelir; oyun derlemesi onları `--extern` ile kullanır. Bağlama `rust-lld` ile yapılır (rustc'yle gelir). Kullanıcının makinesinde **ev sahibi bağlayıcısı (MSVC `link.exe`) hiç gerekmez.**
+- **Gömülü araç zinciri** = sabit rustc'nin asgari kopyası: `rustc` + `rustc_driver`, `rust-lld` (+ `gcc-ld/wasm-ld`), `rust-std-wasm32-unknown-unknown`, önceden derlenmiş SDK. Cargo, rustup, Visual Studio gerekmez.
+- **Örnekleme:** modül başına **tick başına bir taze örnek**; o tick'teki sistem çağrıları onu paylaşır, bir çağrı başarısız olursa (tuzak, yakıt, bellek) örnek atılır ve sıradaki çağrı yenisini alır. Durum tick'ten tick'e asla taşınmaz: anlık görüntüler tick sınırında alındığı için eksiksizdir, sıcak yükleme tick sınırında kayıpsızdır.
+- wasmtime havuz ayırıcısıyla (64 yuva) çalışır.
+
+**Neden (M5 WP1 ölçümleri, 16 Kasım 2026, geliştirme makinesi, Windows 10, release; `wish_script/tests/build_paths.rs` ve `rust_guest.rs` ile yeniden üretilir):**
+- *Yol A (cargo + proc-macro):* bağlayıcı ortam değişkeniyle bozulunca derleme **başarısız** — proc-macro ev sahibi için bağlanıyor; temiz Windows'ta çalışmaz.
+- *Yol C:* `env_clear()` ile boş ortamda (yalnızca kopyalanmış araç zinciri `PATH`'te, rustup/VS değişkenleri yok) derlendi ve modül çalıştı; `--print link-args` bağlayıcının `rust-lld` olduğunu gösterdi. Süre: ilk derleme 1,95 sn (yeni kopyalanmış 200 MB'lık `rustc_driver` dll'inin ilk yüklenmesi dahil), **tek satır değişiklikten sonra 0,18 sn**, değişiklik yokken 0,13 sn. Hedef < 10 sn rahatça tutuyor.
+- *Araç zinciri boyutu:* açılmış 437 MiB (`rustc_driver` 201 MiB, `rust-lld` 117 MiB, wasm32 std 100 MiB), gzip ile 141 MiB. Unity/Unreal kurulumlarının yanında küçük; ADR-023 tetikleyicisi tetiklenmedi. (Sıkıştırma `zstd`/`xz` ile daha da küçülür; gereksiz `gcc-ld` sarmalayıcıları atılabilir — WP7.)
+- *Taze örnek maliyeti:* depo 0,4 µs + örnekleme 6,4 µs + dışa aktarma/ayırma 2,3 µs + bırakma 7,2 µs ≈ 16–28 µs (ölçüme göre değişken). Çağrı başına taze örnek, 20 sistemlik bir oyunda tick başına ~0,5 ms ederdi; tick başına örnekle ~20 µs + sistem başına birkaç µs. Havuz ayırıcı istek üzerine ayırmaya göre ~%20 hızlı.
+- *Sınır maliyeti:* konuğa 24 baytlık iki sütun (konum + hız) kopyalayıp geri almak dahil varlık başına ~13–15 ns (yerel döngü ~1,5 ns). 10.000 varlıkta çağrı başına ~135 µs: kare bütçesinin %0,8'i. ADR-011 tetikleyicisi (%20 = 3,3 ms) çok uzakta.
+
+**Alternatifler.** Yol A (cargo + proc-macro): temiz makinede bağlayıcı yok — elendi. Yol B (proc-macro'suz, `macro_rules!` bildirimleri): çalışır ama Rust'ın gerçek öznitelik sözdizimini ve iyi derleyici hatalarını kaybettirir; C aynı bedeli ödemeden aynı sonucu verir. Çağrı başına taze örnek: en katı durumsuzluk, ama tick başına örneğe göre ~10 kat pahalı ve kazandırdığı bir garanti yok (anlık görüntü zaten tick sınırında).
+
+**Bedel.** İlk sürümde oyun kodu üçüncü taraf crate kullanamaz (yalnızca `wish_sdk`); önceden derlenmiş SDK sabit rustc sürümüne bağlıdır (`rust-toolchain.toml` değişince yeniden üretilir; uyuşmazlık `script_toolchain_mismatch` ile açıklanır). Bir tick içinde iki sistem bir `static` üzerinden konuşabilir: belirlenimcidir ama SDK bunu önermez ve garanti etmez.
+
+**Tetikleyici.** Değerlendirmelerde ajanların üçüncü taraf crate ihtiyacı tekrar tekrar görülürse yol B'ye benzer bir cargo yan yolu (bağlayıcı gerektirmeyen crate'lerle) eklenir. Tick başına örnek maliyeti kıyaslamada (WP7) bütçenin %5'ini aşarsa örneği tick'ler arasında yeniden kullanıp belleği sıfırlama yolu denenir.
 
 ---
 

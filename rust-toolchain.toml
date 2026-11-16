@@ -3,3 +3,5 @@
 [toolchain]
 channel = "1.100.0"
 components = ["rustfmt", "clippy"]
+# Game code is compiled to WebAssembly (ADR-011, M5).
+targets = ["wasm32-unknown-unknown"]

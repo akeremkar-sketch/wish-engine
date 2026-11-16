@@ -1,0 +1,27 @@
+# A small game written with the SDK, for wish_script's end-to-end tests:
+# move, collect coins, keep score, plus two misbehaving systems. Built for
+# wasm32-unknown-unknown by the tests; not a member of the engine workspace.
+[package]
+name = "collect_game"
+version = "0.0.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+wish_sdk = { path = "../../../wish_sdk" }
+wish_schema = { path = "../../../wish_schema" }
+
+[profile.release]
+debug = "line-tables-only"
+panic = "abort"
+codegen-units = 1
+
+[profile.dev]
+panic = "abort"
+
+[workspace]

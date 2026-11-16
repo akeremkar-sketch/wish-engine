@@ -11,7 +11,9 @@
 //! ```
 
 mod args;
+mod bench_script;
 mod capture;
+mod play;
 mod project_cmds;
 mod scene;
 mod tool_cmds;
@@ -37,7 +39,7 @@ wen - the Wish Engine command-line tool
 USAGE:
     wen run --example <name> [--scene <file> [--root <folder>]] [--frames <n>] [--seed <n>]
             [--hash-every <n>] [--headless] [--json]
-    wen bench [--entities <n>] [--ticks <n>] [--seed <n>] [--json]
+    wen bench [--entities <n>] [--ticks <n>] [--seed <n>] [--script] [--json]
     wen check [files...] --example <name> [--root <folder>] [--json]
     wen fmt [files...] --example <name> [--root <folder>] [--check] [--json]
     wen migrate [files...] [--root <folder>] [--json]
@@ -50,6 +52,12 @@ USAGE:
              [--view lit|ids|depth|normals|wireframe] [--software] [--shaders <folder>] [--exit-after <frames>]
     wen shaders [--dir <folder>] [--json]
     wen new <folder> [--name <name>] [--json]
+    wen build [--root <folder>] [--dry-run] [--json]
+    wen test [files...] [--root <folder>] [--update-golden] [--json]
+    wen replay <name> [--root <folder>] [--json]
+    wen play [--root <folder>] [--scene <file>] [--size <w>x<h>] [--software] [--exit-after <frames>]
+    wen sdk [--out <folder>] [--json]
+    wen package [--out <folder>] [--json]
     wen mcp [--root <folder>] [--software]
     wen call <tool> ['{json args}' | --<param> <value> ...] [--root <folder>] [--actor <name>]
     wen do [<file> | -] [--root <folder>] [--actor <name>]
@@ -66,7 +74,8 @@ COMMANDS:
                current folder) gives the entities and resources instead, and the
                example only supplies the component types. Prefabs are found in --root.
     bench      Time the core on many moving entities (defaults: 100000 entities, 600 ticks).
-               Build with --release for meaningful numbers.
+               Build with --release for meaningful numbers. --script measures game code instead: the
+               same system natively and as WebAssembly on 1, 1 000 and 10 000 entities (needs the SDK).
     check      Check every prefab, scene and meta file of the project (syntax, schema,
                references, asset files) and report all problems with file, line and
                column. Exits with failure if there is any error.
@@ -94,7 +103,28 @@ COMMANDS:
                a folder of <name>.wgsl files in place of the built-in ones. Pass the same folder
                as --shaders to capture/describe to draw with them. Fails if there is any problem.
     new        Create a project folder: wish.json, a starting scene (camera, sun, ground), assets/,
-               .mcp.json (connects Claude Code and other MCP clients) and a project CLAUDE.md.
+               scripts/src/lib.rs (game code), .mcp.json (connects Claude Code and other MCP clients)
+               and a project CLAUDE.md.
+    build      Compile the project's game code (scripts/src/lib.rs) to WebAssembly: compiler errors
+               with file, line and hint; a failed build keeps the last good code. --dry-run only
+               checks that it compiles. Same as the script_build tool.
+    play       Play the project's game in a window: keys and mouse buttons drive the actions of
+               input.json (move, jump, ...), the game runs at 60 ticks a second. Saving
+               scripts/src/lib.rs builds the new code and switches to it without stopping the game
+               or losing its state; a compile error is shown and the old code keeps running. Escape
+               closes the window. Needs a desktop session. Edits to scenes need a restart.
+    test       Run the project's scenario tests (tests/*.test.json): each plays the game from a scene and
+               a seed through its steps and says which step failed, at which tick, with the values
+               the condition read. Pictures are compared with golden images (software adapter);
+               --update-golden saves them instead. Exits with failure if any test fails.
+    replay     Play a recorded replay (replays/<name>.replay.jsonl) back in a new session and compare
+               the world after every tick with the recording: passes when the game plays out exactly
+               as it did, otherwise says the first tick that differs. Exits with failure if it differs.
+    sdk        Engine development: build the game SDK pack from the engine's sources (needs cargo).
+               Packaged engines ship it; game builds look for it next to wen or in WISH_SDK.
+    package    Engine development: a folder with wen, the game SDK and the packed compiler (no cargo,
+               rustup or Visual Studio needed to build game code), plus clean-test.wsb, which runs
+               a project build and its tests in Windows Sandbox (a machine with no developer tools).
     mcp        Serve the tools over MCP (Model Context Protocol, stdio). Claude Code and other MCP
                clients start it themselves from .mcp.json (wen new writes it); --software draws
                with the CPU adapter. Standard output carries only the protocol.
@@ -200,6 +230,58 @@ fn execute_any(args: Args) -> Result<Outcome> {
                 success: true,
             })
         }
+        Command::Build { root, dry_run } => Ok(tool_cmds::shortcut(
+            "script_build",
+            &serde_json::json!({ "dry_run": dry_run }),
+            &args::ToolContext {
+                root: root.clone(),
+                example: None,
+                actor: None,
+                software: false,
+            },
+            args.json,
+            tool_cmds::build_text,
+        )),
+        Command::Test {
+            paths,
+            root,
+            update_golden,
+        } => Ok(tool_cmds::shortcut(
+            "test_run",
+            &serde_json::json!({ "paths": paths, "update_golden": update_golden }),
+            &args::ToolContext {
+                root: root.clone(),
+                example: None,
+                actor: None,
+                software: true,
+            },
+            args.json,
+            tool_cmds::test_text,
+        )),
+        Command::Replay { name, root } => Ok(tool_cmds::shortcut(
+            "replay",
+            &serde_json::json!({ "action": "run", "name": name }),
+            &args::ToolContext {
+                root: root.clone(),
+                example: None,
+                actor: None,
+                software: false,
+            },
+            args.json,
+            tool_cmds::replay_text,
+        )),
+        Command::Package { out } => {
+            tool_cmds::package(out.as_deref(), args.json).map(|text| Outcome {
+                text,
+                success: true,
+            })
+        }
+        Command::Sdk { out } => {
+            tool_cmds::pack_sdk(out.as_deref(), args.json).map(|text| Outcome {
+                text,
+                success: true,
+            })
+        }
         Command::Call(call) => Ok(tool_cmds::call(call)),
         Command::Do(calls) => Ok(tool_cmds::run_calls(calls)),
         Command::Migrate { paths, root } => project_cmds::migrate(paths, &root_of(root), args.json),
@@ -238,9 +320,15 @@ fn execute(args: Args) -> Result<String> {
             args.json,
         ),
         Command::Bench {
+            ticks,
+            script: true,
+            ..
+        } => bench_script::bench_script(ticks, args.json),
+        Command::Bench {
             entities,
             ticks,
             seed,
+            script: false,
         } => bench(entities, ticks, seed, args.json),
         Command::Check { .. }
         | Command::Format { .. }
@@ -248,6 +336,11 @@ fn execute(args: Args) -> Result<String> {
         | Command::Migrate { .. }
         | Command::Shaders { .. }
         | Command::New { .. }
+        | Command::Build { .. }
+        | Command::Replay { .. }
+        | Command::Test { .. }
+        | Command::Sdk { .. }
+        | Command::Package { .. }
         | Command::Capture(_)
         | Command::Describe(_)
         | Command::Mcp(_)
@@ -259,6 +352,7 @@ fn execute(args: Args) -> Result<String> {
             "This is a bug in wen. Please report it.",
         )),
         Command::View(view) => view::view(&view, args.json),
+        Command::Play(play) => play::play(&play, args.json),
         Command::Schema { example } => schema(example.as_deref(), args.json),
         Command::Examples => Ok(if args.json {
             json!({ "ok": true, "examples": wish_examples::NAMES }).to_string()

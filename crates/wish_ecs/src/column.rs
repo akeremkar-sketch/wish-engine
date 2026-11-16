@@ -132,6 +132,16 @@ impl Column {
         Ok(())
     }
 
+    /// Appends a value with the given ticks (moving a value between layouts
+    /// keeps when it was added and last changed).
+    pub(crate) fn push_with_ticks(&mut self, bytes: &[u8], added: u64, changed: u64) -> Result<()> {
+        self.push_bytes(bytes, added)?;
+        if let Some(last) = self.changed.last_mut() {
+            *last = changed;
+        }
+        Ok(())
+    }
+
     /// Overwrites a value at `tick`. `bytes` must be a valid value of the
     /// column's type.
     pub(crate) fn write_bytes(&mut self, row: usize, bytes: &[u8], tick: u64) -> Result<()> {

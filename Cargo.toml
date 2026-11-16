@@ -25,6 +25,11 @@ wish_control = { path = "crates/wish_control" }
 wish_mcp = { path = "crates/wish_mcp" }
 wish_window = { path = "crates/wish_window" }
 wish_schema_macros = { path = "crates/wish_schema_macros" }
+wish_types = { path = "crates/wish_types" }
+wish_sdk = { path = "crates/wish_sdk" }
+wish_sdk_macros = { path = "crates/wish_sdk_macros" }
+wish_script = { path = "crates/wish_script" }
+wish_input = { path = "crates/wish_input" }
 
 # External crates. Check the license before adding one (see deny.toml).
 #
@@ -54,6 +59,22 @@ wgpu = "30"
 softbuffer = "0.4"
 winit = "0.30"
 
+# Game logic (wish_script only, ADR-011). Only what running core modules
+# needs: no WASI, no component model, no async, no on-disk cache. Fuel makes
+# runaway guests stop deterministically; `backtrace` + `addr2line` turn a trap
+# into the guest's own function name, file and line.
+wasmtime = { version = "=50.0.1", default-features = false, features = [
+    "runtime",
+    "cranelift",
+    "std",
+    "backtrace",
+    "addr2line",
+    "demangle",
+    "pooling-allocator",
+] }
+# WebAssembly text format, for hand-written hostile guests in tests.
+wat = "1"
+
 # Procedural macros. syn 3, the same major version serde_derive uses, so the
 # build compiles one syn.
 proc-macro2 = "1"
@@ -64,6 +85,14 @@ syn = { version = "3", features = ["full"] }
 proptest = "1"
 # Compile-fail tests: the macros' error messages are part of the interface.
 trybuild = "1.0.123"
+
+# Debug builds: full debug information for the engine's own crates only.
+# Dependencies get line tables (backtraces stay readable). wasmtime is linked
+# into every test binary of the crates above wish_script; with full debug
+# information each one weighed about a gigabyte and the build folder grew by
+# tens of gigabytes (M5 WP3, the disk filled up).
+[profile.dev.package."*"]
+debug = "line-tables-only"
 
 [workspace.lints.rust]
 # `unsafe` is allowed only in the crates listed in CLAUDE.md, which opt in locally.

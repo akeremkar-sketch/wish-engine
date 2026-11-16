@@ -133,8 +133,38 @@ fn examples() -> Vec<(&'static str, Value)> {
         ("capture_frame", json!({ "out": "scenes/main.scene.json" })),
         ("describe_view", json!({ "width": 64, "height": 36 })),
         ("logs_get", json!({})),
+        // Replays: record a short run, save it, play it back.
+        ("sim_start", json!({})),
+        ("replay", json!({ "action": "record", "session": "s3" })),
+        (
+            "sim_step",
+            json!({ "session": "s3", "frames": 5, "input": { "move": [0, 1] } }),
+        ),
+        (
+            "replay",
+            json!({ "action": "save", "session": "s3", "name": "parity" }),
+        ),
+        ("replay", json!({ "action": "run", "name": "parity" })),
+        ("replay", json!({ "action": "run", "name": "nothing" })),
+        ("sim_stop", json!({ "session": "s3" })),
+        // Scenario tests: none yet, then one that cannot be found.
+        ("test_run", json!({})),
+        ("test_run", json!({ "paths": ["tests/win.test.json"] })),
+        // Input: a known action is held, an unknown one is explained.
+        (
+            "sim_step",
+            json!({ "session": "s1", "frames": 2, "input": { "move": [0, 1], "jump": true } }),
+        ),
+        (
+            "sim_step",
+            json!({ "session": "s1", "input": { "jmup": true } }),
+        ),
         ("sim_stop", json!({ "session": "s2" })),
         ("sim_stop", json!({ "session": "s1" })),
+        // Building needs the SDK pack and the compiler, which differ between
+        // machines; the parity of the answer is shown on a mistake (building
+        // itself is tested in wish_control/tests/script_tools.rs).
+        ("script_build", json!({ "reload": "yes" })),
     ]
 }
 

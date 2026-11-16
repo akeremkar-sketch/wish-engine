@@ -1,6 +1,7 @@
 //! Systems and the order they run in.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use wish_core::suggest::unknown_name_hint;
 use wish_core::{Diagnostic, Result, Rng};
@@ -28,11 +29,43 @@ pub struct SystemContext<'a> {
 /// with a diagnostic. A failing system is disabled; the others keep running.
 pub type SystemFn = fn(&mut World, &mut SystemContext<'_>) -> Result<()>;
 
+/// A system whose code is not a Rust function of the engine: game code in a
+/// WebAssembly module (`wish_script`), which carries the module with it.
+/// Same contract as [`SystemFn`]; anything it needs to change between calls
+/// it keeps behind its own lock.
+pub type DynamicSystemFn =
+    Arc<dyn Fn(&mut World, &mut SystemContext<'_>) -> Result<()> + Send + Sync>;
+
+/// What runs when a system runs.
+#[derive(Clone)]
+pub(crate) enum Runner {
+    Native(SystemFn),
+    Dynamic(DynamicSystemFn),
+}
+
+impl Runner {
+    pub(crate) fn call(&self, world: &mut World, context: &mut SystemContext<'_>) -> Result<()> {
+        match self {
+            Self::Native(run) => run(world, context),
+            Self::Dynamic(run) => run(world, context),
+        }
+    }
+}
+
+impl std::fmt::Debug for Runner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Native(_) => f.write_str("Native"),
+            Self::Dynamic(_) => f.write_str("Dynamic"),
+        }
+    }
+}
+
 /// A named unit of game logic and its ordering constraints.
 #[derive(Clone, Debug)]
 pub struct System {
     pub(crate) name: String,
-    pub(crate) run: SystemFn,
+    pub(crate) run: Runner,
     pub(crate) before: BTreeSet<String>,
     pub(crate) after: BTreeSet<String>,
 }
@@ -44,7 +77,18 @@ impl System {
     pub fn new(name: &str, run: SystemFn) -> Self {
         Self {
             name: name.to_owned(),
-            run,
+            run: Runner::Native(run),
+            before: BTreeSet::new(),
+            after: BTreeSet::new(),
+        }
+    }
+
+    /// A system that runs code from outside the engine (a game module).
+    /// Everything else is as for [`System::new`].
+    pub fn dynamic(name: &str, run: DynamicSystemFn) -> Self {
+        Self {
+            name: name.to_owned(),
+            run: Runner::Dynamic(run),
             before: BTreeSet::new(),
             after: BTreeSet::new(),
         }

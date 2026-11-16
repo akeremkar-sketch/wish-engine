@@ -5,9 +5,14 @@ use crate::tool::Tool;
 
 mod asset;
 mod project;
+mod replay;
 mod scene;
+mod script;
 mod sim;
+mod testing;
 mod view;
+
+pub(crate) use sim::parse_input;
 
 /// How much a tool tells: `summary` (the default, cheapest), `normal`, `full`.
 pub(crate) const DETAIL: Param = Param::optional(
@@ -39,4 +44,7 @@ pub(crate) const CATALOG: &[Tool] = &[
     sim::LOGS_GET,
     view::CAPTURE_FRAME,
     view::DESCRIBE_VIEW,
+    script::SCRIPT_BUILD,
+    replay::REPLAY,
+    testing::TEST_RUN,
 ];

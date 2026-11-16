@@ -12,7 +12,7 @@ Boyutlar görecelidir (S < M < L < XL); takvim sözü değildir.
 | M2 | Veri katmanı | Sahne formatı, biçimlendirici, doğrulama, varlık sunucusu, işlem/geri al | M | Sonnet 5.5 · high (tasarım ağırlıklı iş paketleri Opus 5.5 · high) — **tamamlandı** |
 | M3 | İlk piksel | wgpu render temeli, glTF, başsız yakalama | L | Opus 5.5 · high (çekirdek) → Sonnet 5.5 · medium (içe aktarıcılar) — **tamamlandı** |
 | M4 | Kontrol düzlemi + MCP | Tek API, MCP sunucusu, komut satırı eşliği, ilk ajan değerlendirmeleri | M | İlk oturum Opus 5.5 · high (araç tasarımı) → Sonnet 5.5 · medium |
-| M5 | Oyun mantığı | Wasm ev sahibi + SDK, sıcak yükleme, girdi, senaryo testleri, gömülü araç zinciri denemesi | L | Opus 5.5 · high (ABI, ev sahibi) → Sonnet 5.5 · medium |
+| M5 | Oyun mantığı | Wasm ev sahibi + SDK, sıcak yükleme, girdi, senaryo testleri, gömülü araç zinciri denemesi | L | Opus 5.5 · high (ABI, ev sahibi) → Sonnet 5.5 · medium — **tamamlandı** (iki kullanıcı doğrulaması bekliyor) |
 | M6 | Oyun sistemleri | Fizik, ses, oyun içi arayüz, animasyon, 2D alt kümesi | L | Sonnet 5.5 · medium (sorunlu bütünleşmede Opus 5.5 · high) |
 | M7 | Kendi motorumuzla oyun | Vitrin oyunu, ajan değerlendirme takımı, sürtünme giderme | M | Oyun yapan ajan: Sonnet 5.5 · medium ve Haiku 5.5; düzeltmeler: Opus 5.5 · high |
 | M8a | Editör temeli (elle düzenleme) | Görünüm, hiyerarşi, otomatik denetçi, tutamaçlar, varlık tarayıcı, oynatma denetimleri | L | Sonnet 5.5 · high |
@@ -145,6 +145,8 @@ M1'in ilk iş paketinde yapılacak tek ortam işi: derleme çıktılarını OneD
 **T1 burada başlar:** kokpit maketleri ve etkileşim akışları (kod yok).
 
 ## M5 — Oyun mantığı
+
+**Durum: tamamlandı (16 Kasım 2026)**, `m5-logic` dalından `main`'e birleştirildi. Notlar ve kanıtlar: [design/M5-oyun-mantigi.md](design/M5-oyun-mantigi.md) §17 (WP1–WP9) ve §18 "M5 sonucu". Bağımsız kapanış incelemesi 20 bulgu verdi (3 yüksek: olumsuz `expect` hep geçiyordu, derleme sırasında dosya/ortam okunabiliyordu, aynı adlı iki tür değerleri karıştırıyordu); hepsi düzeltildi. İki doğrulama kullanıcı adımı bekliyor: değerlendirme koşumu (kota) ve Windows Sandbox'ta temiz makine denemesi.
 
 **Çıktı.** `wish_script` (wasmtime ev sahibi, ABI, yakıt/süre sınırı, tuzak yalıtımı), `wish_sdk` (konuk SDK'sı ve makrolar), kayıpsız sıcak yükleme, `wish_input` (eylem haritaları, enjeksiyon, kayıt/tekrar), `wish_test` (senaryo testleri), `script_build` ve `test_run` araçları.
 

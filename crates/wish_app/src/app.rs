@@ -240,6 +240,36 @@ impl App {
             .zip(&self.states)
     }
 
+    /// Puts `system` in place of the system with the same name, or adds it
+    /// if there is none. A replaced system keeps its state (random stream,
+    /// change tick), so a game module reloaded between two ticks carries on
+    /// exactly where it was; it is enabled again, since its code changed.
+    pub fn replace_system(&mut self, system: System) -> Result<()> {
+        let Some(index) = self.systems.iter().position(|s| s.name == system.name) else {
+            return self.add_system(system);
+        };
+        if let Some(state) = self.states.get_mut(index) {
+            state.disabled = None;
+        }
+        if let Some(slot) = self.systems.get_mut(index) {
+            *slot = system;
+        }
+        self.order = None;
+        Ok(())
+    }
+
+    /// Removes the system named `name` and its state. Returns whether there
+    /// was one.
+    pub fn remove_system(&mut self, name: &str) -> bool {
+        let Some(index) = self.systems.iter().position(|s| s.name == name) else {
+            return false;
+        };
+        self.systems.remove(index);
+        self.states.remove(index);
+        self.order = None;
+        true
+    }
+
     /// Re-enables a system that failed, for example after its code was fixed.
     pub fn enable_system(&mut self, name: &str) -> Result<()> {
         let Some(index) = self.systems.iter().position(|system| system.name == name) else {
@@ -291,7 +321,7 @@ impl App {
                 rng: &mut state.rng,
                 last_run: state.last_run,
             };
-            let result = (system.run)(world, &mut context);
+            let result = system.run.call(world, &mut context);
             state.last_run = world.change_tick();
             world.advance_change_tick();
             if let Err(cause) = result {
@@ -364,6 +394,26 @@ impl App {
             }
         }
         hasher.finish()
+    }
+
+    /// Fits `snapshot` to this app's current systems, with `world` as its
+    /// world (game code was replaced: its types moved to the new layout,
+    /// systems may have come or gone). Systems the snapshot knew keep their
+    /// state; new ones start with their current state.
+    pub fn rebase(&self, snapshot: &AppSnapshot, world: WorldSnapshot) -> AppSnapshot {
+        AppSnapshot {
+            world,
+            tick: snapshot.tick,
+            systems: self
+                .system_states()
+                .map(|(name, state)| {
+                    let state = snapshot.systems.get(name).unwrap_or(state);
+                    (name.to_owned(), state.clone())
+                })
+                .collect(),
+            schedule: self.schedule_fingerprint(),
+            config: snapshot.config,
+        }
     }
 
     /// A copy of everything that decides how the app continues.

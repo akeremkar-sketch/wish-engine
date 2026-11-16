@@ -9,6 +9,7 @@
 //!                                        evals/results/
 //! ```
 
+mod game_tasks;
 mod probe;
 mod tasks;
 
@@ -125,21 +126,28 @@ fn run_try(task: &Task, dir: &Path, model: &str, effort: &str) -> Try {
         .args(["-p", task.prompt, "--model", model, "--effort", effort])
         .args(["--output-format", "stream-json", "--verbose"])
         .args(["--mcp-config", ".mcp.json", "--strict-mcp-config"])
-        .args(["--allowedTools", "mcp__wish"])
-        .args([
-            "--disallowedTools",
-            "Bash",
-            "Edit",
-            "Write",
-            "Read",
-            "Glob",
-            "Grep",
-            "NotebookEdit",
-            "WebFetch",
-            "WebSearch",
-            "Task",
-            "TodoWrite",
-        ])
+        // Game code tasks may read and edit the project's files; the others
+        // have the engine's tools only. Bash is never allowed.
+        .args(if task.files {
+            &[
+                "--allowedTools",
+                "mcp__wish",
+                "Read",
+                "Edit",
+                "Write",
+                "Glob",
+                "Grep",
+            ][..]
+        } else {
+            &["--allowedTools", "mcp__wish"][..]
+        })
+        .arg("--disallowedTools")
+        .args(if task.files {
+            &["Bash"][..]
+        } else {
+            &["Bash", "Edit", "Write", "Read", "Glob", "Grep"][..]
+        })
+        .args(["NotebookEdit", "WebFetch", "WebSearch", "Task", "TodoWrite"])
         .args(["--setting-sources", "project"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

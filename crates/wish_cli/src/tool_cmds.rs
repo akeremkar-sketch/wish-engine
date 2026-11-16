@@ -446,3 +446,333 @@ pub fn serve_mcp(context: &ToolContext) -> std::process::ExitCode {
         }
     }
 }
+
+/// Text for a `script_build` answer.
+pub fn build_text(answer: &Value) -> String {
+    let mut text = String::new();
+    for entry in answer["diagnostics"].as_array().into_iter().flatten() {
+        if let Ok(problem) = serde_json::from_value::<Diagnostic>(entry.clone()) {
+            text.push_str(&format!("{problem}\n"));
+        }
+    }
+    let seconds = answer["seconds"].as_f64().unwrap_or(0.0);
+    if answer["passed"] == true {
+        let systems = answer["systems"]
+            .as_array()
+            .map(|s| {
+                s.iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_default();
+        let verb = if answer["dry_run"] == true {
+            "Compiles"
+        } else {
+            "Built"
+        };
+        text.push_str(&format!("{verb} in {seconds:.2} s; systems: {systems}."));
+    } else {
+        text.push_str(&format!(
+            "Build failed: {} error(s), {} warning(s); the previous build stays in use.",
+            answer["errors"], answer["warnings"]
+        ));
+    }
+    text
+}
+
+/// `wen sdk`: builds the game SDK pack from the engine's own sources.
+pub fn pack_sdk(out: Option<&str>, as_json: bool) -> wish_core::Result<String> {
+    let beside = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf))
+        .unwrap_or_default();
+    let out = out.map_or_else(|| beside.join("sdk"), std::path::PathBuf::from);
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml");
+    if !manifest.is_file() {
+        return Err(Diagnostic::error(
+            "script_sdk_missing",
+            "`wen sdk` builds the SDK from the engine's sources, which are not on this machine.",
+            "Packaged engines ship the SDK in their 'sdk' folder; this command is for engine development.",
+        ));
+    }
+    let cargo = std::env::var_os("CARGO").map_or_else(|| "cargo".into(), std::path::PathBuf::from);
+    let target = beside.join("sdk-target");
+    let description = wish_script::build::pack_sdk(&cargo, &manifest, &target, &out)?;
+    Ok(if as_json {
+        serde_json::json!({ "out": out.display().to_string(), "sdk": description }).to_string()
+    } else {
+        format!(
+            "SDK pack written to {} (for {}).",
+            out.display(),
+            description["rustc"].as_str().unwrap_or("?")
+        )
+    })
+}
+
+/// Text for a `replay` run answer.
+pub fn replay_text(answer: &Value) -> String {
+    let mut text = String::new();
+    for entry in answer["diagnostics"].as_array().into_iter().flatten() {
+        if let Ok(problem) = serde_json::from_value::<Diagnostic>(entry.clone()) {
+            text.push_str(&format!("{problem}\n"));
+        }
+    }
+    let name = answer["name"].as_str().unwrap_or_default();
+    if answer["passed"] == true {
+        text.push_str(&format!(
+            "Replay '{name}' passed: {} tick(s) played back bit for bit (final hash {}).",
+            answer["ticks_run"],
+            answer["final_hash"].as_str().unwrap_or("?")
+        ));
+    } else if answer["diverged_at"].is_number() {
+        text.push_str(&format!(
+            "Replay '{name}' diverged at tick {}: expected {}, got {}.",
+            answer["diverged_at"],
+            answer["expected_hash"].as_str().unwrap_or("?"),
+            answer["actual_hash"].as_str().unwrap_or("?")
+        ));
+    } else {
+        text.push_str(&format!("Replay '{name}' was stopped before it ended."));
+    }
+    text
+}
+
+/// Text for a `test_run` answer.
+pub fn test_text(answer: &Value) -> String {
+    let mut text = String::new();
+    for result in answer["results"].as_array().into_iter().flatten() {
+        let name = result["name"].as_str().unwrap_or_default();
+        if result["passed"] == true {
+            text.push_str(&format!("ok      {name} ({} ticks)\n", result["ticks"]));
+            continue;
+        }
+        let why = &result["failure"];
+        text.push_str(&format!(
+            "FAILED  {name}: step {} at tick {}: {}\n",
+            why["step"],
+            why["tick"],
+            why["message"].as_str().unwrap_or_default()
+        ));
+        if let Some(values) = why["values"]["entities"].as_array() {
+            for entity in values {
+                text.push_str(&format!(
+                    "          {} {}\n",
+                    entity["entity"], entity["values"]
+                ));
+            }
+        }
+        if let Some(world) = why["values"]["world"].as_object()
+            && !world.is_empty()
+        {
+            text.push_str(&format!("          world {}\n", why["values"]["world"]));
+        }
+        if let Some(hint) = why["hint"].as_str() {
+            text.push_str(&format!("          {hint}\n"));
+        }
+    }
+    text.push_str(&format!(
+        "{} test(s), {} failed.",
+        answer["tests"], answer["failed"]
+    ));
+    text
+}
+
+/// The Windows Sandbox configuration of the clean-machine test: the package
+/// mapped read-only, a writable folder for the result, no network, and the
+/// test script started at logon.
+fn sandbox_config(package: &std::path::Path, result: &std::path::Path) -> String {
+    format!(
+        "<Configuration>\n  <Networking>Disable</Networking>\n  <MappedFolders>\n    <MappedFolder>\n      <HostFolder>{}</HostFolder>\n      <SandboxFolder>C:\\wish</SandboxFolder>\n      <ReadOnly>true</ReadOnly>\n    </MappedFolder>\n    <MappedFolder>\n      <HostFolder>{}</HostFolder>\n      <SandboxFolder>C:\\result</SandboxFolder>\n      <ReadOnly>false</ReadOnly>\n    </MappedFolder>\n  </MappedFolders>\n  <LogonCommand>\n    <Command>powershell.exe -ExecutionPolicy Bypass -File C:\\wish\\clean-test.ps1</Command>\n  </LogonCommand>\n</Configuration>\n",
+        package.display(),
+        result.display()
+    )
+}
+
+/// What runs inside the sandbox: a fresh Windows with no developer tools.
+const SANDBOX_SCRIPT: &str = r#"# Wish Engine clean-machine test (ADR-023): run inside Windows Sandbox.
+# Copies the package out of the read-only mapping, makes a project, builds
+# its game code with the packaged compiler, runs its tests, and writes what
+# happened to C:\result.
+$ErrorActionPreference = 'Continue'
+$log = 'C:\result\clean-test.log'
+"Wish Engine clean-machine test, $(Get-Date -Format o)" | Out-File $log
+function Step($name, $block) {
+    "`n== $name" | Out-File $log -Append
+    $started = Get-Date
+    $output = & $block 2>&1 | Out-String
+    $output | Out-File $log -Append
+    "exit: $LASTEXITCODE, seconds: $([math]::Round(((Get-Date) - $started).TotalSeconds, 2))" | Out-File $log -Append
+    return $LASTEXITCODE
+}
+"`n== developer tools on this machine (expected: none)" | Out-File $log -Append
+foreach ($tool in 'cargo', 'rustc', 'rustup', 'link', 'cl') {
+    $found = Get-Command $tool -ErrorAction SilentlyContinue
+    "$tool : $(if ($found) { $found.Source } else { 'not found' })" | Out-File $log -Append
+}
+Copy-Item C:\wish C:\Users\WDAGUtilityAccount\wish -Recurse
+$wen = 'C:\Users\WDAGUtilityAccount\wish\wen.exe'
+$results = [ordered]@{}
+$results.version = Step 'wen version' { & $wen version }
+$results.new = Step 'wen new' { & $wen new C:\game --name Clean }
+$results.build = Step 'wen build (first)' { & $wen build --root C:\game }
+(Get-Content C:\game\scripts\src\lib.rs) -replace 'default = 1.0', 'default = 2.0' | Set-Content C:\game\scripts\src\lib.rs
+$results.rebuild = Step 'wen build (after an edit)' { & $wen build --root C:\game }
+$results.test = Step 'wen test' { & $wen test --root C:\game }
+$results.capture = Step 'capture_frame (software adapter)' { & $wen call capture_frame --root C:\game --out shot.png --width 320 --height 180 }
+if (Test-Path C:\game\shot.png) { Copy-Item C:\game\shot.png C:\result\shot.png }
+$results | ConvertTo-Json | Out-File C:\result\result.json
+"`n== done" | Out-File $log -Append
+"#;
+
+/// `wen package`: a folder with everything a machine without developer
+/// tools needs to build and run game code (engine development).
+pub fn package(out: Option<&str>, as_json: bool) -> wish_core::Result<String> {
+    let exe = std::env::current_exe().map_err(|error| {
+        Diagnostic::error(
+            "package_failed",
+            format!("The running program could not be found: {error}."),
+            "Run wen from its folder.",
+        )
+    })?;
+    let beside = exe
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_default();
+    let out = out.map_or_else(|| beside.join("package"), std::path::PathBuf::from);
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml");
+    if !manifest.is_file() {
+        return Err(Diagnostic::error(
+            "package_failed",
+            "`wen package` builds the package from the engine's sources, which are not on this machine.",
+            "This command is for engine development.",
+        ));
+    }
+    let failed = |what: &str, error: std::io::Error| {
+        Diagnostic::error(
+            "package_failed",
+            format!("Could not {what}: {error}."),
+            "Check that the package folder can be written to.",
+        )
+    };
+    wish_script::build::clear_output_folder(
+        &out,
+        &[
+            "wen.exe",
+            "wen",
+            "sdk",
+            "toolchain",
+            "clean-test.ps1",
+            "clean-test.wsb",
+        ],
+    )?;
+    std::fs::create_dir_all(&out).map_err(|e| failed("create the package folder", e))?;
+    std::fs::copy(&exe, out.join(exe.file_name().unwrap_or_default()))
+        .map_err(|e| failed("copy wen", e))?;
+    let cargo = std::env::var_os("CARGO").map_or_else(|| "cargo".into(), std::path::PathBuf::from);
+    let sdk = wish_script::build::pack_sdk(
+        &cargo,
+        &manifest,
+        &beside.join("sdk-target"),
+        &out.join("sdk"),
+    )?;
+    let rustc = std::env::var_os("RUSTC").map_or_else(|| "rustc".into(), std::path::PathBuf::from);
+    let toolchain = wish_script::build::pack_toolchain(&rustc, &out.join("toolchain"))?;
+    let result = out.with_file_name(format!(
+        "{}-result",
+        out.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("package")
+    ));
+    std::fs::create_dir_all(&result).map_err(|e| failed("create the result folder", e))?;
+    std::fs::write(out.join("clean-test.ps1"), SANDBOX_SCRIPT)
+        .map_err(|e| failed("write clean-test.ps1", e))?;
+    std::fs::write(out.join("clean-test.wsb"), sandbox_config(&out, &result))
+        .map_err(|e| failed("write clean-test.wsb", e))?;
+    // A program linked against the Visual C++ runtime DLL does not start on a
+    // Windows that lacks it; the package needs one linked statically.
+    let mut warnings = Vec::new();
+    let bytes = std::fs::read(&exe).unwrap_or_default();
+    let imports = imported_dlls(&bytes);
+    if imports
+        .iter()
+        .any(|dll| dll.to_ascii_lowercase().starts_with("vcruntime"))
+    {
+        warnings.push(Diagnostic::warning(
+            "package_needs_static_crt",
+            "This wen.exe needs VCRUNTIME140.dll, which a clean Windows may not have.",
+            "Build the packaged wen with the C runtime linked in: set RUSTFLAGS=-C target-feature=+crt-static, then cargo build -p wish_cli --release (into a separate --target-dir), and run that wen's `package`.",
+        ));
+    }
+    let toolchain_mib = toolchain["bytes"].as_u64().unwrap_or(0) / (1024 * 1024);
+    Ok(if as_json {
+        serde_json::json!({
+            "out": out.display().to_string(),
+            "sdk": sdk,
+            "toolchain": toolchain,
+            "sandbox": out.join("clean-test.wsb").display().to_string(),
+            "result": result.display().to_string(),
+            "diagnostics": warnings,
+        })
+        .to_string()
+    } else {
+        let mut text: String = warnings.iter().map(|w| format!("{w}\n")).collect();
+        text.push_str(&format!(
+            "Package written to {} (toolchain {toolchain_mib} MiB, {}).\nClean-machine test: open {} in Windows Sandbox; the result appears in {}.",
+            out.display(),
+            toolchain["rustc"].as_str().unwrap_or("?"),
+            out.join("clean-test.wsb").display(),
+            result.display()
+        ));
+        text
+    })
+}
+
+/// The DLLs a Windows program imports, read from its PE import table (an
+/// empty list for anything that is not a PE file).
+fn imported_dlls(bytes: &[u8]) -> Vec<String> {
+    let u16_at = |at: usize| -> Option<usize> {
+        Some(usize::from(u16::from_le_bytes(
+            bytes.get(at..at + 2)?.try_into().ok()?,
+        )))
+    };
+    let u32_at = |at: usize| -> Option<usize> {
+        usize::try_from(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?)).ok()
+    };
+    let read = || -> Option<Vec<String>> {
+        let pe = u32_at(0x3c)?;
+        if bytes.get(pe..pe + 4)? != b"PE\0\0" {
+            return None;
+        }
+        let sections = u16_at(pe + 6)?;
+        let optional = pe + 24;
+        let optional_size = u16_at(pe + 20)?;
+        // PE32+ (0x20b) keeps the data directories 16 bytes further on.
+        let directories = optional + if u16_at(optional)? == 0x20b { 112 } else { 96 };
+        let import_rva = u32_at(directories + 8)?;
+        let table = optional + optional_size;
+        let to_offset = |rva: usize| -> Option<usize> {
+            (0..sections).find_map(|i| {
+                let header = table + i * 40;
+                let start = u32_at(header + 12)?;
+                let size = u32_at(header + 8)?.max(u32_at(header + 16)?);
+                let raw = u32_at(header + 20)?;
+                (rva >= start && rva < start + size).then(|| raw + rva - start)
+            })
+        };
+        let mut names = Vec::new();
+        let mut descriptor = to_offset(import_rva)?;
+        while names.len() < 256 {
+            let name_rva = u32_at(descriptor + 12)?;
+            if name_rva == 0 {
+                break;
+            }
+            let at = to_offset(name_rva)?;
+            let end = bytes.get(at..)?.iter().position(|b| *b == 0)?;
+            names.push(String::from_utf8_lossy(&bytes[at..at + end]).to_string());
+            descriptor += 20;
+        }
+        Some(names)
+    };
+    read().unwrap_or_default()
+}

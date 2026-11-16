@@ -11,6 +11,7 @@ publish.workspace = true
 wish_core.workspace = true
 wish_ecs.workspace = true
 wish_schema.workspace = true
+wish_types.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

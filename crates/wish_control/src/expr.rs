@@ -44,6 +44,8 @@ enum Node {
     /// A component and the steps into it.
     Path(String, Vec<Step>),
     Has(String),
+    /// How many entities of the world have the component.
+    Count(String),
     /// Items picked out of a computed list.
     Select(Box<Node>, Vec<Step>),
     Call(Func, Vec<Node>),
@@ -70,7 +72,7 @@ enum Func {
 }
 
 const FUNCTIONS: &[&str] = &[
-    "has", "abs", "len", "length", "distance", "min", "max", "matches",
+    "has", "count", "abs", "len", "length", "distance", "min", "max", "matches",
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -140,6 +142,11 @@ pub trait Subject {
     fn id(&self) -> &str;
     /// The component's JSON value, if the entity has it.
     fn component(&self, name: &str) -> Option<Value>;
+    /// How many entities of the whole world have the component (`count(X)`);
+    /// `None` where the subject cannot see the world.
+    fn count(&self, _component: &str) -> Option<usize> {
+        None
+    }
 }
 
 // --------------------------------------------------------------------------
@@ -475,7 +482,7 @@ impl Parser<'_> {
 
     fn call(&mut self, name: &str, column: u32) -> Result<Node> {
         let mut args = Vec::new();
-        if name == "has" {
+        if name == "has" || name == "count" {
             let component = match self.peek().clone() {
                 Token::Ident(component) => {
                     self.at += 1;
@@ -484,14 +491,22 @@ impl Parser<'_> {
                 other => {
                     return Err(syntax(
                         self.column(),
-                        format!("has() takes a component name, not {}.", describe(&other)),
-                        "Write it like has(Camera).",
+                        format!("{name}() takes a component name, not {}.", describe(&other)),
+                        if name == "has" {
+                            "Write it like has(Camera)."
+                        } else {
+                            "Write it like count(Camera)."
+                        },
                     ));
                 }
             };
             self.check_component(&component, column)?;
             self.expect(")")?;
-            return Ok(Node::Has(component));
+            return Ok(if name == "has" {
+                Node::Has(component)
+            } else {
+                Node::Count(component)
+            });
         }
         let (func, arity) = match name {
             "abs" => (Func::Abs, 1),
@@ -698,9 +713,75 @@ impl Expr {
         eval(&self.node, subject)
     }
 
+    /// Whether `has(...)` appears under a negation (`!has(Coin)`,
+    /// `has(Coin) == false`): over "some entity", such a condition holds as
+    /// soon as one entity lacks the component, which is rarely what was meant.
+    pub fn negates_has(&self) -> bool {
+        fn walk(node: &Node, negated: bool) -> bool {
+            match node {
+                Node::Has(_) => negated,
+                Node::Not(inner) => walk(inner, !negated),
+                Node::Select(inner, _) | Node::Neg(inner) => walk(inner, negated),
+                Node::List(items) | Node::Call(_, items) => {
+                    items.iter().any(|item| walk(item, negated))
+                }
+                // Inside a comparison, has() may stand for either truth.
+                Node::Binary(op, left, right) if *op != Op::And && *op != Op::Or => {
+                    walk(left, true) || walk(right, true)
+                }
+                Node::Binary(_, left, right) => walk(left, negated) || walk(right, negated),
+                Node::Literal(_) | Node::Id | Node::Path(..) | Node::Count(_) => false,
+            }
+        }
+        walk(&self.node, false)
+    }
+
     /// Whether the expression is true for one entity.
     pub fn matches(&self, subject: &dyn Subject) -> bool {
         self.eval(subject).is_true()
+    }
+
+    /// Every component path the expression reads (`Score.points`,
+    /// `Transform.translation[1]`), each with its value for `subject`, in
+    /// the order they appear, once each. For saying why a condition did not
+    /// hold.
+    pub fn path_values(&self, subject: &dyn Subject) -> Vec<(String, Val)> {
+        let mut found = Vec::new();
+        collect_paths(&self.node, subject, &mut found);
+        found
+    }
+}
+
+fn collect_paths(node: &Node, subject: &dyn Subject, found: &mut Vec<(String, Val)>) {
+    match node {
+        Node::Path(component, steps) => {
+            let mut text = component.clone();
+            for step in steps {
+                match step {
+                    Step::Field(field) => {
+                        text.push('.');
+                        text.push_str(field);
+                    }
+                    Step::Index(index) => text.push_str(&format!("[{index}]")),
+                }
+            }
+            if !found.iter().any(|(seen, _)| *seen == text) {
+                found.push((text, eval(node, subject)));
+            }
+        }
+        Node::List(items) | Node::Call(_, items) => {
+            for item in items {
+                collect_paths(item, subject, found);
+            }
+        }
+        Node::Select(inner, _) | Node::Not(inner) | Node::Neg(inner) => {
+            collect_paths(inner, subject, found);
+        }
+        Node::Binary(_, left, right) => {
+            collect_paths(left, subject, found);
+            collect_paths(right, subject, found);
+        }
+        Node::Literal(_) | Node::Id | Node::Has(_) | Node::Count(_) => {}
     }
 }
 
@@ -710,6 +791,9 @@ fn eval(node: &Node, subject: &dyn Subject) -> Val {
         Node::List(items) => Val::List(items.iter().map(|item| eval(item, subject)).collect()),
         Node::Id => Val::Str(subject.id().to_owned()),
         Node::Has(component) => Val::Bool(subject.component(component).is_some()),
+        Node::Count(component) => subject
+            .count(component)
+            .map_or(Val::Null, |n| Val::Num(n as f64)),
         Node::Path(component, steps) => {
             let Some(mut value) = subject.component(component) else {
                 return Val::Null;
@@ -756,21 +840,25 @@ fn eval(node: &Node, subject: &dyn Subject) -> Val {
             ),
             _ => Val::Null,
         },
-        Node::Binary(Op::And, left, right) => {
-            // Short-circuit: false && anything is false.
-            match eval(left, subject) {
+        // Three-valued logic: a condition about something missing is
+        // unknown (null) and stays unknown under `!`, so `!(Camera.fov > 10)`
+        // does not hold for an entity without a camera (M5 closing review).
+        Node::Binary(Op::And, left, right) => match eval(left, subject) {
+            Val::Bool(false) => Val::Bool(false),
+            Val::Bool(true) => truth(eval(right, subject)),
+            _ => match eval(right, subject) {
                 Val::Bool(false) => Val::Bool(false),
-                Val::Bool(true) => Val::Bool(eval(right, subject).is_true()),
-                _ => Val::Bool(false),
-            }
-        }
-        Node::Binary(Op::Or, left, right) => {
-            if eval(left, subject).is_true() {
-                Val::Bool(true)
-            } else {
-                Val::Bool(eval(right, subject).is_true())
-            }
-        }
+                _ => Val::Null,
+            },
+        },
+        Node::Binary(Op::Or, left, right) => match eval(left, subject) {
+            Val::Bool(true) => Val::Bool(true),
+            Val::Bool(false) => truth(eval(right, subject)),
+            _ => match eval(right, subject) {
+                Val::Bool(true) => Val::Bool(true),
+                _ => Val::Null,
+            },
+        },
         Node::Binary(op, left, right) => binary(*op, eval(left, subject), eval(right, subject)),
         Node::Call(func, args) => {
             let values: Vec<Val> = args.iter().map(|arg| eval(arg, subject)).collect();
@@ -794,22 +882,38 @@ fn arithmetic(op: Op, a: f64, b: f64) -> Val {
     }
 }
 
+/// A value as a condition: true, false, or unknown.
+fn truth(value: Val) -> Val {
+    match value {
+        Val::Bool(flag) => Val::Bool(flag),
+        _ => Val::Null,
+    }
+}
+
 fn binary(op: Op, left: Val, right: Val) -> Val {
+    if matches!(op, Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge)
+        && (left == Val::Null || right == Val::Null)
+    {
+        // Comparing with something missing is unknown, not false.
+        return Val::Null;
+    }
     match op {
-        Op::Eq => Val::Bool(left != Val::Null && left == right),
-        Op::Ne => Val::Bool(left != Val::Null && right != Val::Null && left != right),
+        Op::Eq => Val::Bool(left == right),
+        Op::Ne => Val::Bool(left != right),
         Op::Lt | Op::Le | Op::Gt | Op::Ge => {
             let ordering = match (&left, &right) {
                 (Val::Num(a), Val::Num(b)) => a.partial_cmp(b),
                 (Val::Str(a), Val::Str(b)) => Some(a.cmp(b)),
                 _ => None,
             };
-            Val::Bool(ordering.is_some_and(|ordering| match op {
-                Op::Lt => ordering.is_lt(),
-                Op::Le => ordering.is_le(),
-                Op::Gt => ordering.is_gt(),
-                _ => ordering.is_ge(),
-            }))
+            ordering.map_or(Val::Null, |ordering| {
+                Val::Bool(match op {
+                    Op::Lt => ordering.is_lt(),
+                    Op::Le => ordering.is_le(),
+                    Op::Gt => ordering.is_gt(),
+                    _ => ordering.is_ge(),
+                })
+            })
         }
         Op::Add | Op::Sub | Op::Mul | Op::Div => match (&left, &right) {
             (Val::Num(a), Val::Num(b)) => arithmetic(op, *a, *b),

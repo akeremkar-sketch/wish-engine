@@ -67,6 +67,17 @@ impl WorldSnapshot {
     }
 }
 
+/// What changing a type's layout did to the values stored in a world
+/// (`World::retype_component` and its kin).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Retyped {
+    /// How many values were moved to the new layout.
+    pub values: usize,
+    /// Fields whose values could not be kept, each named once: gone from
+    /// the new layout, or holding a value the new field does not accept.
+    pub dropped: Vec<String>,
+}
+
 /// Entities, their components, resources, events and text.
 ///
 /// Typed access (`insert`, `get`, `query`) works with Rust types declared
@@ -743,13 +754,10 @@ impl World {
         Ok(())
     }
 
-    /// Adds or replaces a component from raw bytes, for data from outside
-    /// native code (script modules). The bytes are checked first: a value
-    /// whose `bool` or enum fields hold invalid bytes, or whose text handles
-    /// are not in this world's text table, is rejected.
-    pub fn insert_bytes(&mut self, entity: Entity, id: ComponentId, bytes: &[u8]) -> Result<()> {
-        self.check_writable(id)?;
-        let info = self.component_info(id)?;
+    /// Checks raw bytes from outside native code against a type: `bool` and
+    /// enum fields must hold valid bytes, and text handles must be in this
+    /// world's text table.
+    fn check_outside_bytes(&self, info: &TypeInfo, bytes: &[u8]) -> Result<()> {
         validate_bytes(info.schema(), bytes)?;
         for offset in info.text_offsets() {
             let handle = bytes
@@ -768,7 +776,122 @@ impl World {
                 ));
             }
         }
+        Ok(())
+    }
+
+    /// Adds or replaces a component from raw bytes, for data from outside
+    /// native code (script modules). The bytes are checked first: a value
+    /// whose `bool` or enum fields hold invalid bytes, or whose text handles
+    /// are not in this world's text table, is rejected.
+    pub fn insert_bytes(&mut self, entity: Entity, id: ComponentId, bytes: &[u8]) -> Result<()> {
+        self.check_writable(id)?;
+        let info = self.component_info(id)?;
+        self.check_outside_bytes(info, bytes)?;
         self.put_component(entity, id, bytes)
+    }
+
+    /// Copies the entity's component into `out` (exactly the component's
+    /// size), padding zeroed. Returns `Ok(false)` when the entity exists but
+    /// does not have it. Unlike [`World::component_bytes`] it allocates
+    /// nothing, for copying many values in a row.
+    pub fn component_bytes_into(
+        &self,
+        entity: Entity,
+        id: ComponentId,
+        out: &mut [u8],
+    ) -> Result<bool> {
+        let location = self.location(entity)?;
+        let Some(column) = self.archetype(location.archetype)?.column(id) else {
+            return Ok(false);
+        };
+        let info = self.component_info(id)?;
+        out.fill(0);
+        column.read_into(location.row, info.spans(), out)?;
+        Ok(true)
+    }
+
+    /// Appends component `id` of every entity in archetype `archetype` (the
+    /// index into [`World::archetypes`]) to `out`, packed in row order,
+    /// padding zeroed: one column slice in one call, for passing many values
+    /// to a game module (M5 WP7). The entities are the archetype's
+    /// [`Archetype::entities`], in the same order.
+    pub fn archetype_column_bytes(
+        &self,
+        archetype: usize,
+        id: ComponentId,
+        out: &mut Vec<u8>,
+    ) -> Result<()> {
+        let info = self.component_info(id)?;
+        let column = self
+            .archetype(archetype)?
+            .column(id)
+            .ok_or_else(|| internal_error("the archetype does not store that component"))?;
+        let size = info.size();
+        let start = out.len();
+        out.resize(start + column.len() * size, 0);
+        for row in 0..column.len() {
+            let at = start + row * size;
+            column.read_into(row, info.spans(), &mut out[at..at + size])?;
+        }
+        Ok(())
+    }
+
+    /// Writes back component `id` of every entity in archetype `archetype`
+    /// from `bytes` (packed in row order, as [`World::archetype_column_bytes`]
+    /// gave them): only the values whose bytes differ are written, and only
+    /// those count as changed. Values are checked like
+    /// [`World::insert_bytes`] when the type has fields that need it.
+    /// Returns how many values changed.
+    pub fn write_archetype_column(
+        &mut self,
+        archetype: usize,
+        id: ComponentId,
+        bytes: &[u8],
+    ) -> Result<usize> {
+        self.check_writable(id)?;
+        let info = self.component_info(id)?.clone();
+        let size = info.size();
+        let check = info.schema().needs_validation() || !info.text_offsets().is_empty();
+        let rows = self
+            .archetype(archetype)?
+            .column(id)
+            .map(Column::len)
+            .ok_or_else(|| internal_error("the archetype does not store that component"))?;
+        if bytes.len() != rows * size {
+            return Err(internal_error("column bytes have the wrong length"));
+        }
+        // Find the changed rows first (and check them), then write: a value
+        // that is refused leaves the whole column as it was.
+        let mut current = vec![0u8; size];
+        let mut changed = Vec::new();
+        {
+            let column = self
+                .archetype(archetype)?
+                .column(id)
+                .ok_or_else(|| internal_error("the archetype does not store that component"))?;
+            for row in 0..rows {
+                let new = &bytes[row * size..(row + 1) * size];
+                current.fill(0);
+                column.read_into(row, info.spans(), &mut current)?;
+                if new != current.as_slice() {
+                    if check {
+                        self.check_outside_bytes(&info, new)?;
+                    }
+                    changed.push(row);
+                }
+            }
+        }
+        let tick = self.state.change_tick;
+        let column = self
+            .state
+            .archetypes
+            .get_mut(archetype)
+            .and_then(|a| a.column_mut(id))
+            .ok_or_else(|| internal_error("the archetype does not store that component"))?;
+        for row in &changed {
+            column.write_bytes(*row, &bytes[row * size..(row + 1) * size], tick)?;
+        }
+        Ok(changed.len())
     }
 
     /// The entity's component in JSON form.
@@ -823,6 +946,191 @@ impl World {
     }
 
     // -----------------------------------------------------------------------
+    // Changing a type's layout (game code reloaded during a game)
+    // -----------------------------------------------------------------------
+
+    /// One value moved from `old` to `new` by field name: fields with the
+    /// same name keep their value if it fits the new field; new fields take
+    /// their defaults; the rest are named in `dropped`.
+    fn moved_value(
+        &mut self,
+        old: &TypeSchema,
+        old_bytes: &[u8],
+        new: &TypeInfo,
+        dropped: &mut std::collections::BTreeSet<String>,
+    ) -> Result<Vec<u8>> {
+        let value = to_json(old, old_bytes, &self.state.texts)?;
+        let mut bytes = new.default_bytes().to_vec();
+        let patches: Vec<(Option<String>, Value)> = match (&value, &new.schema().kind) {
+            (Value::Object(fields), wish_schema::TypeKind::Struct(new_fields)) => fields
+                .iter()
+                .map(|(name, field)| {
+                    let patch = if new_fields.iter().any(|f| &f.name == name) {
+                        Value::Object(Map::from_iter([(name.clone(), field.clone())]))
+                    } else {
+                        Value::Null
+                    };
+                    (Some(name.clone()), patch)
+                })
+                .collect(),
+            _ => vec![(None, value)],
+        };
+        for (name, patch) in patches {
+            let label = name.unwrap_or_else(|| "(value)".to_owned());
+            if patch.is_null() {
+                dropped.insert(label);
+                continue;
+            }
+            let mut attempt = bytes.clone();
+            match apply_json_pending(new.schema(), &patch, &mut attempt, &self.state.texts) {
+                Ok(added) => {
+                    self.commit_texts(added)?;
+                    bytes = attempt;
+                }
+                Err(_) => {
+                    dropped.insert(label);
+                }
+            }
+        }
+        Ok(bytes)
+    }
+
+    fn check_retype(info: &TypeInfo, schema: &TypeSchema) -> Result<TypeInfo> {
+        if info.is_native() || info.is_managed() || info.name() != schema.name {
+            return Err(Diagnostic::error(
+                "retype_refused",
+                format!(
+                    "'{}' is the engine's own type; its layout cannot change while the world exists.",
+                    info.name()
+                ),
+                "Only types declared by game code can change their fields during a game. Rename the game's type if it clashes with an engine type.",
+            ));
+        }
+        TypeInfo::new(schema.clone(), None)
+    }
+
+    /// Changes the layout of a component declared by game code, moving every
+    /// stored value field by field (same name, a value that fits: kept; new
+    /// fields: their defaults; the others: reported in
+    /// [`Retyped::dropped`]). When each value was added and last changed is
+    /// kept. Engine types (bound to a Rust type) are refused.
+    pub fn retype_component(&mut self, id: ComponentId, schema: TypeSchema) -> Result<Retyped> {
+        schema.validate()?;
+        let old = self.component_info(id)?.clone();
+        let new = Self::check_retype(&old, &schema)?;
+        let mut stored = Vec::new();
+        for (a, archetype) in self.state.archetypes.iter().enumerate() {
+            let Some(c) = archetype.components().iter().position(|x| *x == id) else {
+                continue;
+            };
+            let column = archetype
+                .columns
+                .get(c)
+                .ok_or_else(|| internal_error("an archetype lacks a column"))?;
+            let mut rows = Vec::with_capacity(column.len());
+            for row in 0..column.len() {
+                let mut bytes = vec![0u8; old.size()];
+                column.read_into(row, old.spans(), &mut bytes)?;
+                let (added, changed) = column
+                    .ticks(row)
+                    .ok_or_else(|| internal_error("a row has no ticks"))?;
+                rows.push((bytes, added, changed));
+            }
+            stored.push((a, c, rows));
+        }
+        let mut dropped = std::collections::BTreeSet::new();
+        let mut values = 0;
+        let mut columns = Vec::with_capacity(stored.len());
+        for (a, c, rows) in stored {
+            let mut column = Column::new(new.size());
+            for (bytes, added, changed) in rows {
+                let moved = self.moved_value(old.schema(), &bytes, &new, &mut dropped)?;
+                column.push_with_ticks(&moved, added, changed)?;
+                values += 1;
+            }
+            columns.push((a, c, column));
+        }
+        self.registry.replace_component_schema(id, schema)?;
+        for (a, c, column) in columns {
+            if let Some(slot) = self
+                .state
+                .archetypes
+                .get_mut(a)
+                .and_then(|archetype| archetype.columns.get_mut(c))
+            {
+                *slot = column;
+            }
+        }
+        Ok(Retyped {
+            values,
+            dropped: dropped.into_iter().collect(),
+        })
+    }
+
+    /// Changes the layout of a resource declared by game code, moving its
+    /// value like [`World::retype_component`].
+    pub fn retype_resource(&mut self, id: ResourceId, schema: TypeSchema) -> Result<Retyped> {
+        schema.validate()?;
+        let old = self.resource_info(id)?.clone();
+        let new = Self::check_retype(&old, &schema)?;
+        let current = match self.resource_column(id) {
+            Some(column) => {
+                let mut bytes = vec![0u8; old.size()];
+                column.read_into(0, old.spans(), &mut bytes)?;
+                let ticks = column
+                    .ticks(0)
+                    .ok_or_else(|| internal_error("a resource has no ticks"))?;
+                Some((bytes, ticks))
+            }
+            None => None,
+        };
+        let mut dropped = std::collections::BTreeSet::new();
+        let moved = match &current {
+            Some((bytes, (added, changed))) => {
+                let moved = self.moved_value(old.schema(), bytes, &new, &mut dropped)?;
+                let mut column = Column::new(new.size());
+                column.push_with_ticks(&moved, *added, *changed)?;
+                Some(column)
+            }
+            None => None,
+        };
+        self.registry.replace_resource_schema(id, schema)?;
+        let values = usize::from(moved.is_some());
+        if let Some(column) = moved
+            && let Some(slot) = self.state.resources.get_mut(id.index())
+        {
+            *slot = Some(column);
+        }
+        Ok(Retyped {
+            values,
+            dropped: dropped.into_iter().collect(),
+        })
+    }
+
+    /// Changes the layout of an event declared by game code. Events still
+    /// buffered in the old layout are dropped (they were for the old code).
+    pub fn retype_event(&mut self, id: EventId, schema: TypeSchema) -> Result<Retyped> {
+        schema.validate()?;
+        let old = self.event_info(id)?.clone();
+        Self::check_retype(&old, &schema)?;
+        self.registry.replace_event_schema(id, schema)?;
+        let had = self
+            .state
+            .events
+            .get_mut(id.index())
+            .and_then(Option::take)
+            .is_some();
+        Ok(Retyped {
+            values: 0,
+            dropped: if had {
+                vec!["(buffered events)".to_owned()]
+            } else {
+                Vec::new()
+            },
+        })
+    }
+
+    // -----------------------------------------------------------------------
     // Resources
     // -----------------------------------------------------------------------
 
@@ -874,6 +1182,39 @@ impl World {
         // SAFETY: as in `resource`; the references borrow the world mutably.
         let (value, changed) = unsafe { column.get_mut::<T>(0) };
         Some(Mut::new(value, changed, tick))
+    }
+
+    fn resource_info(&self, id: ResourceId) -> Result<&TypeInfo> {
+        self.registry.resource(id).ok_or_else(|| {
+            Diagnostic::error(
+                "unknown_resource_id",
+                format!("No resource has the id {}.", id.index()),
+                "Look resource ids up by name in this world; ids are not shared between worlds.",
+            )
+        })
+    }
+
+    /// A copy of the resource's value as bytes, padding zeroed; `Ok(None)`
+    /// when it has no value.
+    pub fn resource_bytes(&self, id: ResourceId) -> Result<Option<Vec<u8>>> {
+        let info = self.resource_info(id)?;
+        let Some(column) = self.resource_column(id) else {
+            return Ok(None);
+        };
+        let mut bytes = vec![0u8; info.size()];
+        column.read_into(0, info.spans(), &mut bytes)?;
+        Ok(Some(bytes))
+    }
+
+    /// Sets a resource from raw bytes, for data from outside native code
+    /// (script modules), checked like [`World::insert_bytes`].
+    pub fn insert_resource_bytes(&mut self, id: ResourceId, bytes: &[u8]) -> Result<()> {
+        let info = self.resource_info(id)?;
+        if bytes.len() != info.size() {
+            return Err(internal_error("resource bytes have the wrong length"));
+        }
+        self.check_outside_bytes(info, bytes)?;
+        self.put_resource(id, bytes)
     }
 
     /// Removes the resource's value and returns it.
@@ -1010,6 +1351,48 @@ impl World {
             .iter()
             .map(|bytes| {
                 E::decode(bytes).ok_or_else(|| internal_error("a stored event did not decode"))
+            })
+            .collect()
+    }
+
+    fn event_info(&self, id: EventId) -> Result<&TypeInfo> {
+        self.registry.event(id).ok_or_else(|| {
+            Diagnostic::error(
+                "unknown_event_id",
+                format!("No event has the id {}.", id.index()),
+                "Look event ids up by name in this world; ids are not shared between worlds.",
+            )
+        })
+    }
+
+    /// Sends an event from raw bytes, for data from outside native code
+    /// (script modules), checked like [`World::insert_bytes`].
+    pub fn send_bytes(&mut self, id: EventId, bytes: &[u8]) -> Result<()> {
+        let info = self.event_info(id)?;
+        if bytes.len() != info.size() {
+            return Err(internal_error("event bytes have the wrong length"));
+        }
+        self.check_outside_bytes(info, bytes)?;
+        self.push_event(id, bytes)
+    }
+
+    /// The buffered events of type `id` sent after change tick `since`, as
+    /// bytes (padding zeroed), oldest first. For readers that remember where
+    /// they are as a change tick: a game module's system sees the events
+    /// sent since its previous run (`SystemContext::last_run`), and that
+    /// position is part of the app's snapshot.
+    pub fn event_bytes_since(&self, id: EventId, since: ChangeTick) -> Result<Vec<Vec<u8>>> {
+        let info = self.event_info(id)?;
+        let Some(queue) = self.state.events.get(id.index()).and_then(Option::as_ref) else {
+            return Ok(Vec::new());
+        };
+        queue
+            .rows_from(0)
+            .filter(|(column, row)| column.ticks(*row).is_some_and(|(added, _)| added > since.0))
+            .map(|(column, row)| {
+                let mut bytes = vec![0u8; info.size()];
+                column.read_into(row, info.spans(), &mut bytes)?;
+                Ok(bytes)
             })
             .collect()
     }

@@ -51,5 +51,5 @@ mod schedule;
 mod time;
 
 pub use app::{App, AppConfig, AppSnapshot, StepReport, SystemState, UpdateReport};
-pub use schedule::{System, SystemContext, SystemFn};
+pub use schedule::{DynamicSystemFn, System, SystemContext, SystemFn};
 pub use time::Time;
