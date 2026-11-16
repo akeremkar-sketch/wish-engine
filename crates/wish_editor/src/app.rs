@@ -14,13 +14,15 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
-use egui::{Align, Layout, Rect, Sense, Ui, pos2, vec2};
+use egui::{Align, Layout, Pos2, Rect, Sense, Ui, pos2, vec2};
+use glam::{Quat, Vec3};
 use serde_json::{Value, json};
 use wish_control::{PictureSource, Workspace, parse_actor};
 use wish_render::{CameraView, RgbaImage, View};
 use wish_window::{Button, FlyCamera, Modifiers, Movement, Picture, Shell, ShellEvent};
 
 use crate::Editor;
+use crate::gizmo::{self, Drag, Eye, Handle, Mode, Space, Target};
 use crate::inspector::{self, Inspected, InspectorActions, InspectorState, InspectorView};
 use crate::raster::Canvas;
 
@@ -96,6 +98,17 @@ pub struct EditorApp {
     drawn_size: (u32, u32),
     picture_stale: bool,
     ui_state: RefCell<UiState>,
+    /// What the handles do, along which axes, and whether they snap.
+    mode: Mode,
+    space: Space,
+    snap: bool,
+    /// The camera as last drawn (where things are on the screen).
+    last_camera: RefCell<Option<CameraView>>,
+    /// The main selected entity's transform, for the handles.
+    target: Option<(String, Target)>,
+    target_for: (Vec<String>, u64),
+    hovered: Option<Handle>,
+    drag: Option<ActiveDrag>,
     /// Component schemas from `schema_get`, by name.
     schemas: BTreeMap<String, Value>,
     /// The project's files, for asset fields.
@@ -111,6 +124,18 @@ pub struct EditorApp {
     scripts: String,
     frames: u64,
     exit: bool,
+}
+
+/// A handle being dragged: the drag, and what it has made so far.
+struct ActiveDrag {
+    drag: Drag,
+    id: String,
+    /// The transform when the drag began.
+    start: Target,
+    /// The transform now (shown in the preview, sent on release).
+    now: Target,
+    /// The change as edit operations, for the preview and the release.
+    ops: Option<Value>,
 }
 
 /// What the layout decided, handed back out of egui's closure.
@@ -136,6 +161,9 @@ struct Actions {
     reparent: Option<(String, Option<String>)>,
     /// What the inspector asked for.
     inspector: InspectorActions,
+    mode: Option<Mode>,
+    toggle_space: bool,
+    toggle_snap: bool,
 }
 
 impl Actions {
@@ -155,6 +183,9 @@ impl Actions {
             || self.rename.is_some()
             || self.reparent.is_some()
             || self.inspector.any()
+            || self.mode.is_some()
+            || self.toggle_space
+            || self.toggle_snap
     }
 }
 
@@ -188,6 +219,14 @@ impl EditorApp {
             drawn_size: (0, 0),
             picture_stale: true,
             ui_state: RefCell::new(UiState::default()),
+            mode: Mode::Translate,
+            space: Space::World,
+            snap: false,
+            last_camera: RefCell::new(None),
+            target: None,
+            target_for: (Vec::new(), u64::MAX),
+            hovered: None,
+            drag: None,
             schemas: BTreeMap::new(),
             assets: Vec::new(),
             inspected: Vec::new(),
@@ -273,6 +312,188 @@ impl EditorApp {
         if unknown {
             self.load_schemas();
         }
+    }
+
+    /// The camera as last drawn, over the picture's place on the window.
+    fn eye_now(&self) -> Option<Eye> {
+        let camera = (*self.last_camera.borrow())?;
+        (self.viewport.width() >= MIN_VIEWPORT && self.viewport.height() >= MIN_VIEWPORT)
+            .then(|| Eye::new(&camera, self.viewport))
+    }
+
+    /// Reads the main selected entity's transform and its parent's world
+    /// matrix, for the handles (not for a part of a prefab instance: its
+    /// handles would have to write overrides).
+    fn refresh_target(&mut self) {
+        let key = (self.selected.clone(), self.revision);
+        if key == self.target_for || self.drag.is_some() {
+            return;
+        }
+        self.target_for = key;
+        self.target = None;
+        let Some(id) = self
+            .selected
+            .first()
+            .filter(|id| !id.contains('/'))
+            .cloned()
+        else {
+            return;
+        };
+        let got = self.call(
+            "entity_get",
+            &json!({ "scene": self.scene.clone(), "ids": [id.clone()],
+                     "components": ["Transform", "GlobalTransform"] }),
+        );
+        let components = &got["entities"][0]["components"];
+        let vector = |value: &Value, n: usize| -> Option<Vec<f32>> {
+            let items = value.as_array()?;
+            (items.len() == n).then(|| {
+                items
+                    .iter()
+                    .map(|v| v.as_f64().unwrap_or(0.0) as f32)
+                    .collect()
+            })
+        };
+        let (Some(t), Some(r), Some(s), Some(m)) = (
+            vector(&components["Transform"]["translation"], 3),
+            vector(&components["Transform"]["rotation"], 4),
+            vector(&components["Transform"]["scale"], 3),
+            vector(&components["GlobalTransform"]["matrix"], 16),
+        ) else {
+            return;
+        };
+        let local = glam::Mat4::from_scale_rotation_translation(
+            Vec3::new(s[0], s[1], s[2]),
+            Quat::from_xyzw(r[0], r[1], r[2], r[3]).normalize(),
+            Vec3::new(t[0], t[1], t[2]),
+        );
+        let mut columns = [0.0f32; 16];
+        columns.copy_from_slice(&m);
+        let world = glam::Mat4::from_cols_array(&columns);
+        let parent = world * local.inverse();
+        self.target = Some((
+            id,
+            Target {
+                translation: Vec3::new(t[0], t[1], t[2]),
+                rotation: Quat::from_xyzw(r[0], r[1], r[2], r[3]).normalize(),
+                scale: Vec3::new(s[0], s[1], s[2]),
+                parent: if parent.is_finite() {
+                    parent
+                } else {
+                    glam::Mat4::IDENTITY
+                },
+            },
+        ));
+    }
+
+    /// The edit that makes the drag's transform: only what changed.
+    fn drag_ops(id: &str, start: &Target, now: &Target) -> Value {
+        let mut value = serde_json::Map::new();
+        let list = |v: Vec<f32>| json!(v.iter().map(|x| f64::from(*x)).collect::<Vec<_>>());
+        if now.translation != start.translation {
+            value.insert(
+                "translation".to_owned(),
+                list(now.translation.to_array().to_vec()),
+            );
+        }
+        if now.rotation != start.rotation {
+            value.insert(
+                "rotation".to_owned(),
+                list(now.rotation.to_array().to_vec()),
+            );
+        }
+        if now.scale != start.scale {
+            value.insert("scale".to_owned(), list(now.scale.to_array().to_vec()));
+        }
+        json!([{ "op": "set", "id": id, "component": "Transform", "value": value }])
+    }
+
+    /// What the pointer does to the handles: which one it is over, taking
+    /// hold, dragging, letting go, Esc. Returns whether the press was a
+    /// handle's (and so no click on the view).
+    fn gizmo_input(&mut self, event: &ShellEvent) -> bool {
+        let Some(eye) = self.eye_now() else {
+            return false;
+        };
+        let pointer = self.pointer.map(|(x, y)| pos2(x, y));
+        match event {
+            ShellEvent::Pointer { .. } => {
+                if let Some(active) = self.drag.as_mut() {
+                    if let Some(pointer) = pointer
+                        && let Some(now) = active.drag.transform(&eye, pointer, self.snap)
+                    {
+                        active.ops = Some(Self::drag_ops(&active.id, &active.start, &now));
+                        active.now = now;
+                        self.picture_stale = true;
+                    }
+                } else {
+                    let hovered = self.hover(&eye, pointer);
+                    if hovered != self.hovered {
+                        self.hovered = hovered;
+                        self.picture_stale = true;
+                    }
+                }
+            }
+            ShellEvent::Button {
+                button: Button::Primary,
+                pressed: true,
+                ..
+            } if self.drag.is_none() => {
+                if let (Some(handle), Some(pointer), Some((id, target))) =
+                    (self.hovered, pointer, self.target.clone())
+                    && let Some(drag) =
+                        Drag::begin(&eye, self.mode, handle, self.space, target, pointer)
+                {
+                    self.drag = Some(ActiveDrag {
+                        drag,
+                        id,
+                        start: target,
+                        now: target,
+                        ops: None,
+                    });
+                    return true;
+                }
+            }
+            ShellEvent::Button {
+                button: Button::Primary,
+                pressed: false,
+                ..
+            } => {
+                if let Some(active) = self.drag.take() {
+                    self.picture_stale = true;
+                    if let Some(ops) = active.ops {
+                        let what = match self.mode {
+                            Mode::Translate => format!("moved {}", active.id),
+                            Mode::Rotate => format!("rotated {}", active.id),
+                            Mode::Scale => format!("scaled {}", active.id),
+                        };
+                        let Value::Array(ops) = ops else {
+                            return true;
+                        };
+                        self.edit(&what, ops);
+                    }
+                    return true;
+                }
+            }
+            ShellEvent::Key {
+                name,
+                pressed: true,
+                ..
+            } if name == "Escape" && self.drag.take().is_some() => {
+                self.status = "cancelled".to_owned();
+                self.picture_stale = true;
+            }
+            _ => {}
+        }
+        false
+    }
+
+    /// The handle under the pointer (only over the view and with a target).
+    fn hover(&self, eye: &Eye, pointer: Option<Pos2>) -> Option<Handle> {
+        let pointer = pointer.filter(|p| self.viewport.contains(*p))?;
+        let (_, target) = self.target.as_ref()?;
+        let axes = gizmo::axes(target.world_rotation(), self.space);
+        gizmo::hit_test(eye, self.mode, axes, target.pivot(), pointer)
     }
 
     /// The inspector's changes, as one `edit_apply` on every selected entity
@@ -387,6 +608,37 @@ impl EditorApp {
     /// tree): role, label, value and place.
     pub fn widgets(&self) -> &[crate::Widget] {
         self.editor.as_ref().map_or(&[], |editor| editor.widgets())
+    }
+
+    /// What the handles do now.
+    pub fn handle_mode(&self) -> &'static str {
+        match self.mode {
+            Mode::Translate => "move",
+            Mode::Rotate => "rotate",
+            Mode::Scale => "scale",
+        }
+    }
+
+    /// Whether a handle is being dragged.
+    pub fn dragging(&self) -> bool {
+        self.drag.is_some()
+    }
+
+    /// Where the selected entity's handles are on the window: the pivot and
+    /// the ends of the three axes (`None` without a selection or a camera).
+    pub fn handle_places(&self) -> Option<[Pos2; 4]> {
+        let eye = self.eye_now()?;
+        let (_, target) = self.target.as_ref()?;
+        let current = self.drag.as_ref().map_or(*target, |d| d.now);
+        let pivot = current.pivot();
+        let length = eye.handle_length(pivot);
+        let axes = gizmo::axes(current.world_rotation(), self.space);
+        Some([
+            eye.project(pivot)?,
+            eye.project(pivot + axes[0] * length)?,
+            eye.project(pivot + axes[1] * length)?,
+            eye.project(pivot + axes[2] * length)?,
+        ])
     }
 
     /// The boxes drawn around the selection in the view (window pixels).
@@ -564,6 +816,21 @@ impl EditorApp {
             *self.eye.borrow_mut() = None;
             self.picture_stale = true;
         }
+        if let Some(mode) = actions.mode {
+            self.mode = mode;
+            self.hovered = None;
+            self.picture_stale = true;
+        }
+        if actions.toggle_space {
+            self.space = match self.space {
+                Space::World => Space::Local,
+                Space::Local => Space::World,
+            };
+            self.picture_stale = true;
+        }
+        if actions.toggle_snap {
+            self.snap = !self.snap;
+        }
         if let Some((id, toggle)) = actions.select {
             self.click_entity(&id, toggle);
         }
@@ -684,6 +951,11 @@ impl EditorApp {
             match event {
                 ShellEvent::Pointer { x, y } => self.pointer = Some((*x, *y)),
                 ShellEvent::PointerLeft => self.pointer = None,
+                _ => {}
+            }
+            // The handles first: a press on one is not a click on the view.
+            let took = self.gizmo_input(event);
+            match event {
                 ShellEvent::Button {
                     button: Button::Secondary,
                     pressed,
@@ -694,7 +966,9 @@ impl EditorApp {
                     pressed,
                     modifiers,
                 } => {
-                    if *pressed {
+                    if took {
+                        self.press = None;
+                    } else if *pressed {
                         self.press = self.pointer.filter(|_| over_view(self));
                     } else if let (Some(start), Some(end)) = (self.press.take(), self.pointer)
                         && (start.0 - end.0).abs() < CLICK_SLOP
@@ -713,6 +987,23 @@ impl EditorApp {
                 ShellEvent::Key { name, pressed, .. } => {
                     let flying = self.looking;
                     let down = *pressed;
+                    let typing = self
+                        .editor
+                        .as_ref()
+                        .is_some_and(|e| e.context().egui_wants_keyboard_input());
+                    if down && !flying && !typing {
+                        let mode = match name.as_str() {
+                            "W" => Some(Mode::Translate),
+                            "E" => Some(Mode::Rotate),
+                            "R" => Some(Mode::Scale),
+                            _ => None,
+                        };
+                        if let Some(mode) = mode {
+                            self.mode = mode;
+                            self.hovered = None;
+                            self.picture_stale = true;
+                        }
+                    }
                     match name.as_str() {
                         "W" if flying || !down => self.movement.forward = down,
                         "S" if flying || !down => self.movement.back = down,
@@ -758,20 +1049,27 @@ impl EditorApp {
             return false;
         }
         let eye = &self.eye;
+        let last = &self.last_camera;
         let camera = |base: &CameraView| {
             let mut eye = eye.borrow_mut();
-            eye.get_or_insert_with(|| FlyCamera::from_view(base))
-                .apply(base)
+            let applied = eye
+                .get_or_insert_with(|| FlyCamera::from_view(base))
+                .apply(base);
+            *last.borrow_mut() = Some(applied);
+            applied
         };
         let scene = self.scene.clone();
         if redraw {
-            let drawn = self.workspace.render_picture(
-                PictureSource::Scene(Some(&scene)),
-                Some(&camera),
-                width,
-                height,
-                self.view,
-            );
+            // While a handle is dragged the picture shows the change as it
+            // would be, without making it.
+            let preview = self.drag.as_ref().and_then(|active| active.ops.clone());
+            let source = match &preview {
+                Some(ops) => PictureSource::Preview(Some(&scene), ops),
+                None => PictureSource::Scene(Some(&scene)),
+            };
+            let drawn =
+                self.workspace
+                    .render_picture(source, Some(&camera), width, height, self.view);
             match drawn {
                 Ok(picture) => {
                     self.picture = Some(picture.image);
@@ -789,6 +1087,9 @@ impl EditorApp {
         }
         // Who is where, for a click and for the box around the selection.
         let pick = self.pending_pick.take();
+        if self.drag.is_some() {
+            return false;
+        }
         if pick.is_none() && self.selected.is_empty() {
             self.outlines.clear();
             return false;
@@ -1010,6 +1311,39 @@ impl EditorApp {
                 if ui.button("Reset camera").clicked() {
                     actions.reset_camera = true;
                 }
+                ui.separator();
+                for (mode, name) in [
+                    (Mode::Translate, "Move"),
+                    (Mode::Rotate, "Rotate"),
+                    (Mode::Scale, "Scale"),
+                ] {
+                    if ui
+                        .selectable_label(self.mode == mode, name)
+                        .on_hover_text("Keys W, E, R")
+                        .clicked()
+                    {
+                        actions.mode = Some(mode);
+                    }
+                }
+                let space = if self.space == Space::World {
+                    "World"
+                } else {
+                    "Local"
+                };
+                if ui
+                    .button(space)
+                    .on_hover_text("The handles' axes: the world's or the entity's own")
+                    .clicked()
+                {
+                    actions.toggle_space = true;
+                }
+                if ui
+                    .selectable_label(self.snap, "Snap")
+                    .on_hover_text("Half metres, 15 degrees, steps of 10 % when on")
+                    .clicked()
+                {
+                    actions.toggle_snap = true;
+                }
                 if ui.button("Check").clicked() {
                     actions.check = true;
                 }
@@ -1074,6 +1408,7 @@ impl EditorApp {
             self.since_poll = 0.0;
             changed |= self.refresh_scene();
         }
+        self.refresh_target();
         self.view_input(&events);
         self.refresh_inspected();
         if changed || self.picture_stale || self.pending_pick.is_some() {
@@ -1103,6 +1438,7 @@ impl EditorApp {
                 self.act(actions);
                 let picked = self.render_viewport(seconds);
                 self.refresh_inspected();
+                self.refresh_target();
                 passes += 1;
                 // What was just done (a click, a button) changes what the
                 // panels say: lay them out again before drawing.
@@ -1119,8 +1455,24 @@ impl EditorApp {
             if let Some(picture) = &self.picture {
                 blit(&mut self.canvas, picture, self.viewport);
             }
-            for outline in &self.outlines {
-                draw_outline(&mut self.canvas, *outline, self.viewport);
+            // (Not while a handle is dragged: the box would stay where the
+            // entity was.)
+            if self.drag.is_none() {
+                for outline in &self.outlines {
+                    draw_outline(&mut self.canvas, *outline, self.viewport);
+                }
+            }
+            if let (Some(eye), Some((_, target))) = (self.eye_now(), self.target.as_ref()) {
+                let current = self.drag.as_ref().map_or(*target, |d| d.now);
+                gizmo::draw(
+                    &mut self.canvas,
+                    self.viewport,
+                    &eye,
+                    self.mode,
+                    gizmo::axes(current.world_rotation(), self.space),
+                    current.pivot(),
+                    self.drag.as_ref().map(|d| d.drag.handle()).or(self.hovered),
+                );
             }
             editor.paint(&frame, &mut self.canvas);
             self.editor = Some(editor);

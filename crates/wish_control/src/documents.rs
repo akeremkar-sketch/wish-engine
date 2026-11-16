@@ -637,8 +637,6 @@ impl Workspace {
     /// The document at `path` instantiated into a world (cached per
     /// revision).
     pub(crate) fn view(&mut self, path: &str) -> Result<&WorldView> {
-        let example = self.example().map(str::to_owned);
-        let module = self.game_module().cloned();
         let generation = self.scripts.generation;
         let open = self.document_mut(path)?;
         // A new game module can add types the scene uses: the view is
@@ -646,14 +644,10 @@ impl Workspace {
         let revision = open.doc.revision() ^ (generation << 48);
         let fresh = open.view.as_ref().is_some_and(|(at, _)| *at == revision);
         if !fresh {
-            let (fonts, _) = self.fonts();
+            let doc = open.doc.clone();
+            let view = self.build_view(&doc)?;
             let open = self.document_mut(path)?;
-            let mut world = World::new();
-            crate::types::register_all(example.as_deref(), module.as_deref(), &mut world)?;
-            let ids = open.doc.instantiate(&mut world)?;
-            wish_transform::update_global_transforms(&mut world)?;
-            crate::ui::prepare(&mut world, fonts)?;
-            open.view = Some((revision, WorldView { world, ids }));
+            open.view = Some((revision, view));
         }
         let open = self.document_mut(path)?;
         open.view.as_ref().map(|(_, view)| view).ok_or_else(|| {
@@ -663,6 +657,37 @@ impl Workspace {
                 "This is a bug in the engine. Please report it.",
             )
         })
+    }
+
+    /// A document instantiated into a world of its own (not cached).
+    pub(crate) fn build_view(&mut self, doc: &SceneDocument) -> Result<WorldView> {
+        let example = self.example().map(str::to_owned);
+        let module = self.game_module().cloned();
+        let (fonts, _) = self.fonts();
+        let mut world = World::new();
+        crate::types::register_all(example.as_deref(), module.as_deref(), &mut world)?;
+        let ids = doc.instantiate(&mut world)?;
+        wish_transform::update_global_transforms(&mut world)?;
+        crate::ui::prepare(&mut world, fonts)?;
+        Ok(WorldView { world, ids })
+    }
+
+    /// The document at `path` with `ops` applied on a copy (nothing is kept,
+    /// nothing written), as a world: what the scene would look like after
+    /// the change. For previews while a change is being made.
+    pub(crate) fn build_preview(&mut self, path: &str, ops: &Value) -> Result<WorldView> {
+        let ops = crate::ops::parse_ops(ops)?;
+        let registry = self.registry().clone();
+        let mut working = self.document(path)?.doc.clone();
+        working.apply(
+            &Transaction {
+                actor: Actor::Human,
+                base_revision: None,
+                ops,
+            },
+            &registry,
+        )?;
+        self.build_view(&working)
     }
 
     /// What other actors changed in `path` since `actor` last looked, and

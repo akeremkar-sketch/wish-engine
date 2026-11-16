@@ -128,6 +128,17 @@ fn prepare_source(
     session: Option<&str>,
     scene: Option<&str>,
 ) -> Result<Prepared> {
+    prepare_with(workspace, session, scene, None)
+}
+
+/// [`prepare_source`], optionally with `preview` edit operations applied on a
+/// copy of the scene (what it would look like after them).
+fn prepare_with(
+    workspace: &mut Workspace,
+    session: Option<&str>,
+    scene: Option<&str>,
+    preview: Option<&Value>,
+) -> Result<Prepared> {
     let session = match session {
         Some(id) => Some(workspace.session_id(Some(id))?),
         None => None,
@@ -147,13 +158,23 @@ fn prepare_source(
             let path = workspace.scene_path(scene)?;
             let notes = workspace.open_document(&path, false)?;
             let revision = workspace.document(&path)?.doc.revision();
-            let view = workspace.view(&path)?;
-            (
-                extract(&view.world)?,
-                view.ids.clone(),
-                notes,
-                json!({ "scene": path, "revision": revision }),
-            )
+            if let Some(ops) = preview {
+                let view = workspace.build_preview(&path, ops)?;
+                (
+                    extract(&view.world)?,
+                    view.ids,
+                    notes,
+                    json!({ "scene": path, "revision": revision, "preview": true }),
+                )
+            } else {
+                let view = workspace.view(&path)?;
+                (
+                    extract(&view.world)?,
+                    view.ids.clone(),
+                    notes,
+                    json!({ "scene": path, "revision": revision }),
+                )
+            }
         }
     };
     let names = by_name
@@ -453,6 +474,10 @@ fn describe_view(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
 pub enum PictureSource<'a> {
     /// A scene file (`None`: the project's scene).
     Scene(Option<&'a str>),
+    /// A scene file with these edit operations applied on a copy: what it
+    /// would look like after them (the file and the history are untouched).
+    /// For showing a change while it is still being made.
+    Preview(Option<&'a str>, &'a Value),
     /// A play session's live world.
     Session(&'a str),
 }
@@ -483,11 +508,12 @@ impl Workspace {
         height: u32,
         view: View,
     ) -> Result<Picture> {
-        let (session, scene) = match source {
-            PictureSource::Scene(scene) => (None, scene),
-            PictureSource::Session(id) => (Some(id), None),
+        let (session, scene, preview) = match source {
+            PictureSource::Scene(scene) => (None, scene, None),
+            PictureSource::Preview(scene, ops) => (None, scene, Some(ops)),
+            PictureSource::Session(id) => (Some(id), None, None),
         };
-        let mut prepared = prepare_source(self, session, scene)?;
+        let mut prepared = prepare_with(self, session, scene, preview)?;
         if let (Some(camera), Some(first)) = (camera, prepared.scene.cameras.first_mut()) {
             *first = camera(first);
         }
@@ -525,11 +551,12 @@ impl Workspace {
         width: u32,
         height: u32,
     ) -> Result<IdPicture> {
-        let (session, scene) = match source {
-            PictureSource::Scene(scene) => (None, scene),
-            PictureSource::Session(id) => (Some(id), None),
+        let (session, scene, preview) = match source {
+            PictureSource::Scene(scene) => (None, scene, None),
+            PictureSource::Preview(scene, ops) => (None, scene, Some(ops)),
+            PictureSource::Session(id) => (Some(id), None, None),
         };
-        let mut prepared = prepare_source(self, session, scene)?;
+        let mut prepared = prepare_with(self, session, scene, preview)?;
         if let (Some(camera), Some(first)) = (camera, prepared.scene.cameras.first_mut()) {
             *first = camera(first);
         }

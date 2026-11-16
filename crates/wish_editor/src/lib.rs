@@ -5,6 +5,7 @@
 //! no GPU, the same on every machine (see the M8a design note, §2).
 
 mod app;
+mod gizmo;
 mod inspector;
 pub mod raster;
 pub mod script;

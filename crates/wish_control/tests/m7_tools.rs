@@ -236,3 +236,89 @@ fn entity_get_says_which_resources_are_defaults() {
         "{got}"
     );
 }
+
+/// M8a WP5: a preview draws a scene with edits applied on a copy: what it
+/// would look like, with the file, the history and the revision untouched.
+#[test]
+fn a_preview_shows_a_change_without_making_it() {
+    use wish_control::PictureSource;
+    let (dir, mut ws) = project("preview");
+    ws.set_software(true);
+    let added = call(
+        &mut ws,
+        "edit_apply",
+        json!({ "ops": [{ "op": "spawn", "id": "marker", "components": {
+            "Transform": { "translation": [0.0, 1.0, 0.0] }, "Primitive": { "shape": "Cube" },
+            "Material": { "base_color": [0.9, 0.1, 0.1, 1] } } }] }),
+    );
+    assert_eq!(added["ok"], true, "{added}");
+    let file = std::fs::read_to_string(dir.join("scenes/main.scene.json")).unwrap();
+    let before = call(&mut ws, "edit_history", json!({ "action": "list" }));
+    let still = ws
+        .render_picture(
+            PictureSource::Scene(None),
+            None,
+            320,
+            180,
+            wish_render::View::Lit,
+        )
+        .unwrap();
+    // Move the cube far to the right on a copy.
+    let ops = json!([{ "op": "set", "id": "marker", "component": "Transform",
+                       "value": { "translation": [3.0, 1.0, 0.0] } }]);
+    let moved = ws
+        .render_picture(
+            PictureSource::Preview(None, &ops),
+            None,
+            320,
+            180,
+            wish_render::View::Lit,
+        )
+        .unwrap();
+    let differing = still
+        .image
+        .pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(moved.image.pixels.as_chunks::<4>().0)
+        .filter(|(a, b)| a != b)
+        .count();
+    assert!(
+        differing > 500,
+        "the preview shows the move ({differing} pixels differ)"
+    );
+    // Nothing was made: same file, same history, and a plain picture is
+    // still the old one.
+    assert_eq!(
+        std::fs::read_to_string(dir.join("scenes/main.scene.json")).unwrap(),
+        file
+    );
+    assert_eq!(
+        call(&mut ws, "edit_history", json!({ "action": "list" })),
+        before
+    );
+    let again = ws
+        .render_picture(
+            PictureSource::Scene(None),
+            None,
+            320,
+            180,
+            wish_render::View::Lit,
+        )
+        .unwrap();
+    assert_eq!(again.image.pixels, still.image.pixels);
+    // A preview that cannot be made is a diagnostic, not a panic.
+    let bad = json!([{ "op": "set", "id": "nobody", "component": "Transform", "value": {} }]);
+    let error = ws
+        .render_picture(
+            PictureSource::Preview(None, &bad),
+            None,
+            320,
+            180,
+            wish_render::View::Lit,
+        )
+        .err()
+        .unwrap();
+    assert!(!error.hint.is_empty());
+}
