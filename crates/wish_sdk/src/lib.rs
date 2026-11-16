@@ -58,15 +58,16 @@ mod param;
 mod query;
 
 pub use param::{
-    Commands, EntityCommands, EventReader, EventWriter, NewEntity, Res, ResMut, SystemParam,
+    Actions, Commands, EntityCommands, EventReader, EventWriter, NewEntity, Res, ResMut,
+    SystemParam,
 };
 pub use query::{ColumnAccess, Query, QueryData, QueryFilter, With, Without};
 pub use wish_core::{AssetRef, Color, Entity, Text, math};
 pub use wish_schema::{component, event, resource, schema};
 pub use wish_sdk_macros::system;
 pub use wish_types::{
-    Ambient, Camera, DirectionalLight, Exposure, GlobalTransform, Material, Model, Primitive,
-    Shape, Sky, Time, Transform, world_position,
+    ActionSlot, ActionState, Ambient, Camera, DirectionalLight, Exposure, GlobalTransform,
+    Material, Model, Primitive, Shape, Sky, Time, Transform, world_position,
 };
 
 /// The ABI version this SDK speaks.
@@ -76,7 +77,7 @@ pub const ABI_VERSION: i32 = 1;
 pub mod prelude {
     pub use crate::math::{Mat4, Quat, Vec2, Vec3, Vec4};
     pub use crate::{
-        Ambient, AssetRef, Camera, Color, Commands, DirectionalLight, Entity, EventReader,
+        Actions, Ambient, AssetRef, Camera, Color, Commands, DirectionalLight, Entity, EventReader,
         EventWriter, Exposure, GlobalTransform, Material, Model, Primitive, Query, Res, ResMut,
         Shape, Sky, Text, Time, Transform, With, Without, component, event, random_f32,
         random_range, random_u64, resource, schema, system, world_position,

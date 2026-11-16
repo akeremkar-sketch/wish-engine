@@ -10,7 +10,8 @@ use wish_core::{Diagnostic, Result};
 /// The commands `wen` understands.
 pub const COMMANDS: &[&str] = &[
     "run", "bench", "schema", "mv", "check", "fmt", "migrate", "watch", "capture", "describe",
-    "shaders", "view", "call", "do", "new", "build", "sdk", "mcp", "examples", "help", "version",
+    "shaders", "view", "call", "do", "new", "build", "play", "sdk", "mcp", "examples", "help",
+    "version",
 ];
 
 /// A parsed command line.
@@ -101,6 +102,8 @@ pub enum Command {
         /// Stop after this many seconds (0: run until interrupted).
         seconds: u64,
     },
+    /// Play the project's game in a window.
+    Play(PlayArgs),
     /// Build the project's game code (the `script_build` tool).
     Build {
         /// The project folder.
@@ -171,6 +174,21 @@ pub struct CaptureArgs {
     pub shaders: Option<String>,
     /// Where to write the PNG.
     pub out: String,
+}
+
+/// The options of `wen play`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlayArgs {
+    /// The project folder (default: the current folder).
+    pub root: Option<String>,
+    /// The scene to play (default: the project's own).
+    pub scene: Option<String>,
+    /// The window's size in pixels.
+    pub size: (u32, u32),
+    /// Use the software adapter.
+    pub software: bool,
+    /// Close after this many frames (for scripts).
+    pub exit_after: Option<u64>,
 }
 
 /// The options of `wen view`.
@@ -426,6 +444,14 @@ fn flags_of(command: &str) -> &'static [(&'static str, bool)] {
         "shaders" => &[("--dir", true), ("--json", false)],
         "new" => &[("--name", true), ("--json", false)],
         "build" => &[("--root", true), ("--dry-run", false), ("--json", false)],
+        "play" => &[
+            ("--root", true),
+            ("--scene", true),
+            ("--size", true),
+            ("--software", false),
+            ("--exit-after", true),
+            ("--json", false),
+        ],
         "sdk" => &[("--out", true), ("--json", false)],
         "view" => &[
             ("--example", true),
@@ -662,6 +688,15 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
                 },
             }
         }
+        "play" => Command::Play(PlayArgs {
+            root: value_of("--root").map(str::to_owned),
+            scene: value_of("--scene").map(str::to_owned),
+            size: value_of("--size").map_or(Ok((1280, 720)), parse_size)?,
+            software: values.iter().any(|(flag, _)| *flag == "--software"),
+            exit_after: value_of("--exit-after")
+                .map(|value| parse_number("--exit-after", value))
+                .transpose()?,
+        }),
         "build" => Command::Build {
             root: value_of("--root").map(str::to_owned),
             dry_run: values.iter().any(|(flag, _)| *flag == "--dry-run"),

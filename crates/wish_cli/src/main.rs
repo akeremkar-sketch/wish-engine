@@ -12,6 +12,7 @@
 
 mod args;
 mod capture;
+mod play;
 mod project_cmds;
 mod scene;
 mod tool_cmds;
@@ -51,6 +52,7 @@ USAGE:
     wen shaders [--dir <folder>] [--json]
     wen new <folder> [--name <name>] [--json]
     wen build [--root <folder>] [--dry-run] [--json]
+    wen play [--root <folder>] [--scene <file>] [--size <w>x<h>] [--software] [--exit-after <frames>]
     wen sdk [--out <folder>] [--json]
     wen mcp [--root <folder>] [--software]
     wen call <tool> ['{json args}' | --<param> <value> ...] [--root <folder>] [--actor <name>]
@@ -101,6 +103,11 @@ COMMANDS:
     build      Compile the project's game code (scripts/src/lib.rs) to WebAssembly: compiler errors
                with file, line and hint; a failed build keeps the last good code. --dry-run only
                checks that it compiles. Same as the script_build tool.
+    play       Play the project's game in a window: keys and mouse buttons drive the actions of
+               input.json (move, jump, ...), the game runs at 60 ticks a second. Saving
+               scripts/src/lib.rs builds the new code and switches to it without stopping the game
+               or losing its state; a compile error is shown and the old code keeps running. Escape
+               closes the window. Needs a desktop session. Edits to scenes need a restart.
     sdk        Engine development: build the game SDK pack from the engine's sources (needs cargo).
                Packaged engines ship it; game builds look for it next to wen or in WISH_SDK.
     mcp        Serve the tools over MCP (Model Context Protocol, stdio). Claude Code and other MCP
@@ -287,6 +294,7 @@ fn execute(args: Args) -> Result<String> {
             "This is a bug in wen. Please report it.",
         )),
         Command::View(view) => view::view(&view, args.json),
+        Command::Play(play) => play::play(&play, args.json),
         Command::Schema { example } => schema(example.as_deref(), args.json),
         Command::Examples => Ok(if args.json {
             json!({ "ok": true, "examples": wish_examples::NAMES }).to_string()

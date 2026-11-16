@@ -133,6 +133,15 @@ fn examples() -> Vec<(&'static str, Value)> {
         ("capture_frame", json!({ "out": "scenes/main.scene.json" })),
         ("describe_view", json!({ "width": 64, "height": 36 })),
         ("logs_get", json!({})),
+        // Input: a known action is held, an unknown one is explained.
+        (
+            "sim_step",
+            json!({ "session": "s1", "frames": 2, "input": { "move": [0, 1], "jump": true } }),
+        ),
+        (
+            "sim_step",
+            json!({ "session": "s1", "input": { "jmup": true } }),
+        ),
         ("sim_stop", json!({ "session": "s2" })),
         ("sim_stop", json!({ "session": "s1" })),
         // Building needs the SDK pack and the compiler, which differ between

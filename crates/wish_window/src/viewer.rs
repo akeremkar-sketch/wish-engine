@@ -1,5 +1,6 @@
 //! The window, its event loop and the viewer's state.
 
+use std::collections::BTreeSet;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -41,6 +42,87 @@ pub trait Content {
     /// A number that changes when any file the scene is made of changes
     /// (see [`fingerprint_dir`]).
     fn fingerprint(&mut self) -> u64;
+
+    /// Whether the content is a running game rather than a still scene. A
+    /// live viewer gives every key to the game (only Escape closes it) and
+    /// draws from the game's own camera.
+    fn live(&self) -> bool {
+        false
+    }
+
+    /// For live content: lets `seconds` of real time pass with the named
+    /// keys held (the names `input.json` uses: `W`, `Space`, `MouseLeft`)
+    /// and returns what to draw. A mistake is reported and the last picture
+    /// stays.
+    fn play(&mut self, _keys: &BTreeSet<String>, _seconds: f64) -> Option<Result<RenderScene>> {
+        None
+    }
+}
+
+/// The name `input.json` uses for a keyboard key, if it has one.
+pub fn key_name(code: KeyCode) -> Option<&'static str> {
+    Some(match code {
+        KeyCode::KeyA => "A",
+        KeyCode::KeyB => "B",
+        KeyCode::KeyC => "C",
+        KeyCode::KeyD => "D",
+        KeyCode::KeyE => "E",
+        KeyCode::KeyF => "F",
+        KeyCode::KeyG => "G",
+        KeyCode::KeyH => "H",
+        KeyCode::KeyI => "I",
+        KeyCode::KeyJ => "J",
+        KeyCode::KeyK => "K",
+        KeyCode::KeyL => "L",
+        KeyCode::KeyM => "M",
+        KeyCode::KeyN => "N",
+        KeyCode::KeyO => "O",
+        KeyCode::KeyP => "P",
+        KeyCode::KeyQ => "Q",
+        KeyCode::KeyR => "R",
+        KeyCode::KeyS => "S",
+        KeyCode::KeyT => "T",
+        KeyCode::KeyU => "U",
+        KeyCode::KeyV => "V",
+        KeyCode::KeyW => "W",
+        KeyCode::KeyX => "X",
+        KeyCode::KeyY => "Y",
+        KeyCode::KeyZ => "Z",
+        KeyCode::Digit0 => "0",
+        KeyCode::Digit1 => "1",
+        KeyCode::Digit2 => "2",
+        KeyCode::Digit3 => "3",
+        KeyCode::Digit4 => "4",
+        KeyCode::Digit5 => "5",
+        KeyCode::Digit6 => "6",
+        KeyCode::Digit7 => "7",
+        KeyCode::Digit8 => "8",
+        KeyCode::Digit9 => "9",
+        KeyCode::F1 => "F1",
+        KeyCode::F2 => "F2",
+        KeyCode::F3 => "F3",
+        KeyCode::F4 => "F4",
+        KeyCode::F5 => "F5",
+        KeyCode::F6 => "F6",
+        KeyCode::F7 => "F7",
+        KeyCode::F8 => "F8",
+        KeyCode::F9 => "F9",
+        KeyCode::F10 => "F10",
+        KeyCode::F11 => "F11",
+        KeyCode::F12 => "F12",
+        KeyCode::Space => "Space",
+        KeyCode::Enter => "Enter",
+        KeyCode::Escape => "Escape",
+        KeyCode::Tab => "Tab",
+        KeyCode::ShiftLeft | KeyCode::ShiftRight => "Shift",
+        KeyCode::ControlLeft | KeyCode::ControlRight => "Ctrl",
+        KeyCode::AltLeft | KeyCode::AltRight => "Alt",
+        KeyCode::ArrowUp => "Up",
+        KeyCode::ArrowDown => "Down",
+        KeyCode::ArrowLeft => "Left",
+        KeyCode::ArrowRight => "Right",
+        _ => return None,
+    })
 }
 
 /// How the viewer starts.
@@ -149,6 +231,7 @@ pub fn run(options: ViewerOptions, content: &mut dyn Content) -> Result<Report> 
         base_camera: None,
         eye: None,
         keys: Movement::default(),
+        held: BTreeSet::new(),
         looking: false,
         view: View::Lit,
         window: None,
@@ -169,6 +252,10 @@ pub fn run(options: ViewerOptions, content: &mut dyn Content) -> Result<Report> 
     app.view = app.options.view;
     app.base_camera = app.scene.cameras.first().copied();
     app.reset_camera();
+    if app.content.live() {
+        // A game draws from its own camera.
+        app.eye = None;
+    }
     for warning in &loaded.warnings {
         app.say(&format!("{warning}"));
     }
@@ -199,6 +286,8 @@ struct App<'a> {
     base_camera: Option<wish_render::CameraView>,
     eye: Option<FlyCamera>,
     keys: Movement,
+    /// The keys and mouse buttons held now, by `input.json` name.
+    held: BTreeSet<String>,
     looking: bool,
     view: View,
     window: Option<Rc<Window>>,
@@ -258,7 +347,7 @@ impl App<'_> {
                     self.scene = loaded.scene;
                     // Keep where the person is looking from.
                     self.base_camera = self.scene.cameras.first().copied();
-                    if self.eye.is_none() {
+                    if self.eye.is_none() && !self.content.live() {
                         self.eye = self.base_camera.as_ref().map(FlyCamera::from_view);
                     }
                     self.report.scene_reloads += 1;
@@ -377,6 +466,20 @@ impl App<'_> {
     }
 
     fn key(&mut self, code: KeyCode, down: bool, event_loop: &ActiveEventLoop) {
+        if self.content.live() {
+            // A running game: every key is the game's, except Escape.
+            if let Some(name) = key_name(code) {
+                if down {
+                    self.held.insert(name.to_owned());
+                } else {
+                    self.held.remove(name);
+                }
+            }
+            if down && code == KeyCode::Escape {
+                event_loop.exit();
+            }
+            return;
+        }
         match code {
             KeyCode::KeyW => self.keys.forward = down,
             KeyCode::KeyS => self.keys.back = down,
@@ -451,6 +554,21 @@ impl ApplicationHandler for App<'_> {
                 }
             }
             WindowEvent::CursorMoved { position, .. } => self.cursor = (position.x, position.y),
+            WindowEvent::MouseInput { state, button, .. } if self.content.live() => {
+                let name = match button {
+                    MouseButton::Left => Some("MouseLeft"),
+                    MouseButton::Right => Some("MouseRight"),
+                    MouseButton::Middle => Some("MouseMiddle"),
+                    _ => None,
+                };
+                if let Some(name) = name {
+                    if state == ElementState::Pressed {
+                        self.held.insert(name.to_owned());
+                    } else {
+                        self.held.remove(name);
+                    }
+                }
+            }
             WindowEvent::MouseInput { state, button, .. } => match (button, state) {
                 (MouseButton::Right, state) => self.looking = state == ElementState::Pressed,
                 (MouseButton::Left, ElementState::Pressed) => self.press_at = Some(self.cursor),
@@ -483,6 +601,19 @@ impl ApplicationHandler for App<'_> {
         let now = Instant::now();
         let seconds = now.duration_since(self.last_frame).as_secs_f32().min(0.1);
         self.last_frame = now;
+        if self.content.live() {
+            match self.content.play(&self.held, f64::from(seconds)) {
+                Some(Ok(scene)) => {
+                    self.scene = scene;
+                    self.dirty = true;
+                }
+                Some(Err(problem)) => {
+                    self.say(&format!("{problem}"));
+                    self.dirty = true;
+                }
+                None => {}
+            }
+        }
         if self.keys.any()
             && let Some(eye) = self.eye.as_mut()
         {

@@ -243,3 +243,186 @@ fn a_component_that_gains_a_field_keeps_its_values_in_a_running_game() {
     );
     assert_eq!(set["ok"], true, "{set}");
 }
+
+const WALKER: &str = r#"
+use wish_sdk::prelude::*;
+
+/// Something the player walks.
+#[component]
+pub struct Walker {
+    /// How fast it walks.
+    #[schema(unit = "m/s", default = 4.0)]
+    pub speed: f32,
+}
+
+#[system]
+fn walk(actions: Actions, mut walkers: Query<(&mut Transform, &Walker)>, time: Res<Time>) {
+    let go = actions.axis2("move");
+    for (transform, walker) in walkers.iter_mut() {
+        transform.translation += Vec3::new(go.x, 0.0, -go.y) * walker.speed * time.delta;
+        if actions.pressed("jump") {
+            transform.translation.y += 1.0;
+        }
+    }
+}
+
+wish_sdk::export! {
+    components: [Walker],
+    systems: [walk],
+}
+"#;
+
+fn hero_at(ws: &mut Workspace) -> Vec<f64> {
+    let agent = parse_actor("agent");
+    let hero = ws.call(
+        "entity_get",
+        &json!({ "session": "s1", "ids": ["hero"] }),
+        &agent,
+    );
+    hero["entities"][0]["components"]["Transform"]["translation"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no hero position in {hero}"))
+        .iter()
+        .map(|n| n.as_f64().unwrap())
+        .collect()
+}
+
+#[test]
+fn a_game_is_played_through_actions_the_tool_gives_it() {
+    let (dir, mut ws) = project("input");
+    let agent = parse_actor("agent");
+    std::fs::write(dir.join(SCRIPTS_ENTRY), WALKER).unwrap();
+    let built = ws.call("script_build", &json!({}), &agent);
+    assert_eq!(built["passed"], true, "{built}");
+    ws.call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "spawn", "id": "hero", "components": { "Transform": {}, "Walker": {} } }] }),
+        &agent,
+    );
+    ws.call("sim_start", &json!({}), &agent);
+
+    // Held for the ticks of the call: forward is -Z, 4 m/s for half a second.
+    let walked = ws.call(
+        "sim_step",
+        &json!({ "frames": 30, "input": { "move": [0, 1] } }),
+        &agent,
+    );
+    assert_eq!(walked["ok"], true, "{walked}");
+    let at = hero_at(&mut ws);
+    assert!((at[2] + 2.0).abs() < 1e-3 && at[0].abs() < 1e-6, "{at:?}");
+
+    // Released afterwards: the next call without input stands still.
+    ws.call("sim_step", &json!({ "frames": 10 }), &agent);
+    assert!((hero_at(&mut ws)[2] + 2.0).abs() < 1e-3);
+
+    // "pressed" is true on the first tick only, however long it is held.
+    ws.call(
+        "sim_step",
+        &json!({ "frames": 5, "input": { "jump": true } }),
+        &agent,
+    );
+    assert!(
+        (hero_at(&mut ws)[1] - 1.0).abs() < 1e-6,
+        "{:?}",
+        hero_at(&mut ws)
+    );
+    ws.call("sim_step", &json!({ "frames": 1 }), &agent);
+    ws.call(
+        "sim_step",
+        &json!({ "frames": 5, "input": { "jump": true } }),
+        &agent,
+    );
+    assert!(
+        (hero_at(&mut ws)[1] - 2.0).abs() < 1e-6,
+        "pressed again after a release"
+    );
+
+    // The same input gives the same world, in a session of its own.
+    let hash = ws.call("sim_step", &json!({ "frames": 1 }), &agent)["world_hash"].clone();
+    ws.call(
+        "sim_start",
+        &json!({ "scene": "scenes/main.scene.json" }),
+        &agent,
+    );
+    ws.call(
+        "sim_step",
+        &json!({ "session": "s2", "frames": 30, "input": { "move": [0, 1] } }),
+        &agent,
+    );
+    ws.call(
+        "sim_step",
+        &json!({ "session": "s2", "frames": 10 }),
+        &agent,
+    );
+    ws.call(
+        "sim_step",
+        &json!({ "session": "s2", "frames": 5, "input": { "jump": true } }),
+        &agent,
+    );
+    ws.call("sim_step", &json!({ "session": "s2", "frames": 1 }), &agent);
+    ws.call(
+        "sim_step",
+        &json!({ "session": "s2", "frames": 5, "input": { "jump": true } }),
+        &agent,
+    );
+    let again =
+        ws.call("sim_step", &json!({ "session": "s2", "frames": 1 }), &agent)["world_hash"].clone();
+    assert_eq!(again, hash);
+
+    // Mistakes are explained.
+    let unknown = ws.call(
+        "sim_step",
+        &json!({ "session": "s1", "input": { "jmup": true } }),
+        &agent,
+    );
+    assert_eq!(unknown["error"]["code"], "unknown_action");
+    assert_eq!(unknown["error"]["hint"], "Did you mean 'jump'?");
+    let wrong = ws.call(
+        "sim_step",
+        &json!({ "session": "s1", "input": { "move": "up" } }),
+        &agent,
+    );
+    assert_eq!(wrong["error"]["code"], "invalid_parameter");
+
+    // A broken input.json is reported by check, with its line.
+    std::fs::write(
+        dir.join("input.json"),
+        "{ \"format\": 1, \"actions\": { \"jump\": { \"kind\": \"button\", \"keys\": [\"Spcae\"] } } }",
+    )
+    .unwrap();
+    let checked = ws.call("check", &json!({}), &agent);
+    assert_eq!(checked["passed"], false, "{checked}");
+    assert_eq!(checked["diagnostics"][0]["code"], "invalid_input_file");
+    assert_eq!(checked["diagnostics"][0]["hint"], "Did you mean 'Space'?");
+}
+
+#[test]
+fn held_keys_drive_a_session_the_way_the_play_window_does() {
+    let (dir, mut ws) = project("play");
+    let agent = parse_actor("agent");
+    std::fs::write(dir.join(SCRIPTS_ENTRY), WALKER).unwrap();
+    assert_eq!(ws.call("script_build", &json!({}), &agent)["passed"], true);
+    ws.call(
+        "edit_apply",
+        &json!({ "ops": [
+            { "op": "spawn", "id": "hero", "components": { "Transform": {}, "Walker": {}, "Primitive": { "shape": "Cube" } } }
+        ] }),
+        &agent,
+    );
+    let started = ws.call("sim_start", &json!({}), &agent);
+    let id = started["session"].as_str().unwrap().to_owned();
+    let keys = |names: &[&str]| -> std::collections::BTreeSet<String> {
+        names.iter().map(|n| (*n).to_owned()).collect()
+    };
+    // The window passes the keys it sees held; W is "move up" in input.json.
+    assert!(ws.play_step(&id, 30, &keys(&["W"])).unwrap().is_empty());
+    let at = hero_at(&mut ws);
+    assert!((at[2] + 2.0).abs() < 1e-3, "{at:?}");
+    // Keys the map does not know are ignored; no key is rest.
+    ws.play_step(&id, 10, &keys(&["Q", "F9"])).unwrap();
+    assert!((hero_at(&mut ws)[2] + 2.0).abs() < 1e-3);
+    // What is drawn is the session's own world: the cube moved with it.
+    let scene = ws.play_scene(&id).unwrap();
+    assert_eq!(scene.draws.len(), 2, "the ground and the hero");
+    assert_eq!(scene.cameras.len(), 1);
+}

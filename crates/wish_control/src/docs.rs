@@ -181,6 +181,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "A hash string is not 32 hexadecimal digits.",
     ),
     (
+        "invalid_input_file",
+        "input.json, the project's map from keys to actions, is not valid. The message says where; a mistyped key name comes with the closest real one.",
+    ),
+    (
         "invalid_op",
         "An operation in edit_apply is malformed: unknown op name, missing or misspelled key, or a value of the wrong kind. location.op says which operation.",
     ),
@@ -613,6 +617,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "Two different types were registered under the same name.",
     ),
     (
+        "unknown_action",
+        "sim_step's input names an action the project does not have. The candidates are the actions in input.json.",
+    ),
+    (
         "unknown_component",
         "No component type has that name. The hint gives the closest; schema_get lists them.",
     ),
@@ -854,6 +862,7 @@ Compile errors come back with file and line; a failed build keeps the old code. 
 the new code between two ticks without losing their state, and its types are usable in `edit_apply` at once.\n\
 All state lives in components and resources (the module restarts every tick). No clock, files or network: time is\n\
 `Res<Time>`, randomness `random_f32()`; a panic or an endless loop turns that system off and is reported with its line.\n\
+Input is actions (`input.json`: `move`, `jump`, ...); systems take `actions: Actions`. Play with `sim_step` `input`: `{{ \"move\": [0, 1], \"jump\": true }}` is held for the ticks of that call.\n\
 \n\
 ## Rules\n\
 \n\

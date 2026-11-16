@@ -10,6 +10,7 @@ use wish_ecs::World;
 pub fn register_engine_types(world: &mut World) -> Result<()> {
     wish_scene::instantiate::register(world)?;
     wish_transform::register(world)?;
+    wish_input::register(world)?;
     wish_render::components::register(world)
 }
 

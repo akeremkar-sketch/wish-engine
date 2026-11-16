@@ -5,6 +5,7 @@
 //! scenes/main.scene.json    a camera, a sun and a ground: something to see
 //! assets/                   models and images go here
 //! scripts/src/lib.rs        game code (Rust with wish_sdk; built by the engine)
+//! input.json                actions and the keys that drive them (move, jump)
 //! .mcp.json                 connects Claude Code and other MCP clients (`wen mcp`)
 //! CLAUDE.md                 how an agent should work in this project
 //! .gitignore
@@ -131,7 +132,10 @@ A Wish Engine project. You work on it through the engine's tools (MCP server `wi
 - Edit the file, then `script_build`: errors come back with file, line and hint; running sessions switch\n\
   to the new code without losing their state. Then `sim_start` / `sim_step` and look.\n\
 - All state lives in components and resources (the module starts fresh every tick). No clock, files or\n\
-  network: time comes from `Res<Time>`, randomness from `wish_sdk::random_f32()` (deterministic).\n"
+  network: time comes from `Res<Time>`, randomness from `wish_sdk::random_f32()` (deterministic).\n\
+- Input is actions, not keys: `input.json` maps keys to named actions (`move`, `jump`), and a system takes\n\
+  `actions: Actions` (`actions.axis2(\"move\")`, `actions.pressed(\"jump\")`). To play the game yourself, give\n\
+  `sim_step` an `input` such as `{{ \"move\": [0, 1], \"jump\": true }}`: it is held for that many ticks.\n"
     )
 }
 
@@ -169,6 +173,12 @@ pub fn create_project(dir: &Path, name: &str, command: &str) -> Result<Vec<Strin
     )?;
     write(dir, "assets/.gitkeep", "", &mut written)?;
     write(dir, "scripts/src/lib.rs", STARTING_CODE, &mut written)?;
+    write(
+        dir,
+        wish_input::INPUT_FILE,
+        &wish_input::InputMap::starter().to_canonical()?,
+        &mut written,
+    )?;
     write(dir, ".mcp.json", &mcp_config(command), &mut written)?;
     write(dir, "CLAUDE.md", &guide(name), &mut written)?;
     write(

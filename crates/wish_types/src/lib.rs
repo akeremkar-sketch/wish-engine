@@ -12,10 +12,12 @@
 //! Nothing here may depend on anything that does not build for
 //! `wasm32-unknown-unknown`.
 
+pub mod input;
 pub mod render;
 pub mod time;
 pub mod transform;
 
+pub use input::{ActionSlot, ActionState, MAX_ACTIONS, action_id};
 pub use render::{
     Ambient, Camera, DirectionalLight, EMISSIVE_NITS, Exposure, Material, Model, Primitive, Shape,
     Sky,

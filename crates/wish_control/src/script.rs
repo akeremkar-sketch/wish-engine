@@ -235,3 +235,45 @@ fn reload_session(
     session.script = Some(runtime);
     Ok(changed)
 }
+
+impl Workspace {
+    /// The project's actions: `input.json`, or none if the project has no
+    /// such file. A broken file is an error (the same one `check` reports).
+    pub(crate) fn input_map(&self) -> Result<wish_input::InputMap> {
+        let path = self.root().join(wish_input::INPUT_FILE);
+        match std::fs::read_to_string(&path) {
+            Ok(text) => wish_input::InputMap::parse(&text, wish_input::INPUT_FILE),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                Ok(wish_input::InputMap::default())
+            }
+            Err(error) => Err(Diagnostic::error(
+                "file_unreadable",
+                format!("Could not read '{}': {error}.", wish_input::INPUT_FILE),
+                "Check that the file can be read.",
+            )),
+        }
+    }
+}
+
+/// Playing a game in real time (`wen play`): the same sessions the tools
+/// use, driven by a window instead of by `sim_step`.
+impl Workspace {
+    /// Lets `frames` ticks pass in session `id` with the named keys held
+    /// (the names `input.json` uses). Returns what looks wrong (a system
+    /// that failed, an inspector finding).
+    pub fn play_step(
+        &mut self,
+        id: &str,
+        frames: u64,
+        keys: &std::collections::BTreeSet<String>,
+    ) -> Result<Vec<Diagnostic>> {
+        let values = self.session(id)?.input.evaluate(keys);
+        let (stepped, ..) = self.step_session(id, frames, None, &values)?;
+        Ok(stepped.diagnostics)
+    }
+
+    /// What session `id` looks like now, for drawing.
+    pub fn play_scene(&self, id: &str) -> Result<wish_render::RenderScene> {
+        wish_render::extract(self.session(id)?.app.world())
+    }
+}

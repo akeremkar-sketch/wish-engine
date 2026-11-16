@@ -3755,6 +3755,7 @@ dependencies = [
  "wish_ecs",
  "wish_examples",
  "wish_import",
+ "wish_input",
  "wish_render",
  "wish_scene",
  "wish_schema",
@@ -3810,6 +3811,17 @@ dependencies = [
  "png",
  "serde_json",
  "wish_core",
+]
+
+[[package]]
+name = "wish_input"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wish_core",
+ "wish_ecs",
+ "wish_types",
 ]
 
 [[package]]

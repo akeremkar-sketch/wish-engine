@@ -41,6 +41,8 @@ pub(crate) struct Session {
     pub reported: BTreeSet<(String, String)>,
     /// The game code running in this session, if the project has any.
     pub script: Option<wish_script::ScriptRuntime>,
+    /// The project's actions (`input.json`) as they were when the session started.
+    pub input: wish_input::InputMap,
 }
 
 /// One entry of the structured log.
@@ -236,6 +238,7 @@ fn step_app(
     frames: u64,
     until: Option<&Expr>,
     cancel: Option<&std::sync::atomic::AtomicBool>,
+    input: &wish_input::Values,
 ) -> Result<Stepped> {
     let before = event_totals(session.app.world());
     let mut diagnostics = Vec::new();
@@ -252,6 +255,11 @@ fn step_app(
         if cancel.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed)) {
             stopped_by = "cancelled";
             break;
+        }
+        // The tick's input, before any system runs. A project without
+        // actions has none, and its world stays as it was.
+        if !session.input.is_empty() {
+            wish_input::apply(session.app.world_mut(), &session.input, input)?;
         }
         let report = session.app.step()?;
         ticks_run += 1;
@@ -420,6 +428,7 @@ impl Workspace {
             ));
         }
         let (app, script) = build_app(self, scene, seed)?;
+        let input = self.input_map()?;
         let id = self.sessions.new_id();
         let tick = app.tick();
         self.sessions.open.insert(
@@ -431,6 +440,7 @@ impl Workspace {
                 saved: Vec::new(),
                 reported: BTreeSet::new(),
                 script,
+                input,
             },
         );
         let started = Diagnostic::info(
@@ -472,10 +482,11 @@ impl Workspace {
         id: &str,
         frames: u64,
         until: Option<&Expr>,
+        input: &wish_input::Values,
     ) -> Result<(Stepped, u64, String, usize)> {
         let cancel = self.cancel.clone();
         let session = self.session_mut(id)?;
-        let mut stepped = step_app(session, frames, until, cancel.as_deref())?;
+        let mut stepped = step_app(session, frames, until, cancel.as_deref(), input)?;
         stepped.diagnostics.extend(inspect(session));
         let tick = session.app.tick();
         let hash = session.app.hash().to_string();

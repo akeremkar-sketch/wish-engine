@@ -29,6 +29,7 @@ wish_types = { path = "crates/wish_types" }
 wish_sdk = { path = "crates/wish_sdk" }
 wish_sdk_macros = { path = "crates/wish_sdk_macros" }
 wish_script = { path = "crates/wish_script" }
+wish_input = { path = "crates/wish_input" }
 
 # External crates. Check the license before adding one (see deny.toml).
 #

@@ -274,3 +274,68 @@ impl<T: Event> SystemParam for EventWriter<T> {
         Self { _type: PhantomData }
     }
 }
+
+/// The player's input this tick, as actions (`input.json` names them).
+///
+/// ```ignore
+/// #[system]
+/// fn walk(actions: Actions, mut players: Query<&mut Transform, With<Player>>, time: Res<Time>) {
+///     let walk = actions.axis2("move");
+///     for transform in players.iter_mut() {
+///         transform.translation += Vec3::new(walk.x, 0.0, -walk.y) * 4.0 * time.delta;
+///     }
+///     if actions.pressed("jump") { /* ... */ }
+/// }
+/// ```
+///
+/// A name the project's `input.json` does not have reads as at rest, so a
+/// mistyped name shows as an action that never happens; `script_build`'s
+/// companion `check` lists the names the project has.
+pub struct Actions {
+    state: wish_types::ActionState,
+}
+
+impl Actions {
+    fn slot(&self, name: &str) -> Option<&wish_types::ActionSlot> {
+        self.state.slot(name)
+    }
+
+    /// Whether the action is active now (a button is down, an axis is away
+    /// from zero).
+    pub fn held(&self, name: &str) -> bool {
+        self.slot(name).is_some_and(|slot| slot.held)
+    }
+
+    /// Whether the action became active this tick.
+    pub fn pressed(&self, name: &str) -> bool {
+        self.slot(name).is_some_and(|slot| slot.pressed)
+    }
+
+    /// Whether the action stopped being active this tick.
+    pub fn released(&self, name: &str) -> bool {
+        self.slot(name).is_some_and(|slot| slot.released)
+    }
+
+    /// The value of a one-axis (or button) action, from -1 to 1.
+    pub fn axis(&self, name: &str) -> f32 {
+        self.slot(name).map_or(0.0, |slot| slot.x)
+    }
+
+    /// The value of a two-axis action: x to the right, y up.
+    pub fn axis2(&self, name: &str) -> wish_core::math::Vec2 {
+        self.slot(name).map_or(wish_core::math::Vec2::ZERO, |slot| {
+            wish_core::math::Vec2::new(slot.x, slot.y)
+        })
+    }
+}
+
+impl SystemParam for Actions {
+    fn describe(types: &mut TypeTable) -> Value {
+        json!({ "res": { "type": types.resource::<wish_types::ActionState>(), "write": false } })
+    }
+    fn fetch(section: Section) -> Self {
+        Self {
+            state: decode(section.bytes(), "ActionState"),
+        }
+    }
+}

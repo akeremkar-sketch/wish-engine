@@ -14,6 +14,7 @@ wish_asset.workspace = true
 wish_core.workspace = true
 wish_ecs.workspace = true
 wish_examples.workspace = true
+wish_input.workspace = true
 wish_import.workspace = true
 wish_render.workspace = true
 wish_scene.workspace = true
