@@ -27,6 +27,7 @@ pub mod project;
 pub mod render;
 mod replays;
 pub mod scaffold;
+mod scenarios;
 mod script;
 mod sessions;
 pub mod tool;

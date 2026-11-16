@@ -117,8 +117,8 @@ fn every_catalogue_tool_is_listed_with_its_schema() {
     assert_eq!(tools.len(), catalog().len());
     assert_eq!(
         tools.len(),
-        22,
-        "20 tools of M4 (design note §5), script_build and replay (M5)"
+        23,
+        "20 tools of M4 (design note §5), script_build, replay and test_run (M5)"
     );
     for (listed, tool) in tools.iter().zip(catalog()) {
         assert_eq!(listed["name"], tool.name);

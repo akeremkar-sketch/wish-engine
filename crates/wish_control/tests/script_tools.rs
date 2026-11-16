@@ -611,3 +611,202 @@ fn going_back_to_a_snapshot_rewinds_the_recording_too() {
     let nameless = ws.call("replay", &json!({ "action": "run" }), &agent);
     assert_eq!(nameless["error"]["code"], "missing_parameter");
 }
+
+fn write_test(dir: &std::path::Path, name: &str, text: &str) {
+    let path = dir.join("tests").join(format!("{name}.test.json"));
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, text).unwrap();
+}
+
+#[test]
+fn scenario_tests_play_the_game_and_say_what_failed() {
+    let (dir, mut ws) = walking_project("scenarios");
+    let agent = parse_actor("agent");
+    write_test(
+        &dir,
+        "walk",
+        r#"{ "format": 1, "scene": "scenes/main.scene.json", "seed": 1, "steps": [
+            { "input": { "move": [0, 1] }, "frames": 30 },
+            { "expect": "Transform.translation.z < -1.9 && Transform.translation.z > -2.1", "entity": "hero" },
+            { "input": { "jump": true }, "frames": 1 },
+            { "expect": "Transform.translation.y == 1", "entity": "hero", "message": "jumping lifts the hero by a meter" },
+            { "until": "Transform.translation.z < -10", "input": { "move": [0, 1] }, "max_frames": 600 }
+        ] }"#,
+    );
+    write_test(
+        &dir,
+        "far",
+        r#"{ "format": 1, "scene": "scenes/main.scene.json", "steps": [
+            { "input": { "move": [0, 1] }, "frames": 30 },
+            { "expect": "Transform.translation.z < -50", "entity": "hero", "message": "the hero walks far" }
+        ] }"#,
+    );
+    write_test(
+        &dir,
+        "never",
+        r#"{ "format": 1, "scene": "scenes/main.scene.json", "steps": [
+            { "until": "Transform.translation.x > 100", "max_frames": 10 }
+        ] }"#,
+    );
+    write_test(
+        &dir,
+        "broken",
+        r#"{ "format": 1, "scene": "scenes/main.scene.json", "steps": [ { "jump": 3 } ] }"#,
+    );
+
+    let all = ws.call("test_run", &json!({}), &agent);
+    assert_eq!(all["ok"], true, "{all}");
+    assert_eq!(all["passed"], false);
+    assert_eq!(
+        (all["tests"].as_u64(), all["failed"].as_u64()),
+        (Some(5), Some(3)),
+        "{all}"
+    );
+    let result = |name: &str| {
+        all["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["name"] == name)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(result("walk")["passed"], true, "{}", result("walk"));
+    assert!(result("walk")["ticks"].as_u64().unwrap() > 120);
+
+    let far = result("far");
+    assert_eq!(far["passed"], false);
+    let why = &far["failure"];
+    assert_eq!(
+        (why["step"].as_u64(), why["tick"].as_u64()),
+        (Some(1), Some(30)),
+        "{why}"
+    );
+    assert_eq!(why["kind"], "expect");
+    assert_eq!(why["message"], "the hero walks far");
+    // What was there: the hero's z, the value that did not fit.
+    let z = why["values"]["entities"][0]["values"]["Transform.translation[2]"]
+        .as_f64()
+        .unwrap_or_else(|| panic!("no z in {why}"));
+    assert!((z + 2.0).abs() < 1e-3, "{why}");
+    assert_eq!(why["values"]["entities"][0]["entity"], "hero");
+
+    assert_eq!(
+        result("never")["failure"]["kind"],
+        "until_not_reached",
+        "{}",
+        result("never")
+    );
+    assert_eq!(result("broken")["failure"]["kind"], "setup");
+    assert!(
+        result("broken")["failure"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("jump")
+    );
+
+    // Some of them, and the ones that are not there.
+    let some = ws.call(
+        "test_run",
+        &json!({ "paths": ["tests/walk.test.json"] }),
+        &agent,
+    );
+    assert_eq!(some["passed"], true, "{some}");
+    let missing = ws.call(
+        "test_run",
+        &json!({ "paths": ["tests/wlak.test.json"] }),
+        &agent,
+    );
+    assert_eq!(missing["error"]["code"], "test_not_found");
+    assert_eq!(
+        missing["error"]["hint"],
+        "Did you mean 'tests/walk.test.json'?"
+    );
+
+    // The tests and their pictures are not assets.
+    let assets = ws.call("asset_list", &json!({}), &agent);
+    assert_eq!(assets["matched"], 0, "{assets}");
+}
+
+#[test]
+fn golden_pictures_are_made_compared_and_explained() {
+    let (dir, mut ws) = walking_project("golden");
+    let agent = parse_actor("agent");
+    ws.call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "set", "id": "hero", "component": "Primitive", "value": { "shape": "Cube" } }] }),
+        &agent,
+    );
+    write_test(
+        &dir,
+        "look",
+        r#"{ "format": 1, "scene": "scenes/main.scene.json", "steps": [
+            { "capture": { "camera": "camera", "golden": "tests/golden/hero.png", "width": 96, "height": 54 } }
+        ] }"#,
+    );
+    let missing = ws.call(
+        "test_run",
+        &json!({ "paths": ["tests/look.test.json"] }),
+        &agent,
+    );
+    assert_eq!(
+        missing["results"][0]["failure"]["kind"], "golden_missing",
+        "{missing}"
+    );
+    // A dry run writes nothing.
+    ws.call(
+        "test_run",
+        &json!({ "paths": ["tests/look.test.json"], "update_golden": true, "dry_run": true }),
+        &agent,
+    );
+    assert!(!dir.join("tests/golden/hero.png").exists());
+    let made = ws.call(
+        "test_run",
+        &json!({ "paths": ["tests/look.test.json"], "update_golden": true }),
+        &agent,
+    );
+    assert_eq!(made["passed"], true, "{made}");
+    assert!(dir.join("tests/golden/hero.png").is_file());
+    assert_eq!(
+        ws.call(
+            "test_run",
+            &json!({ "paths": ["tests/look.test.json"] }),
+            &agent
+        )["passed"],
+        true
+    );
+
+    // The hero moves: the picture differs; the new one is kept to look at.
+    ws.call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "set", "id": "hero", "component": "Transform", "value": { "translation": [-2, 0.5, 1] } }] }),
+        &agent,
+    );
+    let changed = ws.call(
+        "test_run",
+        &json!({ "paths": ["tests/look.test.json"] }),
+        &agent,
+    );
+    assert_eq!(changed["passed"], false, "{changed}");
+    let why = &changed["results"][0]["failure"];
+    assert_eq!(why["kind"], "capture");
+    assert!(
+        why["message"].as_str().unwrap().contains("differs"),
+        "{why}"
+    );
+    assert!(dir.join(why["actual"].as_str().unwrap()).is_file());
+    // Accepting the new picture makes it pass again.
+    ws.call(
+        "test_run",
+        &json!({ "paths": ["tests/look.test.json"], "update_golden": true }),
+        &agent,
+    );
+    assert_eq!(
+        ws.call(
+            "test_run",
+            &json!({ "paths": ["tests/look.test.json"] }),
+            &agent
+        )["passed"],
+        true
+    );
+}

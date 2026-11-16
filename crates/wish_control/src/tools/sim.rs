@@ -419,7 +419,7 @@ fn logs_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<Str
 
 /// What the player does during a `sim_step`: `{ "move": [0, 1], "jump": true }`
 /// against the session's action names.
-fn parse_input(
+pub(crate) fn parse_input(
     workspace: &Workspace,
     session: &str,
     given: Option<&Value>,

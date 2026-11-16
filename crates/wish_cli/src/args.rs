@@ -10,8 +10,8 @@ use wish_core::{Diagnostic, Result};
 /// The commands `wen` understands.
 pub const COMMANDS: &[&str] = &[
     "run", "bench", "schema", "mv", "check", "fmt", "migrate", "watch", "capture", "describe",
-    "shaders", "view", "call", "do", "new", "build", "play", "replay", "sdk", "mcp", "examples",
-    "help", "version",
+    "shaders", "view", "call", "do", "new", "build", "play", "replay", "test", "sdk", "mcp",
+    "examples", "help", "version",
 ];
 
 /// A parsed command line.
@@ -104,6 +104,15 @@ pub enum Command {
     },
     /// Play the project's game in a window.
     Play(PlayArgs),
+    /// Run the project's scenario tests (the `test_run` tool).
+    Test {
+        /// Only these test files (all when empty).
+        paths: Vec<String>,
+        /// The project folder.
+        root: Option<String>,
+        /// Save the pictures as the golden images.
+        update_golden: bool,
+    },
     /// Play a recorded replay back and compare every tick (the `replay` tool's run).
     Replay {
         /// The replay's name.
@@ -452,6 +461,11 @@ fn flags_of(command: &str) -> &'static [(&'static str, bool)] {
         "new" => &[("--name", true), ("--json", false)],
         "build" => &[("--root", true), ("--dry-run", false), ("--json", false)],
         "replay" => &[("--root", true), ("--json", false)],
+        "test" => &[
+            ("--root", true),
+            ("--update-golden", false),
+            ("--json", false),
+        ],
         "play" => &[
             ("--root", true),
             ("--scene", true),
@@ -696,6 +710,11 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
                 },
             }
         }
+        "test" => Command::Test {
+            paths: positional.iter().map(|path| (*path).to_owned()).collect(),
+            root: value_of("--root").map(str::to_owned),
+            update_golden: values.iter().any(|(flag, _)| *flag == "--update-golden"),
+        },
         "replay" => {
             if positional.len() != 1 {
                 return Err(usage_error(

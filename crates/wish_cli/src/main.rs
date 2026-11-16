@@ -52,6 +52,7 @@ USAGE:
     wen shaders [--dir <folder>] [--json]
     wen new <folder> [--name <name>] [--json]
     wen build [--root <folder>] [--dry-run] [--json]
+    wen test [files...] [--root <folder>] [--update-golden] [--json]
     wen replay <name> [--root <folder>] [--json]
     wen play [--root <folder>] [--scene <file>] [--size <w>x<h>] [--software] [--exit-after <frames>]
     wen sdk [--out <folder>] [--json]
@@ -109,6 +110,10 @@ COMMANDS:
                scripts/src/lib.rs builds the new code and switches to it without stopping the game
                or losing its state; a compile error is shown and the old code keeps running. Escape
                closes the window. Needs a desktop session. Edits to scenes need a restart.
+    test       Run the project's scenario tests (tests/*.test.json): each plays the game from a scene and
+               a seed through its steps and says which step failed, at which tick, with the values
+               the condition read. Pictures are compared with golden images (software adapter);
+               --update-golden saves them instead. Exits with failure if any test fails.
     replay     Play a recorded replay (replays/<name>.replay.jsonl) back in a new session and compare
                the world after every tick with the recording: passes when the game plays out exactly
                as it did, otherwise says the first tick that differs. Exits with failure if it differs.
@@ -231,6 +236,22 @@ fn execute_any(args: Args) -> Result<Outcome> {
             args.json,
             tool_cmds::build_text,
         )),
+        Command::Test {
+            paths,
+            root,
+            update_golden,
+        } => Ok(tool_cmds::shortcut(
+            "test_run",
+            &serde_json::json!({ "paths": paths, "update_golden": update_golden }),
+            &args::ToolContext {
+                root: root.clone(),
+                example: None,
+                actor: None,
+                software: true,
+            },
+            args.json,
+            tool_cmds::test_text,
+        )),
         Command::Replay { name, root } => Ok(tool_cmds::shortcut(
             "replay",
             &serde_json::json!({ "action": "run", "name": name }),
@@ -299,6 +320,7 @@ fn execute(args: Args) -> Result<String> {
         | Command::New { .. }
         | Command::Build { .. }
         | Command::Replay { .. }
+        | Command::Test { .. }
         | Command::Sdk { .. }
         | Command::Capture(_)
         | Command::Describe(_)

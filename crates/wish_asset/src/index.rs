@@ -12,6 +12,10 @@ use wish_core::{Diagnostic, Result};
 /// compiles, not assets.
 pub const SCRIPTS_FOLDER: &str = "scripts/";
 
+/// Folders of the project that are not assets: game code, scenario tests
+/// (and their golden images) and replays.
+pub const NON_ASSET_FOLDERS: &[&str] = &[SCRIPTS_FOLDER, "tests/", "replays/"];
+
 /// Whether a file name is an engine document rather than an asset: a scene,
 /// a prefab or a meta file.
 pub fn is_document(name: &str) -> bool {
@@ -102,7 +106,12 @@ impl AssetIndex {
     pub fn scan(root: &Path) -> Result<Self> {
         let files = walk_files(root)?
             .into_iter()
-            .filter(|(path, _)| !is_document(path) && !path.starts_with(SCRIPTS_FOLDER))
+            .filter(|(path, _)| {
+                !is_document(path)
+                    && !NON_ASSET_FOLDERS
+                        .iter()
+                        .any(|folder| path.starts_with(folder))
+            })
             .map(|(path, _)| path)
             .collect();
         Ok(Self { files })

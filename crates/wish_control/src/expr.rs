@@ -702,6 +702,49 @@ impl Expr {
     pub fn matches(&self, subject: &dyn Subject) -> bool {
         self.eval(subject).is_true()
     }
+
+    /// Every component path the expression reads (`Score.points`,
+    /// `Transform.translation[1]`), each with its value for `subject`, in
+    /// the order they appear, once each. For saying why a condition did not
+    /// hold.
+    pub fn path_values(&self, subject: &dyn Subject) -> Vec<(String, Val)> {
+        let mut found = Vec::new();
+        collect_paths(&self.node, subject, &mut found);
+        found
+    }
+}
+
+fn collect_paths(node: &Node, subject: &dyn Subject, found: &mut Vec<(String, Val)>) {
+    match node {
+        Node::Path(component, steps) => {
+            let mut text = component.clone();
+            for step in steps {
+                match step {
+                    Step::Field(field) => {
+                        text.push('.');
+                        text.push_str(field);
+                    }
+                    Step::Index(index) => text.push_str(&format!("[{index}]")),
+                }
+            }
+            if !found.iter().any(|(seen, _)| *seen == text) {
+                found.push((text, eval(node, subject)));
+            }
+        }
+        Node::List(items) | Node::Call(_, items) => {
+            for item in items {
+                collect_paths(item, subject, found);
+            }
+        }
+        Node::Select(inner, _) | Node::Not(inner) | Node::Neg(inner) => {
+            collect_paths(inner, subject, found);
+        }
+        Node::Binary(_, left, right) => {
+            collect_paths(left, subject, found);
+            collect_paths(right, subject, found);
+        }
+        Node::Literal(_) | Node::Id | Node::Has(_) => {}
+    }
 }
 
 fn eval(node: &Node, subject: &dyn Subject) -> Val {

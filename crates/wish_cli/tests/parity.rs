@@ -147,6 +147,9 @@ fn examples() -> Vec<(&'static str, Value)> {
         ("replay", json!({ "action": "run", "name": "parity" })),
         ("replay", json!({ "action": "run", "name": "nothing" })),
         ("sim_stop", json!({ "session": "s3" })),
+        // Scenario tests: none yet, then one that cannot be found.
+        ("test_run", json!({})),
+        ("test_run", json!({ "paths": ["tests/win.test.json"] })),
         // Input: a known action is held, an unknown one is explained.
         (
             "sim_step",

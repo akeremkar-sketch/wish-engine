@@ -537,3 +537,43 @@ pub fn replay_text(answer: &Value) -> String {
     }
     text
 }
+
+/// Text for a `test_run` answer.
+pub fn test_text(answer: &Value) -> String {
+    let mut text = String::new();
+    for result in answer["results"].as_array().into_iter().flatten() {
+        let name = result["name"].as_str().unwrap_or_default();
+        if result["passed"] == true {
+            text.push_str(&format!("ok      {name} ({} ticks)\n", result["ticks"]));
+            continue;
+        }
+        let why = &result["failure"];
+        text.push_str(&format!(
+            "FAILED  {name}: step {} at tick {}: {}\n",
+            why["step"],
+            why["tick"],
+            why["message"].as_str().unwrap_or_default()
+        ));
+        if let Some(values) = why["values"]["entities"].as_array() {
+            for entity in values {
+                text.push_str(&format!(
+                    "          {} {}\n",
+                    entity["entity"], entity["values"]
+                ));
+            }
+        }
+        if let Some(world) = why["values"]["world"].as_object()
+            && !world.is_empty()
+        {
+            text.push_str(&format!("          world {}\n", why["values"]["world"]));
+        }
+        if let Some(hint) = why["hint"].as_str() {
+            text.push_str(&format!("          {hint}\n"));
+        }
+    }
+    text.push_str(&format!(
+        "{} test(s), {} failed.",
+        answer["tests"], answer["failed"]
+    ));
+    text
+}

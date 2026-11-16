@@ -25,6 +25,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "No asset file has that path. Paths are project-relative with '/' between folders; asset_list shows what exists.",
     ),
     (
+        "capture_failed",
+        "A scenario test's capture step could not take its picture (no camera, or the camera named does not exist); the message says which.",
+    ),
+    (
         "component_not_found",
         "The entity does not have the component the operation needs. Add it first (set adds a missing component) or check the name with schema_get.",
     ),
@@ -223,6 +227,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "invalid_system_name",
         "A system name is empty or contains characters that are not allowed.",
+    ),
+    (
+        "invalid_test_file",
+        "A scenario test file (tests/*.test.json) is not valid; the message names the step and what is wrong. A test has format 1, a scene, a seed and steps: frames, until, expect or capture.",
     ),
     (
         "invalid_text_handle",
@@ -625,6 +633,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "System ordering constraints form a circle (a before b before a).",
     ),
     (
+        "test_not_found",
+        "test_run was given a file that is not one of the project's tests (tests/*.test.json); the hint lists them.",
+    ),
+    (
         "text_unavailable",
         "A text value could not be stored or found.",
     ),
@@ -643,6 +655,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "too_many_snapshots",
         "A session holds the most snapshots it may (each is a whole world). Restore or fork from one you have, or start a new session.",
+    ),
+    (
+        "too_many_tests",
+        "One test_run runs at most 200 tests; run a part with paths.",
     ),
     (
         "too_many_texts",
@@ -906,7 +922,8 @@ Compile errors come back with file and line; a failed build keeps the old code. 
 the new code between two ticks without losing their state, and its types are usable in `edit_apply` at once.\n\
 All state lives in components and resources (the module restarts every tick). No clock, files or network: time is\n\
 `Res<Time>`, randomness `random_f32()`; a panic or an endless loop turns that system off and is reported with its line.\n\
-Replays: `replay` records a session from tick 0, saves it, and `run` plays it back checking the world after every tick; run them after changing the code to see whether the game still plays the same.
+Tests: `tests/*.test.json` (`{{ \"format\": 1, \"scene\": ..., \"seed\": 1, \"steps\": [ {{ \"input\": {{...}}, \"frames\": 60 }}, {{ \"expect\": \"Score.points >= 1\" }} ] }}`); `test_run` runs them and explains the first failing step with the tick and the values read.
+\nReplays: `replay` records a session from tick 0, saves it, and `run` plays it back checking the world after every tick; run them after changing the code to see whether the game still plays the same.
 \nInput is actions (`input.json`: `move`, `jump`, ...); systems take `actions: Actions`. Play with `sim_step` `input`: `{{ \"move\": [0, 1], \"jump\": true }}` is held for the ticks of that call.\n\
 \n\
 ## Rules\n\
