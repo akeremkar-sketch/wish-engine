@@ -83,7 +83,7 @@ pub fn collect_setup(dir: &Path) -> Result<(), String> {
 }
 
 /// Builds the agent's code, then runs `hidden` and the agent's own tests.
-fn play_check(probe: &mut Probe, dir: &Path, hidden: &Value) -> Verdict {
+pub fn play_check(probe: &mut Probe, dir: &Path, hidden: &Value) -> Verdict {
     let built = probe.call("script_build", json!({}))?;
     if built["passed"] != true {
         return Err(format!(

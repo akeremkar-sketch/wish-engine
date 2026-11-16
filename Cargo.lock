@@ -4303,9 +4303,11 @@ dependencies = [
 name = "wish_evals"
 version = "0.1.0"
 dependencies = [
+ "png",
  "serde_json",
  "wish_control",
  "wish_core",
+ "wish_import",
 ]
 
 [[package]]

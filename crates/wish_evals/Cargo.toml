@@ -12,9 +12,11 @@ name = "wish-evals"
 path = "src/main.rs"
 
 [dependencies]
+png.workspace = true
 serde_json.workspace = true
 wish_control.workspace = true
 wish_core.workspace = true
+wish_import.workspace = true
 
 [lints]
 workspace = true

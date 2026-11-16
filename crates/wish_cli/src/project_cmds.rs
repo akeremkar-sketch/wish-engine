@@ -75,14 +75,24 @@ fn render(diagnostics: &[Diagnostic]) -> String {
 /// lists the ones that are not).
 pub fn format(
     paths: &[String],
-    example: &str,
+    example: Option<&str>,
     root: &Path,
     check_only: bool,
     as_json: bool,
 ) -> Result<Outcome> {
     let paths = &resolve(paths, root)?;
-    let app = registry_app(example)?;
-    let project = load_project(root, app.world().registry())?;
+    // The types: an example's, or the project's own (the engine's, its
+    // example's and its built game code's), as the tools see them.
+    let project = match example {
+        Some(example) => load_project(root, registry_app(example)?.world().registry())?,
+        None => {
+            let workspace = wish_control::Workspace::open(wish_control::WorkspaceOptions {
+                root: root.to_path_buf(),
+                example: None,
+            })?;
+            load_project(root, workspace.registry())?
+        }
+    };
     let mut changed: Vec<&str> = Vec::new();
     let mut skipped: Vec<&str> = Vec::new();
     for file in project

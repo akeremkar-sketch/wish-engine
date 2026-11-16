@@ -446,3 +446,35 @@ fn rays_overlaps_and_contacts_answer_questions() {
     assert_eq!(bad.code, "invalid_parameter");
     assert!(!bad.hint.is_empty());
 }
+
+#[test]
+fn a_bouncy_ball_bounces_off_a_dull_floor() {
+    // Restitution 1 on the ball alone: the bouncier of the two decides, so
+    // it comes back up most of the way (M6 closing review).
+    let mut app = app();
+    floor(&mut app);
+    let ball = crate_at(&mut app, Vec3::new(0.0, 4.0, 0.0));
+    app.world_mut()
+        .insert(
+            ball,
+            Collider {
+                shape: ColliderShape::Sphere,
+                restitution: 1.0,
+                ..Collider::default()
+            },
+        )
+        .unwrap();
+    let mut touched = false;
+    let mut highest = 0.0f32;
+    for _ in 0..240 {
+        run(&mut app, 1);
+        let height = y(&app, ball);
+        if height < 0.6 {
+            touched = true;
+        } else if touched {
+            highest = highest.max(height);
+        }
+    }
+    assert!(touched);
+    assert!(highest > 3.0, "bounced back up to {highest}");
+}

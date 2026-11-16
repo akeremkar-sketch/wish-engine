@@ -10,6 +10,7 @@
 //! ```
 
 mod game_tasks;
+mod m6_tasks;
 mod probe;
 mod tasks;
 
@@ -254,6 +255,7 @@ fn flag<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
 fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut tasks = tasks::all();
+    tasks.extend(m6_tasks::all());
     if let Some(wanted) = flag(&args, "--tasks") {
         let wanted: Vec<&str> = wanted.split(',').collect();
         tasks.retain(|task| wanted.iter().any(|w| task.id.starts_with(w)));

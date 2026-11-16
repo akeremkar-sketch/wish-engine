@@ -1,0 +1,30 @@
+{
+  "format": 1,
+  "actions": {
+    "jump": {
+      "kind": "button",
+      "keys": [
+        "Space"
+      ]
+    },
+    "move": {
+      "kind": "axis2",
+      "up": [
+        "W",
+        "Up"
+      ],
+      "down": [
+        "S",
+        "Down"
+      ],
+      "left": [
+        "A",
+        "Left"
+      ],
+      "right": [
+        "D",
+        "Right"
+      ]
+    }
+  }
+}

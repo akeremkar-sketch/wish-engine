@@ -344,6 +344,10 @@ fn apply_collider(collider: &mut rp::Collider, desc: &Collider, scale: Vec3) {
     collider.set_translation_wrt_parent(rv(desc.offset * scale));
     collider.set_friction(desc.friction.clamp(0.0, 10.0));
     collider.set_restitution(desc.restitution.clamp(0.0, 1.0));
+    // The bouncier of two decides, as `Collider.restitution` says: a ball
+    // of 1 bounces back to its height off a floor of 0 (Rapier's default
+    // averages them, which would halve it).
+    collider.set_restitution_combine_rule(rp::CoefficientCombineRule::Max);
     collider.set_density(desc.density.clamp(0.001, 100_000.0));
     collider.set_sensor(desc.sensor);
     collider.set_collision_groups(groups(desc));

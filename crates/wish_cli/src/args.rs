@@ -70,8 +70,9 @@ pub enum Command {
     Check {
         /// Report only these project-relative files (all when empty).
         paths: Vec<String>,
-        /// The example whose component types the documents use.
-        example: String,
+        /// The example whose component types the documents use (default:
+        /// the project's own types, game code included).
+        example: Option<String>,
         /// The project folder (default: the current folder).
         root: Option<String>,
     },
@@ -79,8 +80,9 @@ pub enum Command {
     Format {
         /// Format only these project-relative files (all when empty).
         paths: Vec<String>,
-        /// The example whose component types the documents use.
-        example: String,
+        /// The example whose component types the documents use (default:
+        /// the project's own types, game code included).
+        example: Option<String>,
         /// The project folder (default: the current folder).
         root: Option<String>,
         /// Only report files that are not canonical; change nothing.
@@ -684,7 +686,25 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
                 dry_run: values.iter().any(|(flag, _)| *flag == "--dry-run"),
             }
         }
-        "check" | "fmt" | "watch" => {
+        "check" | "fmt" => {
+            let example = value_of("--example").map(str::to_owned);
+            let root = value_of("--root").map(str::to_owned);
+            let paths: Vec<String> = positional.iter().map(|path| (*path).to_owned()).collect();
+            match command {
+                "check" => Command::Check {
+                    paths,
+                    example,
+                    root,
+                },
+                _ => Command::Format {
+                    paths,
+                    example,
+                    root,
+                    check: values.iter().any(|(flag, _)| *flag == "--check"),
+                },
+            }
+        }
+        "watch" => {
             let example = value_of("--example")
                 .ok_or_else(|| {
                     usage_error(
@@ -696,30 +716,19 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
                     )
                 })?
                 .to_owned();
-            let root = value_of("--root").map(str::to_owned);
-            let paths: Vec<String> = positional.iter().map(|path| (*path).to_owned()).collect();
-            match command {
-                "check" => Command::Check { paths, example, root },
-                "fmt" => Command::Format {
-                    paths,
-                    example,
-                    root,
-                    check: values.iter().any(|(flag, _)| *flag == "--check"),
-                },
-                _ => Command::Watch {
-                    example,
-                    scene: value_of("--scene")
-                        .ok_or_else(|| {
-                            usage_error(
-                                "'wen watch' needs a --scene to load.".to_owned(),
-                                "Add --scene <file>, a path relative to the project folder.".to_owned(),
-                            )
-                        })?
-                        .to_owned(),
-                    root,
-                    seconds: value_of("--seconds")
-                        .map_or(Ok(0), |value| parse_number("--seconds", value))?,
-                },
+            Command::Watch {
+                example,
+                scene: value_of("--scene")
+                    .ok_or_else(|| {
+                        usage_error(
+                            "'wen watch' needs a --scene to load.".to_owned(),
+                            "Add --scene <file>, a path relative to the project folder.".to_owned(),
+                        )
+                    })?
+                    .to_owned(),
+                root: value_of("--root").map(str::to_owned),
+                seconds: value_of("--seconds")
+                    .map_or(Ok(0), |value| parse_number("--seconds", value))?,
             }
         }
         "test" => Command::Test {

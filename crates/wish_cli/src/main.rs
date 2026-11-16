@@ -190,7 +190,7 @@ fn execute_any(args: Args) -> Result<Outcome> {
             &serde_json::json!({ "paths": paths }),
             &args::ToolContext {
                 root: root.clone(),
-                example: Some(example.clone()),
+                example: example.clone(),
                 actor: None,
                 software: false,
             },
@@ -220,7 +220,7 @@ fn execute_any(args: Args) -> Result<Outcome> {
             example,
             root,
             check,
-        } => project_cmds::format(paths, example, &root_of(root), *check, args.json),
+        } => project_cmds::format(paths, example.as_deref(), &root_of(root), *check, args.json),
         Command::Shaders { dir } => capture::shaders(dir.as_deref(), args.json),
         Command::Capture(capture) => Ok(tool_cmds::capture(capture, args.json)),
         Command::Describe(describe) => Ok(tool_cmds::describe(describe, args.json)),

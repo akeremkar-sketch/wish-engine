@@ -885,3 +885,56 @@ fn the_collect_example_builds_is_won_by_its_test_and_replays() {
     let replayed = ws.call("replay", &json!({ "action": "run", "name": "win" }), &agent);
     assert_eq!(replayed["passed"], true, "{replayed}");
 }
+
+/// The platformer in `examples/hop` (M6's example game): a physics
+/// character, sensor coins, sparks, and an interface; its test wins it, and
+/// a recorded win replays bit for bit.
+#[test]
+fn the_hop_example_builds_is_won_by_its_test_and_replays() {
+    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/hop");
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("example-hop");
+    let _ = std::fs::remove_dir_all(&dir);
+    copy_dir(&source, &dir);
+    let mut ws = open(&dir);
+    let agent = parse_actor("agent");
+    let built = ws.call("script_build", &json!({}), &agent);
+    assert_eq!(built["passed"], true, "{built}");
+    assert_eq!(built["warnings"], 0, "no warnings: {built}");
+    let checked = ws.call("check", &json!({}), &agent);
+    assert_eq!(checked["passed"], true, "{checked}");
+    assert_eq!(
+        checked["diagnostics"],
+        json!([]),
+        "canonical files: {checked}"
+    );
+    let tests = ws.call("test_run", &json!({}), &agent);
+    assert_eq!(tests["passed"], true, "{tests}");
+    assert_eq!(tests["tests"], 2);
+
+    let started = ws.call("sim_start", &json!({}), &agent);
+    let id = started["session"].as_str().unwrap().to_owned();
+    ws.call(
+        "replay",
+        &json!({ "action": "record", "session": id }),
+        &agent,
+    );
+    for (input, frames) in [
+        (json!({ "move": [1, 0] }), 40),
+        (json!({ "move": [1, 0], "jump": true }), 1),
+        (json!({ "move": [1, 0] }), 90),
+        (json!({}), 30),
+    ] {
+        ws.call(
+            "sim_step",
+            &json!({ "session": id, "frames": frames, "input": input }),
+            &agent,
+        );
+    }
+    ws.call(
+        "replay",
+        &json!({ "action": "save", "session": id, "name": "hop" }),
+        &agent,
+    );
+    let replayed = ws.call("replay", &json!({ "action": "run", "name": "hop" }), &agent);
+    assert_eq!(replayed["passed"], true, "{replayed}");
+}
