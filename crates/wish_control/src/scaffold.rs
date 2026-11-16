@@ -162,6 +162,8 @@ Built in, set up with components (`schema_get` and `docs_search` say how; `wish:
 - Physics: `Collider` (+ `RigidBody` to move), `CharacterController` for characters, `CollisionStarted` events,\n\
   `physics_query` to ask what a ray hits.\n\
 - Sound: `AudioSource`, `AudioListener` on the camera; `logs_get` with kinds [\"audio\"] says what played.\n\
+- Placeholder assets: `asset_create` makes a .wav sound (a jump, a coin, a thud) or a .png picture from a\n\
+  few numbers; nothing has to be downloaded.\n\
 - Lights: `DirectionalLight`, `PointLight`, `SpotLight`. Animation: `AnimationPlayer` on a glTF `Model`.\n\
 - Interface: `UiNode` boxes with `UiText`, `UiImage`, `UiButton` (`ButtonClicked`); game code writes text with\n\
   `text(...)`; `describe_view` lists the interface; `sim_step` input `pointer` and `click` press buttons.\n\

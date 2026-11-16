@@ -106,16 +106,21 @@ pub(crate) const ENTITY_QUERY: Tool = Tool {
 pub(crate) const ENTITY_GET: Tool = Tool {
     name: "entity_get",
     title: "Entity values",
-    description: "The component values of entities, by id: the effective values (prefab parts expanded, defaults filled in), plus parent, prefab and notes. Engine-internal components (SceneId, Hierarchy, GlobalTransform) are left out unless named.",
+    description: "The component values of entities, by id: the effective values (prefab parts expanded, defaults filled in), plus parent, prefab and notes. Engine-internal components (SceneId, Hierarchy, GlobalTransform) are left out unless named. Also the values of resources (world-wide data such as a game's Score or Time), by name. Pass session to read a running game.",
     params: &[
         SCENE,
         SESSION,
-        Param::required(
+        Param::optional(
             "ids",
             Kind::StringList,
             "Entity ids, such as [\"player\", \"camera\"].",
         ),
         Param::optional("components", Kind::StringList, "Only these components."),
+        Param::optional(
+            "resources",
+            Kind::StringList,
+            "Resource names, such as [\"Score\", \"Time\"]: their values are returned under resources.",
+        ),
     ],
     mutates: false,
     run: entity_get,
@@ -207,10 +212,16 @@ fn check_component_names(workspace: &Workspace, names: &[String], param: &str) -
         .collect();
     for name in names {
         if !known.contains(&name.as_str()) {
+            // A resource asked for as a component (M7 friction log, F7).
+            let is_resource = workspace.registry().resource_id(name).is_some();
             return Err(Diagnostic::error(
                 "unknown_component",
                 format!("There is no component called '{name}'."),
-                wish_core::suggest::unknown_name_hint(name, &known),
+                if is_resource {
+                    format!("'{name}' is a resource (world-wide data), not a component: read it with entity_get and \"resources\": [\"{name}\"] (pass session for a running game), or test it in a condition such as \"{name}.<field> > 0\".")
+                } else {
+                    wish_core::suggest::unknown_name_hint(name, &known)
+                },
             )
             .at_path(format!("/{param}"))
             .with_candidates(known.iter().copied()));
@@ -550,14 +561,24 @@ fn entity_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<S
         notes.extend(scene_not_session(workspace));
     }
     let ids = args.strings("ids");
-    if ids.is_empty() || ids.len() > 100 {
+    let wanted_resources = args.strings("resources");
+    if ids.len() > 100 || wanted_resources.len() > 50 {
         return Err(Diagnostic::error(
             "invalid_parameter",
             format!(
-                "'ids' must list 1 to 100 entity ids, but has {}.",
-                ids.len()
+                "Ask for at most 100 entity ids and 50 resources at a time (asked {} and {}).",
+                ids.len(),
+                wanted_resources.len()
             ),
-            "Ask for fewer entities at a time, or use entity_query with components to read many.",
+            "Ask for fewer at a time, or use entity_query with components to read many entities.",
+        )
+        .at_path("/ids"));
+    }
+    if ids.is_empty() && wanted_resources.is_empty() {
+        return Err(Diagnostic::error(
+            "missing_parameter",
+            "entity_get needs ids (entities) or resources (world-wide data) to read.",
+            "Pass ids such as [\"player\"], or resources such as [\"Score\"]; scene_get lists what the scene has.",
         )
         .at_path("/ids"));
     }
@@ -618,6 +639,37 @@ fn entity_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<S
         item.insert("components".to_owned(), Value::Object(components));
         entities.push(Value::Object(item));
     }
+    let resource_names: Vec<&str> = world
+        .registry()
+        .resources()
+        .map(|(_, info)| info.name())
+        .collect();
+    let mut resources = Map::new();
+    for (index, name) in wanted_resources.iter().enumerate() {
+        if !resource_names.contains(&name.as_str()) {
+            return Err(Diagnostic::error(
+                "unknown_resource",
+                format!("There is no resource called '{name}'."),
+                wish_core::suggest::unknown_name_hint(name, &resource_names),
+            )
+            .at_path(format!("/resources/{index}"))
+            .with_candidates(resource_names.iter().copied()));
+        }
+        // A resource the world does not hold reads as its defaults: what the
+        // engine uses in its place.
+        let value = match world.resource_json(name) {
+            Ok(value) => value,
+            Err(_) => world
+                .registry()
+                .resource_id(name)
+                .and_then(|id| world.registry().resource(id))
+                .and_then(|info| {
+                    wish_schema::to_json(info.schema(), info.default_bytes(), world.texts()).ok()
+                })
+                .unwrap_or(Value::Null),
+        };
+        resources.insert(name.clone(), value);
+    }
     let mut out = Map::new();
     match &session_id {
         Some(id) => {
@@ -629,7 +681,12 @@ fn entity_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<S
             out.insert("revision".to_owned(), json!(revision));
         }
     }
-    out.insert("entities".to_owned(), json!(entities));
+    if !ids.is_empty() {
+        out.insert("entities".to_owned(), json!(entities));
+    }
+    if !wanted_resources.is_empty() {
+        out.insert("resources".to_owned(), Value::Object(resources));
+    }
     finish(&mut out, notes, workspace, &path);
     Ok(out)
 }

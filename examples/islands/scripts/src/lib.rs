@@ -17,6 +17,9 @@ pub struct Player {
     /// How much the player can steer in the air (0: not at all, 1: fully).
     #[schema(range = 0.0..=1.0, default = 0.6)]
     pub air_control: f32,
+    /// Where the player comes back after falling: the last checkpoint.
+    #[schema(unit = "m", default = Vec3::new(0.0, 0.95, 1.0))]
+    pub respawn: Vec3,
 }
 
 /// A camera that follows the player from behind and above.
@@ -33,8 +36,55 @@ pub struct FollowCamera {
     pub look_height: f32,
 }
 
+/// A crystal to pick up (a sensor collider).
+#[component]
+pub struct Crystal {
+    /// Points it is worth.
+    #[schema(range = 1..=100, default = 1)]
+    pub value: u32,
+}
+
+/// A checkpoint (a sensor collider): touching it moves the respawn point.
+#[component]
+pub struct Checkpoint {
+    /// Where the player comes back after falling.
+    #[schema(unit = "m")]
+    pub respawn: Vec3,
+}
+
+/// The text that shows how many crystals were picked up.
+#[component]
+pub struct CrystalLabel {
+    /// The count it shows now.
+    pub shown: u32,
+}
+
+/// How the run is going.
+#[resource]
+pub struct Game {
+    /// Crystals picked up.
+    pub crystals: u32,
+    /// Crystals in the level (counted on the first tick).
+    pub total: u32,
+    /// Times the player fell off the world.
+    pub falls: u32,
+}
+
 /// Gravity, added by the game itself (a character is moved, not pushed).
 const GRAVITY: f32 = 18.0;
+/// Below this height the player has fallen off the world.
+const FALL_LINE: f32 = -8.0;
+
+fn sound(path: &str, at: Vec3) -> PlaySound {
+    PlaySound {
+        clip: asset(path),
+        bus: AudioBus::Sfx,
+        volume: 1.0,
+        pitch: 1.0,
+        spatial: false,
+        position: at,
+    }
+}
 
 /// Runs and jumps: says how fast the character wants to go. `move` is
 /// [x, y], x to the right (+X) and y forward (-Z).
@@ -42,10 +92,11 @@ const GRAVITY: f32 = 18.0;
 fn run(
     actions: Actions,
     time: Res<Time>,
-    mut players: Query<(&Player, &mut CharacterMotion, &CharacterState)>,
+    mut players: Query<(&Player, &Transform, &mut CharacterMotion, &CharacterState)>,
+    mut sounds: EventWriter<PlaySound>,
 ) {
     let go = actions.axis2("move");
-    for (player, motion, state) in players.iter_mut() {
+    for (player, at, motion, state) in players.iter_mut() {
         let wanted = Vec3::new(go.x, 0.0, -go.y) * player.speed;
         let current = Vec3::new(motion.velocity.x, 0.0, motion.velocity.z);
         let horizontal = if state.grounded {
@@ -58,12 +109,103 @@ fn run(
         let mut vy = motion.velocity.y - GRAVITY * time.delta;
         if state.grounded {
             vy = if actions.pressed("jump") {
+                sounds.send(sound("assets/sounds/jump.wav", at.translation));
                 player.jump_speed
             } else {
                 -1.0
             };
         }
         motion.velocity = Vec3::new(horizontal.x, vy, horizontal.z);
+    }
+}
+
+/// A player who fell off the world comes back at the last checkpoint.
+#[system]
+fn fall(
+    mut players: Query<(&Player, &mut Transform, &mut CharacterMotion)>,
+    mut game: ResMut<Game>,
+    mut sounds: EventWriter<PlaySound>,
+) {
+    for (player, at, motion) in players.iter_mut() {
+        if at.translation.y < FALL_LINE {
+            at.translation = player.respawn;
+            motion.velocity = Vec3::ZERO;
+            game.falls += 1;
+            sounds.send(sound("assets/sounds/fall.wav", player.respawn));
+        }
+    }
+}
+
+/// Crystals and checkpoints the player touched.
+#[system]
+fn touch(
+    touches: EventReader<CollisionStarted>,
+    mut players: Query<(Entity, &mut Player)>,
+    crystals: Query<(Entity, &Transform, &Crystal)>,
+    checkpoints: Query<(Entity, &Checkpoint)>,
+    time: Res<Time>,
+    mut game: ResMut<Game>,
+    mut sounds: EventWriter<PlaySound>,
+    mut commands: Commands,
+) {
+    for touch in touches.read() {
+        for (who, player) in players.iter_mut() {
+            let other = if touch.a == who {
+                touch.b
+            } else if touch.b == who {
+                touch.a
+            } else {
+                continue;
+            };
+            if let Some((crystal, at, worth)) = crystals.iter().find(|(e, _, _)| *e == other) {
+                game.crystals += worth.value;
+                commands.despawn(crystal);
+                sounds.send(sound("assets/sounds/crystal.wav", at.translation));
+                commands
+                    .spawn()
+                    .insert(Transform::from_translation(at.translation))
+                    .insert(ParticleEmitter {
+                        start_time: time.elapsed as f32,
+                        rate: 0.0,
+                        burst: 20,
+                        lifetime: 0.5,
+                        speed: 2.0,
+                        spread_deg: 90.0,
+                        gravity: Vec3::new(0.0, -4.0, 0.0),
+                        size_start: 0.12,
+                        size_end: 0.0,
+                        color_start: Color::rgba(0.5, 0.95, 1.0, 1.0),
+                        color_end: Color::rgba(0.2, 0.6, 1.0, 0.0),
+                        seed: game.crystals,
+                        ..ParticleEmitter::default()
+                    });
+            }
+            if let Some((_, checkpoint)) = checkpoints.iter().find(|(e, _)| *e == other)
+                && player.respawn != checkpoint.respawn
+            {
+                player.respawn = checkpoint.respawn;
+                sounds.send(sound("assets/sounds/checkpoint.wav", checkpoint.respawn));
+            }
+        }
+    }
+}
+
+/// Counts the crystals of the level on the first tick, and keeps the label
+/// up to date.
+#[system(after = "touch")]
+fn show(
+    crystals: Query<&Crystal>,
+    mut game: ResMut<Game>,
+    mut labels: Query<(&mut CrystalLabel, &mut UiText)>,
+) {
+    if game.total == 0 {
+        game.total = crystals.iter().map(|c| c.value).sum::<u32>() + game.crystals;
+    }
+    for (label, words) in labels.iter_mut() {
+        if label.shown != game.crystals || text_of(words.text).is_empty() || label.shown == 0 {
+            words.text = text(&format!("Kristal: {}/{}", game.crystals, game.total));
+            label.shown = game.crystals;
+        }
     }
 }
 
@@ -94,6 +236,7 @@ fn follow(
 }
 
 wish_sdk::export! {
-    components: [Player, FollowCamera],
-    systems: [run, follow],
+    components: [Player, FollowCamera, Crystal, Checkpoint, CrystalLabel],
+    resources: [Game],
+    systems: [run, fall, touch, show, follow],
 }

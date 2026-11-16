@@ -38,12 +38,13 @@ Her MCP aracının birebir komut satırı karşılığı vardır (`wen entity qu
 |---|---|---|
 | `scene_get` | Sahne ana hattı: hiyerarşi ağacı, varlık adları, bileşen adları | `scene`, `root`, `depth`, `detail` |
 | `entity_query` | Varlık bul: bileşene, ada, ifadeye, uzamsal yakınlığa göre | `with`, `where`, `near`, `limit`, `cursor` |
-| `entity_get` | Varlıkların bileşen değerleri | `ids`, `components` |
+| `entity_get` | Varlıkların bileşen değerleri; kaynakların değerleri (M7) | `ids`, `components`, `resources`, `session` |
 | `edit_apply` | **Atomik işlem**: `spawn`, `despawn`, `set` (birleştirme), `replace`, `remove`, `reparent`, `rename`, `set_notes`, `set_resource` / `replace_resource` / `remove_resource`, `instantiate`, `set_override` / `replace_override` / `remove_override` işlemlerinin listesi (M2'de `wish_scene::EditOp` olarak uygulandı) | `ops`, `base_revision`, `dry_run` |
 | `edit_history` | Geri al / yinele / geçmişi listele | `action`, `steps` |
 | `asset_list` | Varlık dosyaları ve içe aktarma durumu | `kind`, `search` |
 | `asset_info` | Tek varlık raporu: üçgen sayısı, sınırlar, materyaller, alt nesneler, ölçek uyarıları | `path` |
 | `asset_move` | Varlık dosyasını/klasörünü taşı, tüm sahne ve prefab başvurularını aynı işlemde güncelle (`wen mv`) | `from`, `to`, `dry_run` |
+| `asset_create` | Yer tutucu varlık üret (M7): birkaç sayıdan `.wav` ses ya da `.png` resim; indirme gerekmez | `path`, `sound`, `picture`, `overwrite`, `dry_run` |
 
 ### Simülasyon (oynatma oturumu)
 
@@ -75,7 +76,7 @@ Oturum sırasında `entity_query`, `entity_get` ve `edit_apply` `session` parame
 | `test_run` | Senaryo testlerini koş; başarısızlıkta ilgili tick, beklenen/bulunan değer, görsel fark | `paths`, `update_golden` |
 | `script_build` | Oyun kodunu derle; yoğunlaştırılmış tanılar; başarılıysa sıcak yükle | `reload` |
 
-**Toplam: 24 araç** (uygulamada: M4'ün 20'si, M5'te `script_build`, `replay`, `test_run`, M6'da `physics_query`; `profile_get` henüz yok). (`asset_move` M2'de eklendi: birden çok belgeyi ve diski birlikte değiştirdiği için tek sahneye bağlı `edit_apply`'ın parametresi olamaz.) Yeni araç eklemek için gerekçe aranır; önce mevcut bir aracın parametresi olarak çözülüp çözülemeyeceğine bakılır.
+**Toplam: 25 araç** (uygulamada: M4'ün 20'si, M5'te `script_build`, `replay`, `test_run`, M6'da `physics_query`, M7'de `asset_create` (sürtünme günlüğü F5: araçla ses/resim üretmenin yolu yoktu); `profile_get` henüz yok). (`asset_move` M2'de eklendi: birden çok belgeyi ve diski birlikte değiştirdiği için tek sahneye bağlı `edit_apply`'ın parametresi olamaz.) Yeni araç eklemek için gerekçe aranır; önce mevcut bir aracın parametresi olarak çözülüp çözülemeyeceğine bakılır.
 
 ## Örnek yanıtlar
 

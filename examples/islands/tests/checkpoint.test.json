@@ -1,0 +1,23 @@
+{
+  "format": 1,
+  "scene": "scenes/main.scene.json",
+  "seed": 1,
+  "steps": [
+    { "frames": 20 },
+    { "expect": "Game.crystals == 0 && Game.total == 6", "message": "six crystals to find, none yet" },
+    { "input": { "move": [0, 1] }, "frames": 40 },
+    { "input": { "move": [0, 1], "jump": true }, "frames": 1 },
+    { "input": { "move": [0, 1] }, "frames": 45 },
+    { "expect": "Game.crystals == 2", "message": "the run and the jump pick up the first two crystals" },
+    { "input": { "move": [0.7, 0.7] }, "frames": 10 },
+    { "input": { "move": [0.7, 0.7], "jump": true }, "frames": 1 },
+    { "input": { "move": [0.7, 0.7] }, "frames": 50 },
+    { "frames": 20 },
+    { "expect": "CharacterState.grounded == true && Transform.translation.y > 2.3", "entity": "player", "message": "the player stands on the second island" },
+    { "expect": "Player.respawn.z == -10.5", "entity": "player", "message": "its checkpoint is the respawn point now" },
+    { "input": { "move": [1, 0] }, "until": "Game.falls >= 1", "max_frames": 240 },
+    { "frames": 30 },
+    { "expect": "CharacterState.grounded == true && Transform.translation.x > 2 && Transform.translation.x < 4 && Transform.translation.z < -9.5 && Transform.translation.z > -11.5", "entity": "player", "message": "after falling off the player is back on the checkpoint's island" },
+    { "expect": "UiText.text == \"Kristal: 4/6\"", "entity": "crystal_label", "message": "the label counts the crystals (landing back on the checkpoint picks up the fourth)" }
+  ]
+}

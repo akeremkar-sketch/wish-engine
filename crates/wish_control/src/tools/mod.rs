@@ -37,6 +37,7 @@ pub(crate) const CATALOG: &[Tool] = &[
     asset::ASSET_LIST,
     asset::ASSET_INFO,
     asset::ASSET_MOVE,
+    asset::ASSET_CREATE,
     sim::SIM_START,
     sim::SIM_STEP,
     sim::SIM_SNAPSHOT,

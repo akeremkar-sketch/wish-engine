@@ -1264,8 +1264,9 @@ sent.send(BodyImpulse { entity: crate_, linear: Vec3::new(0.0, 5000.0, 0.0), ang
 
 A sound is an entity with an `AudioSource` (clip: a `.wav` or `.ogg` path in the project, `playing`, `looping`,
 `spatial`, `volume`, `pitch`, `min_distance`, `max_distance`) and an `AudioListener` somewhere (usually the camera).
-A one-off sound is an event: `sent.send(PlaySound { clip, bus: AudioBus::Sfx, volume: 1.0, pitch: 1.0,
-spatial: true, position })`. The engine writes `AudioPlayback { position, gain, pan, started }` and sends
+A one-off sound is an event: `sent.send(PlaySound { clip: asset("assets/sounds/jump.wav"), bus: AudioBus::Sfx, volume: 1.0, pitch: 1.0,
+spatial: true, position })` (`asset(path)` makes the `AssetRef` of a project file; `asset_create` makes placeholder
+`.wav` files). The engine writes `AudioPlayback { position, gain, pan, started }` and sends
 `SoundStarted` / `SoundEnded` events. Nothing is played in a session: an agent reads what played with
 `logs_get kinds: ["audio"]` ("started on 'door': -12.0 dB at the listener, right 100%").
 

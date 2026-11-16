@@ -721,6 +721,12 @@ const DEVICE_NAMES: &[&str] = &[
 /// `.png` name. A picture can therefore never replace a scene, a prefab, a
 /// meta file or `wish.json` (found by the M4 closing review).
 pub(crate) fn normalize_output_path(path: &str) -> Result<String> {
+    normalize_asset_output(path, &["png"])
+}
+
+/// The same rule for any of `extensions` (lowercase, without the dot): what
+/// `asset_create` may write (`.png`, `.wav`). Never a document's extension.
+pub(crate) fn normalize_asset_output(path: &str, extensions: &[&str]) -> Result<String> {
     let mut path = path.trim().replace('\\', "/");
     while let Some(rest) = path.strip_prefix("./") {
         path = rest.to_owned();
@@ -738,12 +744,18 @@ pub(crate) fn normalize_output_path(path: &str) -> Result<String> {
         || path.starts_with('/')
         || path.contains(':')
         || path.split('/').any(segment_bad)
-        || !path.to_ascii_lowercase().ends_with(".png");
+        || !extensions
+            .iter()
+            .any(|ext| path.to_ascii_lowercase().ends_with(&format!(".{ext}")));
     if bad {
+        let names: Vec<String> = extensions.iter().map(|ext| format!(".{ext}")).collect();
         return Err(Diagnostic::error(
             "invalid_output_path",
-            format!("'{path}' is not a picture file the tool may write."),
-            "Give a project-relative .png path such as \"captures/shot.png\" (no '..', hidden folders or device names).",
+            format!("'{path}' is not a file the tool may write."),
+            format!(
+                "Give a project-relative {} path such as \"captures/shot.png\" (no '..', hidden folders or device names).",
+                names.join(" or ")
+            ),
         )
         .at_path("/out"));
     }
