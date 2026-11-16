@@ -531,6 +531,25 @@ fn run(world: &mut World, state: &mut PhysicsState, since: ChangeTick) -> Result
         }
     }
 
+    // Where the moving (kinematic, not character) bodies are before the
+    // step: what they carry is how far they really went (M7 friction log).
+    let before: Vec<(rp::RigidBodyHandle, Mat4)> = state
+        .links
+        .iter()
+        .filter(|(entity, link)| {
+            link.body_desc.map(|d| d.kind) == Some(BodyKind::Kinematic)
+                && !world.has::<CharacterController>(**entity)
+        })
+        .filter_map(|(_, link)| {
+            let body = state.bodies.get(link.body)?;
+            let at = body.position();
+            Some((
+                link.body,
+                Mat4::from_rotation_translation(wq(at.rotation), wv(at.translation)),
+            ))
+        })
+        .collect();
+
     // 4. Step.
     let substeps = settings.substeps.clamp(1, 8);
     let params = rp::IntegrationParameters {
@@ -564,7 +583,7 @@ fn run(world: &mut World, state: &mut PhysicsState, since: ChangeTick) -> Result
     // 5. Characters, against the stepped world: the query tree only knows
     // colliders after a step, and moving first would let a character fall
     // through a floor added this tick.
-    move_characters(world, state, delta)?;
+    move_characters(world, state, delta, &before)?;
 
     // 6. Write back.
     for &entity in &present {
@@ -707,7 +726,46 @@ fn sync_entity(world: &World, state: &mut PhysicsState, entity: Entity) -> Resul
     Ok(())
 }
 
-fn move_characters(world: &mut World, state: &mut PhysicsState, delta: f32) -> Result<()> {
+fn move_characters(
+    world: &mut World,
+    state: &mut PhysicsState,
+    delta: f32,
+    platforms: &[(rp::RigidBodyHandle, Mat4)],
+) -> Result<()> {
+    // Rapier's controller follows a kinematic body it stands on by that
+    // body's velocity, and only partly: a character on an accelerating
+    // platform falls behind and off (M7 friction log, F8). Platforms are
+    // still while characters move, and each character is carried by exactly
+    // how far the platform under it went; their speeds come back after
+    // (dynamic bodies on them are carried by the solver as before).
+    // (Rapier ignores speeds written to a position-driven kinematic body, so
+    // it is driven by speed for the moment.)
+    let mut speeds: Vec<(rp::RigidBodyHandle, rp::Vector, rp::AngVector)> = Vec::new();
+    for (handle, _) in platforms {
+        if let Some(body) = state.bodies.get_mut(*handle) {
+            speeds.push((*handle, body.linvel(), body.angvel()));
+            body.set_body_type(rp::RigidBodyType::KinematicVelocityBased, false);
+            body.set_linvel(rp::Vector::ZERO, false);
+            body.set_angvel(rp::AngVector::ZERO, false);
+        }
+    }
+    let moved = move_each_character(world, state, delta, platforms);
+    for (handle, linvel, angvel) in speeds {
+        if let Some(body) = state.bodies.get_mut(handle) {
+            body.set_linvel(linvel, false);
+            body.set_angvel(angvel, false);
+            body.set_body_type(rp::RigidBodyType::KinematicPositionBased, false);
+        }
+    }
+    moved
+}
+
+fn move_each_character(
+    world: &mut World,
+    state: &mut PhysicsState,
+    delta: f32,
+    platforms: &[(rp::RigidBodyHandle, Mat4)],
+) -> Result<()> {
     let characters: Vec<(Entity, CharacterController, Vec3)> = state
         .links
         .iter()
@@ -770,6 +828,36 @@ fn move_characters(world: &mut World, state: &mut PhysicsState, delta: f32) -> R
             &state.colliders,
             filter,
         );
+        // What the character stands on: when it stood last tick on a body
+        // that moved this step (a moving platform), it goes along by as much.
+        let was_grounded = world
+            .get::<CharacterState>(entity)
+            .is_some_and(|state| state.grounded);
+        let carry = if was_grounded {
+            let feet = -shape.compute_local_aabb().mins.y;
+            let ray = rp::Ray::new(position.translation, rp::Vector::new(0.0, -1.0, 0.0));
+            queries
+                .cast_ray(&ray, feet + 0.2, true)
+                .and_then(|(handle, distance)| {
+                    let parent = state.colliders.get(handle)?.parent()?;
+                    let (_, was) = platforms.iter().find(|(h, _)| *h == parent)?;
+                    let now = state.bodies.get(parent)?.position();
+                    let now =
+                        Mat4::from_rotation_translation(wq(now.rotation), wv(now.translation));
+                    // The point under the feet, moved as the platform moved
+                    // (a turning platform turns it too).
+                    let point = wv(position.translation) - Vec3::new(0.0, distance, 0.0);
+                    let carried =
+                        now.transform_point3(was.inverse().transform_point3(point)) - point;
+                    carried.is_finite().then_some(carried)
+                })
+                .unwrap_or(Vec3::ZERO)
+        } else {
+            Vec3::ZERO
+        };
+        // The character rides along rigidly (as if it were part of the
+        // platform), then makes its own move from there.
+        let position = rp::Pose::from_parts(position.translation + rv(carry), position.rotation);
         // Two moves: along the ground first (sliding, stepping up), then
         // up or down. One combined move with gravity in it presses the shape
         // into the floor and Rapier then refuses the sideways part.
@@ -810,7 +898,7 @@ fn move_characters(world: &mut World, state: &mut PhysicsState, delta: f32) -> R
             rv(Vec3::new(0.0, down, 0.0)),
             |_| {},
         );
-        let total = across.translation + along.translation;
+        let total = rv(carry) + across.translation + along.translation;
         let moved = wv(total);
         if let Some(body) = state.bodies.get_mut(link.body) {
             let current = *body.position();

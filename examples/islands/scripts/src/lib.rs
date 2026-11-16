@@ -52,6 +52,38 @@ pub struct Checkpoint {
     pub respawn: Vec3,
 }
 
+/// A platform that goes back and forth between two places (a kinematic
+/// body: game code moves it, physics carries what stands on it).
+#[component]
+pub struct MovingPlatform {
+    /// One end.
+    #[schema(unit = "m")]
+    pub from: Vec3,
+    /// The other end.
+    #[schema(unit = "m")]
+    pub to: Vec3,
+    /// Seconds from one end to the other.
+    #[schema(unit = "s", range = 0.1..=600.0, default = 3.0)]
+    pub seconds: f32,
+    /// Seconds it waits at each end.
+    #[schema(unit = "s", range = 0.0..=600.0, default = 1.0)]
+    pub wait: f32,
+}
+
+/// The goal (a sensor collider): reaching it wins.
+#[component]
+pub struct Goal {
+    /// Whether it has been reached.
+    pub reached: bool,
+}
+
+/// The screen shown when the goal is reached (its text says how it went).
+#[component]
+pub struct WinBanner {
+    /// Whether it is shown.
+    pub shown: bool,
+}
+
 /// The text that shows how many crystals were picked up.
 #[component]
 pub struct CrystalLabel {
@@ -68,6 +100,10 @@ pub struct Game {
     pub total: u32,
     /// Times the player fell off the world.
     pub falls: u32,
+    /// Whether the goal was reached.
+    pub won: bool,
+    /// The tick it was reached at.
+    pub won_at: u64,
 }
 
 /// Gravity, added by the game itself (a character is moved, not pushed).
@@ -190,6 +226,70 @@ fn touch(
     }
 }
 
+/// Moves platforms back and forth. Where a platform is follows from the
+/// time alone, so it needs no state of its own.
+#[system]
+fn platforms(time: Res<Time>, mut moving: Query<(&MovingPlatform, &mut Transform)>) {
+    for (platform, at) in moving.iter_mut() {
+        let leg = platform.seconds.max(0.1) + platform.wait.max(0.0);
+        let cycle = 2.0 * leg;
+        let t = (time.elapsed as f32).rem_euclid(cycle);
+        // 0 at `from`, 1 at `to`: wait, travel, wait, travel back.
+        let along = if t < leg {
+            ((t - platform.wait).max(0.0) / platform.seconds.max(0.1)).min(1.0)
+        } else {
+            1.0 - ((t - leg - platform.wait).max(0.0) / platform.seconds.max(0.1)).min(1.0)
+        };
+        // Smooth start and stop.
+        let eased = along * along * (3.0 - 2.0 * along);
+        at.translation = platform.from + (platform.to - platform.from) * eased;
+    }
+}
+
+/// Reaching the goal wins: the banner says how many crystals and how long.
+#[system(after = "touch")]
+fn finish(
+    touches: EventReader<CollisionStarted>,
+    players: Query<Entity, With<Player>>,
+    mut goals: Query<(Entity, &mut Goal)>,
+    time: Res<Time>,
+    mut game: ResMut<Game>,
+    mut banners: Query<(&mut WinBanner, &mut UiNode)>,
+    mut texts: Query<&mut UiText, Without<CrystalLabel>>,
+    mut sounds: EventWriter<PlaySound>,
+) {
+    let Some(player) = players.iter().next() else {
+        return;
+    };
+    for touch in touches.read() {
+        for (goal, reached) in goals.iter_mut() {
+            let ours = (touch.a == player && touch.b == goal) || (touch.b == player && touch.a == goal);
+            if ours && !reached.reached {
+                reached.reached = true;
+                game.won = true;
+                game.won_at = time.tick;
+                sounds.send(sound("assets/sounds/win.wav", Vec3::ZERO));
+            }
+        }
+    }
+    if game.won {
+        for (banner, node) in banners.iter_mut() {
+            if !banner.shown {
+                banner.shown = true;
+                node.visible = true;
+                let seconds = game.won_at as f32 * time.delta;
+                for words in texts.iter_mut() {
+                    words.text = text(&format!(
+                        "Tebrikler!
+Kristal {}/{} · {:.1} sn",
+                        game.crystals, game.total, seconds
+                    ));
+                }
+            }
+        }
+    }
+}
+
 /// Counts the crystals of the level on the first tick, and keeps the label
 /// up to date.
 #[system(after = "touch")]
@@ -236,7 +336,7 @@ fn follow(
 }
 
 wish_sdk::export! {
-    components: [Player, FollowCamera, Crystal, Checkpoint, CrystalLabel],
+    components: [Player, FollowCamera, Crystal, Checkpoint, CrystalLabel, MovingPlatform, Goal, WinBanner],
     resources: [Game],
-    systems: [run, fall, touch, show, follow],
+    systems: [platforms, run, fall, touch, show, finish, follow],
 }

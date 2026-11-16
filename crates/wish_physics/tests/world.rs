@@ -580,3 +580,104 @@ fn a_walking_character_touches_the_ground_once() {
     assert_eq!(world.events_sent("CollisionStarted").unwrap(), 1);
     assert_eq!(world.events_sent("CollisionEnded").unwrap(), 0);
 }
+
+#[test]
+fn a_moving_platform_carries_the_character_standing_on_it() {
+    // A kinematic platform slides 6.5 m along +X in 3 s, starting and
+    // stopping smoothly, moved by a system the way game code moves
+    // platforms; the character on it asks for no motion of its own and goes
+    // along exactly (M7 friction log, F8: Rapier's own following fell
+    // behind and off).
+    let mut app = app();
+    app.add_system(
+        System::new("mover", |world, _| {
+            let now = world
+                .resource::<wish_types::time::Time>()
+                .map_or(0.0, |t| t.elapsed as f32);
+            let a = ((now - 1.0) / 3.0).clamp(0.0, 1.0);
+            let x = 6.5 * a * a * (3.0 - 2.0 * a);
+            let platforms: Vec<Entity> = world
+                .entities()
+                .filter(|e| {
+                    world
+                        .get::<RigidBody>(*e)
+                        .is_some_and(|b| b.kind == BodyKind::Kinematic)
+                })
+                .filter(|e| !world.has::<CharacterController>(*e))
+                .collect();
+            for platform in platforms {
+                world.insert(
+                    platform,
+                    Transform::from_translation(Vec3::new(x, -0.25, 0.0)),
+                )?;
+            }
+            Ok(())
+        })
+        .before(wish_physics::SYSTEM),
+    )
+    .unwrap();
+    let world = app.world_mut();
+    let platform = world.spawn().unwrap();
+    world
+        .insert(
+            platform,
+            Transform::from_translation(Vec3::new(0.0, -0.25, 0.0)),
+        )
+        .unwrap();
+    world
+        .insert(
+            platform,
+            Collider {
+                size: Vec3::new(30.0, 0.5, 3.0),
+                ..Collider::default()
+            },
+        )
+        .unwrap();
+    world
+        .insert(
+            platform,
+            RigidBody {
+                kind: BodyKind::Kinematic,
+                ..RigidBody::default()
+            },
+        )
+        .unwrap();
+    let hero = world.spawn().unwrap();
+    world
+        .insert(hero, Transform::from_translation(Vec3::new(0.0, 0.92, 0.0)))
+        .unwrap();
+    world
+        .insert(
+            hero,
+            Collider {
+                shape: ColliderShape::Capsule,
+                size: Vec3::new(0.6, 1.8, 0.6),
+                ..Collider::default()
+            },
+        )
+        .unwrap();
+    world
+        .insert(
+            hero,
+            RigidBody {
+                kind: BodyKind::Kinematic,
+                ..RigidBody::default()
+            },
+        )
+        .unwrap();
+    world.insert(hero, CharacterController::default()).unwrap();
+    world
+        .insert(
+            hero,
+            CharacterMotion {
+                velocity: Vec3::new(0.0, -1.0, 0.0),
+            },
+        )
+        .unwrap();
+    run(&mut app, 60);
+    assert!(app.world().get::<CharacterState>(hero).unwrap().grounded);
+    run(&mut app, 200);
+    let at = app.world().get::<Transform>(hero).unwrap().translation;
+    assert!((at.x - 6.5).abs() < 0.01, "carried to {at:?}");
+    assert!(app.world().get::<CharacterState>(hero).unwrap().grounded);
+}

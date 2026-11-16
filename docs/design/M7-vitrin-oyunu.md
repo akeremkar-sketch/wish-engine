@@ -75,3 +75,13 @@ Görevler 26–40+: platform oyunu yapı taşları (takip kamerası, hareketli p
 | Kurucu ajan (Opus) motoru "fazla iyi" bildiği için sürtünmeyi kaçırır | Yalnızca araçlarla çalışma kuralı; her başarısız çağrı ve her "kaynağa bakmam gerekti" anı günlüğe; sonda Sonnet/Haiku ölçümüyle doğrulanır |
 | Hareketli platformlar karakter denetleyicisiyle sorunlu | Erken (WP1–WP2) denenir; gerekirse motor tarafında platform hızı karaktere aktarılır |
 | Kapsam büyür (vitrin oyunu "bitmez") | Bölüm 2–4 dakika; yeni mekanik ancak motor eksiğini ortaya çıkarıyorsa |
+
+## 10. Uygulama notları
+
+### WP1–WP3 — vitrin oyunu "Ada Atlama" (`examples/islands`)
+
+- **Nasıl kuruldu:** yalnızca araçlarla, `wen do` ile (bir süreçte birden çok çağrı; oturumlar süreç boyunca yaşar). Sahne `edit_apply`, sesler `asset_create`, kod `scripts/src/lib.rs` + `script_build`, gözlem `capture_frame`/`describe_view`/`entity_get`, kanıt `test_run`. Sahne dosyasına elle dokunulmadı.
+- **Oyun:** başlangıç adası → iki basamak ada → kinematik asansör (oyun kodu zamanla sürer: bekle, yumuşak git, bekle, dön) → bitiş adası ve kapı. Altı kristal (sensör; ses + parıltı), denetim noktası bayrağı (yeniden doğma yeri), dünyadan düşünce denetim noktasına dönüş, takip kamerası (zamandan bağımsız yumuşatma), arayüzde kristal sayacı, rüzgâr sesi, kazanma ekranı (kristal sayısı + süre).
+- **Kanıt:** 4 senaryo testi (`first_jump`, `checkpoint`, `win` — bölümün tamamı, altı kristal, kazanma ekranının altın görüntüsü) ve CI testi `the_islands_showcase_is_won_by_its_tests_and_replays` (derleme, denetim, testler, kaydedilen oynanışın bit düzeyinde tekrarı).
+- **Sürtünme günlüğü F1–F8** (hepsi motorda düzeltildi; F8 tasarımda beklenen işti): `wen do` okunaklı JSON; proje kılavuzunda oyun sistemleri; oturum açıkken sahne okuyan araçlara not; yürüyen karakterde temas olayı titremesi; **yeni araç `asset_create`**; SDK `asset()`; **`entity_get` kaynakları okur**; **hareketli platform karakteri kesin taşır** (Rapier'in yarım takibi devre dışı, platformun gerçek yer değiştirmesi; 3 sn'de 6,5 m'de birebir).
+- **Kendi hatalarım (motor değil):** test beklentisinde kamera konumu; rota yönleri; yeniden doğma noktasının bir kristalle çakışması; kristal yolunun bitiş sensörüne değmesi. Bunlar oyun tasarımı/oynama hatalarıydı; araçların hata iletileri (adım, tick, okunan değerler) her birini tek bakışta gösterdi — iyi işaret.
