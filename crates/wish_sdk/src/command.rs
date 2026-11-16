@@ -146,9 +146,12 @@ impl Command {
 
 /// Reads commands written by a module. Every length is checked: hostile
 /// bytes give an error naming what broke, never a panic.
-pub fn decode_commands(mut bytes: &[u8]) -> Result<Vec<Command>, String> {
+pub fn decode_commands(mut bytes: &[u8], max: usize) -> Result<Vec<Command>, String> {
     let mut commands = Vec::new();
     while let Some((&op, rest)) = bytes.split_first() {
+        if commands.len() >= max {
+            return Err(format!("there are more than {max} commands"));
+        }
         bytes = rest;
         let command = match op {
             SPAWN => Command::Spawn {

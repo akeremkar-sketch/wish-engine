@@ -129,7 +129,7 @@ fn commands_round_trip_and_garbage_is_refused() {
     commands.remove::<Speed>(Entity::new(2, 0));
     commands.set_parent(made, Entity::new(4, 0));
     let bytes = wish_sdk::abi::take_commands();
-    let decoded = decode_commands(&bytes).unwrap();
+    let decoded = decode_commands(&bytes, usize::MAX).unwrap();
     assert_eq!(
         decoded,
         [
@@ -153,11 +153,11 @@ fn commands_round_trip_and_garbage_is_refused() {
     // Every prefix of a valid buffer but the empty one and the whole is cut
     // short or ends cleanly between commands; none of them panics.
     for end in 0..bytes.len() {
-        let _ = decode_commands(&bytes[..end]);
+        let _ = decode_commands(&bytes[..end], usize::MAX);
     }
-    assert!(decode_commands(&[99]).is_err());
-    assert!(decode_commands(&[3, 0]).is_err());
-    assert!(decode_commands(&[3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255]).is_err());
+    assert!(decode_commands(&[99], usize::MAX).is_err());
+    assert!(decode_commands(&[3, 0], usize::MAX).is_err());
+    assert!(decode_commands(&[3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255], usize::MAX).is_err());
 }
 
 #[test]

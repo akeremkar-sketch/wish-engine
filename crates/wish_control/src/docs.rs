@@ -494,7 +494,7 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     ),
     (
         "script_command_failed",
-        "A command a game system gave (spawn, insert, despawn, send, parent) could not be applied; the commands before it were applied. The message names the command and the cause.",
+        "A command a game system gave (insert, remove, send, parent) could not be applied and was skipped; the other commands still ran and the system keeps running (a warning in logs_get). Despawning an entity that is already gone is not an error. The system is stopped only when its commands cannot be decoded, there are more than 65536 in one call, or the world already has 4194304 entities.",
     ),
     (
         "script_compile_error",
@@ -527,6 +527,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "script_missing_export",
         "The module lacks an export every game module has (memory, wish_abi_version, wish_alloc, wish_run). Build it with the SDK, which adds them (wish_sdk::export!).",
+    ),
+    (
+        "script_not_finite",
+        "Game code wrote, inserted or sent a float that is NaN or infinite; the value was not stored and the system is turned off. The message names the field. Guard divisions and normalizing zero-length vectors.",
     ),
     (
         "script_out_of_fuel",
@@ -583,6 +587,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "script_unknown_type",
         "A game system uses a component, resource or event the world does not have. The engine installs a module's types when it loads it; this usually means the module and the world do not belong together.",
+    ),
+    (
+        "script_value_size",
+        "A command gave a value whose size does not match the component; the command was skipped. The module was built with a different SDK: rebuild it (script_build).",
     ),
     (
         "script_write_failed",
@@ -1120,6 +1128,8 @@ fn collect(
 - Randomness: `random_f32()` (0..1), `random_range(a, b)`, `random_u64()`: the system's own seeded stream.
 - Logging: `wish_sdk::info!("x = {}", x)`, `warn!`, `error!` (shown in logs_get, kind "script").
 - A resource the world does not have yet starts at its default.
+- A command whose target is gone (an entity despawned earlier) is skipped with a warning in logs_get; despawning
+  twice is fine. NaN or infinite floats are never stored: the system stops with `script_not_finite`.
 
 ## Export
 

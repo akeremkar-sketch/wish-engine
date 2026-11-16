@@ -15,8 +15,8 @@ use serde_json::Value;
 use wish_app::{System, SystemContext};
 use wish_core::{Diagnostic, Entity, Hash128, Result, Severity};
 use wish_ecs::{ComponentId, EventId, ResourceId, World};
-use wish_schema::TypeSchema;
 use wish_schema::wire::from_wire;
+use wish_schema::{TypeKind, TypeSchema};
 use wish_sdk::command::{Command, Target, decode_commands};
 use wish_sdk::frame::{FrameWriter, query_layout};
 
@@ -112,6 +112,18 @@ pub struct Manifest {
 const MAX_SYSTEMS: usize = 256;
 const MAX_TYPES: usize = 1024;
 const MAX_PARAMS: usize = 32;
+/// The most bytes one value of each of a module's types may take together:
+/// every type gets a default value (and resources one in the world), so an
+/// unbounded total would let a manifest exhaust memory (M5 WP9).
+const MAX_TYPE_BYTES: u64 = 16 * 1024 * 1024;
+/// The most commands one system call may give.
+const MAX_COMMANDS: usize = 65_536;
+/// The most entities a world may have for game code to spawn more: a
+/// runaway or hostile module stops with a diagnostic instead of exhausting
+/// memory.
+pub const MAX_ENTITIES: usize = 1 << 22;
+/// The most refused commands reported per call; the rest are counted.
+const MAX_COMMAND_WARNINGS: usize = 8;
 
 fn bad_manifest(name: &str, what: impl std::fmt::Display) -> Diagnostic {
     Diagnostic::error(
@@ -191,6 +203,7 @@ impl Manifest {
             ));
         }
         let mut types = Vec::new();
+        let mut total = 0u64;
         for entry in types_json {
             let role = match entry.get("role").and_then(Value::as_str) {
                 Some("component") => Role::Component,
@@ -200,6 +213,16 @@ impl Manifest {
             };
             let schema = from_wire(entry.get("schema").unwrap_or(&Value::Null))
                 .map_err(|e| e.at_file(name))?;
+            total += u64::from(schema.size);
+            if total > MAX_TYPE_BYTES {
+                return Err(bad_manifest(
+                    name,
+                    format!(
+                        "its types take more than {} MiB together",
+                        MAX_TYPE_BYTES / (1024 * 1024)
+                    ),
+                ));
+            }
             types.push(ModuleType { role, schema });
         }
         let systems_json = value
@@ -561,6 +584,7 @@ impl ScriptRuntime {
             return Err(poisoned());
         };
         let system = i32::try_from(index).map_err(|_| poisoned())?;
+        let sent = call.frame.clone();
         let outcome = live.call(system, &mut call.frame, context.rng);
         let (report, commands) = match outcome {
             Ok(done) => done,
@@ -578,8 +602,20 @@ impl ScriptRuntime {
             });
         }
         drop(slot);
-        call.write_back(world, spec)?;
-        apply_commands(world, &spec.name, &commands)
+        call.write_back(world, spec, &sent)?;
+        let refused = apply_commands(world, &spec.name, &commands)?;
+        if !refused.is_empty() {
+            let mut slot = self.slot.lock().map_err(|_| poisoned())?;
+            for message in refused {
+                slot.logs.push(ScriptLog {
+                    tick: context.time.tick,
+                    system: spec.name.clone(),
+                    severity: Severity::Warning,
+                    message,
+                });
+            }
+        }
+        Ok(())
     }
 }
 
@@ -769,11 +805,12 @@ impl Call {
     /// Writes back what the system changed. Values are compared first, so
     /// only real changes count as changes (change detection stays honest),
     /// and every written value is checked like any outside data.
-    fn write_back(&self, world: &mut World, spec: &SystemSpec) -> Result<()> {
+    fn write_back(&self, world: &mut World, spec: &SystemSpec, sent: &[u8]) -> Result<()> {
         for ((resolved, (start, len)), _) in
             self.resolved.iter().zip(&self.places).zip(&spec.params)
         {
             let section = self.frame.get(*start..start + len).ok_or_else(poisoned)?;
+            let before = sent.get(*start..start + len).ok_or_else(poisoned)?;
             match resolved {
                 Resolved::Query {
                     archetypes,
@@ -786,9 +823,19 @@ impl Call {
                         if !write {
                             continue;
                         }
+                        let floats =
+                            float_fields(world.registry().component(*id).map(|i| i.schema()));
                         let mut at = *offset;
                         for (a, rows) in archetypes {
                             let slice = section.get(at..at + rows * size).ok_or_else(poisoned)?;
+                            if !floats.is_empty() {
+                                let old = before.get(at..at + rows * size).ok_or_else(poisoned)?;
+                                for (new, old) in slice.chunks(*size).zip(old.chunks(*size)) {
+                                    if new != old {
+                                        check_finite(&floats, new, &spec.name, "wrote")?;
+                                    }
+                                }
+                            }
                             world
                                 .write_archetype_column(*a, *id, slice)
                                 .map_err(|cause| write_failed(&spec.name, &cause))?;
@@ -797,6 +844,11 @@ impl Call {
                     }
                 }
                 Resolved::Res { id, write: true } => {
+                    if section != before {
+                        let floats =
+                            float_fields(world.registry().resource(*id).map(|i| i.schema()));
+                        check_finite(&floats, section, &spec.name, "wrote")?;
+                    }
                     if world.resource_bytes(*id)?.as_deref() != Some(section) {
                         world
                             .insert_resource_bytes(*id, section)
@@ -808,6 +860,104 @@ impl Call {
         }
         Ok(())
     }
+}
+
+/// One float of a type: its offset, width (4 or 8) and path.
+struct FloatField {
+    offset: usize,
+    wide: bool,
+    path: String,
+}
+
+/// Every float of `schema`, in layout order (vectors, colours and matrices
+/// are packed `f32`s).
+fn float_fields(schema: Option<&TypeSchema>) -> Vec<FloatField> {
+    fn walk(schema: &TypeSchema, base: usize, path: &str, out: &mut Vec<FloatField>) {
+        let floats = match &schema.kind {
+            TypeKind::F32 => Some((1, false)),
+            TypeKind::F64 => Some((1, true)),
+            TypeKind::Vec2 => Some((2, false)),
+            TypeKind::Vec3 => Some((3, false)),
+            TypeKind::Vec4 | TypeKind::Quat | TypeKind::Color => Some((4, false)),
+            TypeKind::Mat4 => Some((16, false)),
+            _ => None,
+        };
+        if let Some((count, wide)) = floats {
+            let width = if wide { 8 } else { 4 };
+            for n in 0..count {
+                out.push(FloatField {
+                    offset: base + n * width,
+                    wide,
+                    path: if count == 1 {
+                        path.to_owned()
+                    } else {
+                        format!("{path}[{n}]")
+                    },
+                });
+            }
+            return;
+        }
+        match &schema.kind {
+            TypeKind::Struct(fields) => {
+                for field in fields {
+                    let path = if path.is_empty() {
+                        field.name.clone()
+                    } else {
+                        format!("{path}.{}", field.name)
+                    };
+                    walk(&field.ty, base + field.offset as usize, &path, out);
+                }
+            }
+            TypeKind::Array { element, len } => {
+                let size = element.size as usize;
+                for n in 0..*len as usize {
+                    walk(element, base + n * size, &format!("{path}[{n}]"), out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    if let Some(schema) = schema {
+        walk(schema, 0, "", &mut out);
+        for field in &mut out {
+            field.path = if field.path.is_empty() {
+                schema.name.clone()
+            } else {
+                format!("{}.{}", schema.name, field.path)
+            };
+        }
+    }
+    out
+}
+
+/// Refuses a value with a float that is NaN or infinite: no file can hold
+/// it faithfully and it spreads silently (a NaN position hides an entity).
+fn check_finite(floats: &[FloatField], bytes: &[u8], system: &str, verb: &str) -> Result<()> {
+    for field in floats {
+        let finite = if field.wide {
+            bytes
+                .get(field.offset..field.offset + 8)
+                .and_then(|b| b.try_into().ok())
+                .is_none_or(|b| f64::from_le_bytes(b).is_finite())
+        } else {
+            bytes
+                .get(field.offset..field.offset + 4)
+                .and_then(|b| b.try_into().ok())
+                .is_none_or(|b| f32::from_le_bytes(b).is_finite())
+        };
+        if !finite {
+            return Err(Diagnostic::error(
+                "script_not_finite",
+                format!(
+                    "System '{system}' {verb} a value that is not a finite number into {}.",
+                    field.path
+                ),
+                "NaN and infinity usually come from dividing by zero or normalizing a zero-length vector; check with is_finite() (or guard the division) before writing. The value was not stored.",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn write_failed(system: &str, cause: &Diagnostic) -> Diagnostic {
@@ -834,94 +984,133 @@ fn command_failed(system: &str, index: usize, what: &str, cause: &str, hint: &st
     )
 }
 
-/// Applies a system's commands in order.
-fn apply_commands(world: &mut World, system: &str, bytes: &[u8]) -> Result<()> {
+/// Applies a system's commands in order. A command that cannot be applied
+/// is skipped and reported (returned as warning text), the way a native
+/// command buffer skips it: commands are deferred, so their target may be
+/// gone by the time they run. Despawning what is already gone is not even
+/// reported (two players reaching the same coin). Commands that cannot be
+/// decoded, too many commands, or a world that is full stop the system.
+fn apply_commands(world: &mut World, system: &str, bytes: &[u8]) -> Result<Vec<String>> {
+    let mut refused = Vec::new();
     if bytes.is_empty() {
-        return Ok(());
+        return Ok(refused);
     }
-    let commands = decode_commands(bytes).map_err(|cause| {
+    let commands = decode_commands(bytes, MAX_COMMANDS).map_err(|cause| {
         command_failed(
             system,
             0,
             "decoding",
             &cause,
-            "Rebuild the game code with this engine's SDK.",
+            "Rebuild the game code with this engine's SDK; a system gives at most 65536 commands per call.",
         )
     })?;
-    let mut spawned: Vec<Entity> = Vec::new();
+    let mut skipped = 0usize;
+    let mut spawned: Vec<Option<Entity>> = Vec::new();
     for (index, command) in commands.iter().enumerate() {
-        let resolve = |target: Target, spawned: &[Entity]| -> Result<Entity> {
+        let resolve = |target: Target, spawned: &[Option<Entity>]| -> Result<Entity> {
             match target {
                 Target::Existing(entity) => Ok(entity),
-                Target::New(n) => spawned.get(n as usize).copied().ok_or_else(|| {
-                    command_failed(
-                        system,
-                        index,
-                        "entity",
-                        "it names an entity not spawned yet",
+                Target::New(n) => spawned.get(n as usize).copied().flatten().ok_or_else(|| {
+                    Diagnostic::error(
+                        "spawn_target_missing",
+                        format!("it names new entity {n}, which was not spawned in this call"),
                         "Spawn before using the new entity.",
                     )
                 }),
             }
         };
-        let fail = |what: &str, cause: Diagnostic| {
-            command_failed(system, index, what, &cause.message, &cause.hint)
-        };
-        match command {
-            Command::Spawn { .. } => spawned.push(world.spawn().map_err(|c| fail("spawn", c))?),
-            Command::Despawn(target) => {
-                let entity = resolve(*target, &spawned)?;
-                world.despawn(entity).map_err(|c| fail("despawn", c))?;
+        let result: Result<()> = match command {
+            Command::Spawn { .. } => {
+                if world.entity_count() >= MAX_ENTITIES {
+                    return Err(command_failed(
+                        system,
+                        index,
+                        "spawn",
+                        &format!(
+                            "the world already has {MAX_ENTITIES} entities, the most game code may create"
+                        ),
+                        "A system that spawns every tick without despawning grows the world for ever; despawn what is no longer needed.",
+                    ));
+                }
+                let entity = world.spawn()?;
+                spawned.push(Some(entity));
+                Ok(())
             }
+            Command::Despawn(target) => resolve(*target, &spawned).and_then(|entity| {
+                if world.contains(entity) {
+                    world.despawn(entity)
+                } else {
+                    Ok(())
+                }
+            }),
             Command::Insert {
                 target,
                 component: name,
                 bytes,
-            } => {
-                let entity = resolve(*target, &spawned)?;
-                let what = format!("insert {name}");
-                let (id, size) = component(world, name, system).map_err(|c| fail(&what, c))?;
+            } => resolve(*target, &spawned).and_then(|entity| {
+                let (id, size) = component(world, name, system)?;
                 if bytes.len() != size {
-                    return Err(command_failed(
-                        system,
-                        index,
-                        &what,
-                        "the value has the wrong size",
+                    return Err(Diagnostic::error(
+                        "script_value_size",
+                        format!("the value has {} bytes, '{name}' takes {size}", bytes.len()),
                         "Rebuild the game code with this engine's SDK.",
                     ));
                 }
-                world
-                    .insert_bytes(entity, id, bytes)
-                    .map_err(|c| fail(&what, c))?;
-            }
+                let floats = float_fields(world.registry().component(id).map(|i| i.schema()));
+                check_finite(&floats, bytes, system, "inserted")?;
+                world.insert_bytes(entity, id, bytes)
+            }),
             Command::Remove {
                 target,
                 component: name,
-            } => {
-                let entity = resolve(*target, &spawned)?;
-                let what = format!("remove {name}");
-                let (id, _) = component(world, name, system).map_err(|c| fail(&what, c))?;
-                world.remove_by_id(entity, id).map_err(|c| fail(&what, c))?;
-            }
-            Command::Send { event, bytes } => {
-                let what = format!("send {event}");
-                let id = event_id(world, event, system).map_err(|c| fail(&what, c))?;
-                world.send_bytes(id, bytes).map_err(|c| fail(&what, c))?;
-            }
-            Command::SetParent { child, parent } => {
-                let child = resolve(*child, &spawned)?;
+            } => resolve(*target, &spawned).and_then(|entity| {
+                let (id, _) = component(world, name, system)?;
+                world.remove_by_id(entity, id).map(|_| ())
+            }),
+            Command::Send { event, bytes } => event_id(world, event, system).and_then(|id| {
+                let floats = float_fields(world.registry().event(id).map(|i| i.schema()));
+                if bytes.len() == world.registry().event(id).map_or(0, |i| i.size()) {
+                    check_finite(&floats, bytes, system, "sent")?;
+                }
+                world.send_bytes(id, bytes)
+            }),
+            Command::SetParent { child, parent } => resolve(*child, &spawned).and_then(|child| {
                 let parent = resolve(*parent, &spawned)?;
-                world
-                    .set_parent(child, parent)
-                    .map_err(|c| fail("set_parent", c))?;
-            }
+                world.set_parent(child, parent)
+            }),
             Command::RemoveParent(child) => {
-                let child = resolve(*child, &spawned)?;
-                world
-                    .remove_parent(child)
-                    .map_err(|c| fail("remove_parent", c))?;
+                resolve(*child, &spawned).and_then(|child| world.remove_parent(child))
+            }
+        };
+        if let Err(cause) = result {
+            if refused.len() < MAX_COMMAND_WARNINGS {
+                let what = describe(command);
+                refused.push(format!(
+                    "[script_command_failed] Command {index} of system '{system}' ({what}) was skipped: {} {}",
+                    cause.message, cause.hint
+                ));
+            } else {
+                skipped += 1;
             }
         }
     }
-    Ok(())
+    if skipped > 0 {
+        refused.push(format!(
+            "[script_command_failed] {skipped} more commands of system '{system}' were skipped."
+        ));
+    }
+    Ok(refused)
+}
+
+/// A command, in a few words.
+fn describe(command: &Command) -> String {
+    match command {
+        Command::Spawn { .. } => "spawn".to_owned(),
+        Command::Despawn(_) => "despawn".to_owned(),
+        Command::Insert { component, .. } => format!("insert {component}"),
+        Command::Remove { component, .. } => format!("remove {component}"),
+        Command::Send { event, .. } => format!("send {event}"),
+        Command::SetParent { .. } => "set_parent".to_owned(),
+        Command::RemoveParent(_) => "remove_parent".to_owned(),
+    }
 }
