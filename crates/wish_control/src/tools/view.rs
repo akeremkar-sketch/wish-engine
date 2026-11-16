@@ -505,3 +505,41 @@ impl Workspace {
         })
     }
 }
+
+/// Which entity is drawn at each pixel of a picture, with the entities' names.
+pub struct IdPicture {
+    /// The identity buffer: [`wish_render::IdBuffer::entity_at`] says who is at a pixel.
+    pub ids: wish_render::IdBuffer,
+    /// Entity names, by entity.
+    pub names: BTreeMap<Entity, String>,
+}
+
+impl Workspace {
+    /// The identity buffer of the scene or session from the same camera
+    /// [`Workspace::render_picture`] would use: "which entity is at this
+    /// pixel", for clicking in the editor's view.
+    pub fn render_ids(
+        &mut self,
+        source: PictureSource<'_>,
+        camera: Option<&dyn Fn(&wish_render::CameraView) -> wish_render::CameraView>,
+        width: u32,
+        height: u32,
+    ) -> Result<IdPicture> {
+        let (session, scene) = match source {
+            PictureSource::Scene(scene) => (None, scene),
+            PictureSource::Session(id) => (Some(id), None),
+        };
+        let mut prepared = prepare_source(self, session, scene)?;
+        if let (Some(camera), Some(first)) = (camera, prepared.scene.cameras.first_mut()) {
+            *first = camera(first);
+        }
+        let (open, _) = drawing_with(self, None, &prepared.scene)?;
+        let ids = open
+            .renderer
+            .id_buffer(&open.gpu, &prepared.scene, None, width, height)?;
+        Ok(IdPicture {
+            ids,
+            names: prepared.names,
+        })
+    }
+}

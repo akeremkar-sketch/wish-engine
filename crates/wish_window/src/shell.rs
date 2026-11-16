@@ -88,6 +88,9 @@ pub enum ShellEvent {
     },
     /// Text was typed (what the keys produce, not the keys).
     Text(String),
+    /// The modifier keys held changed (they stay as they are until the
+    /// next one of these).
+    Modifiers(Modifiers),
     /// The raw mouse moved by this much while the window had it (for
     /// looking around with a held button).
     MouseDelta {
@@ -304,6 +307,7 @@ impl ApplicationHandler for ShellApp<'_> {
                     shift: state.shift_key(),
                     logo: state.super_key(),
                 };
+                self.events.push(ShellEvent::Modifiers(self.modifiers));
             }
             WindowEvent::CursorMoved { position, .. } => self.events.push(ShellEvent::Pointer {
                 x: position.x as f32,

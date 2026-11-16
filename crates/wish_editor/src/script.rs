@@ -14,6 +14,8 @@
 //! - `{ "text": "abc" }`
 //! - `{ "scroll": [x, y] }`
 //! - `{ "mouse_delta": [x, y] }`
+//! - `{ "modifiers": { "ctrl": true } }`: these modifier keys are held from
+//!   now on (`{ "modifiers": {} }` lets go)
 
 use serde_json::Value;
 use wish_core::{Diagnostic, Result};
@@ -116,6 +118,15 @@ pub fn parse_event(event: &Value) -> Result<Vec<ShellEvent>> {
     if let Some(by) = event.get("scroll") {
         let (x, y) = pair(by, "scroll")?;
         return Ok(vec![ShellEvent::Scroll { x, y }]);
+    }
+    if let Some(held) = event.get("modifiers") {
+        let on = |name: &str| held[name] == true;
+        return Ok(vec![ShellEvent::Modifiers(Modifiers {
+            alt: on("alt"),
+            ctrl: on("ctrl"),
+            shift: on("shift"),
+            logo: false,
+        })]);
     }
     if let Some(by) = event.get("mouse_delta") {
         let (x, y) = pair(by, "mouse_delta")?;

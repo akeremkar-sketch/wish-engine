@@ -1,16 +1,20 @@
-//! The editor's shell: the window's layout, the view of the scene and the
-//! way input reaches both (M8a WP2).
+//! The editor's shell: the window's layout, the view of the scene, the
+//! hierarchy and the way input reaches them (M8a WP2, WP3).
 //!
 //! Everything the editor does to the project is a control-plane call by the
 //! actor `human` ([`EditorApp::call`]): the panels never touch a scene file
 //! or a world. What is shown comes from calls too (`project_info`,
 //! `scene_get`, `edit_history`), so a change made by an agent or by editing
-//! the file by hand shows up here the next time the editor looks.
+//! the file by hand shows up here the next time the editor looks. A change
+//! the editor makes is one `edit_apply` (so one entry of the history, undone
+//! in one step), sent with the revision it was made against: if somebody
+//! changed the scene meanwhile the call is refused and the person is told,
+//! instead of overwriting their work.
 
 use std::cell::RefCell;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
-use egui::{Align, Layout, Rect, Ui, pos2, vec2};
+use egui::{Align, Layout, Rect, Sense, Ui, pos2, vec2};
 use serde_json::{Value, json};
 use wish_control::{PictureSource, Workspace, parse_actor};
 use wish_render::{CameraView, RgbaImage, View};
@@ -25,6 +29,10 @@ const POLL_SECONDS: f64 = 0.4;
 const BACKDROP: [u8; 4] = [24, 24, 27, 255];
 /// A viewport smaller than this is not drawn (a window being squeezed).
 const MIN_VIEWPORT: f32 = 32.0;
+/// The colour of the box around the selection in the view.
+const OUTLINE: [u8; 4] = [255, 170, 40, 255];
+/// A press and release this close together (pixels) is a click, not a drag.
+const CLICK_SLOP: f32 = 4.0;
 
 /// One entity of the hierarchy, flattened.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -35,6 +43,15 @@ pub struct Row {
     pub depth: usize,
     /// What components it has.
     pub components: Vec<String>,
+    /// The id of its parent, if it has one.
+    pub parent: Option<String>,
+}
+
+/// What the layout keeps between frames (text being typed).
+#[derive(Default)]
+struct UiState {
+    /// The row being renamed and the name typed so far.
+    rename: Option<(String, String)>,
 }
 
 /// The editor as a window's content.
@@ -49,6 +66,8 @@ pub struct EditorApp {
     scenes: Vec<String>,
     revision: u64,
     rows: Vec<Row>,
+    /// The selected entities, the first being the one the inspector shows.
+    selected: Vec<String>,
     can_undo: bool,
     can_redo: bool,
     problems: (u64, u64),
@@ -59,12 +78,19 @@ pub struct EditorApp {
     looking: bool,
     pointer: Option<(f32, f32)>,
     modifiers: Modifiers,
+    /// Where a primary-button press began over the view.
+    press: Option<(f32, f32)>,
+    /// A click over the view waiting to pick: pixels, whether Ctrl was held.
+    pending_pick: Option<(f32, f32, bool)>,
     /// Where the scene's picture goes, from the last layout.
     viewport: Rect,
     /// What the scene looked like last (kept while nothing changes).
     picture: Option<RgbaImage>,
+    /// Boxes around the selected entities, in window pixels.
+    outlines: Vec<Rect>,
     drawn_size: (u32, u32),
     picture_stale: bool,
+    ui_state: RefCell<UiState>,
     status: String,
     since_poll: f64,
     frames: u64,
@@ -81,6 +107,36 @@ struct Actions {
     scene: Option<String>,
     view: Option<View>,
     quit: bool,
+    /// An entity was clicked in the hierarchy: its id, and whether to toggle.
+    select: Option<(String, bool)>,
+    /// The empty part of the hierarchy was clicked.
+    deselect: bool,
+    /// Add an entity (under this parent, or at the root).
+    add: Option<Option<String>>,
+    delete: bool,
+    /// Rename an entity: from, to.
+    rename: Option<(String, String)>,
+    /// Move an entity under a parent (`None`: to the root).
+    reparent: Option<(String, Option<String>)>,
+}
+
+impl Actions {
+    /// Whether the layout asked for anything.
+    fn any(&self) -> bool {
+        self.undo
+            || self.redo
+            || self.check
+            || self.reset_camera
+            || self.quit
+            || self.deselect
+            || self.delete
+            || self.scene.is_some()
+            || self.view.is_some()
+            || self.select.is_some()
+            || self.add.is_some()
+            || self.rename.is_some()
+            || self.reparent.is_some()
+    }
 }
 
 impl EditorApp {
@@ -95,6 +151,7 @@ impl EditorApp {
             scenes: Vec::new(),
             revision: u64::MAX,
             rows: Vec::new(),
+            selected: Vec::new(),
             can_undo: false,
             can_redo: false,
             problems: (0, 0),
@@ -104,10 +161,14 @@ impl EditorApp {
             looking: false,
             pointer: None,
             modifiers: Modifiers::default(),
+            press: None,
+            pending_pick: None,
             viewport: Rect::NOTHING,
             picture: None,
+            outlines: Vec::new(),
             drawn_size: (0, 0),
             picture_stale: true,
+            ui_state: RefCell::new(UiState::default()),
             status: String::new(),
             since_poll: POLL_SECONDS,
             frames: 0,
@@ -132,6 +193,22 @@ impl EditorApp {
         &self.rows
     }
 
+    /// The selected entities (ids), the first being the main one.
+    pub fn selection(&self) -> &[String] {
+        &self.selected
+    }
+
+    /// Selects entities (as a click in the hierarchy would; unknown ids are
+    /// dropped).
+    pub fn select(&mut self, ids: &[&str]) {
+        self.selected = ids
+            .iter()
+            .filter(|id| self.rows.iter().any(|row| row.id == **id))
+            .map(|id| (*id).to_owned())
+            .collect();
+        self.picture_stale = true;
+    }
+
     /// The scene being edited (project-relative).
     pub fn scene(&self) -> &str {
         &self.scene
@@ -151,6 +228,11 @@ impl EditorApp {
     /// frame.
     pub fn viewport(&self) -> Rect {
         self.viewport
+    }
+
+    /// The boxes drawn around the selection in the view (window pixels).
+    pub fn outlines(&self) -> &[Rect] {
+        &self.outlines
     }
 
     /// Reads what the title and lists need: the project, its scenes, the
@@ -206,10 +288,11 @@ impl EditorApp {
         }
         self.revision = revision;
         self.rows.clear();
-        fn walk(nodes: &Value, depth: usize, rows: &mut Vec<Row>) {
+        fn walk(nodes: &Value, depth: usize, parent: Option<&str>, rows: &mut Vec<Row>) {
             for node in nodes.as_array().into_iter().flatten() {
+                let id = node["id"].as_str().unwrap_or("").to_owned();
                 rows.push(Row {
-                    id: node["id"].as_str().unwrap_or("").to_owned(),
+                    id: id.clone(),
                     depth,
                     components: node["components"]
                         .as_array()
@@ -219,11 +302,15 @@ impl EditorApp {
                                 .collect()
                         })
                         .unwrap_or_default(),
+                    parent: parent.map(str::to_owned),
                 });
-                walk(&node["children"], depth + 1, rows);
+                walk(&node["children"], depth + 1, Some(&id), rows);
             }
         }
-        walk(&got["tree"], 0, &mut self.rows);
+        walk(&got["tree"], 0, None, &mut self.rows);
+        // What was selected may be gone now.
+        let known: BTreeSet<&str> = self.rows.iter().map(|row| row.id.as_str()).collect();
+        self.selected.retain(|id| known.contains(id.as_str()));
         let history = self.call(
             "edit_history",
             &json!({ "scene": self.scene.clone(), "action": "list" }),
@@ -232,6 +319,40 @@ impl EditorApp {
         self.can_redo = history["can_redo"] == true;
         self.picture_stale = true;
         true
+    }
+
+    /// One change to the scene: `ops` as one `edit_apply`, made against the
+    /// revision the person is looking at. Returns whether it was applied.
+    fn edit(&mut self, what: &str, ops: Vec<Value>) -> bool {
+        let mut args = json!({ "scene": self.scene.clone(), "ops": ops });
+        if self.revision != u64::MAX {
+            args["base_revision"] = json!(self.revision);
+        }
+        let done = self.call("edit_apply", &args);
+        let applied = done["ok"] == true;
+        self.status = if applied {
+            what.to_owned()
+        } else {
+            let message = done["error"]["message"]
+                .as_str()
+                .unwrap_or("it did not work");
+            let hint = done["error"]["hint"].as_str().unwrap_or("");
+            format!("{what} failed: {message} {hint}")
+        };
+        // Look again either way: a refusal means the scene is not what the
+        // person saw.
+        self.revision = u64::MAX;
+        self.refresh_scene();
+        applied
+    }
+
+    /// An id that no entity has, built on `base`.
+    fn unused_id(&self, base: &str) -> String {
+        let taken: BTreeSet<&str> = self.rows.iter().map(|row| row.id.as_str()).collect();
+        (1..)
+            .map(|n| format!("{base}_{n}"))
+            .find(|id| !taken.contains(id.as_str()))
+            .unwrap_or_else(|| base.to_owned())
     }
 
     /// Runs what the layout asked for, as calls.
@@ -244,6 +365,7 @@ impl EditorApp {
         {
             self.scene = scene;
             self.revision = u64::MAX;
+            self.selected.clear();
             *self.eye.borrow_mut() = None;
             self.refresh_scene();
         }
@@ -254,6 +376,64 @@ impl EditorApp {
         if actions.reset_camera {
             *self.eye.borrow_mut() = None;
             self.picture_stale = true;
+        }
+        if let Some((id, toggle)) = actions.select {
+            self.click_entity(&id, toggle);
+        }
+        if actions.deselect {
+            self.selected.clear();
+            self.picture_stale = true;
+        }
+        if let Some(parent) = actions.add {
+            let id = self.unused_id("entity");
+            let mut op = json!({ "op": "spawn", "id": id, "components": { "Transform": {} } });
+            if let Some(parent) = parent {
+                op["parent"] = json!(parent);
+            }
+            if self.edit(&format!("added {id}"), vec![op]) {
+                self.selected = vec![id];
+            }
+        }
+        if actions.delete && !self.selected.is_empty() {
+            let doomed = self.selected.clone();
+            let ops = doomed
+                .iter()
+                .map(|id| json!({ "op": "despawn", "id": id }))
+                .collect();
+            let what = if doomed.len() == 1 {
+                format!("deleted {}", doomed[0])
+            } else {
+                format!("deleted {} entities", doomed.len())
+            };
+            if self.edit(&what, ops) {
+                self.selected.clear();
+            }
+        }
+        if let Some((from, to)) = actions.rename
+            && from != to
+            && !to.is_empty()
+        {
+            // The refresh after an edit drops ids that no longer exist, so the
+            // renamed entity keeps its place in the selection by hand.
+            let place = self.selected.iter().position(|id| *id == from);
+            if self.edit(
+                &format!("renamed {from} to {to}"),
+                vec![json!({ "op": "rename", "id": from, "to": to })],
+            ) && let Some(place) = place
+            {
+                self.selected.insert(place.min(self.selected.len()), to);
+                self.picture_stale = true;
+            }
+        }
+        if let Some((id, parent)) = actions.reparent {
+            let what = match &parent {
+                Some(parent) => format!("moved {id} under {parent}"),
+                None => format!("moved {id} to the root"),
+            };
+            self.edit(
+                &what,
+                vec![json!({ "op": "reparent", "id": id, "parent": parent })],
+            );
         }
         for (wanted, action) in [(actions.undo, "undo"), (actions.redo, "redo")] {
             if wanted {
@@ -288,9 +468,29 @@ impl EditorApp {
         }
     }
 
-    /// What the plain input events mean for the view: looking around, flying.
+    /// A click on an entity (in the hierarchy or the view): selects it, or
+    /// with Ctrl adds it to or takes it out of the selection.
+    fn click_entity(&mut self, id: &str, toggle: bool) {
+        if toggle {
+            if let Some(at) = self.selected.iter().position(|s| s == id) {
+                self.selected.remove(at);
+            } else {
+                self.selected.push(id.to_owned());
+            }
+        } else {
+            self.selected = vec![id.to_owned()];
+        }
+        self.picture_stale = true;
+    }
+
+    /// What the plain input events mean for the view: looking around, flying,
+    /// clicking to pick.
     fn view_input(&mut self, events: &[ShellEvent]) {
         for event in events {
+            let over_view = |app: &Self| {
+                app.pointer
+                    .is_some_and(|(x, y)| app.viewport.contains(pos2(x, y)))
+            };
             match event {
                 ShellEvent::Pointer { x, y } => self.pointer = Some((*x, *y)),
                 ShellEvent::PointerLeft => self.pointer = None,
@@ -298,11 +498,21 @@ impl EditorApp {
                     button: Button::Secondary,
                     pressed,
                     ..
+                } => self.looking = *pressed && over_view(self),
+                ShellEvent::Button {
+                    button: Button::Primary,
+                    pressed,
+                    modifiers,
                 } => {
-                    let over = self
-                        .pointer
-                        .is_some_and(|(x, y)| self.viewport.contains(pos2(x, y)));
-                    self.looking = *pressed && over;
+                    if *pressed {
+                        self.press = self.pointer.filter(|_| over_view(self));
+                    } else if let (Some(start), Some(end)) = (self.press.take(), self.pointer)
+                        && (start.0 - end.0).abs() < CLICK_SLOP
+                        && (start.1 - end.1).abs() < CLICK_SLOP
+                        && over_view(self)
+                    {
+                        self.pending_pick = Some((end.0, end.1, modifiers.ctrl));
+                    }
                 }
                 ShellEvent::MouseDelta { x, y } if self.looking => {
                     if let Some(eye) = self.eye.borrow_mut().as_mut() {
@@ -325,8 +535,7 @@ impl EditorApp {
                 }
                 _ => {}
             }
-            if let ShellEvent::Button { modifiers, .. } | ShellEvent::Key { modifiers, .. } = event
-            {
+            if let ShellEvent::Modifiers(modifiers) = event {
                 self.modifiers = *modifiers;
                 self.movement.fast = modifiers.shift;
             }
@@ -334,15 +543,18 @@ impl EditorApp {
     }
 
     /// The picture of the scene at the viewport's size, drawn when something
-    /// changed (the scene, the camera, the size).
-    fn render_viewport(&mut self, seconds: f64) {
+    /// changed (the scene, the camera, the size); and what a click on it
+    /// means: who is under the pointer, and where the selection is.
+    fn render_viewport(&mut self, seconds: f64) -> bool {
         let (width, height) = (
             self.viewport.width().max(0.0) as u32,
             self.viewport.height().max(0.0) as u32,
         );
         if self.viewport.width() < MIN_VIEWPORT || self.viewport.height() < MIN_VIEWPORT {
             self.picture = None;
-            return;
+            self.outlines.clear();
+            self.pending_pick = None;
+            return false;
         }
         if self.movement.any()
             && let Some(eye) = self.eye.borrow_mut().as_mut()
@@ -350,8 +562,10 @@ impl EditorApp {
             eye.step(self.movement, seconds as f32);
             self.picture_stale = true;
         }
-        if !self.picture_stale && self.drawn_size == (width, height) && self.picture.is_some() {
-            return;
+        let redraw =
+            self.picture_stale || self.drawn_size != (width, height) || self.picture.is_none();
+        if !redraw && self.pending_pick.is_none() {
+            return false;
         }
         let eye = &self.eye;
         let camera = |base: &CameraView| {
@@ -360,27 +574,203 @@ impl EditorApp {
                 .apply(base)
         };
         let scene = self.scene.clone();
-        let drawn = self.workspace.render_picture(
+        if redraw {
+            let drawn = self.workspace.render_picture(
+                PictureSource::Scene(Some(&scene)),
+                Some(&camera),
+                width,
+                height,
+                self.view,
+            );
+            match drawn {
+                Ok(picture) => {
+                    self.picture = Some(picture.image);
+                    if let Some(warning) = picture.warnings.first() {
+                        self.status = format!("{warning}");
+                    }
+                }
+                Err(problem) => {
+                    self.picture = None;
+                    self.status = format!("{problem}");
+                }
+            }
+            self.drawn_size = (width, height);
+            self.picture_stale = false;
+        }
+        // Who is where, for a click and for the box around the selection.
+        let pick = self.pending_pick.take();
+        if pick.is_none() && self.selected.is_empty() {
+            self.outlines.clear();
+            return false;
+        }
+        let ids = self.workspace.render_ids(
             PictureSource::Scene(Some(&scene)),
             Some(&camera),
             width,
             height,
-            self.view,
         );
-        match drawn {
-            Ok(picture) => {
-                self.picture = Some(picture.image);
-                if let Some(warning) = picture.warnings.first() {
-                    self.status = format!("{warning}");
-                }
-            }
-            Err(problem) => {
-                self.picture = None;
-                self.status = format!("{problem}");
+        let Ok(ids) = ids else {
+            self.outlines.clear();
+            return false;
+        };
+        let origin = self.viewport.min;
+        let before = self.selected.clone();
+        if let Some((x, y, toggle)) = pick {
+            let hit = ids
+                .ids
+                .entity_at(
+                    (x - origin.x).max(0.0) as u32,
+                    (y - origin.y).max(0.0) as u32,
+                )
+                .and_then(|entity| ids.names.get(&entity).cloned());
+            match hit {
+                Some(name) => self.click_entity(&name, toggle),
+                None if !toggle => self.selected.clear(),
+                None => {}
             }
         }
-        self.drawn_size = (width, height);
-        self.picture_stale = false;
+        let mut boxes: BTreeMap<_, _> = ids
+            .names
+            .iter()
+            .filter(|(_, name)| self.selected.contains(name))
+            .map(|(entity, _)| (*entity, [i32::MAX, i32::MAX, i32::MIN, i32::MIN]))
+            .collect();
+        for y in (0..height).step_by(2) {
+            for x in (0..width).step_by(2) {
+                if let Some(entity) = ids.ids.entity_at(x, y)
+                    && let Some(bounds) = boxes.get_mut(&entity)
+                {
+                    bounds[0] = bounds[0].min(x as i32);
+                    bounds[1] = bounds[1].min(y as i32);
+                    bounds[2] = bounds[2].max(x as i32);
+                    bounds[3] = bounds[3].max(y as i32);
+                }
+            }
+        }
+        self.outlines = boxes
+            .values()
+            .filter(|b| b[0] <= b[2])
+            .map(|b| {
+                Rect::from_min_max(
+                    pos2(origin.x + b[0] as f32, origin.y + b[1] as f32),
+                    pos2(origin.x + b[2] as f32 + 2.0, origin.y + b[3] as f32 + 2.0),
+                )
+            })
+            .collect();
+        // Whether a click changed the selection (the panels show it).
+        before != self.selected
+    }
+
+    /// The hierarchy panel: select, add, delete, rename, move.
+    fn hierarchy(&self, ui: &mut Ui, actions: &mut Actions) {
+        ui.horizontal(|ui| {
+            ui.heading("Hierarchy");
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if ui
+                    .add_enabled(!self.selected.is_empty(), egui::Button::new("Delete"))
+                    .clicked()
+                {
+                    actions.delete = true;
+                }
+                if ui.button("+").on_hover_text("Add an entity").clicked() {
+                    actions.add = Some(None);
+                }
+            });
+        });
+        ui.separator();
+        let typing = self.ui_state.borrow().rename.is_some();
+        if !typing
+            && ui.input(|input| input.key_pressed(egui::Key::Delete))
+            && !ui.ctx().egui_wants_keyboard_input()
+        {
+            actions.delete = true;
+        }
+        if !typing
+            && ui.input(|input| input.key_pressed(egui::Key::F2))
+            && let Some(first) = self.selected.first()
+        {
+            self.ui_state.borrow_mut().rename = Some((first.clone(), first.clone()));
+        }
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            for row in &self.rows {
+                let selected = self.selected.contains(&row.id);
+                ui.horizontal(|ui| {
+                    ui.add_space(row.depth as f32 * 14.0);
+                    let renaming = {
+                        let state = self.ui_state.borrow();
+                        state
+                            .rename
+                            .as_ref()
+                            .filter(|(id, _)| *id == row.id)
+                            .map(|(_, text)| text.clone())
+                    };
+                    if let Some(mut text) = renaming {
+                        let editor =
+                            ui.add(egui::TextEdit::singleline(&mut text).desired_width(150.0));
+                        if !editor.has_focus() && !editor.lost_focus() {
+                            editor.request_focus();
+                        }
+                        let enter = ui.input(|input| input.key_pressed(egui::Key::Enter));
+                        let escape = ui.input(|input| input.key_pressed(egui::Key::Escape));
+                        if enter {
+                            actions.rename = Some((row.id.clone(), text.clone()));
+                            self.ui_state.borrow_mut().rename = None;
+                        } else if escape || editor.lost_focus() {
+                            self.ui_state.borrow_mut().rename = None;
+                        } else if let Some(state) = self.ui_state.borrow_mut().rename.as_mut() {
+                            state.1 = text;
+                        }
+                        return;
+                    }
+                    let response = ui
+                        .selectable_label(selected, &row.id)
+                        .interact(Sense::click_and_drag());
+                    if response.clicked() {
+                        actions.select =
+                            Some((row.id.clone(), ui.input(|input| input.modifiers.command)));
+                    }
+                    if response.double_clicked() {
+                        self.ui_state.borrow_mut().rename = Some((row.id.clone(), row.id.clone()));
+                    }
+                    if response.drag_started() {
+                        response.dnd_set_drag_payload(row.id.clone());
+                    }
+                    if let Some(dragged) = response.dnd_release_payload::<String>()
+                        && *dragged != row.id
+                    {
+                        actions.reparent = Some(((*dragged).clone(), Some(row.id.clone())));
+                    }
+                    response.context_menu(|ui| {
+                        if ui.button("Add child").clicked() {
+                            actions.add = Some(Some(row.id.clone()));
+                            ui.close();
+                        }
+                        if ui.button("Rename").clicked() {
+                            self.ui_state.borrow_mut().rename =
+                                Some((row.id.clone(), row.id.clone()));
+                            ui.close();
+                        }
+                        if ui.button("Delete").clicked() {
+                            actions.select = Some((row.id.clone(), false));
+                            actions.delete = true;
+                            ui.close();
+                        }
+                    });
+                });
+            }
+            // The rest of the panel: a click there selects nothing; dropping
+            // an entity there takes it out of its parent.
+            let rest = ui.allocate_response(
+                vec2(ui.available_width(), ui.available_height().max(40.0)),
+                Sense::click(),
+            );
+            if rest.clicked() {
+                actions.deselect = true;
+            }
+            if let Some(dragged) = rest.dnd_release_payload::<String>() {
+                actions.reparent = Some(((*dragged).clone(), None));
+            }
+        });
     }
 
     /// The layout: menu bar, hierarchy, inspector, status bar, and the hole
@@ -450,24 +840,23 @@ impl EditorApp {
         });
         egui::Panel::left("hierarchy")
             .default_size(220.0)
-            .show(ui, |ui| {
-                ui.heading("Hierarchy");
-                ui.separator();
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    for row in &self.rows {
-                        ui.horizontal(|ui| {
-                            ui.add_space(row.depth as f32 * 14.0);
-                            ui.label(&row.id);
-                        });
-                    }
-                });
-            });
+            .show(ui, |ui| self.hierarchy(ui, &mut actions));
         egui::Panel::right("inspector")
             .default_size(260.0)
             .show(ui, |ui| {
                 ui.heading("Inspector");
                 ui.separator();
-                ui.weak("Select an entity to edit its components.");
+                match self.selected.as_slice() {
+                    [] => {
+                        ui.weak("Select an entity to edit its components.");
+                    }
+                    [one] => {
+                        ui.strong(one);
+                    }
+                    many => {
+                        ui.strong(format!("{} entities", many.len()));
+                    }
+                }
             });
         // The middle is not painted: the scene's picture shows through.
         egui::CentralPanel::default()
@@ -479,7 +868,7 @@ impl EditorApp {
     }
 
     /// Runs one frame: input, calls, layout, the scene's picture, painting.
-    /// Returns the canvas when something changed.
+    /// Returns whether something was drawn (the canvas is then new).
     pub fn frame_canvas(
         &mut self,
         size: (u32, u32),
@@ -493,7 +882,7 @@ impl EditorApp {
             changed |= self.refresh_scene();
         }
         self.view_input(&events);
-        if changed || self.picture_stale {
+        if changed || self.picture_stale || self.pending_pick.is_some() {
             let egui_events = convert(&events, self.pointer);
             if self.canvas.width != size.0 || self.canvas.height != size.1 {
                 self.canvas = Canvas::new(size.0, size.1, BACKDROP);
@@ -501,20 +890,42 @@ impl EditorApp {
             let Some(mut editor) = self.editor.take() else {
                 return false;
             };
-            let mut viewport = self.viewport;
-            let mut actions = Actions::default();
-            let frame = editor.layout(size, seconds, egui_events, |ui| {
-                actions = self.layout(ui, &mut viewport);
-            });
-            self.viewport = viewport;
-            self.act(actions);
-            self.render_viewport(seconds);
+            let mut egui_events = Some(egui_events);
+            let mut seconds = seconds;
+            let mut passes = 0;
+            let frame = loop {
+                let mut viewport = self.viewport;
+                let mut actions = Actions::default();
+                let frame = editor.layout(
+                    size,
+                    seconds,
+                    egui_events.take().unwrap_or_default(),
+                    |ui| {
+                        actions = self.layout(ui, &mut viewport);
+                    },
+                );
+                self.viewport = viewport;
+                let acted = actions.any();
+                self.act(actions);
+                let picked = self.render_viewport(seconds);
+                passes += 1;
+                // What was just done (a click, a button) changes what the
+                // panels say: lay them out again before drawing.
+                if (acted || picked) && passes < 3 {
+                    seconds = 0.0;
+                    continue;
+                }
+                break frame;
+            };
             // Backdrop, then the scene, then the panels over it.
             for pixel in self.canvas.pixels.as_chunks_mut::<4>().0 {
                 *pixel = BACKDROP;
             }
             if let Some(picture) = &self.picture {
                 blit(&mut self.canvas, picture, self.viewport);
+            }
+            for outline in &self.outlines {
+                draw_outline(&mut self.canvas, *outline, self.viewport);
             }
             editor.paint(&frame, &mut self.canvas);
             self.editor = Some(editor);
@@ -527,6 +938,40 @@ impl EditorApp {
     /// The canvas as drawn last.
     pub fn canvas(&self) -> &Canvas {
         &self.canvas
+    }
+}
+
+/// A two-pixel frame around `rect`, kept inside `clip`.
+fn draw_outline(canvas: &mut Canvas, rect: Rect, clip: Rect) {
+    let put = |canvas: &mut Canvas, x: i32, y: i32| {
+        if x >= clip.min.x as i32
+            && x < clip.max.x as i32
+            && y >= clip.min.y as i32
+            && y < clip.max.y as i32
+            && x >= 0
+            && y >= 0
+            && (x as u32) < canvas.width
+            && (y as u32) < canvas.height
+        {
+            let at = (y as usize * canvas.width as usize + x as usize) * 4;
+            canvas.pixels[at..at + 4].copy_from_slice(&OUTLINE);
+        }
+    };
+    let (x0, y0, x1, y1) = (
+        rect.min.x as i32,
+        rect.min.y as i32,
+        rect.max.x as i32,
+        rect.max.y as i32,
+    );
+    for t in 0..2 {
+        for x in x0..=x1 {
+            put(canvas, x, y0 + t);
+            put(canvas, x, y1 - t);
+        }
+        for y in y0..=y1 {
+            put(canvas, x0 + t, y);
+            put(canvas, x1 - t, y);
+        }
     }
 }
 
@@ -609,6 +1054,9 @@ fn convert(events: &[ShellEvent], pointer: Option<(f32, f32)>) -> Vec<egui::Even
                 }
             }
             ShellEvent::Text(text) => out.push(egui::Event::Text(text.clone())),
+            ShellEvent::Modifiers(modifiers) => {
+                out.push(egui::Event::ModifiersChanged(egui_modifiers(*modifiers)));
+            }
             ShellEvent::MouseDelta { .. } => {}
         }
     }
