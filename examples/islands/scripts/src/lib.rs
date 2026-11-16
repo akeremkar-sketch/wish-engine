@@ -246,6 +246,13 @@ fn platforms(time: Res<Time>, mut moving: Query<(&MovingPlatform, &mut Transform
     }
 }
 
+/// The text on the win banner.
+#[component]
+pub struct WinText {
+    /// Unused.
+    pub unused: u32,
+}
+
 /// Reaching the goal wins: the banner says how many crystals and how long.
 #[system(after = "touch")]
 fn finish(
@@ -255,7 +262,7 @@ fn finish(
     time: Res<Time>,
     mut game: ResMut<Game>,
     mut banners: Query<(&mut WinBanner, &mut UiNode)>,
-    mut texts: Query<&mut UiText, Without<CrystalLabel>>,
+    mut texts: Query<&mut UiText, (With<WinText>, Without<CrystalLabel>)>,
     mut sounds: EventWriter<PlaySound>,
 ) {
     let Some(player) = players.iter().next() else {
@@ -336,7 +343,7 @@ fn follow(
 }
 
 wish_sdk::export! {
-    components: [Player, FollowCamera, Crystal, Checkpoint, CrystalLabel, MovingPlatform, Goal, WinBanner],
+    components: [Player, FollowCamera, Crystal, Checkpoint, CrystalLabel, MovingPlatform, Goal, WinBanner, WinText],
     resources: [Game],
     systems: [platforms, run, fall, touch, show, finish, follow],
 }

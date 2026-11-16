@@ -104,6 +104,16 @@ pub fn play_check(probe: &mut Probe, dir: &Path, hidden: &Value) -> Verdict {
     if own.is_empty() {
         return Err("no scenario test of the agent's own in tests/".to_owned());
     }
+    // A test that only runs frames proves nothing.
+    let checks_something = own.iter().any(|name| {
+        std::fs::read_to_string(dir.join("tests").join(name))
+            .is_ok_and(|text| text.contains("\"expect\"") || text.contains("\"until\""))
+    });
+    if !checks_something {
+        return Err(
+            "the agent's scenario tests check nothing (no expect or until step)".to_owned(),
+        );
+    }
     let mine = probe.call("test_run", json!({}))?;
     if mine["passed"] != true {
         return Err(format!("the project's tests fail: {}", mine["results"]));

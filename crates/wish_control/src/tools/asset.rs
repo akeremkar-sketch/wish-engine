@@ -110,6 +110,54 @@ fn spec_error(path: &str, message: String, hint: &str) -> Diagnostic {
     Diagnostic::error("invalid_parameter", message, hint).at_path(path.to_owned())
 }
 
+const SOUND_FIELDS: &[&str] = &[
+    "wave",
+    "frequency",
+    "end_frequency",
+    "seconds",
+    "volume",
+    "attack",
+    "release",
+    "seed",
+];
+const PICTURE_FIELDS: &[&str] = &["width", "height", "shape", "color", "background"];
+
+/// A spec with a field it does not know is a mistake (a default would be
+/// used silently; M7 closing review).
+fn known_fields(spec: &Map<String, Value>, known: &[&str], at: &str) -> Result<()> {
+    for field in spec.keys() {
+        if !known.contains(&field.as_str()) {
+            return Err(spec_error(
+                &format!("{at}/{field}"),
+                format!(
+                    "'{field}' is not a field of '{}'.",
+                    at.trim_start_matches('/')
+                ),
+                &wish_core::suggest::unknown_name_hint(field, known),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A name field of a spec object (a wave, a shape).
+fn spec_name<'a>(
+    spec: &'a Map<String, Value>,
+    field: &str,
+    default: &'a str,
+    at: &str,
+) -> Result<&'a str> {
+    match spec.get(field) {
+        None | Some(Value::Null) => Ok(default),
+        Some(Value::String(name)) => Ok(name),
+        Some(other) => Err(spec_error(
+            &format!("{at}/{field}"),
+            format!("'{field}' must be a name in quotes, not {other}."),
+            &format!("Write it like \"{field}\": \"{default}\"."),
+        )),
+    }
+}
+
 /// A number field of a spec object, within bounds.
 fn spec_number(
     spec: &Map<String, Value>,
@@ -220,6 +268,29 @@ fn asset_create(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map
     .map_err(|problem| problem.at_path("/path"))?;
     let lower = path.to_ascii_lowercase();
     let target = crate::documents::inside_project(workspace.root(), &path)?;
+    if let Some(spelled) = crate::documents::other_case(workspace.root(), &path) {
+        return Err(Diagnostic::error(
+            "invalid_output_path",
+            format!("'{path}' is spelled '{spelled}' on disk."),
+            "Use the spelling on disk: names that differ only in letter case work on Windows but not on Linux.",
+        )
+        .at_path("/path"));
+    }
+    // The spec that belongs to the file's kind, and only that one.
+    let (wanted, other) = if lower.ends_with(".wav") {
+        ("sound", "picture")
+    } else {
+        ("picture", "sound")
+    };
+    if args.value(other).is_some_and(|v| !v.is_null()) {
+        return Err(spec_error(
+            &format!("/{other}"),
+            format!("'{other}' does not go with '{path}'."),
+            &format!(
+                "A .wav file is made from \"sound\" and a .png file from \"picture\"; give \"{wanted}\" for this path."
+            ),
+        ));
+    }
     if target.exists() && !args.flag("overwrite") {
         return Err(Diagnostic::error(
             "output_exists",
@@ -232,7 +303,8 @@ fn asset_create(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map
     let bytes = if lower.ends_with(".wav") {
         let spec = spec_object(args, "sound")?;
         let at = "/sound";
-        let wave_name = spec.get("wave").and_then(Value::as_str).unwrap_or("sine");
+        known_fields(&spec, SOUND_FIELDS, at)?;
+        let wave_name = spec_name(&spec, "wave", "sine", at)?;
         let wave = wish_audio::Wave::parse(wave_name).ok_or_else(|| {
             spec_error(
                 "/sound/wave",
@@ -265,10 +337,11 @@ fn asset_create(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map
     } else if lower.ends_with(".png") {
         let spec = spec_object(args, "picture")?;
         let at = "/picture";
+        known_fields(&spec, PICTURE_FIELDS, at)?;
         let width = spec_number(&spec, "width", 1.0, 1024.0, 64.0, at)? as u32;
         let height = spec_number(&spec, "height", 1.0, 1024.0, 64.0, at)? as u32;
         const SHAPES: &[&str] = &["fill", "circle", "ring", "diamond", "triangle"];
-        let shape = spec.get("shape").and_then(Value::as_str).unwrap_or("fill");
+        let shape = spec_name(&spec, "shape", "fill", at)?;
         if !SHAPES.contains(&shape) {
             return Err(spec_error(
                 "/picture/shape",
@@ -300,15 +373,7 @@ fn asset_create(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map
         out.insert("dry_run".to_owned(), json!(true));
         return Ok(out);
     }
-    if let Some(folder) = target.parent() {
-        std::fs::create_dir_all(folder).map_err(|error| {
-            Diagnostic::error(
-                "file_unwritable",
-                format!("Could not make the folder for '{path}': {error}."),
-                "Check that the project folder can be written to.",
-            )
-        })?;
-    }
+    let target = crate::documents::prepare_output(workspace.root(), &path)?;
     std::fs::write(&target, &bytes).map_err(|error| {
         Diagnostic::error(
             "file_unwritable",

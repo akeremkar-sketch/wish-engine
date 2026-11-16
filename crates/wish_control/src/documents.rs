@@ -765,9 +765,18 @@ pub(crate) fn normalize_asset_output(path: &str, extensions: &[&str]) -> Result<
 /// Checks that writing `relative` under `root` really lands inside the
 /// project (a linked folder could lead elsewhere), creating its folder.
 pub(crate) fn inside_project(root: &Path, relative: &str) -> Result<std::path::PathBuf> {
+    // Checked without creating anything (a dry run, or a call that fails
+    // later, leaves no folders behind; M7 closing review): the nearest folder
+    // on the way that exists must be inside the project. A folder that does
+    // not exist yet cannot be a link.
     let target = root.join(relative);
-    let folder = target.parent().unwrap_or(root);
-    std::fs::create_dir_all(folder).map_err(|error| unwritable(relative, &error))?;
+    let mut folder = target.parent().unwrap_or(root);
+    while !folder.exists() {
+        match folder.parent() {
+            Some(parent) => folder = parent,
+            None => break,
+        }
+    }
     let real_root = std::fs::canonicalize(root).map_err(|error| unwritable(relative, &error))?;
     let real_folder =
         std::fs::canonicalize(folder).map_err(|error| unwritable(relative, &error))?;
@@ -780,6 +789,44 @@ pub(crate) fn inside_project(root: &Path, relative: &str) -> Result<std::path::P
         .at_path("/out"));
     }
     Ok(target)
+}
+
+/// [`inside_project`], then makes the file's folder: for a write that is
+/// about to happen.
+pub(crate) fn prepare_output(root: &Path, relative: &str) -> Result<std::path::PathBuf> {
+    let target = inside_project(root, relative)?;
+    if let Some(folder) = target.parent() {
+        std::fs::create_dir_all(folder).map_err(|error| unwritable(relative, &error))?;
+    }
+    // Made through a link while it was being made? Checked again.
+    inside_project(root, relative)
+}
+
+/// When a file or folder on `relative`'s way exists with other letter case
+/// (`Assets/Sounds/Jump.wav` for `assets/sounds/jump.wav`), its spelling on
+/// disk: the name would work on Windows and fail on Linux.
+pub(crate) fn other_case(root: &Path, relative: &str) -> Option<String> {
+    let mut folder = root.to_path_buf();
+    let mut spelled = Vec::new();
+    let mut differs = false;
+    for part in relative.split('/') {
+        let entries = std::fs::read_dir(&folder).ok()?;
+        let mut names: Vec<String> = entries
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        let name = if names.iter().any(|n| n == part) {
+            part.to_owned()
+        } else {
+            let found = names.into_iter().find(|n| n.eq_ignore_ascii_case(part))?;
+            differs = true;
+            found
+        };
+        folder.push(&name);
+        spelled.push(name);
+    }
+    differs.then(|| spelled.join("/"))
 }
 
 #[cfg(test)]

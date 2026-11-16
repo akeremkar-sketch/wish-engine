@@ -119,7 +119,7 @@ pub(crate) const ENTITY_GET: Tool = Tool {
         Param::optional(
             "resources",
             Kind::StringList,
-            "Resource names, such as [\"Score\", \"Time\"]: their values are returned under resources.",
+            "Resource names, such as [\"Score\", \"Time\"]: their values are returned under resources. One the world does not hold yet reads as its defaults and is listed under resources_defaulted.",
         ),
     ],
     mutates: false,
@@ -645,6 +645,7 @@ fn entity_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<S
         .map(|(_, info)| info.name())
         .collect();
     let mut resources = Map::new();
+    let mut defaulted = Vec::new();
     for (index, name) in wanted_resources.iter().enumerate() {
         if !resource_names.contains(&name.as_str()) {
             return Err(Diagnostic::error(
@@ -655,18 +656,24 @@ fn entity_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<S
             .at_path(format!("/resources/{index}"))
             .with_candidates(resource_names.iter().copied()));
         }
-        // A resource the world does not hold reads as its defaults: what the
-        // engine uses in its place.
+        // A resource the world does not hold reads as its defaults (what the
+        // engine uses in its place), and the answer says so; any other
+        // problem is reported (M7 closing review).
         let value = match world.resource_json(name) {
             Ok(value) => value,
-            Err(_) => world
-                .registry()
-                .resource_id(name)
-                .and_then(|id| world.registry().resource(id))
-                .and_then(|info| {
-                    wish_schema::to_json(info.schema(), info.default_bytes(), world.texts()).ok()
-                })
-                .unwrap_or(Value::Null),
+            Err(problem) if problem.code != "resource_not_found" => return Err(problem),
+            Err(_) => {
+                defaulted.push(name.clone());
+                world
+                    .registry()
+                    .resource_id(name)
+                    .and_then(|id| world.registry().resource(id))
+                    .and_then(|info| {
+                        wish_schema::to_json(info.schema(), info.default_bytes(), world.texts())
+                            .ok()
+                    })
+                    .unwrap_or(Value::Null)
+            }
         };
         resources.insert(name.clone(), value);
     }
@@ -686,6 +693,9 @@ fn entity_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<S
     }
     if !wanted_resources.is_empty() {
         out.insert("resources".to_owned(), Value::Object(resources));
+    }
+    if !defaulted.is_empty() {
+        out.insert("resources_defaulted".to_owned(), json!(defaulted));
     }
     finish(&mut out, notes, workspace, &path);
     Ok(out)

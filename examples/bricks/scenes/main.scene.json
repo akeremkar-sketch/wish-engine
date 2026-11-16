@@ -745,6 +745,7 @@
     },
     "end_text": {
       "components": {
+        "EndText": {},
         "UiNode": {},
         "UiText": {
           "align": "Center",

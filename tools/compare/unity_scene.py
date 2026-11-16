@@ -129,11 +129,18 @@ class Scene:
         if renderer is None:
             return []
         colors = []
-        for _, guid in renderer.list_refs("m_Materials"):
-            mat = find_asset(project_root, guid) if guid else None
-            if mat is None:
-                continue
-            text = open(mat, encoding="utf-8").read()
+        for file_id, guid in renderer.list_refs("m_Materials"):
+            if guid:
+                mat = find_asset(project_root, guid)
+                if mat is None:
+                    continue
+                text = open(mat, encoding="utf-8").read()
+            else:
+                # A material kept inside the scene (not saved as an asset).
+                inline = self.docs.get(file_id)
+                if inline is None or inline.cls != 21:
+                    continue
+                text = "\n".join(inline.lines)
             for key in ("_BaseColor", "_Color"):
                 match = re.search(r"- " + key + r": \{r: ([\d.e-]+), g: ([\d.e-]+), b: ([\d.e-]+)", text)
                 if match:
@@ -153,21 +160,40 @@ def find_asset(project_root, guid):
     return None
 
 
-def forward(rotation):
-    """Unity looks along +Z: the rotated +Z axis of a quaternion {x,y,z,w}."""
+def rotate(rotation, v):
+    """A vector turned by a quaternion {x,y,z,w}."""
     x, y, z, w = (rotation.get(k, 0.0) for k in "xyzw")
-    return (2 * (x * z + w * y), 2 * (y * z - w * x), 1 - 2 * (x * x + y * y))
+    if x == y == z == 0 and w == 0:
+        w = 1.0
+    # v + 2w (q x v) + 2 q x (q x v)
+    qv = (x, y, z)
+
+    def cross(a, b):
+        return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+    t = tuple(2 * c for c in cross(qv, v))
+    u = cross(qv, t)
+    return tuple(v[i] + w * t[i] + u[i] for i in range(3))
+
+
+def forward(rotation):
+    """Unity looks along +Z: the rotated +Z axis."""
+    return rotate(rotation, (0.0, 0.0, 1.0))
 
 
 def in_view(scene, camera_obj, point, aspect=16 / 9):
+    """Inside the camera's view: the vertical half-angle is fov/2, the
+    horizontal one follows from the aspect (16:9, as Wish Engine's check
+    renders). Occlusion is not looked at."""
     t = scene.transform(camera_obj)
+    rotation = t.vector("m_LocalRotation") or {}
     eye = scene.world_position(camera_obj)
-    f = forward(t.vector("m_LocalRotation") or {})
     to = tuple(p - e for p, e in zip(point, eye))
-    length = math.sqrt(sum(v * v for v in to)) or 1e-9
-    to = tuple(v / length for v in to)
+    ahead = sum(a * b for a, b in zip(rotate(rotation, (0, 0, 1)), to))
+    if ahead <= 0.3:  # Unity's default near plane
+        return False
+    side = sum(a * b for a, b in zip(rotate(rotation, (1, 0, 0)), to))
+    up = sum(a * b for a, b in zip(rotate(rotation, (0, 1, 0)), to))
     fov = scene.component(camera_obj, CAMERA).number("field of view", 60.0)
     half_v = math.radians(fov) / 2
-    half_diag = math.atan(math.tan(half_v) * math.sqrt(1 + aspect * aspect))
-    angle = math.acos(max(-1.0, min(1.0, sum(a * b for a, b in zip(f, to)))))
-    return angle < half_diag * 0.9
+    half_h = math.atan(math.tan(half_v) * aspect)
+    return abs(math.atan2(up, ahead)) < half_v and abs(math.atan2(side, ahead)) < half_h

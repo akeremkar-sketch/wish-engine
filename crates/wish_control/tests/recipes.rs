@@ -1,6 +1,8 @@
 //! The recipes page (`wish://docs/recipes`, M7 WP4) stays true: every
 //! recipe's game code builds without warnings in a fresh project, its scene
-//! operations apply, and its scenario test examples are well formed.
+//! operations apply, its scenario test examples are well formed, and it
+//! does what it says: a scenario test plays each one (M7 closing review:
+//! building and applying alone did not show that a coin is picked up).
 
 #![allow(missing_docs)]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -32,6 +34,106 @@ fn toolchain() -> &'static Toolchain {
             .join(if cfg!(windows) { "rustc.exe" } else { "rustc" });
         Toolchain { sdk, rustc }
     })
+}
+
+/// What proves a recipe works: extra scene operations (what the rest of a
+/// game would add) and the steps of a scenario test. By the recipe's title.
+fn behaviour(title: &str) -> Option<(Value, Value)> {
+    let click = |x: u32, y: u32| {
+        json!([
+            { "input": { "pointer": [x, y], "click": true }, "frames": 1 },
+            { "input": { "pointer": [x, y] }, "frames": 2 }
+        ])
+    };
+    let (ops, steps) = if title.starts_with("A platformer character") {
+        (
+            json!([]),
+            json!([
+                { "frames": 20 },
+                { "expect": "CharacterState.grounded == true", "entity": "player", "message": "it stands on the floor" },
+                { "input": { "move": [1, 0] }, "frames": 60 },
+                { "expect": "Transform.translation.x > 4", "entity": "player", "message": "it runs 5 m/s along +X" },
+                { "input": { "jump": true }, "frames": 1 },
+                { "frames": 12 },
+                { "expect": "Transform.translation.y > 1.6", "entity": "player", "message": "it jumps" },
+                { "frames": 60 },
+                { "expect": "CharacterState.grounded == true", "entity": "player", "message": "it lands" }
+            ]),
+        )
+    } else if title.starts_with("A camera that follows") {
+        (
+            json!([]),
+            json!([
+                { "frames": 180 },
+                { "expect": "Transform.translation.y > 3.9 && Transform.translation.z > 7.9 && Transform.translation.z < 8.1",
+                  "entity": "camera", "message": "the camera settles behind and above the player" }
+            ]),
+        )
+    } else if title.starts_with("Things to pick up") {
+        (
+            json!([
+                { "op": "spawn", "id": "player", "components": {
+                    "Transform": { "translation": [0, 0.6, 0] }, "Player": {},
+                    "RigidBody": { "kind": "Dynamic", "gravity_scale": 0, "linear_damping": 0 },
+                    "Collider": { "shape": "Sphere" }, "BodyVelocity": { "linear": [2, 0, 0] } } }
+            ]),
+            json!([
+                { "until": "Score.points >= 1", "max_frames": 120 },
+                { "frames": 2 },
+                { "expect": "Score.points == 1 && count(Coin) == 0", "message": "the coin is picked up once" },
+                { "expect": "UiText.text == \"Score: 1\"", "entity": "score_label", "message": "the label says so" },
+                { "expect": "count(ParticleEmitter) == 1", "message": "sparks start" }
+            ]),
+        )
+    } else if title.starts_with("Falling off and checkpoints") {
+        (
+            json!([
+                { "op": "despawn", "id": "ground" },
+                { "op": "spawn", "id": "player", "components": {
+                    "Transform": { "translation": [6, 3, 0], "scale": [0.6, 1.8, 0.6] },
+                    "RigidBody": { "kind": "Kinematic" }, "Collider": { "shape": "Capsule" },
+                    "CharacterController": {}, "CharacterMotion": { "velocity": [0, -5, 0] }, "CharacterState": {},
+                    "Player": {} } }
+            ]),
+            json!([
+                { "frames": 200 },
+                { "expect": "Player.respawn.x == 6 && Transform.translation.y > 0.99 && Transform.translation.y < 1.01",
+                  "entity": "player", "message": "it fell through the checkpoint, off the world, and came back there" }
+            ]),
+        )
+    } else if title.starts_with("A moving platform") {
+        (
+            json!([]),
+            json!([
+                { "frames": 90 },
+                { "expect": "Transform.translation.z < -6.9 && Transform.translation.z > -7.1", "entity": "lift",
+                  "message": "half way at 1.5 s" },
+                { "frames": 90 },
+                { "expect": "Transform.translation.z < -9.9", "entity": "lift", "message": "at the far end at 3 s" }
+            ]),
+        )
+    } else if title.starts_with("A win screen") {
+        let mut steps = vec![json!({ "frames": 2 })];
+        steps.extend(click(640, 360).as_array().unwrap().iter().cloned());
+        steps.push(json!({ "expect": "GameState.started == true", "message": "the button starts the game" }));
+        steps.push(json!({ "expect": "UiNode.visible == false", "entity": "win_panel", "message": "not won yet" }));
+        (json!([]), Value::Array(steps))
+    } else if title.starts_with("A 2D game") {
+        (
+            json!([]),
+            json!([
+                { "frames": 70 },
+                { "until": "has(Sprite) && has(RigidBody) && Transform.translation.y > -3.2", "max_frames": 120 },
+                { "expect": "Transform.translation.z == 0", "entity": "ball", "message": "it bounced and stays in the plane" }
+            ]),
+        )
+    } else {
+        return None;
+    };
+    Some((
+        ops,
+        json!({ "format": 1, "scene": "scenes/main.scene.json", "seed": 1, "steps": steps }),
+    ))
 }
 
 /// A fenced block: its info string and its text.
@@ -76,6 +178,7 @@ fn every_recipe_builds_and_applies() {
     let mut built = 0;
     let mut applied = 0;
     let mut tests = 0;
+    let mut played = 0;
     for (index, (title, blocks)) in all.iter().enumerate() {
         let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("recipe-{index}"));
         let _ = std::fs::remove_dir_all(&dir);
@@ -132,10 +235,25 @@ fn every_recipe_builds_and_applies() {
                     .all(|d| d["severity"] != "error"),
             "'{title}': {stepped}"
         );
+        // And it does what it says.
+        if let Some((ops, test)) = behaviour(title) {
+            if ops.as_array().is_some_and(|o| !o.is_empty()) {
+                let answer = ws.call("edit_apply", &json!({ "ops": ops }), &agent);
+                assert_eq!(answer["ok"], true, "'{title}': {answer}");
+            }
+            std::fs::write(
+                dir.join("tests/recipe.test.json"),
+                serde_json::to_string_pretty(&test).unwrap(),
+            )
+            .unwrap();
+            let ran = ws.call("test_run", &json!({}), &agent);
+            assert_eq!(ran["passed"], true, "'{title}' does not work: {ran}");
+            played += 1;
+        }
     }
     assert!(
-        built >= 6 && applied >= 7 && tests >= 1,
-        "{built} {applied} {tests}"
+        built >= 6 && applied >= 7 && tests >= 1 && played >= 7,
+        "{built} {applied} {tests} {played}"
     );
 }
 

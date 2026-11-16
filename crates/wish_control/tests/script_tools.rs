@@ -1014,7 +1014,7 @@ fn the_bricks_example_is_won_by_its_tests_and_replays() {
     assert_eq!(checked["diagnostics"], json!([]), "{checked}");
     let tests = ws.call("test_run", &json!({}), &agent);
     assert_eq!(tests["passed"], true, "{tests}");
-    assert_eq!(tests["tests"], 3);
+    assert_eq!(tests["tests"], 4);
 
     let started = ws.call("sim_start", &json!({}), &agent);
     let id = started["session"].as_str().unwrap().to_owned();

@@ -1,7 +1,8 @@
 # Wish Engine: recipes
 
-Working pieces of games, each a complete `scripts/src/lib.rs` and the scene operations that go with it. They are
-compiled and applied by the engine's own tests, so they work as written. Take what you need; rename freely.
+Working pieces of games, each a complete `scripts/src/lib.rs` and the scene operations that go with it. The
+engine's own tests build each one, apply it and play it (the player runs and jumps, a coin is picked up, a checkpoint
+brings the player back...), so they work as written. Take what you need; rename freely.
 Steps for every recipe: write the code, `script_build`, apply the operations with `edit_apply`, then `sim_start` /
 `sim_step` with `input` and look (`entity_get` with `session`, `describe_view`).
 
@@ -237,7 +238,9 @@ Make the sound first: `asset_create` with `{ "path": "assets/sounds/coin.wav", "
 
 ## Falling off and checkpoints
 
-Below a line the player comes back at the last checkpoint touched. A checkpoint is a sensor collider.
+Below a line the player comes back at the last checkpoint touched. A checkpoint is a sensor collider. Set the
+player's `respawn` to where it starts in the scene (`{ "op": "set", "id": "player", "component": "Player", "value":
+{ "respawn": [0, 0.95, 0] } }`), so a fall before any checkpoint brings it back there, not into the floor.
 
 ```rust
 use wish_sdk::prelude::*;
@@ -245,8 +248,8 @@ use wish_sdk::prelude::*;
 /// The player and where it comes back.
 #[component]
 pub struct Player {
-    /// The last checkpoint's place.
-    #[schema(unit = "m")]
+    /// The last checkpoint's place (at first: where the player starts).
+    #[schema(unit = "m", default = Vec3::new(0.0, 1.0, 0.0))]
     pub respawn: Vec3,
 }
 
@@ -379,6 +382,8 @@ fn start(clicks: EventReader<ButtonClicked>, mut state: ResMut<GameState>) {
     }
 }
 
+/// Shows the panel once the game is won: the rest of your game sets
+/// `GameState.won` (for example when the last coin is gone).
 #[system]
 fn show_win(state: Res<GameState>, mut panels: Query<(&mut WinPanel, &mut UiNode)>) {
     for (panel, node) in panels.iter_mut() {

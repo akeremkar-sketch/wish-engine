@@ -141,3 +141,98 @@ fn resources_are_read_with_entity_get() {
     let nothing = call(&mut ws, "entity_get", json!({}));
     assert_eq!(nothing["error"]["code"], "missing_parameter");
 }
+
+/// M7 closing review: asset_create writes nothing on a dry run or a failed
+/// call, and refuses what it would otherwise get silently wrong.
+#[test]
+fn asset_create_leaves_no_trace_and_refuses_unknown_fields() {
+    let (dir, mut ws) = project("create-review");
+    let dry = call(
+        &mut ws,
+        "asset_create",
+        json!({ "path": "assets/new/deep/x.wav", "dry_run": true }),
+    );
+    assert_eq!(dry["ok"], true, "{dry}");
+    assert!(!dir.join("assets/new").exists(), "a dry run made folders");
+
+    let typo = call(
+        &mut ws,
+        "asset_create",
+        json!({ "path": "made/here/x.wav", "sound": { "wave": "sqare" } }),
+    );
+    assert_eq!(typo["ok"], false);
+    assert!(!dir.join("made").exists(), "a failed call made folders");
+
+    // A field it does not know, with the near name as a hint.
+    let unknown = call(
+        &mut ws,
+        "asset_create",
+        json!({ "path": "assets/sounds/long.wav", "sound": { "secons": 2 } }),
+    );
+    assert_eq!(unknown["error"]["code"], "invalid_parameter", "{unknown}");
+    assert_eq!(unknown["error"]["location"]["path"], "/sound/secons");
+    assert!(
+        unknown["error"]["hint"]
+            .as_str()
+            .unwrap()
+            .contains("seconds"),
+        "{unknown}"
+    );
+    // A name that is not a string.
+    let number = call(
+        &mut ws,
+        "asset_create",
+        json!({ "path": "assets/ui/x.png", "picture": { "shape": 3 } }),
+    );
+    assert_eq!(
+        number["error"]["location"]["path"], "/picture/shape",
+        "{number}"
+    );
+    // The spec of the other kind.
+    let crossed = call(
+        &mut ws,
+        "asset_create",
+        json!({ "path": "assets/ui/x.png", "sound": { "wave": "sine" } }),
+    );
+    assert_eq!(crossed["error"]["location"]["path"], "/sound", "{crossed}");
+    assert!(!dir.join("assets/ui/x.png").exists());
+
+    // A name that exists with other letter case.
+    let made = call(
+        &mut ws,
+        "asset_create",
+        json!({ "path": "assets/sounds/jump.wav" }),
+    );
+    assert_eq!(made["ok"], true, "{made}");
+    let cased = call(
+        &mut ws,
+        "asset_create",
+        json!({ "path": "assets/Sounds/Jump.wav", "overwrite": true }),
+    );
+    assert_eq!(cased["error"]["code"], "invalid_output_path", "{cased}");
+    assert!(
+        cased["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("assets/sounds/jump.wav"),
+        "{cased}"
+    );
+}
+
+/// M7 closing review: a resource read from its defaults says so.
+#[test]
+fn entity_get_says_which_resources_are_defaults() {
+    let (_dir, mut ws) = project("resources-review");
+    let got = call(
+        &mut ws,
+        "entity_get",
+        json!({ "resources": ["PhysicsSettings"] }),
+    );
+    assert_eq!(got["ok"], true, "{got}");
+    assert!(got["resources"]["PhysicsSettings"].is_object(), "{got}");
+    assert_eq!(
+        got["resources_defaulted"],
+        json!(["PhysicsSettings"]),
+        "{got}"
+    );
+}

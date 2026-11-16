@@ -612,7 +612,7 @@ impl Workspace {
                 |_| golden.clone(),
                 |p| p.to_string_lossy().replace('\\', "/"),
             );
-            let real = crate::documents::inside_project(self.root(), &relative)?;
+            let real = crate::documents::prepare_output(self.root(), &relative)?;
             std::fs::write(real, png).map_err(|error| {
                 Diagnostic::error(
                     "file_unwritable",

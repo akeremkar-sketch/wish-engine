@@ -279,16 +279,28 @@ def stream_metrics(lines):
     return metrics
 
 
-def claude(prompt, cwd, server, tools, model, effort):
+def claude(prompt, task, server, tools, model, effort):
+    """One agent run from an empty folder of its own: neither engine's agent
+    gets a project guide or the project's files (both work through their
+    MCP server only)."""
     exe = "claude.cmd" if os.name == "nt" else "claude"
+    cwd = os.path.join(WORK, f"agent-{server}-{task}")
+    shutil.rmtree(cwd, ignore_errors=True)
+    os.makedirs(cwd)
     with open(os.path.join(cwd, ".compare-mcp.json"), "w", encoding="utf-8") as f:
         json.dump({"mcpServers": {server: tools}}, f)
-    done = subprocess.run(
-        [exe, "-p", prompt, "--model", model, "--effort", effort, "--output-format", "stream-json", "--verbose",
-         "--mcp-config", ".compare-mcp.json", "--strict-mcp-config", "--allowedTools", f"mcp__{server}",
-         "--disallowedTools", "Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch"],
-        cwd=cwd, capture_output=True, timeout=1800)
-    return stream_metrics(done.stdout.decode("utf-8", "replace").splitlines())
+    try:
+        done = subprocess.run(
+            [exe, "-p", prompt, "--model", model, "--effort", effort, "--output-format", "stream-json", "--verbose",
+             "--mcp-config", ".compare-mcp.json", "--strict-mcp-config", "--allowedTools", f"mcp__{server}",
+             "--disallowedTools", "Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch,Read,Glob,Grep"],
+            cwd=cwd, capture_output=True, timeout=1800)
+        metrics = stream_metrics(done.stdout.decode("utf-8", "replace").splitlines())
+    except subprocess.TimeoutExpired as expired:
+        metrics = stream_metrics((expired.stdout or b"").decode("utf-8", "replace").splitlines())
+        metrics["timed_out"] = True
+    shutil.rmtree(cwd, ignore_errors=True)
+    return metrics
 
 
 def run(args):
@@ -302,32 +314,40 @@ def run(args):
     label = flag("--label", f"{engine}-{model}-{effort}")
     os.makedirs(WORK, exist_ok=True)
     rows = []
+    out = os.path.join(REPO, "evals", "results", f"compare-{label}")
+    open(out + ".jsonl", "w", encoding="utf-8").close()
     if engine == "unity":
         project = flag("--unity-project")
         base = os.path.join(project, "Assets", "Scenes", "CompareBase.unity")
-        # The real file must fail every check first: proof the reader reads it.
-        wrong = [t for t, _ in tasks if t != "delete" and unity_check(t, base, project)[0]]
+        # The reader must find the start scene's objects (a binary scene
+        # would read as empty), and every task must fail on it first.
+        from unity_scene import Scene
+        start_scene = Scene(base)
+        missing = [n for n in ["floor", "box", "target", "wheel", "old", "Main Camera"] if start_scene.find(n) is None]
+        if missing:
+            sys.exit(f"the start scene does not read (missing {missing}): is it saved as text? see CompareSetup")
+        wrong = [t for t, _ in tasks if unity_check(t, base, project)[0]]
         if wrong:
             sys.exit(f"the start scene already passes {wrong}: check CompareSetup")
     for task, prompt in tasks:
         if engine == "wish":
             root = wish_project(task)
             full = f"{prompt} {NOTE}"
-            metrics = claude(full, root, "wish", {"command": WEN, "args": ["mcp", "--root", root]}, model, effort)
+            metrics = claude(full, task, "wish", {"command": WEN, "args": ["mcp", "--root", root]}, model, effort)
             passed, why = wish_check(task, WEN, root)
             shutil.rmtree(root, ignore_errors=True)
         else:
             scene_rel = f"Assets/Scenes/Compare_{task}.unity"
             shutil.copyfile(base, os.path.join(project, scene_rel))
             full = f"Unity'de {scene_rel} sahnesini aç. {prompt} {NOTE}"
-            metrics = claude(full, WORK, "unity-mcp", UNITY_MCP, model, effort)
+            metrics = claude(full, task, "unity-mcp", UNITY_MCP, model, effort)
             passed, why = unity_check(task, os.path.join(project, scene_rel), project)
         row = {"engine": engine, "task": task, "passed": passed, "why": why, **metrics}
         rows.append(row)
         print(json.dumps(row, ensure_ascii=False))
-    out = os.path.join(REPO, "evals", "results", f"compare-{label}")
-    with open(out + ".jsonl", "w", encoding="utf-8") as f:
-        f.writelines(json.dumps(r, ensure_ascii=False) + "\n" for r in rows)
+        # Written as each task ends: a later failure keeps what was measured.
+        with open(out + ".jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
     lines = [f"# Comparison: {engine}, {model} · {effort}", "",
              f"Passed **{sum(r['passed'] for r in rows)}/{len(rows)}**; cost {sum(r['cost_usd'] for r in rows):.2f} $", "",
              "| Task | Passed | Turns | Tool calls | Tool errors | Tokens in/out | Cost $ |", "|---|---|---|---|---|---|---|"]

@@ -1,8 +1,8 @@
 //! Bricks: a 2D brick breaker, a small example for Wish Engine (M7). A
 //! ball bounces between walls, a paddle and bricks; every brick is worth
-//! points, three lives, win by clearing the bricks. Move the paddle with
-//! A/D or the arrow keys; with `auto` on it follows the ball by itself
-//! (how the tests play).
+//! points, three lives, win by clearing the bricks. With `auto` on the
+//! paddle follows the ball by itself (a demo, and how the tests play); the
+//! first press of A/D or the arrow keys hands it to the player.
 
 use wish_sdk::prelude::*;
 
@@ -12,7 +12,7 @@ pub struct Paddle {
     /// How fast it moves.
     #[schema(unit = "m/s", default = 9.0)]
     pub speed: f32,
-    /// Whether it follows the ball by itself.
+    /// Whether it follows the ball by itself (until a key moves it).
     pub auto: bool,
 }
 
@@ -37,6 +37,13 @@ pub struct Brick {
 pub struct Hud {
     /// The score and lives it shows now, packed: score * 10 + lives.
     pub shown: u32,
+}
+
+/// The text on the end panel.
+#[component]
+pub struct EndText {
+    /// Unused.
+    pub unused: u32,
 }
 
 /// The panel at the end, with its message.
@@ -94,12 +101,17 @@ fn move_paddle(
     time: Res<Time>,
     game: Res<Game>,
     balls: Query<&Transform, With<Ball>>,
-    mut paddles: Query<(&Paddle, &mut Transform), Without<Ball>>,
+    mut paddles: Query<(&mut Paddle, &mut Transform), Without<Ball>>,
 ) {
     if game.won || game.lost {
         return;
     }
+    let keys = actions.axis2("move").x;
     for (paddle, at) in paddles.iter_mut() {
+        // A key takes the paddle over from the demo.
+        if paddle.auto && keys.abs() > 0.01 {
+            paddle.auto = false;
+        }
         let step = paddle.speed * time.delta;
         let wanted = if paddle.auto {
             // Aims at a spot that wanders along the paddle, so the ball
@@ -110,7 +122,7 @@ fn move_paddle(
                 .next()
                 .map(|b| b.translation.x - wander - at.translation.x)
         } else {
-            Some(actions.axis2("move").x * paddle.speed * time.delta)
+            Some(keys * paddle.speed * time.delta)
         };
         if let Some(wanted) = wanted {
             let x = at.translation.x + wanted.clamp(-step, step);
@@ -185,14 +197,12 @@ fn hit(
             if game.bricks == 0 {
                 game.won = true;
             }
-        } else {
+        } else if let Some((_, paddle_at)) = paddles.iter().find(|(e, _)| *e == other) {
             sounds.send(sound("assets/sounds/paddle.wav"));
             // Where the ball hit the paddle decides the way it leaves:
             // the edges send it sideways, the middle straight up.
-            if let Some((_, paddle_at)) = paddles.iter().find(|(e, _)| *e == other) {
-                let offset = ((ball_at.translation.x - paddle_at.translation.x) / 1.1).clamp(-1.0, 1.0);
-                velocity.linear = Vec3::new(offset * 7.0, 6.0, 0.0);
-            }
+            let offset = ((ball_at.translation.x - paddle_at.translation.x) / 1.1).clamp(-1.0, 1.0);
+            velocity.linear = Vec3::new(offset * 7.0, 6.0, 0.0);
         }
     }
 }
@@ -203,7 +213,7 @@ fn show(
     game: Res<Game>,
     mut huds: Query<(&mut Hud, &mut UiText)>,
     mut panels: Query<(&mut EndPanel, &mut UiNode)>,
-    mut messages: Query<&mut UiText, Without<Hud>>,
+    mut messages: Query<&mut UiText, (With<EndText>, Without<Hud>)>,
 ) {
     let packed = game.score * 10 + game.lives;
     for (hud, words) in huds.iter_mut() {
@@ -224,7 +234,7 @@ fn show(
 }
 
 wish_sdk::export! {
-    components: [Paddle, Ball, Brick, Hud, EndPanel],
+    components: [Paddle, Ball, Brick, Hud, EndText, EndPanel],
     resources: [Game],
     systems: [start, move_paddle, move_ball, hit, show],
 }

@@ -171,6 +171,39 @@
       "expect": "UiNode.visible == false",
       "entity": "quiz",
       "message": "the questions are gone"
+    },
+    {
+      "input": {
+        "pointer": [
+          640,
+          397
+        ],
+        "click": true
+      },
+      "frames": 1
+    },
+    {
+      "input": {
+        "pointer": [
+          640,
+          397
+        ]
+      },
+      "frames": 2
+    },
+    {
+      "expect": "Game.screen == 1 && Game.question == 0 && Game.score == 0",
+      "message": "'Tekrar' starts a new game from the first question"
+    },
+    {
+      "expect": "UiText.text == \"Wish Engine hangi dille yazıldı?\"",
+      "entity": "question",
+      "message": "the first question is asked again"
+    },
+    {
+      "expect": "UiNode.visible == true",
+      "entity": "quiz",
+      "message": "the questions are back"
     }
   ]
 }

@@ -23,6 +23,8 @@ public static class CompareSetup
 
     public static void Build()
     {
+        // Text scenes, so the checker can read them: set before saving.
+        EditorSettings.serializationMode = SerializationMode.ForceText;
         var scene = EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
         var camera = Camera.main.gameObject;
         camera.transform.position = new Vector3(0, 1, -10);
@@ -36,8 +38,6 @@ public static class CompareSetup
         Make(PrimitiveType.Sphere, "target", new Vector3(0, 0.5f, 25), Vector3.one, false);
         System.IO.Directory.CreateDirectory("Assets/Scenes");
         EditorSceneManager.SaveScene(scene, "Assets/Scenes/CompareBase.unity");
-        // Text scenes, so the checker can read them.
-        EditorSettings.serializationMode = SerializationMode.ForceText;
         AssetDatabase.SaveAssets();
     }
 }

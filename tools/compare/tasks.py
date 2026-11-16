@@ -165,9 +165,15 @@ def _unity_check(task, scene_path, project_root):
         body = box and scene.component(box, RIGIDBODY)
         if body is None:
             return False, "'box' has no Rigidbody"
-        falls = body.number("m_UseGravity", 1) == 1 and body.number("m_IsKinematic", 0) == 0
-        solid = scene.has(box, COLLIDERS) and floor is not None and scene.has(floor, COLLIDERS)
-        return falls and solid, "rigidbody with gravity, colliders on box and floor (static check)"
+        # Falls: gravity, not kinematic, Y position not frozen (constraint bit 4).
+        falls = (body.number("m_UseGravity", 1) == 1 and body.number("m_IsKinematic", 0) == 0
+                 and int(body.number("m_Constraints", 0)) & 4 == 0)
+
+        def solid(o):
+            colliders = [c for c in scene.components(o) if c.cls in COLLIDERS]
+            return any(c.number("m_IsTrigger", 0) == 0 and c.number("m_Enabled", 1) == 1 for c in colliders)
+        lands = solid(box) and floor is not None and solid(floor)
+        return falls and lands, "rigidbody with gravity, solid colliders on box and floor (static check)"
     if task == "point_light":
         o = obj("lamp")
         light = o and scene.component(o, LIGHT)

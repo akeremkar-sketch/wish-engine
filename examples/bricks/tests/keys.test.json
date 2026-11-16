@@ -1,0 +1,16 @@
+{
+  "format": 1,
+  "scene": "scenes/main.scene.json",
+  "seed": 1,
+  "steps": [
+    { "frames": 2 },
+    { "expect": "Paddle.auto == true", "entity": "paddle", "message": "the demo plays first" },
+    { "input": { "move": [-1, 0] }, "frames": 40 },
+    { "expect": "Paddle.auto == false", "entity": "paddle", "message": "a key hands the paddle to the player" },
+    { "expect": "Transform.translation.x < -4", "entity": "paddle", "message": "the paddle went left with the key" },
+    { "input": { "move": [1, 0] }, "frames": 20 },
+    { "expect": "Transform.translation.x > -3.5", "entity": "paddle", "message": "and right (3 m at 9 m/s)" },
+    { "frames": 30 },
+    { "expect": "Paddle.auto == false", "entity": "paddle", "message": "the player keeps it once keys are let go" }
+  ]
+}

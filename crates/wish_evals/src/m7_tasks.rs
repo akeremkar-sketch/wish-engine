@@ -95,8 +95,8 @@ fn reference_code(probe: &mut Probe, code: &str, test: &str) -> Result<(), Strin
     write_file(&dir, "tests/own.test.json", test.as_bytes())
 }
 
-const OWN_TEST: &str =
-    r#"{ "format": 1, "scene": "scenes/main.scene.json", "steps": [ { "frames": 30 } ] }"#;
+const OWN_TEST: &str = r#"{ "format": 1, "scene": "scenes/main.scene.json", "steps": [
+    { "frames": 30 }, { "expect": "Time.tick >= 29", "message": "the game runs" } ] }"#;
 
 // --------------------------------------------------------------------------
 // 26: a camera that follows the player (game code).
@@ -119,10 +119,43 @@ fn follow_check(probe: &mut Probe, dir: &Path, _: &Value) -> Verdict {
             { "input": { "move": [0, 1] }, "frames": 120 },
             { "expect": "Transform.translation.z < -7.5 && Transform.translation.z > -8.5",
               "entity": "player", "message": "the player walked about 8 m forward (-Z) at 4 m/s" },
-            { "expect": "Transform.translation.z < 1 && Transform.translation.z > -6 && Transform.translation.y > 0.5",
-              "entity": "camera", "message": "the camera came along behind the player (it started at z = 7)" }
         ])),
-    )
+    )?;
+    // The camera, in the world (it may be the player's child), behind and
+    // above the player, and the player on screen (M7 closing review).
+    let s = start(probe)?;
+    step(probe, &s, 5, json!({}))?;
+    step(probe, &s, 120, json!({ "move": [0, 1] }))?;
+    let world = |probe: &mut Probe, id: &str| -> Result<[f64; 3], String> {
+        let got = probe.call(
+            "entity_get",
+            json!({ "session": s, "ids": [id], "components": ["GlobalTransform"] }),
+        )?;
+        let m = &got["entities"][0]["components"]["GlobalTransform"]["matrix"];
+        Ok([num(&m[12]), num(&m[13]), num(&m[14])])
+    };
+    let player = world(probe, "player")?;
+    let camera = world(probe, "camera")?;
+    let behind = camera[2] - player[2];
+    if !(1.0..=15.0).contains(&behind) || camera[1] < player[1] + 0.5 {
+        return Err(format!(
+            "after the walk the camera is at {camera:?} and the player at {player:?}: it should be behind (+Z) and above"
+        ));
+    }
+    let seen = probe.call(
+        "describe_view",
+        json!({ "session": s, "width": 640, "height": 360 }),
+    )?;
+    if seen["visible"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|v| v["entity"] == "player")
+    {
+        Ok(())
+    } else {
+        Err("after the walk the camera does not see the player".to_owned())
+    }
 }
 
 const FOLLOW_CODE: &str = r#"
@@ -261,8 +294,8 @@ fn crate_check(probe: &mut Probe, dir: &Path, _: &Value) -> Verdict {
         dir,
         &hidden(json!([
             { "frames": 150 },
-            { "expect": "Transform.translation.y > -5 && Transform.translation.y < 2.1",
-              "entity": "crate", "message": "it fell past -10, was put back at (0, 2, 0) at rest, and has been falling again since (a crate that kept its speed would be far below by now)" },
+            { "expect": "Transform.translation.y > -5 && Transform.translation.y < 2.1 && BodyVelocity.linear.y > -12",
+              "entity": "crate", "message": "it fell past -10, was put back at (0, 2, 0) at rest, and has been falling again since (a crate that kept its speed would fall faster than 20 m/s)" },
             { "expect": "Transform.translation.x > -0.1 && Transform.translation.x < 0.1 && Transform.translation.z > -0.1 && Transform.translation.z < 0.1",
               "entity": "crate", "message": "it comes back above the same spot" },
             { "frames": 250 },
@@ -425,6 +458,20 @@ fn bell_check(probe: &mut Probe, dir: &Path, _: &Value) -> Verdict {
         }
     }
     let hertz = f64::from(crossings) / 2.0 / seconds;
+    // A tone crosses zero at even steps; noise does not.
+    let mut at = Vec::new();
+    for (index, pair) in clip.samples.windows(2).enumerate() {
+        if (pair[0] < 0.0) != (pair[1] < 0.0) {
+            at.push(index as f64);
+        }
+    }
+    let gaps: Vec<f64> = at.windows(2).map(|w| w[1] - w[0]).collect();
+    let mean = gaps.iter().sum::<f64>() / gaps.len().max(1) as f64;
+    let spread =
+        (gaps.iter().map(|g| (g - mean).powi(2)).sum::<f64>() / gaps.len().max(1) as f64).sqrt();
+    if gaps.len() < 10 || spread > 0.3 * mean {
+        return Err("the sound is not a tone (noise, not a bell)".to_owned());
+    }
     if hertz < 800.0 {
         return Err(format!(
             "the sound's pitch is about {hertz:.0} Hz, not above 800 Hz"
@@ -473,9 +520,9 @@ const RING: &str = "assets/ui/ring.png";
 fn icon_check(probe: &mut Probe, dir: &Path, _: &Value) -> Verdict {
     let bytes = std::fs::read(dir.join(RING)).map_err(|_| format!("{RING} does not exist"))?;
     let picture = wish_import::load_png(&bytes, RING).map_err(|p| p.message.to_string())?;
-    if !(32..=128).contains(&picture.width) || picture.width != picture.height {
+    if picture.width != 64 || picture.height != 64 {
         return Err(format!(
-            "the picture is {}x{}, not square and 32 to 128 pixels",
+            "the picture is {}x{}, not 64x64",
             picture.width, picture.height
         ));
     }
@@ -536,8 +583,8 @@ pub struct Counter {
 }
 
 #[system]
-fn count(mut counter: ResMut<Counter>) {
-    counter.ticks += 1;
+fn count(time: Res<Time>, mut counter: ResMut<Counter>) {
+    counter.ticks += 1 + (time.tick % 5) as u32;
 }
 
 wish_sdk::export! {
@@ -557,13 +604,21 @@ fn counter_setup(dir: &Path) -> Result<(), String> {
 }
 
 fn counter_check(probe: &mut Probe, _: &Path, _: &Value) -> Verdict {
+    // The value is not guessable from the prompt: read it the same way.
+    let s = start(probe)?;
+    step(probe, &s, 90, json!({}))?;
+    let got = probe.call(
+        "entity_get",
+        json!({ "session": s, "resources": ["Counter"] }),
+    )?;
+    let expected = got["resources"]["Counter"]["ticks"].to_string();
     match probe.entity(None, "report")?["notes"]
         .as_str()
         .map(str::trim)
     {
-        Some("90") => Ok(()),
+        Some(notes) if notes == expected => Ok(()),
         other => Err(format!(
-            "'report' has notes {other:?}, not \"90\" (Counter.ticks after 90 ticks)"
+            "'report' has notes {other:?}, not \"{expected}\" (Counter.ticks after 90 ticks)"
         )),
     }
 }
@@ -671,7 +726,8 @@ fn bounce2d_setup(dir: &Path) -> Result<(), String> {
             { "op": "spawn", "id": "floor", "components": {
                 "Transform": { "translation": [0, 0, 0] }, "Sprite": { "rect": [0, 0, 1000, 50], "color": [0.3, 0.6, 0.3, 1] } } },
             { "op": "spawn", "id": "ball", "components": {
-                "Transform": { "translation": [0, 4, 0] }, "Sprite": { "rect": [0, 0, 50, 50], "color": [1, 0.4, 0.2, 1] } } }
+                "Transform": { "translation": [0, 4, 0] }, "Sprite": { "rect": [0, 0, 50, 50], "color": [1, 0.4, 0.2, 1] },
+                "BodyVelocity": { "linear": [0, 0, 1] } } }
         ]),
     )
 }
@@ -747,8 +803,9 @@ fn stage_check(probe: &mut Probe, _: &Path, _: &Value) -> Verdict {
         let inner = spot["inner_angle_deg"].as_f64().unwrap_or(25.0);
         let range = spot["range"].as_f64().unwrap_or(10.0);
         let distance = ((at[0]).powi(2) + (at[1] - 0.9).powi(2) + (at[2]).powi(2)).sqrt();
-        if at[0].abs() > 1.5 || at[2].abs() > 1.5 || !(2.5..=8.0).contains(&at[1]) {
-            reasons.push(format!("'{id}' is not above the actor (at {at:?}; it should be 2.5 to 8 m up, within 1.5 m sideways)"));
+        // The actor's top is at y = 1.8.
+        if at[0].abs() > 1.5 || at[2].abs() > 1.5 || !(2.5..=8.0).contains(&(at[1] - 1.8)) {
+            reasons.push(format!("'{id}' is not above the actor (at {at:?}; it should be 2.5 to 8 m above its top at y = 1.8, within 1.5 m sideways)"));
         } else if down < 0.9 {
             reasons.push(format!(
                 "'{id}' does not shine downward (down = {down:.2}); a light looks along its -Z axis"
@@ -852,6 +909,14 @@ fn layers_check(probe: &mut Probe, _: &Path, _: &Value) -> Verdict {
     {
         return Err("'wall' must stay a solid, fixed wall".to_owned());
     }
+    for id in ["ghost", "solid"] {
+        let collider = &probe.components(None, id)?["Collider"];
+        if collider.is_null() || collider["sensor"] == true {
+            return Err(format!(
+                "'{id}' must keep a solid collider (use layers and masks, not a sensor)"
+            ));
+        }
+    }
     let s = start(probe)?;
     step(probe, &s, 180, json!({}))?;
     let ghost = live_pos(probe, &s, "ghost")?;
@@ -905,10 +970,8 @@ fn jumper_check(probe: &mut Probe, dir: &Path, _: &Value) -> Verdict {
             { "expect": "Transform.translation.y > 0.4 && Transform.translation.y < 0.6",
               "entity": "box", "message": "the box rests on the ground" },
             { "input": { "jump": true }, "frames": 1 },
-            { "frames": 20 },
-            { "expect": "Transform.translation.y > 1.3", "entity": "box",
-              "message": "jumping kicks the box up by more than 0.8 m" },
-            { "frames": 120 },
+            { "until": "has(Jumper) && Transform.translation.y > 1.3", "max_frames": 50 },
+            { "frames": 140 },
             { "expect": "Transform.translation.y > 0.4 && Transform.translation.y < 0.6",
               "entity": "box", "message": "it lands and rests again" }
         ])),
@@ -1038,6 +1101,13 @@ fn level_check(probe: &mut Probe, _: &Path, baseline: &Value) -> Verdict {
             ));
         }
     }
+    for id in ["camera", "ground", "sun"] {
+        if probe.components(Some(level), id)? != probe.components(None, id)? {
+            return Err(format!(
+                "'{id}' in {level} is not the same as in the main scene"
+            ));
+        }
+    }
     let bonus = probe.components(Some(level), "bonus")?;
     let colour = &bonus["Material"]["base_color"];
     let (r, g, b) = (num(&colour[0]), num(&colour[1]), num(&colour[2]));
@@ -1081,8 +1151,10 @@ fn replay_check(probe: &mut Probe, dir: &Path, _: &Value) -> Verdict {
         .and_then(|l| serde_json::from_str(l).ok())
         .ok_or("the replay file has no header")?;
     let ticks = header["ticks"].as_u64().unwrap_or(0);
-    if ticks < 60 {
-        return Err(format!("the replay has {ticks} ticks, not at least 60"));
+    if ticks != 81 {
+        return Err(format!(
+            "the replay has {ticks} ticks, not 81 (20 + 1 + 60)"
+        ));
     }
     if !text.contains("\"jump\"") {
         return Err("the replay does not contain the jump input".to_owned());
@@ -1184,7 +1256,7 @@ pub fn all() -> Vec<Task> {
         ),
         task(
             "32_read_counter",
-            "Oyun kodunda Counter kaynağı (ticks alanı) her tick bir artıyor. Simülasyonu 90 tick çalıştır, Counter.ticks değerini oku ve sahnedeki 'report' varlığına not olarak yalnızca o sayıyı yaz.",
+            "Oyun kodundaki Counter kaynağının ticks alanı oyun ilerledikçe değişiyor. Simülasyonu 90 tick çalıştır, Counter.ticks değerini oku ve sahnedeki 'report' varlığına not olarak yalnızca o sayıyı yaz.",
             counter_setup,
             nothing,
             counter_check,
@@ -1211,7 +1283,7 @@ pub fn all() -> Vec<Task> {
         ),
         task(
             "35_stage_spot",
-            "'actor' adlı nesnenin tepesinden aşağı doğru bir sahne ışığı (SpotLight) koy: nesnenin 2,5–8 metre üstünde (yatayda en çok 1,5 m kayık), aşağıya baksın, koni açısı en çok 45 derece olsun (iç açı dış açıdan küçük) ve nesneye erişsin.",
+            "'actor' adlı nesnenin tepesinden aşağı doğru bir sahne ışığı (SpotLight) koy: nesnenin tepesinin 2,5–8 metre üstünde (yatayda en çok 1,5 m kayık), aşağıya baksın, koni açısı en çok 45 derece olsun (iç açı dış açıdan küçük) ve nesneye erişsin.",
             stage_setup,
             nothing,
             stage_check,

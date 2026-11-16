@@ -201,7 +201,7 @@ pub(crate) fn check_name(name: &str) -> Result<()> {
 }
 
 fn write_atomic(root: &Path, relative: &str, text: &str) -> Result<()> {
-    let target = crate::documents::inside_project(root, relative)?;
+    let target = crate::documents::prepare_output(root, relative)?;
     let temporary = target.with_extension("jsonl.wish-tmp");
     let unwritable = |error: std::io::Error| {
         Diagnostic::error(
