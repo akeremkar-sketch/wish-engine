@@ -132,6 +132,15 @@ fn examples() -> Vec<(&'static str, Value)> {
         ("capture_frame", json!({ "camera": "box" })),
         ("capture_frame", json!({ "out": "scenes/main.scene.json" })),
         ("describe_view", json!({ "width": 64, "height": 36 })),
+        (
+            "physics_query",
+            json!({ "ray": { "from": [0, 10, 0], "dir": [0, -1, 0] } }),
+        ),
+        ("physics_query", json!({ "touching": "box" })),
+        (
+            "physics_query",
+            json!({ "ray": { "from": [0, 1, 0], "dir": [0, 0, 0] } }),
+        ),
         ("logs_get", json!({})),
         // Replays: record a short run, save it, play it back.
         ("sim_start", json!({})),

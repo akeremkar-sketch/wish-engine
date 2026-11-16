@@ -137,6 +137,13 @@ impl InputMap {
                     "Action names are 1 to 40 letters, digits or underscores, such as \"jump\" or \"move_left\".",
                 ));
             }
+            if name == crate::POINTER || name == crate::CLICK {
+                return Err(invalid(
+                    file,
+                    format!("'{name}' is the pointer's name, not an action name."),
+                    "The pointer (mouse) is built in: game code reads the Pointer resource, and buttons of the interface react to it by themselves. Name the action something else, such as \"fire\".",
+                ));
+            }
             if let Some(other) = ids.insert(action_id(name), name) {
                 return Err(invalid(
                     file,

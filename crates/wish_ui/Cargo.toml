@@ -1,0 +1,19 @@
+[package]
+name = "wish_ui"
+description = "The in-game interface for Wish Engine: flexbox layout of interface entities, text sizes, and buttons driven by the pointer, deterministically every tick."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+taffy.workspace = true
+wish_app.workspace = true
+wish_core.workspace = true
+wish_ecs.workspace = true
+wish_text.workspace = true
+wish_types.workspace = true
+
+[lints]
+workspace = true

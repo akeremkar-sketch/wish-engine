@@ -4,6 +4,7 @@ use crate::param::{Kind, Param};
 use crate::tool::Tool;
 
 mod asset;
+mod physics;
 mod project;
 mod replay;
 mod scene;
@@ -44,6 +45,7 @@ pub(crate) const CATALOG: &[Tool] = &[
     sim::LOGS_GET,
     view::CAPTURE_FRAME,
     view::DESCRIBE_VIEW,
+    physics::PHYSICS_QUERY,
     script::SCRIPT_BUILD,
     replay::REPLAY,
     testing::TEST_RUN,

@@ -1,0 +1,17 @@
+[package]
+name = "wish_particles"
+description = "Particles for Wish Engine: a closed formula for every particle of an emitter, so the simulation keeps no particle state."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+wish_app.workspace = true
+wish_core.workspace = true
+wish_ecs.workspace = true
+wish_types.workspace = true
+
+[lints]
+workspace = true

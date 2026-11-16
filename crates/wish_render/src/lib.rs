@@ -19,20 +19,27 @@
 //! Design: `docs/design/M3-ilk-piksel.md`.
 
 pub mod capture;
+mod cluster;
 pub mod components;
 pub mod extract;
+mod gizmo;
 pub mod gpu;
 pub mod image;
 pub mod mesh;
 pub mod renderer;
 pub mod shader;
+pub mod sprites;
 mod texture;
+pub mod ui;
 
 pub use capture::{MAX_CAPTURE_SIZE, draw_probe};
 pub use components::{
     Ambient, Camera, DirectionalLight, Exposure, Material, Model, Primitive, Shape, Sky,
 };
-pub use extract::{CameraView, Draw, LightView, MaterialData, Mesh, RenderScene, SkyData, extract};
+pub use extract::{
+    CameraView, ColliderView, Draw, EmitterView, LightView, LocalLightView, MaterialData, Mesh,
+    RenderScene, SkyData, SpriteView, UiBoxView, UiTextView, extract,
+};
 pub use gpu::{AdapterSummary, Gpu, GpuOptions};
 pub use image::{ImageDiff, RgbaImage, Tolerance};
 pub use renderer::{
@@ -41,3 +48,5 @@ pub use renderer::{
     project_to_pixel,
 };
 pub use shader::{CheckedShader, ComposedShader, ShaderLibrary, SourceLine, check_wgsl};
+pub use sprites::OverlayElement;
+pub use ui::{UiElement, UiPicture, ui_elements};

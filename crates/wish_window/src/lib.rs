@@ -25,4 +25,6 @@ mod camera;
 mod viewer;
 
 pub use camera::{FAST, FlyCamera, LOOK_SENSITIVITY, Movement, SPEED};
-pub use viewer::{Content, Loaded, Report, ViewerOptions, fingerprint_dir, key_name, run};
+pub use viewer::{
+    Content, Loaded, Pointing, Report, ViewerOptions, fingerprint_dir, key_name, run,
+};

@@ -1,0 +1,23 @@
+{
+  "format": 1,
+  "scene": "scenes/main.scene.json",
+  "seed": 1,
+  "steps": [
+    { "frames": 20 },
+    { "expect": "CharacterState.grounded == true", "entity": "player", "message": "the player stands on the ground" },
+    { "expect": "Score.points == 0", "message": "nothing is collected before the player moves" },
+    { "input": { "move": [1, 0] }, "until": "Score.points >= 1", "max_frames": 120 },
+    { "input": { "move": [1, 0] }, "until": "has(Player) && Transform.translation.x > 2.5", "max_frames": 120 },
+    { "input": { "move": [1, 0], "jump": true }, "frames": 1 },
+    { "input": { "move": [1, 0] }, "until": "Score.points >= 2", "max_frames": 120 },
+    { "input": { "move": [1, 0] }, "until": "has(Player) && Transform.translation.x > 6.0", "max_frames": 180 },
+    { "input": { "move": [1, 0], "jump": true }, "frames": 1 },
+    { "input": { "move": [1, 0] }, "until": "GameState.won == true", "max_frames": 180 },
+    { "expect": "Score.points == 3 && Score.coins == 3", "message": "all three coins were collected" },
+    { "expect": "count(Coin) == 0", "message": "no coin is left in the world" },
+    { "frames": 2 },
+    { "expect": "UiText.text == \"Puan: 3\"", "entity": "score_label", "message": "the interface shows the score" },
+    { "expect": "UiNode.visible == true", "entity": "win_banner", "message": "the win banner is shown" },
+    { "expect": "count(ParticleEmitter) == 3", "message": "every coin left a burst of sparks" }
+  ]
+}

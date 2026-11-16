@@ -43,6 +43,8 @@ pub(crate) struct Replay {
     pub seed: u64,
     pub tick_rate: u32,
     pub code: Option<String>,
+    /// The session's asset fingerprint (`None` in replays from before M6).
+    pub assets: Option<String>,
     pub inputs: Vec<(u64, wish_input::Values)>,
     pub hashes: Vec<u64>,
 }
@@ -75,6 +77,7 @@ impl Replay {
         line(json!({
             "kind": "header", "format": 1, "scene": self.scene, "scene_hash": self.scene_hash,
             "seed": self.seed, "tick_rate": self.tick_rate, "code": self.code, "ticks": self.ticks(),
+            "assets": self.assets,
         }));
         for (tick, values) in &self.inputs {
             line(json!({ "kind": "input", "tick": tick, "values": values }));
@@ -168,6 +171,10 @@ impl Replay {
                 .get("code")
                 .and_then(Value::as_str)
                 .map(str::to_owned),
+            assets: header
+                .get("assets")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
             inputs,
             hashes,
         })
@@ -233,11 +240,13 @@ impl Workspace {
             .as_ref()
             .map(|script| script.module().fingerprint().to_string());
         let scene = session.scene.clone();
+        let assets = session.assets.clone();
         let text = std::fs::read(self.root().join(&scene)).unwrap_or_default();
         let session = self.session_mut(id)?;
         session.recording = Some(Trail {
             code,
             scene_hash: hash_bytes(&text).to_string(),
+            assets,
             ..Trail::default()
         });
         Ok(())
@@ -283,6 +292,7 @@ impl Workspace {
             seed: session.seed,
             tick_rate: session.app.config().tick_rate_hz,
             code: trail.code.clone(),
+            assets: Some(trail.assets.clone()),
             inputs: trail.inputs.clone(),
             hashes: trail.hashes.iter().map(|h| short(*h)).collect(),
         };
@@ -379,6 +389,18 @@ impl Workspace {
         let opened = self.open_document(&replay.scene, false)?;
         notes.extend(opened);
         let (id, _) = self.start_session(&replay.scene, replay.seed, Vec::new())?;
+        let now = self.session(&id)?.assets.clone();
+        if replay
+            .assets
+            .as_ref()
+            .is_some_and(|recorded| *recorded != now)
+        {
+            notes.push(Diagnostic::warning(
+                "replay_assets_changed",
+                "Project files the game reads (sound or animation clips, fonts) changed since the replay was recorded.",
+                "Clip lengths decide when sounds and animations end, fonts decide the interface layout and where clicks land: a divergence below may just be that.",
+            ));
+        }
         let cancel = self.cancel.clone();
         let session = self.session_mut(&id)?;
         let mut next = 0;
@@ -401,9 +423,7 @@ impl Workspace {
                 cancelled = true;
                 break;
             }
-            if !session.input.is_empty() {
-                wish_input::apply(session.app.world_mut(), &session.input, &values)?;
-            }
+            wish_input::apply(session.app.world_mut(), &session.input, &values)?;
             failures.extend(session.app.step()?.failures);
             ran += 1;
             let actual = short(session.app.hash());

@@ -12,15 +12,37 @@
 //! Nothing here may depend on anything that does not build for
 //! `wasm32-unknown-unknown`.
 
+pub mod anim;
+pub mod audio;
 pub mod input;
+pub mod particles;
+pub mod physics;
 pub mod render;
+pub mod sprite;
 pub mod time;
 pub mod transform;
+pub mod ui;
 
-pub use input::{ActionSlot, ActionState, MAX_ACTIONS, action_id};
-pub use render::{
-    Ambient, Camera, DirectionalLight, EMISSIVE_NITS, Exposure, Material, Model, Primitive, Shape,
-    Sky,
+pub use anim::{AnimationFinished, AnimationPlayer};
+pub use audio::{
+    AudioBus, AudioListener, AudioOneShot, AudioPlayback, AudioSettings, AudioSource, PlaySound,
+    SoundEnded, SoundStarted,
 };
+pub use input::{ActionSlot, ActionState, MAX_ACTIONS, action_id};
+pub use particles::{ParticleEmitter, ParticleState};
+pub use physics::{
+    BodyForce, BodyImpulse, BodyKind, BodyVelocity, CharacterController, CharacterMotion,
+    CharacterState, Collider, ColliderShape, CollisionEnded, CollisionStarted, PhysicsSettings,
+    RigidBody,
+};
+pub use render::{
+    Ambient, Camera, DirectionalLight, EMISSIVE_NITS, Exposure, Material, Model, PointLight,
+    Primitive, Projection, Shape, Sky, SpotLight,
+};
+pub use sprite::Sprite;
 pub use time::Time;
 pub use transform::{GLOBAL_TRANSFORM, GlobalTransform, Transform, world_position};
+pub use ui::{
+    ButtonClicked, Pointer, UiAlign, UiButton, UiDirection, UiImage, UiInteraction, UiJustify,
+    UiLayout, UiLength, UiNode, UiPosition, UiSettings, UiText, UiTextAlign, UiUnit,
+};

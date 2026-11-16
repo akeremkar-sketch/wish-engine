@@ -52,6 +52,12 @@ pub(crate) fn load_models(
             ),
         }
     }
+    warnings.extend(wish_control::render::load_ui_pictures(
+        renderer,
+        scene,
+        root,
+        &mut std::collections::BTreeMap::new(),
+    ));
     warnings
 }
 /// Runs `wen shaders`: checks every shader of the engine (with the files of

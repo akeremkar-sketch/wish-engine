@@ -195,7 +195,34 @@ impl Workspace {
 /// the project example's): it would replace that system, or be replaced
 /// by it, without a word (M5 closing review).
 pub(crate) fn check_system_names(example: Option<&str>, module: &GameModule) -> Result<()> {
-    let mut reserved = vec![PROPAGATION.to_owned()];
+    let mut reserved = vec![
+        PROPAGATION.to_owned(),
+        wish_physics::SYSTEM.to_owned(),
+        wish_audio::SYSTEM.to_owned(),
+        wish_anim::SYSTEM.to_owned(),
+        wish_ui::SYSTEM.to_owned(),
+        wish_particles::SYSTEM.to_owned(),
+    ];
+    // Engine systems run after every game system (their results are seen
+    // the next tick): a game system asking to run after one is a cycle the
+    // author never wrote (M6 closing review).
+    let engine = reserved.clone();
+    for system in &module.manifest().systems {
+        if let Some(name) = system.after.iter().find(|name| engine.contains(name)) {
+            return Err(Diagnostic::error(
+                "script_after_engine_system",
+                format!(
+                    "The game system '{}' asks to run after the engine's '{name}' system, which always runs after every game system.",
+                    system.name
+                ),
+                format!(
+                    "Remove after = \"{name}\": the engine's systems ({}) run after all game code, and what they do this tick (moves, collisions, clicks, clip ends) is seen by game systems the next tick.",
+                    engine.join(", ")
+                ),
+            )
+            .at_file(SCRIPTS_ENTRY));
+        }
+    }
     if let Some(example) = example {
         let mut app = wish_app::App::new(wish_app::AppConfig::default());
         if wish_examples::add_systems(example, &mut app).is_ok() {
@@ -221,6 +248,36 @@ pub(crate) fn check_system_names(example: Option<&str>, module: &GameModule) -> 
     Ok(())
 }
 
+/// What the engine answers game code during a call: physics ray casts,
+/// against the physics world as it was at the start of the tick.
+struct EngineServices;
+
+impl wish_script::HostServices for EngineServices {
+    fn physics_query(&self, world: &wish_ecs::World, request: &[u8]) -> Option<Vec<u8>> {
+        use wish_sdk::physics::{Ray, RayHit, encode_answer};
+        let ray = Ray::decode(request)?;
+        let hit = world
+            .extension::<wish_physics::PhysicsState>()
+            .and_then(|state| {
+                state
+                    .raycast(ray.from, ray.dir, ray.max, ray.mask, ray.ignore)
+                    .ok()
+                    .flatten()
+            });
+        Some(encode_answer(hit.map(|hit| RayHit {
+            entity: hit.entity,
+            point: hit.point,
+            normal: hit.normal,
+            distance: hit.distance,
+        })))
+    }
+}
+
+/// A runtime for `module` in a session, with the engine's services.
+pub(crate) fn runtime(module: &Arc<GameModule>) -> ScriptRuntime {
+    ScriptRuntime::new(Arc::clone(module)).with_services(Arc::new(EngineServices))
+}
+
 /// The systems of a session for a module, and the propagation system that
 /// runs after all of them.
 pub(crate) fn add_game_systems(app: &mut wish_app::App, runtime: &ScriptRuntime) -> Result<()> {
@@ -230,21 +287,53 @@ pub(crate) fn add_game_systems(app: &mut wish_app::App, runtime: &ScriptRuntime)
     Ok(())
 }
 
-/// The transform propagation system, ordered after every other system.
+/// The engine's systems that run after the game's: physics (after every
+/// game and example system: it moves what they pushed), animation, the
+/// interface (it lays out what the game wrote this tick and lets the pointer
+/// act; the game reads clicks the next tick), then transform propagation
+/// (after everything).
 pub(crate) fn propagation_after_all(app: &mut wish_app::App) -> Result<()> {
     let mut names: Vec<String> = app
         .system_states()
         .map(|(name, _)| name.to_owned())
-        .filter(|name| name != PROPAGATION)
+        .filter(|name| {
+            ![
+                PROPAGATION,
+                wish_physics::SYSTEM,
+                wish_audio::SYSTEM,
+                wish_anim::SYSTEM,
+                wish_ui::SYSTEM,
+                wish_particles::SYSTEM,
+            ]
+            .contains(&name.as_str())
+        })
         .collect();
     names.sort();
+    let mut physics = wish_physics::system();
+    let mut animation = wish_anim::system();
+    let mut interface = wish_ui::system();
+    let mut particles = wish_particles::system();
+    for name in &names {
+        physics = physics.after(name);
+        animation = animation.after(name);
+        interface = interface.after(name);
+        particles = particles.after(name);
+    }
+    app.replace_system(physics)?;
+    app.replace_system(animation)?;
+    app.replace_system(interface)?;
+    app.replace_system(particles)?;
     let mut propagation = System::new(PROPAGATION, |world, _| {
         wish_transform::update_global_transforms(world)
-    });
+    })
+    .after(wish_physics::SYSTEM)
+    .after(wish_anim::SYSTEM);
     for name in &names {
         propagation = propagation.after(name);
     }
-    app.replace_system(propagation)
+    app.replace_system(propagation)?;
+    // Sound last: it hears where things are after they moved.
+    app.replace_system(wish_audio::system().after(PROPAGATION))
 }
 
 /// Puts `module` into a session; returns what happened to changed types.
@@ -256,7 +345,7 @@ fn reload_session(
     // the new layout from it, so going back still works after new code.
     let before = session.app.world().clone();
     let mut changed = module.install(session.app.world_mut())?;
-    let runtime = ScriptRuntime::new(Arc::clone(module));
+    let runtime = runtime(module);
     if let Some(old) = &session.script {
         let keep: Vec<&str> = module
             .manifest()
@@ -319,21 +408,57 @@ impl Workspace {
     }
 }
 
+/// Where the mouse is over a picture of the game: pixels from its top left,
+/// and the picture's size.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PointerAt {
+    /// Pixels from the left edge.
+    pub x: f32,
+    /// Pixels from the top edge.
+    pub y: f32,
+    /// The picture's width in pixels.
+    pub width: f32,
+    /// The picture's height in pixels.
+    pub height: f32,
+}
+
 /// Playing a game in real time (`wen play`): the same sessions the tools
 /// use, driven by a window instead of by `sim_step`.
 impl Workspace {
     /// Lets `frames` ticks pass in session `id` with the named keys held
-    /// (the names `input.json` uses). Returns what looks wrong (a system
-    /// that failed, an inspector finding).
+    /// (the names `input.json` uses) and the mouse at `pointer` over the
+    /// picture (`None`: not over it); `MouseLeft` held is the pointer's
+    /// button. Returns what looks wrong (a system that failed, an inspector
+    /// finding).
     pub fn play_step(
         &mut self,
         id: &str,
         frames: u64,
         keys: &std::collections::BTreeSet<String>,
+        pointer: Option<PointerAt>,
     ) -> Result<Vec<Diagnostic>> {
-        let values = self.session(id)?.input.evaluate(keys);
+        let session = self.session(id)?;
+        let mut values = session.input.evaluate(keys);
+        if let Some(at) = pointer {
+            let settings = session
+                .app
+                .world()
+                .resource::<wish_ui::UiSettings>()
+                .copied()
+                .unwrap_or_default();
+            let position = settings.from_picture(at.width, at.height, at.x, at.y);
+            values.insert(wish_input::POINTER.to_owned(), position);
+            if keys.contains("MouseLeft") {
+                values.insert(wish_input::CLICK.to_owned(), [1.0, 0.0]);
+            }
+        }
         let (stepped, ..) = self.step_session(id, frames, None, &values)?;
         Ok(stepped.diagnostics)
+    }
+
+    /// The sounds playing in session `id` now, for a speaker (`wen play`).
+    pub fn play_voices(&self, id: &str) -> Result<Vec<wish_audio::Voice>> {
+        Ok(wish_audio::voices(self.session(id)?.app.world()))
     }
 
     /// What session `id` looks like now, for drawing.

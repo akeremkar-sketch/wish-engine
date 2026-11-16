@@ -55,6 +55,7 @@ pub mod command;
 pub mod frame;
 pub mod manifest;
 mod param;
+pub mod physics;
 mod query;
 
 pub use param::{
@@ -66,9 +67,18 @@ pub use wish_core::{AssetRef, Color, Entity, Text, math};
 pub use wish_schema::{component, event, resource, schema};
 pub use wish_sdk_macros::system;
 pub use wish_types::{
-    ActionSlot, ActionState, Ambient, Camera, DirectionalLight, Exposure, GlobalTransform,
-    Material, Model, Primitive, Shape, Sky, Time, Transform, world_position,
+    ActionSlot, ActionState, Ambient, AnimationFinished, AnimationPlayer, AudioBus, AudioListener,
+    AudioPlayback, AudioSettings, AudioSource, BodyForce, BodyImpulse, BodyKind, BodyVelocity,
+    ButtonClicked, Camera, CharacterController, CharacterMotion, CharacterState, Collider,
+    ColliderShape, CollisionEnded, CollisionStarted, DirectionalLight, Exposure, GlobalTransform,
+    Material, Model, ParticleEmitter, ParticleState, PhysicsSettings, PlaySound, PointLight,
+    Pointer, Primitive, Projection, RigidBody, Shape, Sky, SoundEnded, SoundStarted, SpotLight,
+    Sprite, Time, Transform, UiAlign, UiButton, UiDirection, UiImage, UiInteraction, UiJustify,
+    UiLayout, UiLength, UiNode, UiPosition, UiSettings, UiText, UiTextAlign, UiUnit,
+    world_position,
 };
+
+pub use physics::{Ray, RayHit, raycast};
 
 /// The ABI version this SDK speaks.
 pub const ABI_VERSION: i32 = 1;
@@ -77,11 +87,46 @@ pub const ABI_VERSION: i32 = 1;
 pub mod prelude {
     pub use crate::math::{Mat4, Quat, Vec2, Vec3, Vec4};
     pub use crate::{
-        Actions, Ambient, AssetRef, Camera, Color, Commands, DirectionalLight, Entity, EventReader,
-        EventWriter, Exposure, GlobalTransform, Material, Model, Primitive, Query, Res, ResMut,
-        Shape, Sky, Text, Time, Transform, With, Without, component, event, random_f32,
-        random_range, random_u64, resource, schema, system, world_position,
+        Actions, Ambient, AnimationFinished, AnimationPlayer, AssetRef, AudioBus, AudioListener,
+        AudioPlayback, AudioSettings, AudioSource, BodyForce, BodyImpulse, BodyKind, BodyVelocity,
+        Camera, CharacterController, CharacterMotion, CharacterState, Collider, ColliderShape,
+        CollisionEnded, CollisionStarted, Color, Commands, DirectionalLight, Entity, EventReader,
+        EventWriter, Exposure, GlobalTransform, Material, Model, PhysicsSettings, PlaySound,
+        PointLight, Primitive, Query, Ray, RayHit, Res, ResMut, RigidBody, Shape, Sky, SoundEnded,
+        SoundStarted, SpotLight, Text, Time, Transform, With, Without, component, event,
+        random_f32, random_range, random_u64, raycast, resource, schema, system, text, text_of,
+        world_position,
     };
+    pub use crate::{
+        ButtonClicked, Pointer, UiAlign, UiButton, UiDirection, UiImage, UiInteraction, UiJustify,
+        UiLayout, UiLength, UiNode, UiPosition, UiSettings, UiText, UiTextAlign, UiUnit,
+    };
+    pub use crate::{ParticleEmitter, ParticleState, Projection, Sprite};
+}
+
+/// The handle of `text`, to write into a field of type `Text` (such as
+/// `UiText.text`): `text(&format!("Score: {score}"))`. The engine keeps
+/// each distinct text once, for the life of the world, so reuse texts
+/// rather than make a new one every tick. A text longer than 4096 bytes,
+/// more than 1024 new texts in one system call, or a world already holding
+/// 16 MiB of text, is refused: the result is the empty text and a warning
+/// is logged.
+pub fn text(text: &str) -> Text {
+    match abi::text_intern(text) {
+        Some(index) => Text::from_index(index),
+        None => {
+            abi::log(
+                1,
+                "a text was refused (longer than 4096 bytes, more than 1024 new texts in one system call, or the world's text is full); the empty text is used",
+            );
+            Text::EMPTY
+        }
+    }
+}
+
+/// The string a `Text` handle stands for (empty for an unknown handle).
+pub fn text_of(text: Text) -> String {
+    abi::text_read(text.index()).unwrap_or_default()
 }
 
 /// The next number from this system's own random stream.

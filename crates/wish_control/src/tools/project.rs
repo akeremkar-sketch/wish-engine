@@ -359,6 +359,13 @@ fn check(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<String
     {
         diagnostics.push(problem);
     }
+    // Fonts the interface would use but cannot.
+    let (_, font_problems) = workspace.fonts();
+    diagnostics.extend(
+        font_problems
+            .into_iter()
+            .filter(|d| d.location.file.as_deref().is_none_or(&selected)),
+    );
     let errors = diagnostics.iter().filter(|d| d.is_error()).count();
     let files = project
         .files

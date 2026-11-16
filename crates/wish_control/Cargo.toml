@@ -10,17 +10,24 @@ publish.workspace = true
 [dependencies]
 serde_json.workspace = true
 wish_app.workspace = true
+wish_anim.workspace = true
 wish_asset.workspace = true
+wish_audio.workspace = true
 wish_core.workspace = true
 wish_ecs.workspace = true
 wish_examples.workspace = true
 wish_input.workspace = true
+wish_particles.workspace = true
+wish_physics.workspace = true
 wish_import.workspace = true
 wish_render.workspace = true
 wish_scene.workspace = true
 wish_schema.workspace = true
 wish_script.workspace = true
+wish_sdk.workspace = true
+wish_text.workspace = true
 wish_transform.workspace = true
+wish_ui.workspace = true
 
 [lints]
 workspace = true

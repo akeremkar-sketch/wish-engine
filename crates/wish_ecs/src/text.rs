@@ -14,6 +14,8 @@ use wish_schema::TextStore;
 pub struct TextTable {
     strings: Vec<String>,
     lookup: BTreeMap<String, u32>,
+    /// The bytes of every string together.
+    bytes: usize,
 }
 
 impl Default for TextTable {
@@ -21,6 +23,7 @@ impl Default for TextTable {
         Self {
             strings: vec![String::new()],
             lookup: BTreeMap::from([(String::new(), 0)]),
+            bytes: 0,
         }
     }
 }
@@ -29,6 +32,11 @@ impl TextTable {
     /// The number of distinct strings, the empty string included.
     pub fn len(&self) -> usize {
         self.strings.len()
+    }
+
+    /// The bytes of all the strings together (each counted once).
+    pub fn bytes(&self) -> usize {
+        self.bytes
     }
 
     /// Whether the table holds only the empty string.
@@ -55,6 +63,7 @@ impl TextTable {
         })?;
         self.strings.push(text.to_owned());
         self.lookup.insert(text.to_owned(), index);
+        self.bytes += text.len();
         Ok(Text::from_index(index))
     }
 

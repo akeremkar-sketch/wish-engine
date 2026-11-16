@@ -10,3 +10,5 @@
 *.ogg binary
 *.wav binary
 *.wasm binary
+*.ttf binary
+*.otf binary

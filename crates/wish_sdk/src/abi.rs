@@ -22,6 +22,9 @@ mod imports {
             column: i32,
         );
         pub fn rng_next() -> i64;
+        pub fn physics_query(request: *const u8, len: i32, out: *mut u8, capacity: i32) -> i32;
+        pub fn text_intern(ptr: *const u8, len: i32) -> i64;
+        pub fn text_read(handle: i32, out: *mut u8, capacity: i32) -> i32;
     }
 }
 
@@ -42,6 +45,61 @@ thread_local! {
     /// Off the engine (the SDK's own tests): a stand-in random stream.
     #[cfg(not(target_arch = "wasm32"))]
     static RNG: RefCell<wish_core::Rng> = RefCell::new(wish_core::Rng::from_seed(0));
+    /// Off the engine: a stand-in text table (the empty text first).
+    #[cfg(not(target_arch = "wasm32"))]
+    static TEXTS: RefCell<Vec<String>> = RefCell::new(vec![String::new()]);
+}
+
+/// The handle of `text` in the world's text table (`wish.text_intern`),
+/// added if new; `None` if the engine refused it (longer than 4096 bytes, or
+/// more than 1024 new texts in one call).
+pub fn text_intern(text: &str) -> Option<u32> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        // SAFETY: the engine reads `len` bytes at `ptr` from this module's
+        // memory during the call.
+        let handle = unsafe { imports::text_intern(text.as_ptr(), text.len() as i32) };
+        u32::try_from(handle).ok()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        TEXTS.with(|texts| {
+            let mut texts = texts.borrow_mut();
+            let index = match texts.iter().position(|known| known == text) {
+                Some(index) => index,
+                None => {
+                    texts.push(text.to_owned());
+                    texts.len() - 1
+                }
+            };
+            u32::try_from(index).ok()
+        })
+    }
+}
+
+/// The text behind handle `handle` (`wish.text_read`), or `None` for a
+/// handle the world does not have.
+pub fn text_read(handle: u32) -> Option<String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let handle = i32::try_from(handle).ok()?;
+        let mut out = vec![0u8; 64];
+        loop {
+            // SAFETY: the engine writes at most `capacity` bytes at `out`,
+            // inside this module's memory and alive for the call.
+            let length = unsafe { imports::text_read(handle, out.as_mut_ptr(), out.len() as i32) };
+            let length = usize::try_from(length).ok()?;
+            if length <= out.len() {
+                out.truncate(length);
+                return String::from_utf8(out).ok();
+            }
+            out = vec![0u8; length];
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        TEXTS.with(|texts| texts.borrow().get(handle as usize).cloned())
+    }
 }
 
 /// Adds a command to the call's buffer.
@@ -85,6 +143,34 @@ pub fn log(severity: i32, message: &str) {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let _ = (severity, message);
+    }
+}
+
+/// Asks the engine a physics question (`wish.physics_query`); the answer's
+/// bytes, or `None` off the engine or if the engine could not answer.
+pub fn physics_query(request: &[u8]) -> Option<Vec<u8>> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let mut out = vec![0u8; crate::physics::ANSWER_LEN];
+        // SAFETY: the engine reads `len` bytes at `request` and writes at
+        // most `capacity` bytes at `out`, both inside this module's memory
+        // and alive for the call.
+        let written = unsafe {
+            imports::physics_query(
+                request.as_ptr(),
+                request.len() as i32,
+                out.as_mut_ptr(),
+                out.len() as i32,
+            )
+        };
+        let written = usize::try_from(written).ok()?;
+        out.truncate(written);
+        Some(out)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = request;
+        None
     }
 }
 

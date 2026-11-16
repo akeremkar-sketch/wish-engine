@@ -14,7 +14,7 @@ use wish_control::{Workspace, WorkspaceOptions, parse_actor};
 use wish_core::{Diagnostic, Entity, Result};
 use wish_render::{Gpu, RenderScene, Renderer, View};
 use wish_script::build::SCRIPTS_ENTRY;
-use wish_window::{Content, Loaded, ViewerOptions, fingerprint_dir};
+use wish_window::{Content, Loaded, Pointing, ViewerOptions, fingerprint_dir};
 
 use crate::args::PlayArgs;
 use crate::capture::load_models;
@@ -26,6 +26,9 @@ const TICK_RATE: f64 = 60.0;
 const MAX_CATCH_UP: u64 = 5;
 
 struct Game {
+    /// The sound card, where there is one to open (Windows for now).
+    #[cfg(windows)]
+    speaker: Option<wish_audio::output::Speaker>,
     workspace: Workspace,
     root: PathBuf,
     scene: Option<String>,
@@ -34,9 +37,28 @@ struct Game {
     owed: f64,
     /// What the game reported while it ran (a system that failed).
     messages: Vec<String>,
+    /// The pictures loaded so far, and when their files were read.
+    pictures: std::collections::BTreeMap<String, wish_control::render::Stamp>,
+    /// What could not be loaded, said once.
+    reported: BTreeSet<String>,
 }
 
 impl Game {
+    /// Makes the speakers match the sounds the game says are playing.
+    #[cfg(windows)]
+    fn hear(&mut self, id: &str) {
+        let Some(speaker) = self.speaker.as_mut() else {
+            return;
+        };
+        if let Ok(voices) = self.workspace.play_voices(id) {
+            let root = self.root.clone();
+            speaker.sync(&voices, &|path| std::fs::read(root.join(path)).ok());
+        }
+    }
+
+    #[cfg(not(windows))]
+    fn hear(&mut self, _id: &str) {}
+
     fn run_tool(&mut self, tool: &str, args: &serde_json::Value) -> serde_json::Value {
         self.workspace.call(tool, args, &parse_actor("human"))
     }
@@ -103,7 +125,54 @@ impl Content for Game {
         }
         let scene = self.scene_now()?;
         warnings.extend(load_models(&scene, &self.root, gpu, renderer));
+        warnings.extend(wish_control::render::load_ui_pictures(
+            renderer,
+            &scene,
+            &self.root,
+            &mut self.pictures,
+        ));
         Ok(Loaded { scene, warnings })
+    }
+
+    fn refresh(
+        &mut self,
+        gpu: &Gpu,
+        renderer: &mut Renderer,
+        scene: &RenderScene,
+    ) -> Vec<Diagnostic> {
+        // Models the game started using since the last picture: only the
+        // new ones are read (the rest are loaded already).
+        let mut fresh: Vec<&str> = scene
+            .draws
+            .iter()
+            .filter_map(|draw| draw.model_path.as_deref())
+            .map(|path| path.split('#').next().unwrap_or(path))
+            .filter(|path| !renderer.has_model(path) && !self.reported.contains(*path))
+            .collect();
+        fresh.sort_unstable();
+        fresh.dedup();
+        let mut problems = Vec::new();
+        for path in fresh {
+            if wish_core::asset::validate_asset_ref(path).is_err() {
+                self.reported.insert(path.to_owned());
+                continue;
+            }
+            let loaded = wish_import::load_model_file(&self.root.join(path), path)
+                .and_then(|model| renderer.upload_model(gpu, path, &model));
+            if let Err(problem) = loaded {
+                self.reported.insert(path.to_owned());
+                problems.push(problem);
+            }
+        }
+        let pictures =
+            wish_control::render::load_ui_pictures(renderer, scene, &self.root, &mut self.pictures);
+        for problem in pictures {
+            let key = problem.location.file.clone().unwrap_or_default();
+            if self.reported.insert(key) {
+                problems.push(problem);
+            }
+        }
+        problems
     }
 
     fn name_of(&mut self, entity: Entity) -> String {
@@ -120,14 +189,27 @@ impl Content for Game {
         true
     }
 
-    fn play(&mut self, keys: &BTreeSet<String>, seconds: f64) -> Option<Result<RenderScene>> {
+    fn play(
+        &mut self,
+        keys: &BTreeSet<String>,
+        pointing: Option<Pointing>,
+        seconds: f64,
+    ) -> Option<Result<RenderScene>> {
         let id = self.session.clone()?;
         self.owed += seconds * TICK_RATE;
         let whole = self.owed.floor();
         self.owed -= whole;
         let ticks = (whole as u64).min(MAX_CATCH_UP);
         if ticks > 0 {
-            match self.workspace.play_step(&id, ticks, keys) {
+            let pointer = pointing.map(|at| wish_control::PointerAt {
+                x: at.x,
+                y: at.y,
+                width: at.width as f32,
+                height: at.height as f32,
+            });
+            let stepped = self.workspace.play_step(&id, ticks, keys, pointer);
+            self.hear(&id);
+            match stepped {
                 Ok(problems) => {
                     for problem in problems {
                         self.messages.push(format!("{problem}"));
@@ -148,13 +230,27 @@ pub fn play(args: &PlayArgs, as_json: bool) -> Result<String> {
         example: None,
     })?;
     workspace.set_software(args.software);
+    #[cfg(windows)]
+    let speaker = match wish_audio::output::Speaker::open() {
+        Ok(speaker) => Some(speaker),
+        Err(problem) => {
+            if !as_json {
+                eprintln!("{problem}");
+            }
+            None
+        }
+    };
     let mut game = Game {
+        #[cfg(windows)]
+        speaker,
         workspace,
         root,
         scene: args.scene.clone(),
         session: None,
         owed: 0.0,
         messages: Vec::new(),
+        pictures: std::collections::BTreeMap::new(),
+        reported: BTreeSet::new(),
     };
     let report = wish_window::run(
         ViewerOptions {

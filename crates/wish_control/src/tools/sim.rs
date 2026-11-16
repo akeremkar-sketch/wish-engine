@@ -72,7 +72,7 @@ pub(crate) const SIM_STEP: Tool = Tool {
         Param::optional(
             "input",
             Kind::Object,
-            "What the player does during these ticks, by action name (input.json): a button is true or false, an axis a number from -1 to 1, a two-axis action [x, y] such as {\"move\": [0, 1], \"jump\": true}. Held for every tick of the call and released afterwards; game code sees it through Actions.",
+            "What the player does during these ticks, by action name (input.json): a button is true or false, an axis a number from -1 to 1, a two-axis action [x, y] such as {\"move\": [0, 1], \"jump\": true}. Held for every tick of the call and released afterwards; game code sees it through Actions. The pointer is built in: \"pointer\": [x, y] in interface pixels (UiSettings, 1280x720 by default, from the top left) and \"click\": true holds its button; to click a button, step once with both and then once with only pointer (an entity's UiLayout says where it is).",
         ),
     ],
     mutates: false,
@@ -395,7 +395,7 @@ fn logs_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<Str
         _ => 0,
     };
     let kinds = args.strings("kinds");
-    const KNOWN: &[&str] = &["session", "system", "inspector", "script"];
+    const KNOWN: &[&str] = &["session", "system", "inspector", "script", "audio"];
     for kind in &kinds {
         if !KNOWN.contains(&kind.as_str()) {
             return Err(Diagnostic::error(
@@ -455,10 +455,40 @@ pub(crate) fn parse_input(
             .at_path("/input"));
         }
     };
-    let map = &workspace.session(session)?.input;
+    let live = workspace.session(session)?;
+    let map = &live.input;
     let names: Vec<&str> = map.names().collect();
     for (name, value) in given {
         let path = format!("/input/{name}");
+        if name == wish_input::POINTER {
+            let number = |v: &Value| v.as_f64().filter(|n| n.is_finite() && n.abs() <= 1.0e6);
+            let at = value
+                .as_array()
+                .filter(|items| items.len() == 2)
+                .and_then(|items| number(&items[0]).zip(number(&items[1])));
+            let Some((x, y)) = at else {
+                return Err(Diagnostic::error(
+                    "invalid_parameter",
+                    format!("The pointer must be [x, y] in interface pixels, not {value}."),
+                    "Write it like \"pointer\": [640, 360]: pixels from the top left of the interface screen (UiSettings, 1280x720 by default). An entity's UiLayout says where it is.",
+                )
+                .at_path(path));
+            };
+            values.insert(name.clone(), [x as f32, y as f32]);
+            continue;
+        }
+        if name == wish_input::CLICK {
+            let Some(down) = value.as_bool() else {
+                return Err(Diagnostic::error(
+                    "invalid_parameter",
+                    format!("click must be true or false, not {value}."),
+                    "Write \"click\": true together with \"pointer\": [x, y] to hold the pointer's button there.",
+                )
+                .at_path(path));
+            };
+            values.insert(name.clone(), [f32::from(u8::from(down)), 0.0]);
+            continue;
+        }
         if map.binding(name).is_none() {
             let hint = if names.is_empty() {
                 "The project has no actions yet: create input.json (wen new writes one) with actions such as \"jump\" and \"move\", then start a new session.".to_owned()
@@ -491,6 +521,22 @@ pub(crate) fn parse_input(
             .at_path(path));
         };
         values.insert(name.clone(), parsed);
+    }
+    // A click without a position clicks where the pointer already is.
+    if values.contains_key(wish_input::CLICK) && !values.contains_key(wish_input::POINTER) {
+        match live.app.world().resource::<wish_ui::Pointer>() {
+            Some(pointer) if pointer.present => {
+                values.insert(wish_input::POINTER.to_owned(), pointer.position);
+            }
+            _ => {
+                return Err(Diagnostic::error(
+                    "invalid_parameter",
+                    "click needs a pointer position: there is no pointer yet.",
+                    "Give both, like {\"pointer\": [640, 360], \"click\": true}.",
+                )
+                .at_path("/input/click"));
+            }
+        }
     }
     Ok(values)
 }

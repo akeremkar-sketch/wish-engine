@@ -51,9 +51,12 @@ Kod örnekleri **hedeflenen kullanım biçimini** gösterir; kesin imzalar ilgil
 | `wish_mcp` | MCP sunucusu (stdio + HTTP) | M4 |
 | `wish_script`, `wish_sdk` | Wasm ev sahibi, ABI, sıcak yükleme / konuk SDK'sı | M5 |
 | `wish_test` | Senaryo test koşucusu, altın görüntü, tekrar | M5 |
-| `wish_physics` | Rapier bütünleşmesi | M6 |
-| `wish_audio` | Kira bütünleşmesi, ses olay günlüğü | M6 |
-| `wish_ui` | Oyun içi arayüz | M6 |
+| `wish_physics` | Rapier bütünleşmesi (gövdeler, çarpıştırıcılar, olaylar, sorgular, karakter denetleyicisi); durumu ADR-026 uzantısı | M6 |
+| `wish_audio` | Ses bileşenleri, belirlenimci ses olay günlüğü; çıkış cpal + kendi karıştırıcı (ADR-015) | M6 |
+| `wish_anim` | İskelet animasyonu oynatıcısının zamanı (poz render'da) | M6 |
+| `wish_text` | Yazı tipleri (Roboto gömülü), belirlenimci metin yerleşimi, glif rasterleme | M6 |
+| `wish_ui` | Oyun içi arayüz: flexbox yerleşimi (taffy), düğmeler, işaretçi | M6 |
+| `wish_particles` | Durumsuz parçacık formülü, canlı sayısı | M6 |
 | `wish_editor` | Yapay zekâ kokpiti (arayüz) + ajan bağdaştırıcıları | M8 |
 | `wish_export` | Oyun paketleme ve dışa aktarma | M9 |
 

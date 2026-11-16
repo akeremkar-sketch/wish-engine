@@ -15,13 +15,17 @@ wgpu.workspace = true
 wish_core.workspace = true
 wish_ecs.workspace = true
 wish_import.workspace = true
+wish_particles.workspace = true
 wish_schema.workspace = true
 wish_types.workspace = true
+wish_text.workspace = true
 wish_transform.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
 wish_scene.workspace = true
+wish_import.workspace = true
+wish_ui.workspace = true
 
 [lints]
 workspace = true

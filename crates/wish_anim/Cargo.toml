@@ -1,0 +1,17 @@
+[package]
+name = "wish_anim"
+description = "Skeletal animation for Wish Engine: the clip players' time, advanced deterministically every tick."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+wish_app.workspace = true
+wish_core.workspace = true
+wish_ecs.workspace = true
+wish_types.workspace = true
+
+[lints]
+workspace = true

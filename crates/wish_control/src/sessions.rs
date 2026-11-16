@@ -45,6 +45,9 @@ pub(crate) struct Session {
     pub input: wish_input::InputMap,
     /// What the session is recording for a replay, if anything.
     pub recording: Option<Trail>,
+    /// A fingerprint of the project files the simulation read when the
+    /// session started (sound and animation clip lengths, fonts).
+    pub assets: String,
 }
 
 /// What a replay needs of a session that was recorded from tick 0: what the
@@ -61,6 +64,8 @@ pub(crate) struct Trail {
     pub code: Option<String>,
     /// The hash of the scene file when recording started.
     pub scene_hash: String,
+    /// The session's asset fingerprint when recording started.
+    pub assets: String,
 }
 
 impl Trail {
@@ -108,6 +113,12 @@ impl LogEntry {
 /// Every session, and the log they share.
 #[derive(Default)]
 pub(crate) struct Sessions {
+    /// The lengths of the project's sound clips, kept until the file changes.
+    pub clips: crate::audio::Clips,
+    /// The animation clips of the project's models, kept until a file changes.
+    pub models: crate::audio::Models,
+    /// The project's fonts, kept until a file changes.
+    pub fonts: crate::ui::FontCache,
     pub open: BTreeMap<String, Session>,
     next_id: u32,
     next_seq: u64,
@@ -203,7 +214,7 @@ fn build_app(
     workspace: &mut Workspace,
     scene: &str,
     seed: u64,
-) -> Result<(App, Option<wish_script::ScriptRuntime>)> {
+) -> Result<(App, Option<wish_script::ScriptRuntime>, String)> {
     let example = workspace.example().map(str::to_owned);
     let mut app = App::new(AppConfig {
         seed,
@@ -216,15 +227,38 @@ fn build_app(
     if let Some(name) = &example {
         wish_examples::add_systems(name, &mut app)?;
     }
-    let runtime = workspace
-        .game_module()
-        .map(|module| wish_script::ScriptRuntime::new(std::sync::Arc::clone(module)));
+    let runtime = workspace.game_module().map(crate::script::runtime);
     if let Some(runtime) = &runtime {
         crate::script::add_game_systems(&mut app, runtime)?;
     }
     crate::script::propagation_after_all(&mut app)?;
     wish_transform::update_global_transforms(app.world_mut())?;
-    Ok((app, runtime))
+    // Physics knows the scene before the first tick, so that questions
+    // asked during it (game code's ray casts) see it.
+    wish_physics::prepare(app.world_mut())?;
+    let clips = workspace.audio_clips();
+    let animations = workspace.animation_clips();
+    // The interface is laid out before the first tick, so that a picture
+    // or a click at tick 0 finds it.
+    let (fonts, _, font_print) = workspace.fonts_and_fingerprint();
+    // What the simulation takes from project files, for replays to notice
+    // when it changed (M6 closing review).
+    let mut print = wish_core::StableHasher::new();
+    for (path, seconds) in &clips {
+        print.write_str(path);
+        print.write_u32(seconds.to_bits());
+    }
+    for ((model, clip), seconds) in &animations {
+        print.write_str(model);
+        print.write_str(clip);
+        print.write_u32(seconds.to_bits());
+    }
+    print.write_u64(font_print);
+    let assets = format!("{:016x}", (print.finish().as_u128() >> 64) as u64);
+    wish_audio::install(app.world_mut(), clips);
+    wish_anim::install(app.world_mut(), animations);
+    crate::ui::prepare(app.world_mut(), fonts)?;
+    Ok((app, runtime, assets))
 }
 
 /// What a run of ticks did.
@@ -301,10 +335,8 @@ fn step_app(
             break;
         }
         // The tick's input, before any system runs. A project without
-        // actions has none, and its world stays as it was.
-        if !session.input.is_empty() {
-            wish_input::apply(session.app.world_mut(), &session.input, input)?;
-        }
+        // actions (and no pointer) has none, and its world stays as it was.
+        wish_input::apply(session.app.world_mut(), &session.input, input)?;
         if let Some(trail) = session.recording.as_mut()
             && input != &trail.current
         {
@@ -350,15 +382,83 @@ fn step_app(
     })
 }
 
+/// What looks wrong with the interface: parts of a box on an entity that
+/// is not a box, and text asking for a font the project does not have.
+fn interface_findings(world: &World) -> Vec<(String, Diagnostic)> {
+    let mut found = Vec::new();
+    let fonts = world.extension::<wish_text::Fonts>();
+    for entity in world.entities() {
+        let parts = [
+            ("UiText", world.has::<wish_ui::UiText>(entity)),
+            ("UiImage", world.has::<wish_ui::UiImage>(entity)),
+            ("UiButton", world.has::<wish_ui::UiButton>(entity)),
+        ];
+        if !world.has::<wish_ui::UiNode>(entity)
+            && let Some((part, _)) = parts.iter().find(|(_, has)| *has)
+        {
+            let name = name_of(world, entity);
+            found.push((
+                name.clone(),
+                Diagnostic::warning(
+                    "ui_without_node",
+                    format!("Entity '{name}' has a {part} but no UiNode, so it is not shown."),
+                    "Add a UiNode to the same entity: it is the box that holds the text, picture or button, and places it on the screen.",
+                ),
+            ));
+        }
+        if let Some(text) = world.get::<wish_ui::UiText>(entity) {
+            let path = world.text(text.font.text()).unwrap_or_default();
+            if !path.is_empty() && !fonts.is_some_and(|fonts| fonts.contains(path)) {
+                let name = name_of(world, entity);
+                found.push((
+                    name.clone(),
+                    Diagnostic::warning(
+                        "ui_font_missing",
+                        format!("Entity '{name}' asks for the font '{path}', which the project does not have (or cannot read); the engine's font is used."),
+                        "Check the path (a .ttf or .otf file in the project; asset_list shows them), or leave font empty for the engine's font. check reports fonts that cannot be read.",
+                    )
+                    .at_file(path),
+                ));
+            }
+        }
+    }
+    found
+}
+
 /// Rules that look at the world after a run and say what looks wrong.
 fn inspect(session: &mut Session) -> Vec<Diagnostic> {
     let world = session.app.world();
-    let mut found: Vec<(String, Diagnostic)> = Vec::new();
+    let mut found: Vec<(String, Diagnostic)> = interface_findings(world);
     for entity in world.entities() {
         let Ok(transform) = world.get_json(entity, "Transform") else {
             continue;
         };
         let name = name_of(world, entity);
+        let body = world.get::<wish_physics::RigidBody>(entity);
+        if body.is_some() && !world.has::<wish_physics::Collider>(entity) {
+            found.push((
+                name.clone(),
+                Diagnostic::warning(
+                    "rigid_body_without_collider",
+                    format!(
+                        "Entity '{name}' has a RigidBody but no Collider, so physics ignores it."
+                    ),
+                    "Add a Collider (shape Box, Sphere, Capsule or Cylinder) to the same entity.",
+                ),
+            ));
+        }
+        if world.has::<wish_physics::CharacterController>(entity)
+            && body.map(|b| b.kind) != Some(wish_physics::BodyKind::Kinematic)
+        {
+            found.push((
+                name.clone(),
+                Diagnostic::warning(
+                    "character_not_kinematic",
+                    format!("Entity '{name}' has a CharacterController but its RigidBody is not Kinematic, so the controller does nothing."),
+                    "Give it a RigidBody with kind Kinematic (and a Collider, usually a Capsule), then write CharacterMotion.velocity.",
+                ),
+            ));
+        }
         let numbers: Vec<f64> = ["translation", "rotation", "scale"]
             .iter()
             .filter_map(|key| transform.get(*key).and_then(Value::as_array))
@@ -389,7 +489,11 @@ fn inspect(session: &mut Session) -> Vec<Diagnostic> {
                     format!(
                         "Entity '{name}' is at y = {y:.0} m; it probably fell out of the world."
                     ),
-                    "Add a floor under it, or something that removes entities that fall too far.",
+                    if body.map(|b| b.kind) == Some(wish_physics::BodyKind::Dynamic) {
+                        "It is a dynamic body: give the ground a Collider (an entity with a Collider and no RigidBody is fixed ground), or despawn entities that fall too far (a sensor Collider below the level and CollisionStarted)."
+                    } else {
+                        "Add a floor under it, or something that removes entities that fall too far."
+                    },
                 ),
             ));
         }
@@ -480,7 +584,7 @@ impl Workspace {
                 "Close one with sim_stop first.",
             ));
         }
-        let (app, script) = build_app(self, scene, seed)?;
+        let (app, script, assets) = build_app(self, scene, seed)?;
         let input = self.input_map()?;
         let id = self.sessions.new_id();
         let tick = app.tick();
@@ -495,6 +599,7 @@ impl Workspace {
                 script,
                 input,
                 recording: None,
+                assets,
             },
         );
         let started = Diagnostic::info(
@@ -560,6 +665,15 @@ impl Workspace {
             };
             self.sessions
                 .record(Some(id), Some(log.tick), "script", &entry);
+        }
+        let lines = wish_audio::drain_log(self.session_mut(id)?.app.world_mut());
+        let session = self.session(id)?;
+        let entries: Vec<(u64, Diagnostic)> = lines
+            .iter()
+            .map(|line| crate::audio::entry(session.app.world(), line))
+            .collect();
+        for (at, entry) in &entries {
+            self.sessions.record(Some(id), Some(*at), "audio", entry);
         }
         for diagnostic in &stepped.diagnostics {
             let kind = if diagnostic.code == "system_failed" {

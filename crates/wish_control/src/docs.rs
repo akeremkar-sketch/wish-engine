@@ -25,12 +25,36 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "No asset file has that path. Paths are project-relative with '/' between folders; asset_list shows what exists.",
     ),
     (
+        "audio_clip_unknown",
+        "A sound source wants a clip that is not a readable .wav or .ogg file of the project (wrong path, missing file, or unreadable). The source is switched off. Check the path, and start a new session so the engine reads the project's clips again.",
+    ),
+    (
+        "audio_decode",
+        "A sound file could not be decoded (damaged, an unsupported format, or too long). Use .wav (8, 16, 24 or 32-bit integer, or 32-bit float) or .ogg (Vorbis) of at most an hour and 128 MiB.",
+    ),
+    (
+        "audio_device",
+        "No sound device could be opened for `wen play`, so the game runs without sound. Check that speakers or headphones are connected and not held by an exclusive-mode program.",
+    ),
+    (
+        "audio_ended",
+        "Log line (logs_get kind audio): a sound stopped because its clip finished, it was switched off, or its entity is gone.",
+    ),
+    (
+        "audio_started",
+        "Log line (logs_get kind audio): a sound started, with how loud it is at the listener (dB, 0 dB is the clip as recorded) and where (left, centre, right). Sounds are described in a session, not played.",
+    ),
+    (
         "bench_failed",
         "`wen bench --script` could not prepare its measurement (a temporary folder, or the measured game code did not build). Check that `wen sdk` was run with this engine.",
     ),
     (
         "capture_failed",
         "A scenario test's capture step could not take its picture (no camera, or the camera named does not exist); the message says which.",
+    ),
+    (
+        "character_not_kinematic",
+        "An entity has a CharacterController but its RigidBody is not Kinematic (or it has none); the controller only moves kinematic bodies. Set RigidBody.kind to Kinematic.",
     ),
     (
         "component_not_found",
@@ -97,6 +121,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "A file could not be written. Check that the folder exists, can be written to, and that no other program has the file locked.",
     ),
     (
+        "font_invalid",
+        "A font file of the project cannot be read (not a TrueType or OpenType font, damaged, or larger than 32 MiB). Text asking for it is drawn with the engine's font (Roboto). Re-export or replace the file.",
+    ),
+    (
         "gltf_file_missing",
         "A .gltf file refers to separate .bin or image files that are not next to it. Keep them together, or use a single .glb file.",
     ),
@@ -151,6 +179,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "history_reset",
         "A scene file changed outside the engine in a way that could not be recorded as separate edits. It is recorded as one change by the file (revisions keep counting), and earlier changes can no longer be undone.",
+    ),
+    (
+        "image_invalid",
+        "A picture for the interface cannot be read: it is not a PNG, is damaged, or is larger than 4096x4096 pixels. Re-export it as an 8- or 16-bit PNG.",
     ),
     (
         "internal_error",
@@ -271,6 +303,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "layout_mismatch",
         "Stored data was made by a different version of a type. Re-create it with the current version.",
+    ),
+    (
+        "light_clusters_full",
+        "Too many point and spot lights reach the same part of the picture (more than 128); some were left out there, so it is darker than it should be. Spread lights out or give them a smaller range.",
     ),
     (
         "managed_component",
@@ -417,6 +453,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     ),
     ("project_not_found", "The project folder does not exist."),
     (
+        "replay_assets_changed",
+        "Project files the simulation reads (sound and animation clip lengths, fonts) changed since the replay was recorded, so the run may differ. Re-record the replay if the change was intended.",
+    ),
+    (
         "replay_code_changed",
         "The game code is not the code the replay was recorded with. The replay still plays: if it passes, the change did not alter the run.",
     ),
@@ -465,6 +505,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "An engine type's layout cannot change while a world exists; only types declared by game code can. Rename the game's type if it clashes with an engine type.",
     ),
     (
+        "rigid_body_without_collider",
+        "An entity has a RigidBody but no Collider, so physics ignores it. Add a Collider to the same entity.",
+    ),
+    (
         "scene_file_invalid",
         "Changes are refused because the scene file on disk is currently invalid (edited by hand). Fix the file first; nothing will overwrite it.",
     ),
@@ -483,6 +527,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "script_abi_mismatch",
         "The game module was built for a different game ABI version than this engine speaks. Rebuild it with this engine's SDK (script_build).",
+    ),
+    (
+        "script_after_engine_system",
+        "A game system asks to run after one of the engine's systems (physics, animation, ui, particles, audio, transform_propagation). Those always run after every game system; remove the after and read their results (positions, collisions, clicks) the next tick.",
     ),
     (
         "script_bad_manifest",
@@ -689,6 +737,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "The world holds the most entities it can.",
     ),
     (
+        "too_many_lights",
+        "The scene has more than 1024 point and spot lights; only the first 1024 (in entity order) are drawn. Remove lights that add little or merge them.",
+    ),
+    (
         "too_many_sessions",
         "The most sessions are already open. Close one with sim_stop.",
     ),
@@ -715,6 +767,22 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "type_name_conflict",
         "Two different types were registered under the same name.",
+    ),
+    (
+        "ui_atlas_full",
+        "One frame's interface needs more glyphs and pictures than fit in its 4096x4096 atlas, so some were not drawn. Use smaller pictures or less text at very large sizes.",
+    ),
+    (
+        "ui_font_missing",
+        "A UiText names a font file the project does not have (or cannot read), so the engine's font is used. Fix the path (a .ttf or .otf in the project) or leave font empty.",
+    ),
+    (
+        "ui_image_not_loaded",
+        "A UiImage or a Sprite names a picture that could not be loaded (missing, outside the project, or not a readable PNG); the box shows only its background and the sprite is not drawn. Fix the path or the file.",
+    ),
+    (
+        "ui_without_node",
+        "An entity has UiText, UiImage or UiButton but no UiNode, so it is not part of the interface and is not shown. Add a UiNode to the same entity: it is the box that places it.",
     ),
     (
         "unknown_action",
@@ -801,6 +869,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "unknown_view",
         "No view has that name: use lit, ids, depth, normals or wireframe.",
+    ),
+    (
+        "unsupported_animation",
+        "A model animates something that is not supported (morph target weights); that part does not move. Bake it into a skeletal animation or re-export without morph targets.",
     ),
     (
         "unsupported_extension",
@@ -1161,6 +1233,76 @@ wish_sdk::export! {
     systems: [move_player, collect, score],
 }
 ```
+
+## Physics
+
+Physics runs after the game's systems every tick. An entity with a `Collider` takes part; with a `RigidBody`
+it moves. Physics writes `Transform` and `BodyVelocity` back; writing them yourself teleports or sets the speed.
+
+```rust
+// Kick a crate: the event is applied at the next physics step.
+sent.send(BodyImpulse { entity: crate_, linear: Vec3::new(0.0, 5000.0, 0.0), angular: Vec3::ZERO });
+// Touches: EventReader<CollisionStarted> / <CollisionEnded> give { a, b, sensor }.
+```
+
+- Shapes: `ColliderShape::{Box, Sphere, Capsule, Cylinder}`, sized by `size` times the entity's scale.
+- `RigidBody { kind: BodyKind::Dynamic | Kinematic | Fixed, gravity_scale, lock_translation, lock_rotation, .. }`.
+- Characters: a Kinematic body with `CharacterController`; each tick write `CharacterMotion.velocity` (m/s,
+  gravity included) and read `CharacterState { grounded, blocked, moved }`:
+  `vy = if state.grounded { if actions.pressed("jump") { 5.0 } else { -1.0 } } else { vy - 9.81 * time.delta }`.
+- `BodyForce` pushes every tick while present; `PhysicsSettings` holds gravity and substeps.
+- Ray casts: `raycast(from, dir, max) -> Option<RayHit { entity, point, normal, distance }>`, or
+  `wish_sdk::physics::cast(Ray { from, dir, max, mask, ignore: Some(me) })`. They see the physics world as it was at
+  the start of the tick (the same for every system); each costs a fixed amount of fuel.
+- A game may still declare its own `Velocity` for things it moves itself; physics uses `BodyVelocity`.
+
+## Sound
+
+A sound is an entity with an `AudioSource` (clip: a `.wav` or `.ogg` path in the project, `playing`, `looping`,
+`spatial`, `volume`, `pitch`, `min_distance`, `max_distance`) and an `AudioListener` somewhere (usually the camera).
+A one-off sound is an event: `sent.send(PlaySound { clip, bus: AudioBus::Sfx, volume: 1.0, pitch: 1.0,
+spatial: true, position })`. The engine writes `AudioPlayback { position, gain, pan, started }` and sends
+`SoundStarted` / `SoundEnded` events. Nothing is played in a session: an agent reads what played with
+`logs_get kinds: ["audio"]` ("started on 'door': -12.0 dB at the listener, right 100%").
+
+## Animation
+
+A glTF `Model` with clips plays one through an `AnimationPlayer { clip, time, speed, looping, playing }` on the
+same entity (clip: the name in the file; empty plays the first). The engine moves `time` on every tick; a clip
+that does not loop stops at its end, sets `playing` to false and sends `AnimationFinished { entity }`. To play
+another clip, write `clip` and set `time` to 0.
+
+## Interface
+
+The in-game interface is made of entities. An entity with a `UiNode` is a box; its children (in the entity
+hierarchy) with a `UiNode` are laid out inside it in a column (or a `direction: Row`), like CSS flexbox:
+`width`/`height` (`{ "unit": "Px" | "Percent" | "Auto", "value": n }`), `padding`/`margin` (top, right,
+bottom, left), `gap`, `justify`, `align`, `grow`, `position: Absolute` with `offset` [x, y], `background`,
+`visible`, `layer`. A box can show `UiText { text, size, color, align, wrap, font }` (the engine's font is
+Roboto; `font` names a .ttf/.otf of the project) or `UiImage { image, tint }` (a PNG), and be a `UiButton`.
+
+Positions are interface pixels on a virtual screen (`UiSettings`, 1280 x 720 by default, (0, 0) at the top
+left), scaled to fit any window. Every tick the engine writes each box's place into `UiLayout` and, for buttons,
+`UiInteraction { hovered, pressed, clicks, last_click_tick }`; a click sends `ButtonClicked { entity }` (read it
+the next tick with `EventReader<ButtonClicked>`). The pointer is the `Pointer` resource.
+
+Game code writes text with `text(...)`: `label.text = text(&format!("Score: {}", score.points));`, and reads
+one back with `text_of(handle)`. A tool clicks with `sim_step` input `{ "pointer": [x, y], "click": true }`
+and then a step without `click`; `describe_view` lists the interface with its text.
+
+## 2D and particles
+
+A 2D game looks through a `Camera` with `projection: Orthographic` (`ortho_height`: meters shown from top to
+bottom) and is made of `Sprite { image, rect, color, pixels_per_unit, anchor, flip_x, flip_y, layer, smooth }`
+entities standing in their XY plane (a sprite sheet frame is `rect`, in pixels; game code animates by writing
+it). Sprites are not lit; higher `layer` is drawn over lower. For 2D physics lock the Z translation and the X and
+Y rotations of `RigidBody`.
+
+A `ParticleEmitter { rate, burst, lifetime, speed, spread_deg, gravity, size_start/end, color_start/end, seed,
+start_time, duration, max, playing }` gives off soft round particles in a cone around its entity's +Y axis.
+Particles keep no state (their places follow from the time): to start again, write `start_time` with
+`Time.elapsed`. The engine writes how many are alive into `ParticleState.alive`; `describe_view` lists sprites
+and particles with their boxes.
 
 ## Rules
 

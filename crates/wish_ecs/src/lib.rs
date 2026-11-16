@@ -47,6 +47,7 @@ mod column;
 mod commands;
 mod entities;
 mod events;
+mod extension;
 mod hierarchy;
 mod query;
 mod registry;
@@ -56,6 +57,7 @@ mod world;
 pub use archetype::Archetype;
 pub use commands::{CommandReport, Commands, Target};
 pub use events::EventCursor;
+pub use extension::Extension;
 pub use hierarchy::Hierarchy;
 pub use query::{
     Access, Added, ChangeTick, Changed, Mut, QueryData, QueryFilter, QueryIter, With, Without,

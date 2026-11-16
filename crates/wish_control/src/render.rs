@@ -16,6 +16,8 @@ pub(crate) struct Drawing {
     pub renderer: Renderer,
     /// Project-relative model path → (length, modified) when uploaded.
     models: BTreeMap<String, (u64, Option<SystemTime>)>,
+    /// The same for the interface's pictures.
+    pictures: BTreeMap<String, (u64, Option<SystemTime>)>,
     /// The shader folder in use, if any.
     shaders: Option<PathBuf>,
 }
@@ -33,6 +35,7 @@ impl Drawing {
             gpu,
             renderer,
             models: BTreeMap::new(),
+            pictures: BTreeMap::new(),
             shaders: shaders.map(Path::to_path_buf),
         })
     }
@@ -99,8 +102,111 @@ impl Drawing {
                 ),
             }
         }
+        warnings.extend(load_ui_pictures(
+            &mut self.renderer,
+            scene,
+            root,
+            &mut self.pictures,
+        ));
         warnings
     }
+}
+
+/// When a file was read: its length and modification time.
+pub type Stamp = (u64, Option<SystemTime>);
+
+/// Loads the pictures the interface and the sprites of `scene` show
+/// (`UiImage`, `Sprite`), again if
+/// their files changed since `known` says they were read. A picture that
+/// cannot be loaded is a warning (`ui_image_not_loaded`): its box shows its
+/// background only.
+pub fn load_ui_pictures(
+    renderer: &mut Renderer,
+    scene: &RenderScene,
+    root: &Path,
+    known: &mut BTreeMap<String, Stamp>,
+) -> Vec<Diagnostic> {
+    let mut warnings = Vec::new();
+    let mut paths: Vec<&str> = scene
+        .ui
+        .iter()
+        .filter_map(|view| view.image.as_ref().map(|(path, _)| path.as_str()))
+        .chain(
+            scene
+                .sprites
+                .iter()
+                .filter_map(|view| view.image.as_deref()),
+        )
+        .collect();
+    paths.sort_unstable();
+    paths.dedup();
+    let not_loaded = |path: &str, why: String, hint: String| {
+        Diagnostic::warning(
+            "ui_image_not_loaded",
+            format!("The picture '{path}' was not drawn: {why}"),
+            hint,
+        )
+        .at_file(path)
+    };
+    for path in paths {
+        if wish_core::asset::validate_asset_ref(path).is_err() {
+            warnings.push(not_loaded(
+                path,
+                "it is not a path inside the project.".to_owned(),
+                "Pictures are project-relative paths such as \"assets/ui/heart.png\".".to_owned(),
+            ));
+            continue;
+        }
+        let file = root.join(path);
+        let meta = std::fs::metadata(&file).ok();
+        let stamp = (
+            meta.as_ref().map_or(0, std::fs::Metadata::len),
+            meta.and_then(|m| m.modified().ok()),
+        );
+        if known.get(path) == Some(&stamp) && renderer.has_ui_picture(path) {
+            continue;
+        }
+        // Larger than any picture may be: not read at all.
+        let too_big = stamp.0 > 4 * 4096 * 4096 + (1 << 20);
+        let loaded = (if too_big {
+            Err(Diagnostic::error(
+                "image_invalid",
+                format!(
+                    "it is {} bytes, more than a 4096x4096 picture needs.",
+                    stamp.0
+                ),
+                "Use a PNG of at most 4096x4096 pixels.",
+            ))
+        } else {
+            std::fs::read(&file).map_err(|error| {
+                Diagnostic::error(
+                    "file_unreadable",
+                    format!("could not read it ({error})."),
+                    "Check the path: asset_list shows the project's pictures.",
+                )
+            })
+        })
+        .and_then(|bytes| wish_import::load_png(&bytes, path));
+        match loaded {
+            Ok(texture) => {
+                renderer.set_ui_picture(
+                    path,
+                    wish_render::UiPicture {
+                        width: texture.width,
+                        height: texture.height,
+                        rgba: texture.rgba,
+                    },
+                );
+                known.insert(path.to_owned(), stamp);
+            }
+            Err(problem) => warnings.push(not_loaded(
+                path,
+                problem.message.to_string(),
+                problem.hint.to_string(),
+            )),
+        }
+    }
+    warnings
 }
 
 /// Repeats of one warning per file are dropped (the renderer says, per

@@ -13,7 +13,7 @@ Boyutlar görecelidir (S < M < L < XL); takvim sözü değildir.
 | M3 | İlk piksel | wgpu render temeli, glTF, başsız yakalama | L | Opus 5.5 · high (çekirdek) → Sonnet 5.5 · medium (içe aktarıcılar) — **tamamlandı** |
 | M4 | Kontrol düzlemi + MCP | Tek API, MCP sunucusu, komut satırı eşliği, ilk ajan değerlendirmeleri | M | İlk oturum Opus 5.5 · high (araç tasarımı) → Sonnet 5.5 · medium |
 | M5 | Oyun mantığı | Wasm ev sahibi + SDK, sıcak yükleme, girdi, senaryo testleri, gömülü araç zinciri denemesi | L | Opus 5.5 · high (ABI, ev sahibi) → Sonnet 5.5 · medium — **tamamlandı** (iki kullanıcı doğrulaması bekliyor) |
-| M6 | Oyun sistemleri | Fizik, ses, oyun içi arayüz, animasyon, 2D alt kümesi | L | Sonnet 5.5 · medium (sorunlu bütünleşmede Opus 5.5 · high) |
+| M6 | Oyun sistemleri | Fizik, ses, oyun içi arayüz, animasyon, 2D alt kümesi | L | Sonnet 5.5 · medium (sorunlu bütünleşmede Opus 5.5 · high) — **tamamlandı** (değerlendirme koşumu kullanıcıyı bekliyor) |
 | M7 | Kendi motorumuzla oyun | Vitrin oyunu, ajan değerlendirme takımı, sürtünme giderme | M | Oyun yapan ajan: Sonnet 5.5 · medium ve Haiku 5.5; düzeltmeler: Opus 5.5 · high |
 | M8a | Editör temeli (elle düzenleme) | Görünüm, hiyerarşi, otomatik denetçi, tutamaçlar, varlık tarayıcı, oynatma denetimleri | L | Sonnet 5.5 · high |
 | M8b | Yapay zekâ kokpiti | Konuşma paneli, kokpit içi ajan, "göster ve söyle", etkinlik akışı, denetim noktaları | L | Sonnet 5.5 · high (etkileşim tasarımı kararlarında Opus 5.5 · high) |
@@ -159,6 +159,8 @@ M1'in ilk iş paketinde yapılacak tek ortam işi: derleme çıktılarını OneD
 - **Gömülü araç zinciri denemesi (ADR-023):** hiçbir geliştirme aracı kurulu olmayan temiz bir Windows'ta, paketlenmiş motor oyun kodunu derleyip çalıştırır.
 
 ## M6 — Oyun sistemleri
+
+**Durum: tamamlandı (16 Kasım 2026)**, `m6-systems` dalından `main`'e birleştirildi. Notlar ve kanıtlar: [design/M6-oyun-sistemleri.md](design/M6-oyun-sistemleri.md) §15 (WP1–WP9) ve §16 "M6 sonucu". Bağımsız kapanış incelemesi 13 bulgu verdi (1 yüksek: oyun kodu dünyanın metin tablosunu sınırsız büyütebiliyordu); hepsi ele alındı. Değerlendirme takımı 25 görev (`selftest` 25/25); gerçek koşum kullanıcıyı bekliyor. Ses Kira yerine cpal + kendi karıştırıcımızla (ADR-015 güncellendi: MPL bağımlılıklar).
 
 **Çıktı.** `wish_physics` (Rapier: katı cisimler, çarpıştırıcılar, ışın sorguları, karakter denetleyicisi), `wish_audio` (Kira + ses olay günlüğü), `wish_ui` (metin, görüntü, düğme, esnek yerleşim), iskelet animasyonu, nokta/spot ışıklar ve kümeleme, parçacıklar (temel), 2D alt kümesi (ortografik kamera, sprite).
 

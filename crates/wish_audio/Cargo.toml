@@ -1,0 +1,28 @@
+[package]
+name = "wish_audio"
+description = "Sound for Wish Engine: clip decoding, the deterministic sound system and the audio event log (what an agent hears)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# Plays sounds through the sound card (cpal). Off by default: it needs the
+# platform's audio libraries (ALSA on Linux), which the simulation does not.
+output = ["dep:cpal"]
+
+[dependencies]
+cpal = { workspace = true, optional = true }
+hound.workspace = true
+lewton.workspace = true
+wish_app.workspace = true
+wish_core.workspace = true
+wish_ecs.workspace = true
+wish_types.workspace = true
+
+[dev-dependencies]
+wish_transform.workspace = true
+
+[lints]
+workspace = true

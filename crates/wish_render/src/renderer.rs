@@ -35,8 +35,10 @@ pub use debug::{Description, IdBuffer, MAX_VISIBILITY_MEASUREMENTS, View, Visibl
 const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-/// Bytes of the frame uniform: three matrices and nine vectors.
-const FRAME_UNIFORM_SIZE: u64 = 336;
+/// Bytes of the frame uniform: four matrices and eleven vectors.
+const FRAME_UNIFORM_SIZE: u64 = 432;
+/// Bytes of one point or spot light in the light buffer: four vectors.
+const LIGHT_STRIDE: usize = 64;
 /// Side of the shadow map, in texels.
 pub const SHADOW_MAP_SIZE: u32 = 2048;
 const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -84,6 +86,11 @@ const SHADERS: &[(&str, &str, &str)] = &[
         include_str!("shaders/sky_pass.wgsl"),
     ),
     (
+        "lights",
+        "wish_render/shaders/lights.wgsl",
+        include_str!("shaders/lights.wgsl"),
+    ),
+    (
         "opaque",
         "wish_render/shaders/opaque.wgsl",
         include_str!("shaders/opaque.wgsl"),
@@ -97,6 +104,21 @@ const SHADERS: &[(&str, &str, &str)] = &[
         "debug_pass",
         "wish_render/shaders/debug_pass.wgsl",
         include_str!("shaders/debug_pass.wgsl"),
+    ),
+    (
+        "gizmo_pass",
+        "wish_render/shaders/gizmo_pass.wgsl",
+        include_str!("shaders/gizmo_pass.wgsl"),
+    ),
+    (
+        "ui_pass",
+        "wish_render/shaders/ui_pass.wgsl",
+        include_str!("shaders/ui_pass.wgsl"),
+    ),
+    (
+        "sprite_pass",
+        "wish_render/shaders/sprite_pass.wgsl",
+        include_str!("shaders/sprite_pass.wgsl"),
     ),
 ];
 
@@ -117,6 +139,9 @@ pub const ENTRY_SHADERS: &[&str] = &[
     "tonemap_pass",
     "shadow_pass",
     "debug_pass",
+    "gizmo_pass",
+    "ui_pass",
+    "sprite_pass",
 ];
 
 /// Checks every pipeline shader of `library` and returns every problem found
@@ -183,6 +208,7 @@ impl Bytes {
     }
 }
 
+#[derive(Clone)]
 struct GpuMesh {
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
@@ -196,7 +222,12 @@ struct GpuMesh {
 /// buffer at creation and panics if that mapping fails; filling through the
 /// queue cannot panic, and a failure surfaces in the error scope instead.)
 /// `contents` must be a multiple of 4 bytes long, which all engine data is.
-fn buffer_with(gpu: &Gpu, label: &str, contents: &[u8], usage: wgpu::BufferUsages) -> wgpu::Buffer {
+pub(crate) fn buffer_with(
+    gpu: &Gpu,
+    label: &str,
+    contents: &[u8],
+    usage: wgpu::BufferUsages,
+) -> wgpu::Buffer {
     let size = (contents.len() as u64).max(wgpu::COPY_BUFFER_ALIGNMENT);
     let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some(label),
@@ -367,6 +398,7 @@ impl<'a> DrawList<'a> {
 }
 
 /// One primitive of an uploaded model.
+#[derive(Clone)]
 struct GpuPrimitive {
     mesh: GpuMesh,
     /// The material's five textures and the sampler.
@@ -381,11 +413,19 @@ struct GpuPrimitive {
     matrix: Mat4,
     /// The primitive's bounding box in its own space.
     bounds: (Vec3, Vec3),
+    /// Where it is in the model file (for posing animated models).
+    placed: wish_import::Placed,
 }
+
+/// Posed primitives of animated draws, by draw index.
+type Posed = BTreeMap<usize, Vec<GpuPrimitive>>;
 
 /// A model on the GPU.
 struct GpuModel {
     primitives: Vec<GpuPrimitive>,
+    /// The model's CPU data, kept when it has skins or clips: posing needs
+    /// the node tree, the keyframes and the bind-pose vertices.
+    animated: Option<std::sync::Arc<wish_import::Model>>,
     /// How many of its materials blend alpha, which is not drawn blended yet.
     blended: usize,
 }
@@ -435,7 +475,70 @@ fn choose_camera(scene: &RenderScene, camera: Option<Entity>) -> Result<&CameraV
 impl Renderer {
     /// Turns the scene's draws into draw calls. With `only`, just the draw
     /// with that index in `scene.draws` (to measure one entity on its own).
-    fn collect<'a>(&'a self, scene: &RenderScene, only: Option<usize>) -> Collected<'a> {
+    /// The primitives of every animated model draw of `scene`, posed at its
+    /// clip's time (skinned vertices bent on the CPU), by draw index. Draws
+    /// of models without skins or clips are not here.
+    fn pose(&self, gpu: &Gpu, scene: &RenderScene) -> Result<Posed> {
+        let mut posed = Posed::new();
+        for (index, draw) in scene.draws.iter().enumerate() {
+            let Some((clip, time)) = &draw.animation else {
+                continue;
+            };
+            let file = draw
+                .model_path
+                .as_deref()
+                .unwrap_or_default()
+                .split('#')
+                .next()
+                .unwrap_or_default();
+            let Some(model) = self.models.get(file) else {
+                continue;
+            };
+            let Some(source) = &model.animated else {
+                continue;
+            };
+            let pose = source.pose(source.animation_index(clip), *time);
+            let mut primitives = Vec::with_capacity(model.primitives.len());
+            for primitive in &model.primitives {
+                let mut moved = primitive.clone();
+                let skinned = source.skin(&primitive.placed, &pose);
+                match skinned {
+                    Some((positions, normals)) => {
+                        let Some(original) = source
+                            .meshes
+                            .get(primitive.placed.mesh)
+                            .and_then(|m| m.primitives.get(primitive.placed.primitive))
+                        else {
+                            continue;
+                        };
+                        let mut data = MeshData::from(original);
+                        moved.bounds = bounds_of(&positions);
+                        data.positions = positions;
+                        data.normals = normals;
+                        moved.mesh = gpu
+                            .checked("upload a posed mesh", |gpu| GpuMesh::new(gpu, &data, file))?;
+                        moved.matrix = Mat4::IDENTITY;
+                    }
+                    None => {
+                        moved.matrix = pose
+                            .get(primitive.placed.node)
+                            .copied()
+                            .unwrap_or(primitive.matrix);
+                    }
+                }
+                primitives.push(moved);
+            }
+            posed.insert(index, primitives);
+        }
+        Ok(posed)
+    }
+
+    fn collect<'a>(
+        &'a self,
+        scene: &RenderScene,
+        only: Option<usize>,
+        posed: &'a Posed,
+    ) -> Collected<'a> {
         // What one draw call draws: a built-in shape (with the entity's own
         // `Material`), or one primitive of an uploaded model (with the
         // material from its file).
@@ -491,7 +594,8 @@ impl Renderer {
                     if model.blended > 0 && !blended_models.contains(&key.as_str()) {
                         blended_models.push(key.as_str());
                     }
-                    for primitive in &model.primitives {
+                    let primitives = posed.get(&index).unwrap_or(&model.primitives);
+                    for primitive in primitives {
                         draw_list.push(
                             Source::Primitive(primitive),
                             &(draw.world * primitive.matrix),
@@ -563,6 +667,12 @@ pub struct Renderer {
     models: BTreeMap<String, GpuModel>,
     /// The pipelines of the debug views.
     debug: debug::DebugPipelines,
+    /// The in-game interface's pipeline.
+    ui: crate::ui::UiPipeline,
+    /// The sprites' and particles' pipeline.
+    overlay: crate::sprites::OverlayPipeline,
+    /// Pictures of the interface and of sprites, by project path.
+    ui_pictures: BTreeMap<String, crate::ui::UiPicture>,
 }
 
 impl std::fmt::Debug for Renderer {
@@ -606,6 +716,39 @@ fn material_group(
     })
 }
 
+/// A read-only storage buffer for fragment shaders (the light lists).
+fn storage_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }
+}
+
+/// The point and spot lights as the shader reads them (`LocalLight`).
+fn light_bytes(lights: &[crate::extract::LocalLightView]) -> Vec<u8> {
+    let mut bytes = Bytes::default();
+    for light in lights.iter().take(crate::cluster::MAX_LIGHTS) {
+        bytes.vec4(light.position.to_array(), light.range);
+        let (spot, direction, outer, inner) = match light.spot {
+            Some((direction, inner, outer)) => (1.0, direction.to_array(), outer, inner),
+            None => (0.0, [0.0, -1.0, 0.0], -1.0, -1.0),
+        };
+        bytes.vec4(light.intensity, spot);
+        bytes.vec4(direction, outer);
+        bytes.vec4([inner, 0.0, 0.0], 0.0);
+    }
+    if bytes.0.is_empty() {
+        bytes.pad_to(LIGHT_STRIDE as u64);
+    }
+    bytes.0
+}
+
 fn uniform_entry(binding: u32, dynamic: bool, size: u64) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
@@ -636,6 +779,21 @@ impl Renderer {
         let debug_source = modules
             .iter()
             .find(|(entry, _)| *entry == "debug_pass")
+            .map(|(_, source)| source.clone())
+            .unwrap_or_default();
+        let gizmo_source = modules
+            .iter()
+            .find(|(entry, _)| *entry == "gizmo_pass")
+            .map(|(_, source)| source.clone())
+            .unwrap_or_default();
+        let ui_source = modules
+            .iter()
+            .find(|(entry, _)| *entry == "ui_pass")
+            .map(|(_, source)| source.clone())
+            .unwrap_or_default();
+        let sprite_source = modules
+            .iter()
+            .find(|(entry, _)| *entry == "sprite_pass")
             .map(|(_, source)| source.clone())
             .unwrap_or_default();
         let pipelines = gpu.checked("build the render pipelines", |gpu| {
@@ -671,6 +829,9 @@ impl Renderer {
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
                         count: None,
                     },
+                    storage_entry(3),
+                    storage_entry(4),
+                    storage_entry(5),
                 ],
             });
             let light_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -938,9 +1099,24 @@ impl Renderer {
                 .map(|shape| GpuMesh::new(gpu, &primitive(shape), "primitive"))
                 .collect()
         })?;
-        let debug = debug::DebugPipelines::new(gpu, &debug_source, &draw_layout, &material_layout)?;
+        let debug = debug::DebugPipelines::new(
+            gpu,
+            (&debug_source, &gizmo_source),
+            &draw_layout,
+            &material_layout,
+        )?;
+        let ui = crate::ui::UiPipeline::new(gpu, &ui_source, crate::capture::CAPTURE_FORMAT)?;
+        let overlay = crate::sprites::OverlayPipeline::new(
+            gpu,
+            &sprite_source,
+            crate::capture::CAPTURE_FORMAT,
+            DEPTH_FORMAT,
+        )?;
         Ok(Self {
             debug,
+            ui,
+            overlay,
+            ui_pictures: BTreeMap::new(),
             frame_layout,
             draw_layout,
             hdr_layout,
@@ -965,9 +1141,43 @@ impl Renderer {
     pub fn reload_shaders(&mut self, gpu: &Gpu, library: &ShaderLibrary) -> Result<()> {
         let fresh = Self::with_shaders(gpu, library)?;
         let models = std::mem::take(&mut self.models);
+        let pictures = std::mem::take(&mut self.ui_pictures);
         *self = fresh;
         self.models = models;
+        self.ui_pictures = pictures;
         Ok(())
+    }
+
+    /// Keeps a picture for the in-game interface or a sprite under its
+    /// project path (`UiImage.image`, `Sprite.image`), replacing one of the
+    /// same path.
+    pub fn set_ui_picture(&mut self, path: &str, picture: crate::ui::UiPicture) {
+        self.ui_pictures.insert(path.to_owned(), picture);
+    }
+
+    /// Whether a picture is kept under `path`.
+    pub fn has_ui_picture(&self, path: &str) -> bool {
+        self.ui_pictures.contains_key(path)
+    }
+
+    /// The sprites and particle emitters of `scene` as a `width` × `height`
+    /// picture from `camera` (or the first camera) shows them: their boxes,
+    /// and how many particles each emitter has alive.
+    pub fn overlay_elements(
+        &self,
+        scene: &RenderScene,
+        camera: Option<Entity>,
+        width: u32,
+        height: u32,
+    ) -> Result<Vec<crate::sprites::OverlayElement>> {
+        let view = choose_camera(scene, camera)?;
+        Ok(crate::sprites::elements(
+            scene,
+            view,
+            width,
+            height,
+            &self.ui_pictures,
+        ))
     }
 
     /// Whether a model has been uploaded under `path`.
@@ -1096,11 +1306,15 @@ impl Renderer {
                     double_sided: material.double_sided,
                     matrix: placed.matrix,
                     bounds: bounds_of(&source.positions),
+                    placed,
                 });
             }
+            let animated = (!model.skins.is_empty() || !model.animations.is_empty())
+                .then(|| std::sync::Arc::new(model.clone()));
             GpuModel {
                 primitives,
                 blended,
+                animated,
             }
         })?;
         self.models.insert(path.to_owned(), uploaded);
@@ -1119,6 +1333,7 @@ impl Renderer {
     ) -> Result<Frame> {
         let view = choose_camera(scene, camera)?;
         let target = Target::new(gpu, width, height)?;
+        let posed = self.pose(gpu, scene)?;
         let aspect = width as f32 / height as f32;
         let view_proj = view.projection(aspect) * view.view;
         let exposure = exposure_multiplier(scene.ev100);
@@ -1145,8 +1360,16 @@ impl Renderer {
 
         let Collected {
             draw_list,
-            warnings,
-        } = self.collect(scene, None);
+            mut warnings,
+        } = self.collect(scene, None, &posed);
+        // Sprites and particles, then the interface, are prepared on the CPU
+        // and drawn over the finished picture.
+        let overlay = crate::sprites::build(scene, view, aspect, &self.ui_pictures);
+        let interface = (!scene.ui.is_empty())
+            .then(|| crate::ui::build(scene, width, height, &self.ui_pictures));
+        if let Some(batch) = &interface {
+            warnings.extend(batch.warnings.iter().cloned());
+        }
         let DrawList {
             mut bytes,
             draws,
@@ -1172,7 +1395,66 @@ impl Renderer {
             fit.map_or(0.0, |fit| fit.normal_offset),
             1.0 / SHADOW_MAP_SIZE as f32,
         ]);
+        let clusters = crate::cluster::build(
+            &scene.local_lights,
+            &view.view,
+            &view.projection(aspect),
+            (width, height),
+            (view.near, view.far),
+        );
+        let lights = scene.local_lights.len().min(crate::cluster::MAX_LIGHTS);
+        if scene.local_lights.len() > crate::cluster::MAX_LIGHTS {
+            warnings.push(Diagnostic::warning(
+                "too_many_lights",
+                format!(
+                    "The scene has {} point and spot lights; only the first {} are drawn.",
+                    scene.local_lights.len(),
+                    crate::cluster::MAX_LIGHTS
+                ),
+                "Remove lights that add little, or give them a smaller range.",
+            ));
+        }
+        if clusters.dropped > 0 {
+            warnings.push(Diagnostic::warning(
+                "light_clusters_full",
+                format!(
+                    "Too many lights reach the same part of the picture: {} light placements were left out, so some areas are darker than they should be.",
+                    clusters.dropped
+                ),
+                format!(
+                    "At most {} lights can light one region; spread lights out or give them a smaller range.",
+                    crate::cluster::MAX_PER_CLUSTER
+                ),
+            ));
+        }
+        frame.mat4(&view.view);
+        frame.floats(&[
+            clusters.tiles_x as f32,
+            clusters.tiles_y as f32,
+            crate::cluster::SLICES as f32,
+            lights as f32,
+            clusters.near,
+            view.far,
+            clusters.log_scale,
+            crate::cluster::TILE_PX as f32,
+        ]);
         frame.pad_to(FRAME_UNIFORM_SIZE);
+        let local_light_bytes = light_bytes(&scene.local_lights);
+        let range_bytes: Vec<u8> = clusters
+            .ranges
+            .iter()
+            .flat_map(|[start, count]| [start.to_le_bytes(), count.to_le_bytes()])
+            .flatten()
+            .collect();
+        let index_bytes: Vec<u8> = if clusters.indices.is_empty() {
+            vec![0; 4]
+        } else {
+            clusters
+                .indices
+                .iter()
+                .flat_map(|i| i.to_le_bytes())
+                .collect()
+        };
         let light_bytes = {
             let mut bytes = Bytes::default();
             bytes.mat4(&fit.map_or(Mat4::IDENTITY, |fit| fit.view_proj));
@@ -1210,6 +1492,10 @@ impl Renderer {
             )
             .create_view(&wgpu::TextureViewDescriptor::default());
             let frame_buffer = buffer_with(gpu, "frame", &frame.0, wgpu::BufferUsages::UNIFORM);
+            let storage = wgpu::BufferUsages::STORAGE;
+            let lights_buffer = buffer_with(gpu, "local lights", &local_light_bytes, storage);
+            let ranges_buffer = buffer_with(gpu, "cluster ranges", &range_bytes, storage);
+            let indices_buffer = buffer_with(gpu, "cluster lights", &index_bytes, storage);
             let draw_buffer = buffer_with(gpu, "draws", &draw_bytes.0, wgpu::BufferUsages::UNIFORM);
             let shadow_size = if fit.is_some() { SHADOW_MAP_SIZE } else { 1 };
             let shadow_texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -1253,6 +1539,18 @@ impl Renderer {
                     wgpu::BindGroupEntry {
                         binding: 2,
                         resource: wgpu::BindingResource::Sampler(&self.shadow_sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: lights_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: ranges_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: indices_buffer.as_entire_binding(),
                     },
                 ],
             });
@@ -1352,7 +1650,8 @@ impl Renderer {
                         view: &depth,
                         depth_ops: Some(wgpu::Operations {
                             load: wgpu::LoadOp::Clear(1.0),
-                            store: wgpu::StoreOp::Discard,
+                            // Kept for the sprites and particles.
+                            store: wgpu::StoreOp::Store,
                         }),
                         stencil_ops: None,
                     }),
@@ -1401,6 +1700,13 @@ impl Renderer {
                 pass.set_pipeline(&self.tonemap);
                 pass.set_bind_group(0, &hdr_group, &[]);
                 pass.draw(0..3, 0..1);
+            }
+            if let Some(overlay) = &overlay {
+                self.overlay
+                    .draw(gpu, &mut encoder, &target.view, &depth, overlay);
+            }
+            if let Some(batch) = &interface {
+                self.ui.draw(gpu, &mut encoder, &target.view, batch);
             }
             target.copy(&mut encoder);
             gpu.queue.submit([encoder.finish()]);

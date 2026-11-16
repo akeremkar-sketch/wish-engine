@@ -657,3 +657,184 @@ fn r3_a_hierarchy_cannot_grow_without_end() {
     );
     assert_whole(&mut game.app);
 }
+
+/// Answers every physics question with a fixed hit, to see what reaches
+/// the guest.
+struct Echo;
+
+impl wish_script::HostServices for Echo {
+    fn physics_query(&self, _world: &wish_ecs::World, request: &[u8]) -> Option<Vec<u8>> {
+        (request.len() == wish_sdk::physics::REQUEST_LEN).then(|| vec![7; 37])
+    }
+}
+
+#[test]
+fn physics_questions_cannot_hurt_the_host() {
+    // Garbage pointers and lengths, an answer that does not fit, then a
+    // loop of questions until the fuel runs out.
+    let body = format!(
+        "(drop (call $q (i32.const -5) (i32.const 999999) (i32.const 0) (i32.const 64)))
+         (drop (call $q (i32.const 0) (i32.const {req}) (i32.const 0x7fffff00) (i32.const 64)))
+         (drop (call $q (i32.const 0) (i32.const {req}) (local.get $frame) (i32.const 4)))
+         (i32.store (i32.const 0x30000) (call $q (i32.const 0) (i32.const {req}) (i32.const 0x30010) (i32.const 64)))
+         (loop $again
+           (drop (call $q (i32.const 0) (i32.const {req}) (i32.const 0x30010) (i32.const 64)))
+           (br $again))",
+        req = wish_sdk::physics::REQUEST_LEN
+    );
+    // The guest needs the import declared, so it is written out here.
+    let manifest_text = manifest(json!([{ "name": "ask", "params": [{ "commands": {} }] }]));
+    let wat = format!(
+        r#"(module
+  (import "wish" "physics_query" (func $q (param i32 i32 i32 i32) (result i32)))
+  (memory (export "memory") 64)
+  (data (i32.const {MANIFEST_AT}) "{m}")
+  (func (export "wish_abi_version") (result i32) (i32.const 1))
+  (func (export "wish_alloc") (param i32) (result i32) (i32.const {FRAME_AT}))
+  (func (export "wish_manifest") (result i64) (i64.const {packed}))
+  (func (export "wish_run") (param $system i32) (param $frame i32) (result i32)
+    {body}
+    (i32.const 0)))"#,
+        m = escape(manifest_text.as_bytes()),
+        packed = (u64::from(MANIFEST_AT) << 32) | manifest_text.len() as u64,
+    );
+    let module = load(&wat::parse_str(wat).unwrap());
+    let mut app = App::new(AppConfig::default());
+    wish_transform::register(app.world_mut()).unwrap();
+    module.install(app.world_mut()).unwrap();
+    let runtime = ScriptRuntime::new(Arc::clone(&module)).with_services(Arc::new(Echo));
+    for system in runtime.systems() {
+        app.add_system(system).unwrap();
+    }
+    let report = app.step().unwrap();
+    assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
+    assert!(
+        report.failures[0].message.contains("[script_out_of_fuel]"),
+        "{:?}",
+        report.failures[0]
+    );
+    // The app goes on.
+    app.step().unwrap();
+    assert_whole(&mut app);
+}
+
+#[test]
+fn texts_from_game_code_cannot_hurt_the_host() {
+    // Garbage pointers, a text too long, bytes that are not UTF-8, unknown
+    // handles and a flood of new texts: each is refused with -1, nothing
+    // traps, and at most 1024 new texts enter the world per call. The guest
+    // traps (`unreachable`) if an answer is not the one expected.
+    let body = "
+      (if (i64.ne (call $t (i32.const -5) (i32.const 10)) (i64.const -1)) (then unreachable))
+      (if (i64.ne (call $t (i32.const 0) (i32.const 999999)) (i64.const -1)) (then unreachable))
+      (if (i64.ne (call $t (i32.const 0x7ffffff0) (i32.const 64)) (i64.const -1)) (then unreachable))
+      (if (i64.ne (call $t (i32.const 0x31100) (i32.const 2)) (i64.const -1)) (then unreachable))
+      (if (i32.ne (call $r (i32.const 999999) (i32.const 0x30000) (i32.const 64)) (i32.const -1)) (then unreachable))
+      (if (i32.ne (call $r (i32.const -1) (i32.const 0x30000) (i32.const 64)) (i32.const -1)) (then unreachable))
+      (local.set $hi (call $t (i32.const 0x31000) (i32.const 2)))
+      (if (i64.lt_s (local.get $hi) (i64.const 1)) (then unreachable))
+      (if (i64.ne (call $t (i32.const 0x31000) (i32.const 2)) (local.get $hi)) (then unreachable))
+      (if (i32.ne (call $r (i32.wrap_i64 (local.get $hi)) (i32.const 0x7fffff00) (i32.const 64)) (i32.const -1)) (then unreachable))
+      (if (i32.ne (call $r (i32.wrap_i64 (local.get $hi)) (i32.const 0x30000) (i32.const 1)) (i32.const 2)) (then unreachable))
+      (if (i32.ne (i32.load8_u (i32.const 0x30000)) (i32.const 104)) (then unreachable))
+      (loop $more
+        (i32.store8 (i32.const 0x32000) (i32.add (i32.const 65) (i32.and (local.get $i) (i32.const 15))))
+        (i32.store8 (i32.const 0x32001) (i32.add (i32.const 65) (i32.and (i32.shr_u (local.get $i) (i32.const 4)) (i32.const 15))))
+        (i32.store8 (i32.const 0x32002) (i32.add (i32.const 65) (i32.and (i32.shr_u (local.get $i) (i32.const 8)) (i32.const 15))))
+        (if (i64.ge_s (call $t (i32.const 0x32000) (i32.const 3)) (i64.const 0))
+          (then (local.set $ok (i32.add (local.get $ok) (i32.const 1)))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br_if $more (i32.lt_u (local.get $i) (i32.const 1500))))
+      (if (i32.ne (local.get $ok) (i32.const 1023)) (then unreachable))";
+    let manifest_text = manifest(json!([{ "name": "words", "params": [{ "commands": {} }] }]));
+    let wat = format!(
+        r#"(module
+  (import "wish" "text_intern" (func $t (param i32 i32) (result i64)))
+  (import "wish" "text_read" (func $r (param i32 i32 i32) (result i32)))
+  (memory (export "memory") 64)
+  (data (i32.const {MANIFEST_AT}) "{m}")
+  (data (i32.const 0x31000) "hi")
+  (data (i32.const 0x31100) "\ff\fe")
+  (func (export "wish_abi_version") (result i32) (i32.const 1))
+  (func (export "wish_alloc") (param i32) (result i32) (i32.const {FRAME_AT}))
+  (func (export "wish_manifest") (result i64) (i64.const {packed}))
+  (func (export "wish_run") (param $system i32) (param $frame i32) (result i32)
+    (local $hi i64) (local $i i32) (local $ok i32)
+    {body}
+    (i32.const 0)))"#,
+        m = escape(manifest_text.as_bytes()),
+        packed = (u64::from(MANIFEST_AT) << 32) | manifest_text.len() as u64,
+    );
+    let module = load(&wat::parse_str(wat).unwrap());
+    let mut app = App::new(AppConfig::default());
+    wish_transform::register(app.world_mut()).unwrap();
+    module.install(app.world_mut()).unwrap();
+    // No host services: texts do not need them.
+    let runtime = ScriptRuntime::new(Arc::clone(&module));
+    for system in runtime.systems() {
+        app.add_system(system).unwrap();
+    }
+    let before = app.world().texts().len();
+    let report = app.step().unwrap();
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    assert_eq!(app.world().texts().len(), before + 1024);
+    assert!(app.world().texts().find("hi").is_some());
+    // The next tick may add its own: the limit is per call. "hi" and the
+    // first 1023 are known now, so the next 1023 are new.
+    let report = app.step().unwrap();
+    assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
+    assert_whole(&mut app);
+}
+
+#[test]
+fn game_code_cannot_fill_the_world_with_text() {
+    // Every call makes 1024 new 4096-byte texts (random letters up front):
+    // 4 MiB a tick. The world stops taking new ones at its budget.
+    let body = "
+      (memory.fill (i32.const 0x40000) (i32.const 97) (i32.const 4096))
+      (loop $more
+        (i64.store (i32.const 0x40000)
+          (i64.or (i64.and (call $rng) (i64.const 0x0f0f0f0f0f0f0f0f)) (i64.const 0x4040404040404040)))
+        (drop (call $t (i32.const 0x40000) (i32.const 4096)))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br_if $more (i32.lt_u (local.get $i) (i32.const 1024))))";
+    let manifest_text = manifest(json!([{ "name": "flood", "params": [{ "commands": {} }] }]));
+    let wat = format!(
+        r#"(module
+  (import "wish" "text_intern" (func $t (param i32 i32) (result i64)))
+  (import "wish" "rng_next" (func $rng (result i64)))
+  (memory (export "memory") 64)
+  (data (i32.const {MANIFEST_AT}) "{m}")
+  (func (export "wish_abi_version") (result i32) (i32.const 1))
+  (func (export "wish_alloc") (param i32) (result i32) (i32.const {FRAME_AT}))
+  (func (export "wish_manifest") (result i64) (i64.const {packed}))
+  (func (export "wish_run") (param $system i32) (param $frame i32) (result i32)
+    (local $i i32)
+    {body}
+    (i32.const 0)))"#,
+        m = escape(manifest_text.as_bytes()),
+        packed = (u64::from(MANIFEST_AT) << 32) | manifest_text.len() as u64,
+    );
+    let module = load(&wat::parse_str(wat).unwrap());
+    let mut app = App::new(AppConfig::default());
+    wish_transform::register(app.world_mut()).unwrap();
+    module.install(app.world_mut()).unwrap();
+    let runtime = ScriptRuntime::new(Arc::clone(&module));
+    for system in runtime.systems() {
+        app.add_system(system).unwrap();
+    }
+    for _ in 0..8 {
+        let report = app.step().unwrap();
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+    }
+    let bytes = app.world().texts().bytes();
+    assert!(
+        bytes <= wish_script::MAX_WORLD_TEXT_BYTES,
+        "{bytes} bytes of text"
+    );
+    assert!(
+        bytes > wish_script::MAX_WORLD_TEXT_BYTES - 8192,
+        "it filled up: {bytes}"
+    );
+    assert_whole(&mut app);
+}

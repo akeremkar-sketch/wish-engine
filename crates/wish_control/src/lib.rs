@@ -17,6 +17,7 @@
 //!
 //! Design: `docs/design/M4-kontrol-duzlemi.md`.
 
+mod audio;
 mod concepts;
 pub mod docs;
 mod documents;
@@ -33,10 +34,12 @@ mod sessions;
 pub mod tool;
 mod tools;
 pub mod types;
+mod ui;
 pub mod workspace;
 
 pub use param::{Args, Kind, Param, from_flags, input_schema};
 pub use project::{PROJECT_FILE, PROJECT_FORMAT, ProjectConfig, parse_project, read_project};
 pub use render::{base64, base64_decode};
+pub use script::PointerAt;
 pub use tool::{Tool, catalog};
 pub use workspace::{Workspace, WorkspaceOptions, envelope, find_tool, parse_actor};

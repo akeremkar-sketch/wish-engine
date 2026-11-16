@@ -48,6 +48,7 @@ fn script_build(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map
     // cannot be used must not become the project's build (M5 closing
     // review).
     let mut report = build_game(&toolchain, &root, false)?;
+    explain_stale_sdk(workspace, &mut report.diagnostics);
     let mut out = Map::new();
     let mut reloaded = Vec::new();
     let mut fingerprint = None;
@@ -139,4 +140,37 @@ fn script_build(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map
     out.insert("dry_run".to_owned(), json!(dry_run));
     out.insert("diagnostics".to_owned(), json!(diagnostics));
     Ok(out)
+}
+
+/// A compile error about an engine type or function
+/// the SDK does not know (`cannot find type `CharacterMotion``) while the
+/// engine itself has it means the SDK pack is older than the engine: say
+/// so, instead of letting the author hunt for a typo (M6 closing review).
+fn explain_stale_sdk(workspace: &Workspace, diagnostics: &mut [Diagnostic]) {
+    let registry = workspace.registry();
+    let engine_names = ["text", "text_of", "raycast"];
+    for diagnostic in diagnostics.iter_mut() {
+        if diagnostic.code != "script_compile_error" {
+            continue;
+        }
+        let Some(name) = diagnostic
+            .message
+            .split("cannot find ")
+            .nth(1)
+            .and_then(|rest| rest.split('`').nth(1))
+        else {
+            continue;
+        };
+        // Engine-internal types game code never sees are not the SDK's.
+        let internal = ["SceneId", "Hierarchy"].contains(&name);
+        let known = !internal && registry.component_id(name).is_some()
+            || !internal && registry.resource_id(name).is_some()
+            || !internal && registry.event_id(name).is_some()
+            || engine_names.contains(&name);
+        if known {
+            diagnostic.hint = format!(
+                "'{name}' is part of this engine, but the game SDK the code is compiled against does not have it: the SDK pack is older than the engine. Run `wen sdk` (engine development) or reinstall the engine so that its 'sdk' folder matches."
+            );
+        }
+    }
 }
