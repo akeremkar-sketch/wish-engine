@@ -226,7 +226,20 @@ impl Workspace {
                 "Start a new session with sim_start, then call replay with action \"record\" before the first sim_step (or restore a snapshot taken at tick 0).",
             ));
         }
-        session.recording = Some(Trail::default());
+        // What the replay depends on is taken now, not when it is saved: code
+        // or scene changed later would make the file impossible to replay.
+        let code = session
+            .script
+            .as_ref()
+            .map(|script| script.module().fingerprint().to_string());
+        let scene = session.scene.clone();
+        let text = std::fs::read(self.root().join(&scene)).unwrap_or_default();
+        let session = self.session_mut(id)?;
+        session.recording = Some(Trail {
+            code,
+            scene_hash: hash_bytes(&text).to_string(),
+            ..Trail::default()
+        });
         Ok(())
     }
 
@@ -249,7 +262,6 @@ impl Workspace {
             )
             .at_path("/name"));
         }
-        let code = self.game_module().map(|m| m.fingerprint().to_string());
         let session = self.session(id)?;
         let Some(trail) = &session.recording else {
             return Err(Diagnostic::error(
@@ -265,14 +277,12 @@ impl Workspace {
                 "Run some ticks with sim_step first.",
             ));
         }
-        let scene = session.scene.clone();
-        let scene_text = std::fs::read(root.join(&scene)).unwrap_or_default();
         let replay = Replay {
-            scene,
-            scene_hash: hash_bytes(&scene_text).to_string(),
+            scene: session.scene.clone(),
+            scene_hash: trail.scene_hash.clone(),
             seed: session.seed,
             tick_rate: session.app.config().tick_rate_hz,
-            code,
+            code: trail.code.clone(),
             inputs: trail.inputs.clone(),
             hashes: trail.hashes.iter().map(|h| short(*h)).collect(),
         };
@@ -336,9 +346,14 @@ impl Workspace {
             .with_candidates(names)
         })?;
         let replay = Replay::parse(&text, &path)?;
+        // Replay files travel with projects: the scene they name is checked
+        // like any scene path (inside the project, no `..`).
+        let scene_path = crate::documents::normalize_scene_path(&replay.scene)
+            .map(|scene| root.join(scene))
+            .map_err(|problem| problem.at_file(&path))?;
         let mut notes = Vec::new();
         let scene_text =
-            std::fs::read(root.join(&replay.scene)).map_err(|_| {
+            std::fs::read(&scene_path).map_err(|_| {
                 Diagnostic::error(
                 "replay_scene_missing",
                 format!("The replay's scene '{}' does not exist any more.", replay.scene),

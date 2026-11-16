@@ -10,9 +10,10 @@
 //!   `.wish/build/game.wasm` and turns the compiler's messages into
 //!   diagnostics with the project-relative file and line.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::Instant;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 use wish_core::{Diagnostic, Result, Severity};
@@ -26,6 +27,26 @@ const INCREMENTAL: &str = ".wish/build/incremental";
 const SDK_FILE: &str = "sdk.json";
 /// The most compiler messages kept in a build report.
 const MAX_MESSAGES: usize = 20;
+
+/// Empties an output folder before it is written again, but only if it is
+/// empty or was made by wen (it holds `marker`): `--out .` must never
+/// delete a project (M5 closing review).
+pub fn clear_output_folder(out: &Path, marker: &str) -> Result<()> {
+    let Ok(mut entries) = std::fs::read_dir(out) else {
+        return Ok(());
+    };
+    if entries.next().is_some() && !out.join(marker).is_file() {
+        return Err(Diagnostic::error(
+            "output_exists",
+            format!(
+                "'{}' already has files, and they were not made by wen (there is no {marker}).",
+                out.display()
+            ),
+            "Choose a new or empty folder for --out; wen replaces only folders it made itself.",
+        ));
+    }
+    std::fs::remove_dir_all(out).map_err(|e| io_failed("empty the output folder", &e))
+}
 
 fn io_failed(what: &str, error: &std::io::Error) -> Diagnostic {
     Diagnostic::error(
@@ -97,7 +118,7 @@ pub fn pack_sdk(cargo: &Path, manifest: &Path, target_dir: &Path, out: &Path) ->
     }
     let wasm = out.join("wasm");
     let host = out.join("host");
-    let _ = std::fs::remove_dir_all(out);
+    clear_output_folder(out, SDK_FILE)?;
     std::fs::create_dir_all(&wasm).map_err(|e| io_failed("create the SDK folder", &e))?;
     std::fs::create_dir_all(&host).map_err(|e| io_failed("create the SDK folder", &e))?;
     let mut externs = serde_json::Map::new();
@@ -380,11 +401,37 @@ fn from_rustc(message: &Value) -> Option<Diagnostic> {
 /// Where a build that is not installed leaves its module.
 pub const CHECKED_WASM: &str = ".wish/build/game.next.wasm";
 
+/// How long the compiler may run before the build is stopped: compile-time
+/// evaluation can be made to run for ever (M5 closing review).
+pub const BUILD_TIMEOUT: Duration = Duration::from_secs(120);
+
 /// Compiles the game code of the project at `root`. With `install`, a
 /// module that builds replaces [`GAME_WASM`]; without, it is left at
 /// [`CHECKED_WASM`] (a check that changes nothing). A failed build leaves
 /// the previous module in place.
 pub fn build_game(toolchain: &Toolchain, root: &Path, install: bool) -> Result<BuildReport> {
+    build_game_within(toolchain, root, install, BUILD_TIMEOUT)
+}
+
+/// A report for a build that never reached the compiler, or was stopped.
+fn refused_build(diagnostic: Diagnostic, seconds: f64) -> BuildReport {
+    BuildReport {
+        passed: false,
+        diagnostics: vec![diagnostic],
+        errors: 1,
+        warnings: 0,
+        seconds,
+        output: None,
+    }
+}
+
+/// [`build_game`] with a time limit for the compiler.
+pub fn build_game_within(
+    toolchain: &Toolchain,
+    root: &Path,
+    install: bool,
+    timeout: Duration,
+) -> Result<BuildReport> {
     if !root.join(SCRIPTS_ENTRY).is_file() {
         return Err(Diagnostic::error(
             "script_sources_missing",
@@ -414,8 +461,27 @@ pub fn build_game(toolchain: &Toolchain, root: &Path, install: bool) -> Result<B
             "The SDK and the compiler must come from the same engine package. Reinstall the engine; for engine development, rebuild the SDK pack with `wen sdk`.",
         ));
     }
+    // Game code is untrusted: it may not read the machine while it builds.
+    if let Err(refusal) = crate::source_check::check_sources(root) {
+        return Ok(refused_build(refusal, 0.0));
+    }
     let build = root.join(".wish").join("build");
     std::fs::create_dir_all(&build).map_err(|e| io_failed("create .wish/build", &e))?;
+    // The build folder must be the project's own, not a link elsewhere.
+    let inside = std::fs::canonicalize(&build)
+        .ok()
+        .zip(std::fs::canonicalize(root).ok())
+        .is_some_and(|(build, root)| build.starts_with(root));
+    if !inside {
+        return Ok(refused_build(
+            Diagnostic::error(
+                "script_build_failed",
+                "The project's .wish/build folder leads outside the project.",
+                "Delete .wish/build (it is a link) and build again; the engine recreates it.",
+            ),
+            0.0,
+        ));
+    }
     let output = root.join(CHECKED_WASM);
     let _ = std::fs::remove_file(&output);
     let mut command = Command::new(&toolchain.rustc);
@@ -425,15 +491,7 @@ pub fn build_game(toolchain: &Toolchain, root: &Path, install: bool) -> Result<B
     if let Some(bin) = toolchain.rustc.parent() {
         command.env("PATH", bin);
     }
-    for keep in [
-        "SystemRoot",
-        "SYSTEMROOT",
-        "TEMP",
-        "TMP",
-        "TMPDIR",
-        "HOME",
-        "USERPROFILE",
-    ] {
+    for keep in ["SystemRoot", "SYSTEMROOT", "TEMP", "TMP", "TMPDIR"] {
         if let Some(value) = std::env::var_os(keep) {
             command.env(keep, value);
         }
@@ -480,13 +538,55 @@ pub fn build_game(toolchain: &Toolchain, root: &Path, install: bool) -> Result<B
         .arg(&output)
         .arg(SCRIPTS_ENTRY);
     let start = Instant::now();
-    let run = command
-        .output()
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|e| toolchain_missing(&toolchain.rustc, &e.to_string()))?;
+    // Read the messages on a thread so a full pipe cannot stall the wait.
+    let reader = child.stderr.take().map(|mut stderr| {
+        std::thread::spawn(move || {
+            let mut text = Vec::new();
+            let _ = stderr.read_to_end(&mut text);
+            text
+        })
+    });
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if start.elapsed() < timeout => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Ok(None) | Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+        }
+    };
+    let stderr = reader
+        .and_then(|thread| thread.join().ok())
+        .unwrap_or_default();
     let seconds = start.elapsed().as_secs_f64();
+    let Some(status) = status else {
+        let _ = std::fs::remove_file(&output);
+        return Ok(refused_build(
+            Diagnostic::error(
+                "script_build_timeout",
+                format!(
+                    "The compiler was stopped after {} seconds.",
+                    timeout.as_secs()
+                ),
+                "Something in the game code makes compilation run for very long: look for a const or static computed by a long loop, or a deeply recursive macro. The previous build stays in use.",
+            )
+            .at_file(SCRIPTS_ENTRY),
+            seconds,
+        ));
+    };
     let mut diagnostics = Vec::new();
     let (mut errors, mut warnings) = (0, 0);
-    for line in String::from_utf8_lossy(&run.stderr).lines() {
+    for line in String::from_utf8_lossy(&stderr).lines() {
         let Ok(message) = serde_json::from_str::<Value>(line) else {
             continue;
         };
@@ -501,7 +601,7 @@ pub fn build_game(toolchain: &Toolchain, root: &Path, install: bool) -> Result<B
             }
         }
     }
-    let passed = run.status.success() && output.is_file();
+    let passed = status.success() && output.is_file();
     if passed && install {
         std::fs::rename(&output, root.join(GAME_WASM))
             .map_err(|e| io_failed("put the built module in place", &e))?;
@@ -511,7 +611,7 @@ pub fn build_game(toolchain: &Toolchain, root: &Path, install: bool) -> Result<B
             "script_compile_error",
             format!(
                 "The compiler failed without a message it could explain: {}",
-                String::from_utf8_lossy(&run.stderr)
+                String::from_utf8_lossy(&stderr)
                     .chars()
                     .take(2000)
                     .collect::<String>()
@@ -579,7 +679,7 @@ pub fn pack_toolchain(rustc: &Path, out: &Path) -> Result<Value> {
                 .find_map(|l| l.strip_prefix("host: ").map(str::to_owned))
         })
         .ok_or_else(|| toolchain_missing(&real, "it does not say which machine it runs on"))?;
-    let _ = std::fs::remove_dir_all(out);
+    clear_output_folder(out, TOOLCHAIN_FILE)?;
     let library =
         |name: &str| name.ends_with(".dll") || name.contains(".so") || name.ends_with(".dylib");
     let mut bytes = 0;

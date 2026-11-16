@@ -42,9 +42,17 @@ impl TypeTable {
 
     fn add<T: Plain>(&mut self, role: Role) -> String {
         let schema = T::schema();
-        if !self.types.iter().any(|(_, name, _)| *name == schema.name) {
-            self.types
-                .push((role, schema.name.clone(), to_wire(&schema)));
+        let wire = to_wire(&schema);
+        // The same type seen again is listed once; a different type with the
+        // same name (two `State`s in two modules, or a component and a
+        // resource) is listed too, so the engine can refuse the clash
+        // instead of mixing up their values.
+        if !self
+            .types
+            .iter()
+            .any(|(r, name, w)| *r == role && *name == schema.name && *w == wire)
+        {
+            self.types.push((role, schema.name.clone(), wire));
         }
         schema.name
     }

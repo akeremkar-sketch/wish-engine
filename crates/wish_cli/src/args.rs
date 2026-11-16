@@ -561,8 +561,10 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
     let mut index = 0;
     while let Some(argument) = rest.get(index) {
         index += 1;
-        if matches!(command, "mv" | "check" | "fmt" | "migrate" | "new")
-            && !argument.starts_with('-')
+        if matches!(
+            command,
+            "mv" | "check" | "fmt" | "migrate" | "new" | "test" | "replay"
+        ) && !argument.starts_with('-')
         {
             positional.push(argument);
             continue;

@@ -20,6 +20,7 @@ mod failure;
 mod game;
 mod host;
 mod module;
+pub mod source_check;
 
 pub use engine::{Limits, ScriptEngine};
 pub use game::{

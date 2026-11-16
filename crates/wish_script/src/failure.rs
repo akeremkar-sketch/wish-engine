@@ -27,7 +27,14 @@ pub(crate) struct SourcePlace {
 /// downloaded crate rather than to the game: the place to report is the
 /// game's own line that led there.
 fn is_library(file: &str) -> bool {
-    file.starts_with("/rustc/") || file.contains("/.cargo/registry/") || file.contains("/rustlib/")
+    file.starts_with("/rustc/")
+        || file.contains("/.cargo/registry/")
+        || file.contains("/rustlib/")
+        // The engine's own crates the SDK is made of: the place to report is
+        // the game's line that called into them.
+        || ["wish_sdk", "wish_sdk_macros", "wish_schema", "wish_core", "wish_types"]
+            .iter()
+            .any(|krate| file.contains(&format!("/{krate}/src/")))
 }
 
 /// Where in the game's source the failure happened: the innermost frame in

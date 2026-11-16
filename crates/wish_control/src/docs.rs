@@ -145,6 +145,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "An entity would become its own ancestor. Choose a parent that is not below the entity in the hierarchy.",
     ),
     (
+        "hierarchy_too_deep",
+        "Game code tried to make the hierarchy deeper than 256 levels; the set_parent command was skipped. A chain this deep is usually a parent set every tick by mistake.",
+    ),
+    (
         "history_reset",
         "A scene file changed outside the engine in a way that could not be recorded as separate edits. It is recorded as one change by the file (revisions keep counting), and earlier changes can no longer be undone.",
     ),
@@ -489,6 +493,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "The game code build could not run (a file could not be read or written, or the SDK could not be built). The message names the file; the previous build stays in use.",
     ),
     (
+        "script_build_timeout",
+        "The compiler ran longer than two minutes and was stopped; the previous build stays in use. Look for a const or static computed by a long loop, or a deeply recursive macro.",
+    ),
+    (
         "script_call_failed",
         "Calling into the game module failed for a reason that is not a trap (for example an export with the wrong type). Rebuild with this engine's SDK.",
     ),
@@ -509,12 +517,20 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "A game module lists the same system twice in wish_sdk::export!. List each system once.",
     ),
     (
+        "script_duplicate_type",
+        "The game code declares two types with the same name (in different Rust modules, or a component and a resource). Types are known by name alone in the world: rename one.",
+    ),
+    (
         "script_engine_failed",
         "The WebAssembly engine could not start on this machine. This is not caused by the game code.",
     ),
     (
         "script_forbidden_import",
         "The game module imports something the engine does not provide (files, clock, network, WASI). Game code may only use the engine's API; remove the dependency that needs the operating system.",
+    ),
+    (
+        "script_forbidden_source",
+        "The game code uses something that reads the machine while it is built (include_str!, include_bytes!, include!, env!, option_env!, #[path], or a link in scripts/). Game code may not; data belongs in components, resources or assets.",
     ),
     (
         "script_invalid_module",
@@ -563,6 +579,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "script_stack_overflow",
         "Game code overflowed its stack, usually through recursion without a base case.",
+    ),
+    (
+        "script_system_name_taken",
+        "A game system has the name of one of the engine's own systems (transform_propagation, or a system of the project's example); it would replace it. Rename the function.",
     ),
     (
         "script_toolchain_mismatch",
@@ -950,7 +970,7 @@ Tests: `tests/*.test.json` (`{{ \"format\": 1, \"scene\": ..., \"seed\": 1, \"st
 \n\
 - Units: meters, seconds, kilograms; radians in data, but `Transform` also takes `\"euler_deg\": [x, y, z]` in edits.\n\
 - Coordinates: right-handed, +Y up; cameras and lights look along their -Z axis.\n\
-- Conditions (`where`, `until`): `Transform.translation.y < 0 && has(Camera)`, `distance(Transform.translation, [0,0,0]) < 5`, `matches(id, \"crate_*\")`, resources by name (`Stats.bounces > 3`).\n\
+- Conditions (`where`, `until`): `Transform.translation.y < 0 && has(Camera)`, `distance(Transform.translation, [0,0,0]) < 5`, `matches(id, \"crate_*\")`, resources by name (`Stats.bounces > 3`), `count(Coin) == 0` (entities with a component, in the whole world). A comparison with something missing is unknown and stays unknown under `!`.\n\
 - Errors are answers with `hint` (how to fix), often `candidates` and `location`. Read the hint before retrying.\n\
 - A person may edit at the same time: mind `changed_by_others`, and use `base_revision` for changes prepared earlier.\n\
 - Sessions never change files. To keep something found in a session, make the change with `edit_apply`.\n\

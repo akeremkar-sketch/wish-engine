@@ -42,6 +42,13 @@ impl Workspace {
         Ok(engine)
     }
 
+    /// Runs game code with these limits instead of the defaults (tests,
+    /// measurements). Takes effect for modules loaded afterwards.
+    pub fn set_script_limits(&mut self, limits: Limits) -> Result<()> {
+        self.scripts.engine = Some(ScriptEngine::new(limits)?);
+        Ok(())
+    }
+
     /// Uses this SDK pack and compiler for `script_build` instead of looking
     /// for them next to the program (tests, development setups).
     pub fn set_toolchain(&mut self, toolchain: wish_script::build::Toolchain) {
@@ -184,6 +191,36 @@ impl Workspace {
     }
 }
 
+/// Refuses a module with a system named like one of the engine's own (or
+/// the project example's): it would replace that system, or be replaced
+/// by it, without a word (M5 closing review).
+pub(crate) fn check_system_names(example: Option<&str>, module: &GameModule) -> Result<()> {
+    let mut reserved = vec![PROPAGATION.to_owned()];
+    if let Some(example) = example {
+        let mut app = wish_app::App::new(wish_app::AppConfig::default());
+        if wish_examples::add_systems(example, &mut app).is_ok() {
+            reserved.extend(app.system_states().map(|(name, _)| name.to_owned()));
+        }
+    }
+    for system in &module.manifest().systems {
+        if reserved.contains(&system.name) {
+            return Err(Diagnostic::error(
+                "script_system_name_taken",
+                format!(
+                    "The game system '{}' has the name of one of the engine's own systems.",
+                    system.name
+                ),
+                format!(
+                    "Rename the function. Names the engine uses: {}.",
+                    reserved.join(", ")
+                ),
+            )
+            .at_file(SCRIPTS_ENTRY));
+        }
+    }
+    Ok(())
+}
+
 /// The systems of a session for a module, and the propagation system that
 /// runs after all of them.
 pub(crate) fn add_game_systems(app: &mut wish_app::App, runtime: &ScriptRuntime) -> Result<()> {
@@ -215,7 +252,10 @@ fn reload_session(
     session: &mut crate::sessions::Session,
     module: &Arc<GameModule>,
 ) -> Result<Vec<Diagnostic>> {
-    let changed = module.install(session.app.world_mut())?;
+    // The world before the new types: the session's snapshots are moved to
+    // the new layout from it, so going back still works after new code.
+    let before = session.app.world().clone();
+    let mut changed = module.install(session.app.world_mut())?;
     let runtime = ScriptRuntime::new(Arc::clone(module));
     if let Some(old) = &session.script {
         let keep: Vec<&str> = module
@@ -233,6 +273,30 @@ fn reload_session(
     add_game_systems(&mut session.app, &runtime)?;
     propagation_after_all(&mut session.app)?;
     session.script = Some(runtime);
+    for saved in &mut session.saved {
+        let mut world = before.clone();
+        let moved = world
+            .restore(saved.snapshot.world())
+            .and_then(|()| module.install(&mut world));
+        match moved {
+            Ok(_) => saved.snapshot = session.app.rebase(&saved.snapshot, world.snapshot()),
+            Err(problem) => changed.push(Diagnostic::warning(
+                "script_reloaded",
+                format!(
+                    "Snapshot '{}' could not be moved to the new code and cannot be restored: {}",
+                    saved.label, problem.message
+                ),
+                "Take a new snapshot with sim_snapshot.",
+            )),
+        }
+    }
+    if session.recording.take().is_some() {
+        changed.push(Diagnostic::warning(
+            "script_reloaded",
+            "The session was recording a replay; new code stops the recording (a replay plays one version of the game).",
+            "Start a new session and record again with the new code.",
+        ));
+    }
     Ok(changed)
 }
 

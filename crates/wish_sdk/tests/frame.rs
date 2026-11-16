@@ -5,6 +5,7 @@
 
 #![allow(missing_docs)]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![allow(unsafe_code)] // FrameReader::from_buffer is the only unsafe call here; each has a SAFETY note.
 
 use wish_core::Entity;
 use wish_core::math::Vec3;
@@ -81,7 +82,8 @@ fn a_query_reads_its_columns_and_writes_back_what_is_mutable() {
     let before = frame.clone();
 
     {
-        let mut reader = FrameReader::from_buffer(&mut frame).unwrap();
+        // SAFETY: `frame` lives, unmoved and unused, until the reader is dropped.
+        let mut reader = unsafe { FrameReader::from_buffer(&mut frame) }.unwrap();
         assert_eq!(reader.tick(), 9);
         let mut query =
             <Query<(Entity, &'static mut Transform, &'static Speed)> as SystemParam>::fetch(
@@ -167,10 +169,13 @@ fn a_frame_that_does_not_fit_its_buffer_is_refused() {
     let (mut frame, _) = writer.finish(0);
     // The section claims to run past the end.
     frame[28..32].copy_from_slice(&1000u32.to_le_bytes());
-    assert!(FrameReader::from_buffer(&mut frame).is_none());
+    // SAFETY: nothing is read from a refused buffer.
+    assert!(unsafe { FrameReader::from_buffer(&mut frame) }.is_none());
     // Wrong magic.
     let (mut other, _) = FrameWriter::new().finish(0);
     other[0] = 0;
-    assert!(FrameReader::from_buffer(&mut other).is_none());
-    assert!(FrameReader::from_buffer(&mut [0u8; 4]).is_none());
+    // SAFETY: nothing is read from a refused buffer.
+    assert!(unsafe { FrameReader::from_buffer(&mut other) }.is_none());
+    // SAFETY: nothing is read from a refused buffer.
+    assert!(unsafe { FrameReader::from_buffer(&mut [0u8; 4]) }.is_none());
 }

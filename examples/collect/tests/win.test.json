@@ -8,7 +8,7 @@
     { "input": { "move": [0, 1] }, "until": "Score.points >= 2", "max_frames": 120 },
     { "input": { "move": [-1, 0] }, "until": "GameState.won == true", "max_frames": 120 },
     { "expect": "Score.points == 3 && Score.coins == 3", "message": "all three coins were collected" },
-    { "expect": "!has(Coin)", "message": "no coin is left in the world" },
+    { "expect": "count(Coin) == 0", "message": "no coin is left in the world" },
     { "frames": 30 },
     { "expect": "GameState.won == true", "message": "the game stays won" }
   ]

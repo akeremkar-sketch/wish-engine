@@ -57,6 +57,10 @@ pub(crate) struct Trail {
     pub current: wish_input::Values,
     /// The world's hash after tick `i`, at index `i`.
     pub hashes: Vec<wish_core::Hash128>,
+    /// The game code the session ran when recording started.
+    pub code: Option<String>,
+    /// The hash of the scene file when recording started.
+    pub scene_hash: String,
 }
 
 impl Trail {
@@ -177,6 +181,18 @@ impl Subject for LiveSubject<'_> {
             return Some(value);
         }
         self.world.resource_json(name).ok()
+    }
+
+    fn count(&self, component: &str) -> Option<usize> {
+        let id = self.world.component_id(component).ok()?;
+        Some(
+            self.world
+                .archetypes()
+                .iter()
+                .filter(|archetype| archetype.contains(id))
+                .map(|archetype| archetype.len())
+                .sum(),
+        )
     }
 }
 

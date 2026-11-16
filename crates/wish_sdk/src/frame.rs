@@ -32,8 +32,10 @@ pub const fn align8(n: usize) -> usize {
     (n + 7) & !7
 }
 
-/// One section of a frame, by address. Valid for the life of the instance.
-#[derive(Clone, Copy, Debug)]
+/// One section of a frame, by address. Valid during the call it was given
+/// to (the frame memory is reused by the tick's next call). Not `Copy`:
+/// one section, one owner, so `bytes_mut` cannot alias.
+#[derive(Debug)]
 pub struct Section {
     ptr: *mut u8,
     len: usize,
@@ -51,9 +53,9 @@ impl Section {
         if self.ptr.is_null() || self.len == 0 {
             return &[];
         }
-        // SAFETY: `ptr..ptr+len` lies inside a frame the engine wrote into
-        // memory from `wish_alloc`, which is never freed while the instance
-        // lives; sections of one frame do not overlap.
+        // SAFETY: `ptr..ptr+len` lies inside the frame the engine wrote into
+        // memory from `wish_alloc` for this call, which stays put until the
+        // call ends; sections of one frame do not overlap.
         unsafe { core::slice::from_raw_parts(self.ptr, self.len) }
     }
 
@@ -62,8 +64,8 @@ impl Section {
         if self.ptr.is_null() || self.len == 0 {
             return &mut [];
         }
-        // SAFETY: as in `bytes`; each section belongs to exactly one system
-        // parameter, which is the only writer.
+        // SAFETY: as in `bytes`; a section is not `Copy` or `Clone`, so this
+        // `&mut self` is the only way to its bytes.
         unsafe { core::slice::from_raw_parts_mut(self.ptr, self.len) }
     }
 }
@@ -120,9 +122,12 @@ impl FrameReader {
     }
 
     /// A reader over a frame held in a byte buffer (tests, and the host's own
-    /// checks). The buffer must stay alive and unmoved while sections from it
-    /// are used.
-    pub fn from_buffer(buffer: &mut [u8]) -> Option<Self> {
+    /// checks).
+    ///
+    /// # Safety
+    /// The buffer must stay alive, unmoved and otherwise unused while the
+    /// reader or any section from it is used: sections point into it.
+    pub unsafe fn from_buffer(buffer: &mut [u8]) -> Option<Self> {
         if buffer.len() < HEADER {
             return None;
         }
@@ -149,11 +154,14 @@ impl FrameReader {
     /// for different parameters fails its own checks instead of reading
     /// outside the frame).
     pub fn next_section(&mut self) -> Section {
+        // Each section is handed out once: its owner is the only one who
+        // can reach its bytes.
         let section = self
             .sections
-            .get(self.next)
-            .copied()
-            .unwrap_or(Section::EMPTY);
+            .get_mut(self.next)
+            .map_or(Section::EMPTY, |slot| {
+                std::mem::replace(slot, Section::EMPTY)
+            });
         self.next += 1;
         section
     }

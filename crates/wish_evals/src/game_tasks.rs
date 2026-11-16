@@ -144,7 +144,7 @@ pub fn collect_check(probe: &mut Probe, dir: &Path, _: &Value) -> Verdict {
         { "input": { "move": [0, 1] }, "until": "Score.points >= 2", "max_frames": 120 },
         { "input": { "move": [-1, 0] }, "until": "GameState.won == true", "max_frames": 120 },
         { "expect": "Score.points == 3", "message": "three coins, three points" },
-        { "expect": "!has(Coin)", "message": "no coin is left" }
+        { "expect": "count(Coin) == 0", "message": "no coin is left" }
     ] });
     play_check(probe, dir, &hidden)
 }

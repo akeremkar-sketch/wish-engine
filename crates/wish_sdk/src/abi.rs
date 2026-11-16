@@ -26,6 +26,15 @@ mod imports {
 }
 
 thread_local! {
+    /// The frame memory, reused by every call of the tick: all of a tick's
+    /// systems share one instance, so frames that were never freed would
+    /// add up to the module's memory limit (M5 closing review). The engine
+    /// reads a frame back before it asks for the next one. Words, for the
+    /// frame's 8-byte alignment.
+    static FRAME: RefCell<Vec<u64>> = const { RefCell::new(Vec::new()) };
+    /// The command bytes handed to the engine by the last call, reused the
+    /// same way.
+    static OUT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
     /// Commands of the call in progress.
     static COMMANDS: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
     /// How many entities the call has spawned so far.
@@ -126,15 +135,19 @@ fn report_panics() {
     });
 }
 
-/// Memory for a frame. Never freed: the instance is thrown away after the
-/// tick.
+/// Memory for a frame, zeroed: the same buffer for every call of the tick
+/// (grown when a frame is larger). 0 if the memory could not be had.
 pub fn alloc(len: i32) -> i32 {
-    let Ok(layout) = std::alloc::Layout::from_size_align(len.max(1) as usize, 8) else {
-        return 0;
-    };
-    // SAFETY: the layout has a non-zero size.
-    let ptr = unsafe { std::alloc::alloc_zeroed(layout) };
-    ptr as usize as i32
+    let words = (len.max(1) as usize).div_ceil(8);
+    FRAME.with(|frame| {
+        let mut frame = frame.borrow_mut();
+        frame.clear();
+        if frame.try_reserve_exact(words).is_err() {
+            return 0;
+        }
+        frame.resize(words, 0);
+        frame.as_mut_ptr() as usize as i32
+    })
 }
 
 /// Packs a pointer and a length into the `i64` `wish_manifest` returns.
@@ -161,8 +174,11 @@ pub fn run(systems: &[fn(&mut FrameReader)], system: i32, frame: i32) -> i32 {
     if commands.is_empty() {
         return 0;
     }
-    let mut out = Vec::with_capacity(commands.len() + 4);
-    out.extend((commands.len() as u32).to_le_bytes());
-    out.extend(commands);
-    out.leak().as_ptr() as usize as i32
+    OUT.with(|out| {
+        let mut out = out.borrow_mut();
+        out.clear();
+        out.extend((commands.len() as u32).to_le_bytes());
+        out.extend(commands);
+        out.as_ptr() as usize as i32
+    })
 }

@@ -4,7 +4,7 @@ use serde_json::{Map, Value, json};
 use wish_core::{Diagnostic, Result};
 use wish_scene::Actor;
 use wish_script::GameModule;
-use wish_script::build::{GAME_WASM, SCRIPTS_ENTRY, build_game};
+use wish_script::build::{CHECKED_WASM, GAME_WASM, SCRIPTS_ENTRY, build_game};
 
 use crate::param::{Args, Kind, Param};
 use crate::tool::Tool;
@@ -43,56 +43,63 @@ fn script_build(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map
         .at_file(SCRIPTS_ENTRY));
     }
     let toolchain = workspace.toolchain()?;
-    let report = build_game(&toolchain, &root, !dry_run)?;
+    // The new module is built beside the old one and checked (types,
+    // systems) before it replaces anything: a module that compiles but
+    // cannot be used must not become the project's build (M5 closing
+    // review).
+    let mut report = build_game(&toolchain, &root, false)?;
     let mut out = Map::new();
-    let mut diagnostics = report.diagnostics.clone();
-    if let Value::Object(build) = report.to_json() {
-        for (key, value) in build {
-            if key != "diagnostics" {
-                out.insert(key, value);
-            }
-        }
-    }
     let mut reloaded = Vec::new();
+    let mut fingerprint = None;
+    let mut systems = None;
     if report.passed {
-        let file = report
-            .output
-            .clone()
-            .unwrap_or_else(|| GAME_WASM.to_owned());
-        let bytes = std::fs::read(root.join(&file)).map_err(|error| {
-            Diagnostic::error(
-                "script_build_failed",
-                format!("The built module '{file}' could not be read: {error}."),
-                "Build again; if it keeps failing, check the project folder can be read.",
-            )
-        })?;
-        let engine = workspace.script_engine()?;
-        let loaded = GameModule::load(&engine, GAME_WASM, &bytes).and_then(|module| {
-            // The types must fit the engine's before anything is replaced.
-            let mut world = wish_ecs::World::new();
-            crate::types::register_all(workspace.example(), Some(&module), &mut world)?;
+        let checked = root.join(CHECKED_WASM);
+        let loaded = std::fs::read(&checked)
+            .map_err(|error| {
+                Diagnostic::error(
+                    "script_build_failed",
+                    format!("The built module '{CHECKED_WASM}' could not be read: {error}."),
+                    "Build again; if it keeps failing, check the project folder can be read.",
+                )
+            })
+            .and_then(|bytes| {
+                let engine = workspace.script_engine()?;
+                GameModule::load(&engine, GAME_WASM, &bytes)
+            })
+            .and_then(|module| {
+                // The types and systems must fit the engine's before
+                // anything is replaced.
+                let mut world = wish_ecs::World::new();
+                crate::types::register_all(workspace.example(), Some(&module), &mut world)?;
+                crate::script::check_system_names(workspace.example(), &module)?;
+                Ok(module)
+            });
+        let installed = loaded.and_then(|module| {
+            if dry_run {
+                let _ = std::fs::remove_file(&checked);
+            } else {
+                std::fs::rename(&checked, root.join(GAME_WASM)).map_err(|error| {
+                    Diagnostic::error(
+                        "script_build_failed",
+                        format!("The built module could not be put in place: {error}."),
+                        "Check that .wish/build can be written; the previous build stays in use.",
+                    )
+                })?;
+            }
             Ok(module)
         });
-        match loaded {
+        match installed {
             Ok(module) => {
-                let manifest = module.manifest();
-                out.insert(
-                    "systems".to_owned(),
-                    json!(
-                        manifest
-                            .systems
-                            .iter()
-                            .map(|s| s.name.clone())
-                            .collect::<Vec<_>>()
-                    ),
+                systems = Some(
+                    module
+                        .manifest()
+                        .systems
+                        .iter()
+                        .map(|s| s.name.clone())
+                        .collect::<Vec<_>>(),
                 );
-                out.insert(
-                    "fingerprint".to_owned(),
-                    json!(module.fingerprint().to_string()),
-                );
-                if dry_run {
-                    let _ = std::fs::remove_file(root.join(&file));
-                } else {
+                fingerprint = Some(module.fingerprint().to_string());
+                if !dry_run {
                     workspace.use_module(module)?;
                     if args.flag("reload") {
                         reloaded = workspace.reload_sessions();
@@ -100,11 +107,31 @@ fn script_build(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map
                 }
             }
             Err(problem) => {
-                out.insert("passed".to_owned(), json!(false));
-                diagnostics.push(problem);
+                let _ = std::fs::remove_file(&checked);
+                report.passed = false;
+                report.errors += 1;
+                report.output = None;
+                report.diagnostics.push(problem);
             }
         }
     }
+    if let Value::Object(build) = report.to_json() {
+        for (key, value) in build {
+            if key != "diagnostics" {
+                out.insert(key, value);
+            }
+        }
+    }
+    if report.passed && !dry_run {
+        out.insert("output".to_owned(), json!(GAME_WASM));
+    }
+    if let Some(systems) = systems {
+        out.insert("systems".to_owned(), json!(systems));
+    }
+    if let Some(fingerprint) = fingerprint {
+        out.insert("fingerprint".to_owned(), json!(fingerprint));
+    }
+    let mut diagnostics = report.diagnostics.clone();
     if !dry_run {
         workspace.scripts.last_build = Some(report);
     }

@@ -265,8 +265,21 @@ impl Workspace {
         found
     }
 
-    /// Runs the tests at `paths` (all of them when empty).
+    /// Runs the tests at `paths` (all of them when empty). Pictures are drawn
+    /// on the software adapter; the workspace's own choice is put back after.
     pub(crate) fn test_run(
+        &mut self,
+        paths: &[String],
+        update_golden: bool,
+        dry_run: bool,
+    ) -> Result<Map<String, Value>> {
+        let software = self.software;
+        let result = self.test_run_inner(paths, update_golden, dry_run);
+        self.set_software(software);
+        result
+    }
+
+    fn test_run_inner(
         &mut self,
         paths: &[String],
         update_golden: bool,
@@ -275,9 +288,10 @@ impl Workspace {
         let files = if paths.is_empty() {
             self.test_files()
         } else {
+            let all = self.test_files();
             for path in paths {
-                if !path.ends_with(SUFFIX) || !self.root().join(path).is_file() {
-                    let all = self.test_files();
+                // Only the project's own tests: no `..`, no absolute paths.
+                if !path.ends_with(SUFFIX) || !all.contains(&path.replace('\\', "/")) {
                     return Err(Diagnostic::error(
                         "test_not_found",
                         format!("'{path}' is not a test file of the project."),
@@ -482,6 +496,21 @@ impl Workspace {
             Ok(expression) => expression,
             Err(problem) => return Some(problem_failure("expect", &problem).with_step(index)),
         };
+        if entity.is_none() && expression.negates_has() {
+            let mut found = step_failure(
+                index,
+                "expect_ambiguous",
+                tick,
+                format!(
+                    "'{text}' negates has() without naming an entity: it would hold as soon as any one entity lacks the component."
+                ),
+            );
+            found.insert(
+                "hint".to_owned(),
+                json!("To say that no entity has a component, write count(Coin) == 0; to check one entity, add \"entity\": \"<id>\" to the step."),
+            );
+            return Some(found);
+        }
         let session = self.session(id).ok()?;
         let world = session.app.world();
         let only = match entity {

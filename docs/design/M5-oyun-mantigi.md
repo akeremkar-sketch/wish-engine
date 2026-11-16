@@ -309,7 +309,105 @@ scripts/src/*.rs değişti (dosya izleyici ya da script_build)
 
 ### WP8 — mini oyun örneği, SDK belgesi, oyun kodu değerlendirme görevleri
 
-- **`examples/collect`** (depoda, gerçek bir proje): WASD/oklarla yürüyen oyuncu, üç dönen altın para, `Coin`/`Player` bileşenleri, `Score`/`GameState` kaynakları, `Collected` olayı, `after` sıralaması, `Commands` ile para silme, `info!` ile kazanma günlüğü. Sahne araçlarla kuruldu (`edit_apply`, `euler_deg`), `check` temiz. `tests/win.test.json` oyunu girdiyle oynayıp **129 tick'te kazanır** (`until` adımlarıyla üç para, `!has(Coin)`, kazanmanın kalıcılığı). CI'da: `script_tools.rs::the_collect_example_...` örneği kopyalar, uyarısız derler, iki testini geçer, araçlarla elle oynanan bir kazanmayı kaydeder ve tekrarı bit düzeyinde oynatır. Elle: `wen play --root examples/collect` (önce `wen build --root examples/collect`).
+- **`examples/collect`** (depoda, gerçek bir proje): WASD/oklarla yürüyen oyuncu, üç dönen altın para, `Coin`/`Player` bileşenleri, `Score`/`GameState` kaynakları, `Collected` olayı, `after` sıralaması, `Commands` ile para silme, `info!` ile kazanma günlüğü. Sahne araçlarla kuruldu (`edit_apply`, `euler_deg`), `check` temiz. `tests/win.test.json` oyunu girdiyle oynayıp **129 tick'te kazanır** (`until` adımlarıyla üç para, `count(Coin) == 0`, kazanmanın kalıcılığı). CI'da: `script_tools.rs::the_collect_example_...` örneği kopyalar, uyarısız derler, iki testini geçer, araçlarla elle oynanan bir kazanmayı kaydeder ve tekrarı bit düzeyinde oynatır. Elle: `wen play --root examples/collect` (önce `wen build --root examples/collect`).
 - **Örnekten çıkan iki düzeltme:** (1) **oyunun kaynakları modül kurulurken varsayılanlarıyla var olur** (`Score` tick 0'da yoktu, `expect Score.points == 0` düşüyordu; sahnenin değerleri yine öncelikli). (2) **Proje depo dışındayken `wen build` yanlış derleyiciyi seçiyordu** (PATH'teki rustup proxy'si varsayılan araç zincirine, wasm32 hedefi olmayana gidiyordu): SDK paketi artık kendisini derleyen derleyicinin yolunu (`sdk.json` → `rustc_path`) kaydeder ve geliştirme ortamında o kullanılır; `pack_sdk` cargo ve rustc'yi motorun klasöründen çağırır (sabitlenmiş araç zinciri seçilsin diye).
 - **`wish://docs/sdk`** (MCP kaynağı, `docs_search` de bulur): veri tanımları, alan türleri, sistem parametreleri (`Query`, `Res`, `ResMut`, `Actions`, `Commands`, `EventReader/Writer`), `export!`, kurallar ("ileri = −Z" dahil); kılavuz ve MCP `instructions` buna yönlendirir.
 - **Değerlendirme görevleri 11–12** (`wish_evals/src/game_tasks.rs`): ajan dosyaları okuyup düzenleyebilir (Bash asla), denetim gizli senaryo testiyle (yukarıdaki README). **`wish-evals selftest` 12/12** (her denetim başlangıçta başarısız, referans çözümle başarılı; ücretsiz). **Gerçek koşum yapılmadı:** abonelik kotası harcar, kullanıcı onayı bekliyor (çıkış ölçütünün b ayağı).
+
+### WP9 — düşmanca oyun modülleri, bağımsız kapanış incelemesi
+
+- **Düşmanca uçtan uca testler** (`wish_script/tests/hostile_game.rs`, WAT modülleri):
+  - **Kapsam:**
+    - yalan söyleyen manifestolar: 600 rastgele bozulma; kabul edilenler kurulur ve oynatılır;
+    - bozuk geri yazma;
+    - rastgele ya da dev komut tamponları: 120 yapı farkındalıklı bulanık durum, her biri iki kez koşulur (belirlenimci olduğu denetlenir);
+    - yönetilen veriye yazma.
+  - **Her durumda doğrulanan:** uygulama sürer; dünya anlık görüntü → geri yükleme → aynı hash; varlıkların hepsi JSON'a dökülebilir.
+  - **Bulup düzelttikleri:**
+    - NaN ve sonsuz float dünyaya sessizce giriyordu. Artık `script_not_finite` ile reddediliyor; tanı alanı adlandırır.
+    - Tek bir `memory.fill` çağrı başına 3 milyon spawn veriyordu. Artık çağrı başına en çok 65.536 komut (çözülürken sayılır); oyun kodu dünyayı 4.194.304 varlıktan ve 1 GiB bileşen verisinden öteye büyütemez.
+    - Manifesto türlerinin toplam boyutu sınırsızdı. Artık en çok 16 MiB.
+    - Uygulanamayan komut sistemi kapatıyordu. Artık atlanıp uyarı olarak günlüğe yazılıyor (yerel komut tamponuyla aynı); zaten gitmiş varlığı silmek hata bile sayılmıyor.
+
+- **Bağımsız kapanış incelemesi:** iki inceleyici paralel çalıştı (çalışma zamanı/korumalı alan; araçlar/dosyalar). **20 bulgu** çıktı, hepsi düzeltildi.
+  - **Regresyon testleri:**
+    - `wish_control/tests/review_m5.rs` (14 test);
+    - `wish_cli/tests/review_m5.rs`;
+    - `hostile_game.rs` (`r2_…`, `r3_…`);
+    - `source_check.rs` birim testleri.
+
+#### Yüksek önemli bulgular
+
+- **T1 — olumsuzlanmış `expect` hep geçiyordu.**
+  - **Sorun:** varlık adı verilmeyen `expect`, "kaynaklar ya da herhangi bir varlık sağlıyorsa" geçiyordu.
+    - `!has(Coin)` her zaman doğruydu, çünkü kaynak öznesinde bileşen yok.
+    - `!(Camera.fov > 10)` kamerasız varlıkta doğruydu.
+    - Örnek oyunun ve değerlendirme denetiminin "para kalmadı" adımı bu yüzden hiçbir şey denetlemiyordu.
+  - **Düzeltme:**
+    - İfade dili **üç değerli mantığa** geçti: eksik bir değerle karşılaştırma bilinmez kalır, `!` altında da.
+    - Yeni `count(Bileşen)` işlevi eklendi.
+    - Varlık adı olmadan `has()`'i olumsuzlayan `expect` reddedilir (`expect_ambiguous`, ipucu: `count(Coin) == 0`).
+    - Örnek oyunun testi ve gizli denetim düzeltildi.
+- **T2 — oyun kodu derleme sırasında makineyi okuyabiliyordu.**
+  - **Sorun:** `include_str!`, `include_bytes!`, `include!`, `env!`, `option_env!` ve `#[path]` ile makinedeki her dosya ve ortam değişkeni okunup `logs_get`'e taşınabiliyordu.
+  - **Düzeltme:**
+    - Derlemeden önce kaynak denetimi (`wish_script::source_check`): yorum ve dizeleri tanıyan bir sözcük tarayıcı. Bu adlar her yerde, özniteliklerde `path` ve `#[$…]` yasak; `scripts/` içinde bağlantı yasak.
+    - Derleyiciye `HOME`/`USERPROFILE` verilmez.
+    - `.wish/build` proje dışına çıkamaz.
+- **R1 — aynı adlı iki tür değerleri karıştırıyordu.**
+  - **Sorun:** iki modüldeki aynı adlı türler (`player::State`, `enemy::State`) tek düzeni paylaşıyor, değerler sessizce yanlış okunuyordu.
+  - **Düzeltme:** SDK çakışan türü de manifestoya yazar, ev sahibi reddeder (`script_duplicate_type`).
+
+#### Orta önemli bulgular
+
+| Bulgu | Sorun | Düzeltme |
+|---|---|---|
+| T3 | Kullanılamayan bir modül (örneğin motor türüyle çakışan) `game.wasm`'ın yerine geçiyordu. | Yan dosyada derlenip denetlenir, ancak sonra yerine konur; `last_build` dürüst. |
+| T4 | Derleyicinin süre sınırı yoktu; sonsuz bir `const` hesabı MCP sunucusunu donduruyordu. | 120 sn sınır, `script_build_timeout`. |
+| T5 | `wen replay <ad>` ve `wen test <dosya>` konum argümanını kabul etmiyordu. | Konum argümanı kabul ediliyor. |
+| T6 | Tekrar başlığı kodu ve sahneyi kaydın sonunda okuyordu. | Kayıt başında yakalanır; kayıt sırasında yeni kod kaydı durdurur. |
+| T7 | Kayıttan ileri bir anlık görüntüye dönüş kaydı kaydırıyordu. | Kayıt durur (`recording_stopped`). |
+| T8 | `wen sdk/package --out` verilen klasörü koşulsuz siliyordu. | Yalnızca boşsa ya da wen yaptıysa silinir (`output_exists`). |
+| R2 | Dev bir olayın düzeni her `Send`'de yeniden hesaplanıyor, şema (dizinin varsayılan değeri dahil) kopyalanıyordu: 65.536 gönderim ≈ 1 saat. | Tür düzeni çalışma zamanı başına bir kez hesaplanır, boyut önce denetlenir: 0,26 sn. |
+| R3 | `set_parent` zinciri sınırsızdı; her bağ ataları geziyordu. | Derinlik en çok 256 (`hierarchy_too_deep`). |
+| R4 | Aynı veriye iki yazılabilir parametre birbirinin değişikliğini geri alıyordu. | Yalnızca gönderilenden farklı satırlar yazılır; hepsi önce denetlenir (atomik). |
+| R5 | Tick'in sistemleri tek örneği paylaşırken çerçeveler hiç boşaltılmıyordu: 20 okuyucu × 50k varlık bellek yetmezliği veriyordu. | Konuk çerçeve ve komut tamponunu tick içinde yeniden kullanır; `wish_alloc` 0 dönerse bellek yetmezliği sayılır; konum SDK dosyası değil oyunun satırı. |
+| R6 | Türü değiştiren bir sıcak yüklemeden sonra anlık görüntüler geri yüklenemiyordu. | Oturumun anlık görüntüleri yeni düzene taşınır (`App::rebase`). |
+| R7 | Oyun kodunun bayt cinsinden bir bellek bütçesi yoktu. | Bileşen verisi en çok 1 GiB. |
+| T9/R9 | Motor sistemi adını taşıyan bir oyun sistemi sessizce kayboluyordu. | Reddedilir (`script_system_name_taken`). |
+
+#### Düşük önemli bulgular
+
+- **R8:** `Section` `Copy` idi ve `FrameReader::from_buffer` güvenli bir işlevdi; bu, güvenli koddan bellek takma adına ve serbest bırakılmış belleğin kullanımına yol açabiliyordu. Artık `Section` tek sahipli, `from_buffer` `unsafe`; Miri temiz.
+- **T10:** Tekrarın sahne yolu ve `test_run` yolları proje dışını gösterebiliyordu. Artık denetleniyor.
+- **T11:** `test_run`, yakalama adımından sonra yazılım bağdaştırıcısını açık bırakıyordu; bozuk `input` sessizce yok sayılıyordu. Artık bağdaştırıcı seçimi geri konuyor, bozuk `input` `invalid_parameter` veriyor.
+
+#### Diğer notlar
+
+- **Sınır maliyeti yeniden ölçüldü** (denetimler eklendikten sonra): ~240 ns/varlık, kare bütçesinin **%14**'ü (tetikleyici %20). İlk düzeltme denemesi satır başına bellek ayırma yüzünden %21'e çıkmıştı; düzeltildi.
+- **Bilinen kararsızlık (M5 dışı):** `wish_render/tests/models.rs`'teki iki test, Miri aynı anda çalışırken bir kez siyah görüntü verdi. Tek başına iki kez 8/8 geçti; crate'e dokunulmadı. M6'da render testlerinin GPU paylaşımına bakılacak.
+
+## 18. M5 sonucu
+
+**Tamamlandı — 16 Kasım 2026.** İki doğrulama kullanıcı adımı bekliyor (aşağıda).
+
+| Çıkış ölçütü | Kanıt | Sonuç |
+|---|---|---|
+| Claude, MCP + dosya düzenlemeyle mini oyun yazar ve senaryo testiyle kanıtlar | (a) `examples/collect`: araçlarla kurulmuş sahne, oyun kodu, 129 tick'te kazanan test; CI'da derlenir, test edilir, kaydedilip tekrar oynatılır. (b) Değerlendirme görevleri `11_walk_code` ve `12_collect_game`: oyun kodu dosya araçlarıyla yazılır, denetim gizli senaryo testiyle; **`selftest` 12/12**. Gerçek koşum abonelik kotası harcar. | ◐ **kullanıcı onayı bekliyor** (`wish-evals run`) |
+| Kod değişikliği → çalışan oyun < 10 sn, durum korunur | `wen build` düzenleme sonrası 0,4 sn. Sıcak yükleme durumu ve sistemlerin rastgele akışını korur; şema göçü alan adına göre (`script_tools.rs`, `game.rs`). Anlık görüntüler de yeni düzene taşınır (R6). | ✔ |
+| Sonsuz döngü / tuzak motoru dondurmaz, çökertmez; tanı üretir | `hostile.rs` (yakıt, tuzak, yığın, bellek, panik, yasak içe aktarma); `hostile_game.rs` (manifesto, komut ve geri yazma bulanıklaştırması, sel); derleme zamanı süre sınırı ve kaynak denetimi (`review_m5.rs` T2, T4). | ✔ |
+| Tekrar 10.000 tick hash sapmasız | `script_tools.rs::a_ten_thousand_tick_replay_…` (ayrı çalışma alanında da). | ✔ |
+| Sınır maliyeti kıyaslaması kayıtlı (ADR-011) | `wen bench --script`: %14 (tetikleyici %20). | ✔ |
+| Gömülü araç zinciri temiz Windows'ta derler ve çalıştırır | Boş ortamda (`env -i`) paketlenmiş `wen` (statik CRT): new → build 7,5 sn → düzenleme 0,4 sn → test → yakalama. CI'da paketlenmiş araç zinciri adımı var. Paket: `C:\wish-build\package` + `clean-test.wsb`. | ◐ **kullanıcı adımı bekliyor** (Windows Sandbox) |
+
+- **Sayılar:** 23 araç, 6 yeni crate (`wish_script`, `wish_sdk`, `wish_sdk_macros`, `wish_types`, `wish_input`, `wish_evals`; son ikincisine 11–12 görevleri eklendi), 430+ test.
+- **Bekleyen kullanıcı adımları:**
+  1. `wish-evals run` (kota harcar; onay gerekir).
+  2. Windows Sandbox'ı açıp `C:\wish-build\package\clean-test.wsb` dosyasını çalıştırmak (sonuç `C:\wish-build\package-result` içine düşer).
+
+  İkisinden bir sorun çıkarsa düzeltme `main`'den açılan bir dalda yapılır.
+- **M6'ya devredilenler:**
+  - SDK değer çözme/kodlamasının dolgusuz türlerde dilim görünümüne inmesi (sınır maliyeti);
+  - `until` maliyet ölçümü;
+  - render testlerinin GPU paylaşımı.
+- **M8a'ya devredilen:** `edit_apply`'ın canlı oturuma uygulanması.

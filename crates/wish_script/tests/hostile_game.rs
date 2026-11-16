@@ -586,3 +586,74 @@ fn manifests_that_lie_are_refused_or_survived() {
         "the fuzzer reached install {installed} times"
     );
 }
+
+/// A big event.
+#[event]
+pub struct Blast {
+    /// Lots of floats.
+    pub values: [f32; 65536],
+}
+
+#[test]
+fn r2_many_refused_sends_of_a_big_event_stay_cheap() {
+    // 65536 sends of a 256 KiB event, every one with the wrong size: each
+    // is refused at once, without walking the event's layout.
+    let mut bytes = Vec::new();
+    for _ in 0..65_536 {
+        Command::Send {
+            event: "Blast".to_owned(),
+            bytes: Vec::new(),
+        }
+        .encode(&mut bytes);
+    }
+    let text = json!({ "abi": 1, "sdk": "test",
+        "types": [{ "role": "event", "schema": to_wire(&Blast::schema()) }],
+        "systems": [{ "name": "blast", "params": [{ "commands": {} }] }] })
+    .to_string();
+    let module = load(&guest(&text, "", &bytes, 64));
+    let mut app = App::new(AppConfig::default());
+    module.install(app.world_mut()).unwrap();
+    let runtime = ScriptRuntime::new(Arc::clone(&module));
+    for system in runtime.systems() {
+        app.add_system(system).unwrap();
+    }
+    let started = std::time::Instant::now();
+    let failures = play(&mut app, 1);
+    assert!(failures.is_empty(), "{failures:?}");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(20),
+        "{:?}",
+        started.elapsed()
+    );
+    let logs = runtime.take_logs();
+    assert_eq!(logs.len(), 9, "eight explained, the rest counted");
+    assert!(logs[8].message.contains("65528 more"), "{:?}", logs[8]);
+}
+
+#[test]
+fn r3_a_hierarchy_cannot_grow_without_end() {
+    // Each call spawns 300 entities and chains them: the chain stops at the
+    // depth limit, and the call stays quick.
+    let mut bytes = Vec::new();
+    for n in 0..300u32 {
+        Command::Spawn { index: n }.encode(&mut bytes);
+        if n > 0 {
+            Command::SetParent {
+                child: Target::New(n),
+                parent: Target::New(n - 1),
+            }
+            .encode(&mut bytes);
+        }
+    }
+    let systems = json!([{ "name": "chain", "params": [{ "commands": {} }] }]);
+    let module = load(&guest(&manifest(systems), "", &bytes, 64));
+    let mut game = game(&module);
+    let failures = play(&mut game.app, 1);
+    assert!(failures.is_empty(), "{failures:?}");
+    let logs = game._runtime.take_logs();
+    assert!(
+        logs.iter().any(|l| l.message.contains("256 levels")),
+        "{logs:?}"
+    );
+    assert_whole(&mut game.app);
+}

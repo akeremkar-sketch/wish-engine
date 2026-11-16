@@ -234,6 +234,11 @@ pub fn parse_actor(name: &str) -> Actor {
 }
 
 impl Workspace {
+    /// Whether tools draw on the software adapter.
+    pub fn software(&self) -> bool {
+        self.software
+    }
+
     /// Chooses the software (CPU) adapter for tools that draw: the same
     /// picture on every machine, and it works without a GPU. Also on when
     /// the environment variable `WISH_SOFTWARE` is set.

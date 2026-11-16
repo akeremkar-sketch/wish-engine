@@ -396,6 +396,26 @@ impl App {
         hasher.finish()
     }
 
+    /// Fits `snapshot` to this app's current systems, with `world` as its
+    /// world (game code was replaced: its types moved to the new layout,
+    /// systems may have come or gone). Systems the snapshot knew keep their
+    /// state; new ones start with their current state.
+    pub fn rebase(&self, snapshot: &AppSnapshot, world: WorldSnapshot) -> AppSnapshot {
+        AppSnapshot {
+            world,
+            tick: snapshot.tick,
+            systems: self
+                .system_states()
+                .map(|(name, state)| {
+                    let state = snapshot.systems.get(name).unwrap_or(state);
+                    (name.to_owned(), state.clone())
+                })
+                .collect(),
+            schedule: self.schedule_fingerprint(),
+            config: snapshot.config,
+        }
+    }
+
     /// A copy of everything that decides how the app continues.
     pub fn snapshot(&self) -> AppSnapshot {
         AppSnapshot {

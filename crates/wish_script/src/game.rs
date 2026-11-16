@@ -8,7 +8,7 @@
 //! runs the system in the tick's instance, writes back what changed and
 //! applies the commands.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
@@ -213,6 +213,25 @@ impl Manifest {
             };
             let schema = from_wire(entry.get("schema").unwrap_or(&Value::Null))
                 .map_err(|e| e.at_file(name))?;
+            if let Some(other) = types
+                .iter()
+                .find(|t: &&ModuleType| t.schema.name == schema.name)
+            {
+                let what = if other.role == role {
+                    "with different fields"
+                } else {
+                    "with different roles"
+                };
+                return Err(Diagnostic::error(
+                    "script_duplicate_type",
+                    format!(
+                        "'{name}' declares two types named '{}' ({what}).",
+                        schema.name
+                    ),
+                    "Types are known by their name alone in the world, even in different Rust modules: rename one of them.",
+                )
+                .at_file(name));
+            }
             total += u64::from(schema.size);
             if total > MAX_TYPE_BYTES {
                 return Err(bad_manifest(
@@ -488,6 +507,7 @@ struct Slot {
     tick: u64,
     ran: BTreeSet<usize>,
     logs: Vec<ScriptLog>,
+    floats: FloatCache,
 }
 
 /// One app's use of a module: the systems to add, and their shared state
@@ -601,9 +621,15 @@ impl ScriptRuntime {
                 message: log.message,
             });
         }
+        let mut floats = std::mem::take(&mut slot.floats);
         drop(slot);
-        call.write_back(world, spec, &sent)?;
-        let refused = apply_commands(world, &spec.name, &commands)?;
+        let written = call.write_back(world, spec, &sent, &mut floats);
+        let applied =
+            written.and_then(|()| apply_commands(world, &spec.name, &commands, &mut floats));
+        if let Ok(mut slot) = self.slot.lock() {
+            slot.floats = floats;
+        }
+        let refused = applied?;
         if !refused.is_empty() {
             let mut slot = self.slot.lock().map_err(|_| poisoned())?;
             for message in refused {
@@ -802,15 +828,41 @@ impl Call {
         })
     }
 
-    /// Writes back what the system changed. Values are compared first, so
-    /// only real changes count as changes (change detection stays honest),
-    /// and every written value is checked like any outside data.
-    fn write_back(&self, world: &mut World, spec: &SystemSpec, sent: &[u8]) -> Result<()> {
-        for ((resolved, (start, len)), _) in
-            self.resolved.iter().zip(&self.places).zip(&spec.params)
-        {
+    /// Writes back what the system changed. Only values that differ from
+    /// what the system was given are written (so two parameters over the
+    /// same data cannot undo each other), every one is checked first like
+    /// any outside data, and nothing is written unless all of them pass.
+    fn write_back(
+        &self,
+        world: &mut World,
+        spec: &SystemSpec,
+        sent: &[u8],
+        floats: &mut FloatCache,
+    ) -> Result<()> {
+        enum Change {
+            Rows {
+                archetype: usize,
+                id: ComponentId,
+                size: usize,
+                /// Where the archetype's rows start in the frame.
+                at: usize,
+                /// How many rows the archetype has.
+                count: usize,
+                /// The rows that changed.
+                rows: Vec<u32>,
+            },
+            Resource {
+                id: ResourceId,
+                bytes: Vec<u8>,
+            },
+        }
+        let mut changes = Vec::new();
+        for (resolved, (start, len)) in self.resolved.iter().zip(&self.places) {
             let section = self.frame.get(*start..start + len).ok_or_else(poisoned)?;
             let before = sent.get(*start..start + len).ok_or_else(poisoned)?;
+            if section == before {
+                continue;
+            }
             match resolved {
                 Resolved::Query {
                     archetypes,
@@ -820,129 +872,232 @@ impl Call {
                     let sizes: Vec<usize> = columns.iter().map(|(_, size, _)| *size).collect();
                     let (_, offsets) = query_layout(count, &sizes);
                     for ((id, size, write), offset) in columns.iter().zip(&offsets) {
-                        if !write {
+                        if !write || *size == 0 {
                             continue;
                         }
-                        let floats =
-                            float_fields(world.registry().component(*id).map(|i| i.schema()));
+                        let info = world.registry().component(*id).ok_or_else(poisoned)?;
+                        let layout = floats.of('c', info);
                         let mut at = *offset;
-                        for (a, rows) in archetypes {
-                            let slice = section.get(at..at + rows * size).ok_or_else(poisoned)?;
-                            if !floats.is_empty() {
-                                let old = before.get(at..at + rows * size).ok_or_else(poisoned)?;
-                                for (new, old) in slice.chunks(*size).zip(old.chunks(*size)) {
-                                    if new != old {
-                                        check_finite(&floats, new, &spec.name, "wrote")?;
-                                    }
+                        for (archetype, count) in archetypes {
+                            let span = at..at + count * size;
+                            let first = start + at;
+                            at += count * size;
+                            let new = section.get(span.clone()).ok_or_else(poisoned)?;
+                            let old = before.get(span).ok_or_else(poisoned)?;
+                            if new == old {
+                                continue;
+                            }
+                            let mut rows = Vec::new();
+                            for (row, (n, o)) in
+                                new.chunks(*size).zip(old.chunks(*size)).enumerate()
+                            {
+                                if n != o {
+                                    check_value(&layout, n, &spec.name, "wrote")?;
+                                    rows.push(u32::try_from(row).map_err(|_| poisoned())?);
                                 }
                             }
-                            world
-                                .write_archetype_column(*a, *id, slice)
-                                .map_err(|cause| write_failed(&spec.name, &cause))?;
-                            at += rows * size;
+                            changes.push(Change::Rows {
+                                archetype: *archetype,
+                                id: *id,
+                                size: *size,
+                                at: first,
+                                count: *count,
+                                rows,
+                            });
                         }
                     }
                 }
                 Resolved::Res { id, write: true } => {
-                    if section != before {
-                        let floats =
-                            float_fields(world.registry().resource(*id).map(|i| i.schema()));
-                        check_finite(&floats, section, &spec.name, "wrote")?;
-                    }
-                    if world.resource_bytes(*id)?.as_deref() != Some(section) {
+                    let info = world.registry().resource(*id).ok_or_else(poisoned)?;
+                    let layout = floats.of('r', info);
+                    check_value(&layout, section, &spec.name, "wrote")?;
+                    changes.push(Change::Resource {
+                        id: *id,
+                        bytes: section.to_vec(),
+                    });
+                }
+                Resolved::Res { write: false, .. } | Resolved::None => {}
+            }
+        }
+        // Everything was checked: now write, each change onto what the world
+        // holds at that moment (an earlier parameter may have changed it).
+        let mut column = Vec::new();
+        for change in changes {
+            match change {
+                Change::Rows {
+                    archetype,
+                    id,
+                    size,
+                    at,
+                    count,
+                    rows,
+                } => {
+                    let new = self.frame.get(at..at + count * size).ok_or_else(poisoned)?;
+                    let bytes = if rows.len() == count {
+                        // Every row changed (the usual case for moving
+                        // things): the frame's bytes are the column.
+                        new
+                    } else {
+                        // Only some: the others keep what the world holds
+                        // now (another parameter may have just changed them).
+                        column.clear();
+                        world.archetype_column_bytes(archetype, id, &mut column)?;
+                        for row in rows {
+                            let span = row as usize * size..(row as usize + 1) * size;
+                            column
+                                .get_mut(span.clone())
+                                .ok_or_else(poisoned)?
+                                .copy_from_slice(new.get(span).ok_or_else(poisoned)?);
+                        }
+                        &column
+                    };
+                    world
+                        .write_archetype_column(archetype, id, bytes)
+                        .map_err(|cause| write_failed(&spec.name, &cause))?;
+                }
+                Change::Resource { id, bytes } => {
+                    if world.resource_bytes(id)?.as_deref() != Some(bytes.as_slice()) {
                         world
-                            .insert_resource_bytes(*id, section)
+                            .insert_resource_bytes(id, &bytes)
                             .map_err(|cause| write_failed(&spec.name, &cause))?;
                     }
                 }
-                Resolved::Res { write: false, .. } | Resolved::None => {}
             }
         }
         Ok(())
     }
 }
 
-/// One float of a type: its offset, width (4 or 8) and path.
-struct FloatField {
-    offset: usize,
-    wide: bool,
-    path: String,
+/// A type as checks need it: its schema and where its floats are (an
+/// offset with the top bit set is an `f64`).
+struct Layout {
+    schema: TypeSchema,
+    floats: Vec<u32>,
 }
 
-/// Every float of `schema`, in layout order (vectors, colours and matrices
-/// are packed `f32`s).
-fn float_fields(schema: Option<&TypeSchema>) -> Vec<FloatField> {
-    fn walk(schema: &TypeSchema, base: usize, path: &str, out: &mut Vec<FloatField>) {
-        let floats = match &schema.kind {
-            TypeKind::F32 => Some((1, false)),
-            TypeKind::F64 => Some((1, true)),
-            TypeKind::Vec2 => Some((2, false)),
-            TypeKind::Vec3 => Some((3, false)),
-            TypeKind::Vec4 | TypeKind::Quat | TypeKind::Color => Some((4, false)),
-            TypeKind::Mat4 => Some((16, false)),
-            _ => None,
-        };
-        if let Some((count, wide)) = floats {
-            let width = if wide { 8 } else { 4 };
-            for n in 0..count {
-                out.push(FloatField {
-                    offset: base + n * width,
-                    wide,
-                    path: if count == 1 {
-                        path.to_owned()
-                    } else {
-                        format!("{path}[{n}]")
-                    },
-                });
+/// Layouts worked out once per type for a runtime (a module's types change
+/// only with a new module, which gets a new runtime): a schema can be large
+/// (an array's default value), so it is never copied per call.
+#[derive(Default)]
+struct FloatCache {
+    layouts: BTreeMap<String, Arc<Layout>>,
+}
+
+const WIDE: u32 = 1 << 31;
+
+impl FloatCache {
+    fn of(&mut self, role: char, info: &wish_ecs::TypeInfo) -> Arc<Layout> {
+        let key = format!("{role}{}", info.schema().name);
+        Arc::clone(self.layouts.entry(key).or_insert_with(|| {
+            let schema = info.schema().clone();
+            let mut floats = Vec::new();
+            float_offsets(&schema, 0, &mut floats);
+            Arc::new(Layout { schema, floats })
+        }))
+    }
+}
+
+/// The kind's floats: how many, and whether they are `f64`.
+fn floats_of(kind: &TypeKind) -> Option<(usize, bool)> {
+    match kind {
+        TypeKind::F32 => Some((1, false)),
+        TypeKind::F64 => Some((1, true)),
+        TypeKind::Vec2 => Some((2, false)),
+        TypeKind::Vec3 => Some((3, false)),
+        TypeKind::Vec4 | TypeKind::Quat | TypeKind::Color => Some((4, false)),
+        TypeKind::Mat4 => Some((16, false)),
+        _ => None,
+    }
+}
+
+/// Every float of `schema` (vectors, colours and matrices are packed
+/// `f32`s), as offsets from `base`.
+fn float_offsets(schema: &TypeSchema, base: usize, out: &mut Vec<u32>) {
+    if let Some((count, wide)) = floats_of(&schema.kind) {
+        let width = if wide { 8 } else { 4 };
+        for n in 0..count {
+            let offset = u32::try_from(base + n * width).unwrap_or(0);
+            out.push(if wide { offset | WIDE } else { offset });
+        }
+        return;
+    }
+    match &schema.kind {
+        TypeKind::Struct(fields) => {
+            for field in fields {
+                float_offsets(&field.ty, base + field.offset as usize, out);
+            }
+        }
+        TypeKind::Array { element, len } if element.needs_floats() => {
+            let size = element.size as usize;
+            for n in 0..*len as usize {
+                float_offsets(element, base + n * size, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+trait NeedsFloats {
+    fn needs_floats(&self) -> bool;
+}
+
+impl NeedsFloats for TypeSchema {
+    fn needs_floats(&self) -> bool {
+        floats_of(&self.kind).is_some()
+            || match &self.kind {
+                TypeKind::Struct(fields) => fields.iter().any(|f| f.ty.needs_floats()),
+                TypeKind::Array { element, .. } => element.needs_floats(),
+                _ => false,
+            }
+    }
+}
+
+/// The path of the float at `offset` (`Transform.translation[0]`), for
+/// saying which one was not finite.
+fn float_path(schema: &TypeSchema, offset: usize) -> String {
+    fn find(schema: &TypeSchema, offset: usize, path: &mut String) {
+        if let Some((count, wide)) = floats_of(&schema.kind) {
+            if count > 1 {
+                let width = if wide { 8 } else { 4 };
+                path.push_str(&format!("[{}]", offset / width));
             }
             return;
         }
         match &schema.kind {
             TypeKind::Struct(fields) => {
-                for field in fields {
-                    let path = if path.is_empty() {
-                        field.name.clone()
-                    } else {
-                        format!("{path}.{}", field.name)
-                    };
-                    walk(&field.ty, base + field.offset as usize, &path, out);
+                if let Some(field) = fields.iter().rev().find(|f| f.offset as usize <= offset) {
+                    path.push('.');
+                    path.push_str(&field.name);
+                    find(&field.ty, offset - field.offset as usize, path);
                 }
             }
-            TypeKind::Array { element, len } => {
+            TypeKind::Array { element, .. } if element.size > 0 => {
                 let size = element.size as usize;
-                for n in 0..*len as usize {
-                    walk(element, base + n * size, &format!("{path}[{n}]"), out);
-                }
+                path.push_str(&format!("[{}]", offset / size));
+                find(element, offset % size, path);
             }
             _ => {}
         }
     }
-    let mut out = Vec::new();
-    if let Some(schema) = schema {
-        walk(schema, 0, "", &mut out);
-        for field in &mut out {
-            field.path = if field.path.is_empty() {
-                schema.name.clone()
-            } else {
-                format!("{}.{}", schema.name, field.path)
-            };
-        }
-    }
-    out
+    let mut path = schema.name.clone();
+    find(schema, offset, &mut path);
+    path
 }
 
-/// Refuses a value with a float that is NaN or infinite: no file can hold
-/// it faithfully and it spreads silently (a NaN position hides an entity).
-fn check_finite(floats: &[FloatField], bytes: &[u8], system: &str, verb: &str) -> Result<()> {
-    for field in floats {
-        let finite = if field.wide {
+/// Checks a value game code gives the world: its floats are finite, and
+/// its bools and enums hold valid bytes. Nothing is stored if it fails.
+fn check_value(layout: &Layout, bytes: &[u8], system: &str, verb: &str) -> Result<()> {
+    let schema = &layout.schema;
+    for &entry in &layout.floats {
+        let offset = (entry & !WIDE) as usize;
+        let finite = if entry & WIDE != 0 {
             bytes
-                .get(field.offset..field.offset + 8)
+                .get(offset..offset + 8)
                 .and_then(|b| b.try_into().ok())
                 .is_none_or(|b| f64::from_le_bytes(b).is_finite())
         } else {
             bytes
-                .get(field.offset..field.offset + 4)
+                .get(offset..offset + 4)
                 .and_then(|b| b.try_into().ok())
                 .is_none_or(|b| f32::from_le_bytes(b).is_finite())
         };
@@ -951,11 +1106,15 @@ fn check_finite(floats: &[FloatField], bytes: &[u8], system: &str, verb: &str) -
                 "script_not_finite",
                 format!(
                     "System '{system}' {verb} a value that is not a finite number into {}.",
-                    field.path
+                    float_path(schema, offset)
                 ),
                 "NaN and infinity usually come from dividing by zero or normalizing a zero-length vector; check with is_finite() (or guard the division) before writing. The value was not stored.",
             ));
         }
+    }
+    if schema.needs_validation() {
+        wish_schema::json::validate_bytes(schema, bytes)
+            .map_err(|cause| write_failed(system, &cause))?;
     }
     Ok(())
 }
@@ -984,13 +1143,58 @@ fn command_failed(system: &str, index: usize, what: &str, cause: &str, hint: &st
     )
 }
 
+/// The deepest hierarchy game code may build: each new link walks the
+/// ancestors, so an unbounded chain would make every command slower.
+pub const MAX_HIERARCHY_DEPTH: usize = 256;
+
+/// The most bytes of component data the world may hold for game code to
+/// add more: game code cannot exhaust the engine's memory.
+pub const MAX_WORLD_BYTES: usize = 1 << 30;
+
+/// The bytes of component data in `world` (rows times row size).
+fn world_bytes(world: &World) -> usize {
+    let registry = world.registry();
+    world
+        .archetypes()
+        .iter()
+        .map(|archetype| {
+            let row: usize = archetype
+                .components()
+                .iter()
+                .filter_map(|id| registry.component(*id).map(wish_ecs::TypeInfo::size))
+                .sum();
+            row.saturating_mul(archetype.len())
+        })
+        .fold(0usize, usize::saturating_add)
+}
+
+/// How deep `entity` is in the hierarchy (0 for a root), stopping at
+/// [`MAX_HIERARCHY_DEPTH`].
+fn depth(world: &World, entity: Entity) -> usize {
+    let mut depth = 0;
+    let mut at = entity;
+    while let Some(parent) = world.parent(at) {
+        depth += 1;
+        if depth >= MAX_HIERARCHY_DEPTH {
+            break;
+        }
+        at = parent;
+    }
+    depth
+}
+
 /// Applies a system's commands in order. A command that cannot be applied
 /// is skipped and reported (returned as warning text), the way a native
 /// command buffer skips it: commands are deferred, so their target may be
 /// gone by the time they run. Despawning what is already gone is not even
 /// reported (two players reaching the same coin). Commands that cannot be
 /// decoded, too many commands, or a world that is full stop the system.
-fn apply_commands(world: &mut World, system: &str, bytes: &[u8]) -> Result<Vec<String>> {
+fn apply_commands(
+    world: &mut World,
+    system: &str,
+    bytes: &[u8],
+    floats: &mut FloatCache,
+) -> Result<Vec<String>> {
     let mut refused = Vec::new();
     if bytes.is_empty() {
         return Ok(refused);
@@ -1004,6 +1208,19 @@ fn apply_commands(world: &mut World, system: &str, bytes: &[u8]) -> Result<Vec<S
             "Rebuild the game code with this engine's SDK; a system gives at most 65536 commands per call.",
         )
     })?;
+    let mut size = world_bytes(world);
+    let full = |index: usize, what: &str| {
+        command_failed(
+            system,
+            index,
+            what,
+            &format!(
+                "the world already holds {} MiB of component data, the most game code may fill",
+                MAX_WORLD_BYTES >> 20
+            ),
+            "A system that adds data every tick without removing any grows the world for ever; despawn what is no longer needed.",
+        )
+    };
     let mut skipped = 0usize;
     let mut spawned: Vec<Option<Entity>> = Vec::new();
     for (index, command) in commands.iter().enumerate() {
@@ -1026,9 +1243,7 @@ fn apply_commands(world: &mut World, system: &str, bytes: &[u8]) -> Result<Vec<S
                         system,
                         index,
                         "spawn",
-                        &format!(
-                            "the world already has {MAX_ENTITIES} entities, the most game code may create"
-                        ),
+                        &format!("the world already has {MAX_ENTITIES} entities, the most game code may create"),
                         "A system that spawns every tick without despawning grows the world for ever; despawn what is no longer needed.",
                     ));
                 }
@@ -1047,19 +1262,30 @@ fn apply_commands(world: &mut World, system: &str, bytes: &[u8]) -> Result<Vec<S
                 target,
                 component: name,
                 bytes,
-            } => resolve(*target, &spawned).and_then(|entity| {
-                let (id, size) = component(world, name, system)?;
-                if bytes.len() != size {
-                    return Err(Diagnostic::error(
-                        "script_value_size",
-                        format!("the value has {} bytes, '{name}' takes {size}", bytes.len()),
-                        "Rebuild the game code with this engine's SDK.",
-                    ));
+            } => {
+                if size.saturating_add(bytes.len()) > MAX_WORLD_BYTES {
+                    return Err(full(index, &format!("insert {name}")));
                 }
-                let floats = float_fields(world.registry().component(id).map(|i| i.schema()));
-                check_finite(&floats, bytes, system, "inserted")?;
-                world.insert_bytes(entity, id, bytes)
-            }),
+                resolve(*target, &spawned).and_then(|entity| {
+                    let (id, expected) = component(world, name, system)?;
+                    if bytes.len() != expected {
+                        return Err(Diagnostic::error(
+                            "script_value_size",
+                            format!(
+                                "the value has {} bytes, '{name}' takes {expected}",
+                                bytes.len()
+                            ),
+                            "Rebuild the game code with this engine's SDK.",
+                        ));
+                    }
+                    let info = world.registry().component(id).ok_or_else(poisoned)?;
+                    let layout = floats.of('c', info);
+                    check_value(&layout, bytes, system, "inserted")?;
+                    world.insert_bytes(entity, id, bytes)?;
+                    size = size.saturating_add(bytes.len());
+                    Ok(())
+                })
+            }
             Command::Remove {
                 target,
                 component: name,
@@ -1068,14 +1294,25 @@ fn apply_commands(world: &mut World, system: &str, bytes: &[u8]) -> Result<Vec<S
                 world.remove_by_id(entity, id).map(|_| ())
             }),
             Command::Send { event, bytes } => event_id(world, event, system).and_then(|id| {
-                let floats = float_fields(world.registry().event(id).map(|i| i.schema()));
-                if bytes.len() == world.registry().event(id).map_or(0, |i| i.size()) {
-                    check_finite(&floats, bytes, system, "sent")?;
+                let info = world.registry().event(id).ok_or_else(poisoned)?;
+                // The size first: a wrong size costs nothing more.
+                if bytes.len() == info.size() {
+                    let layout = floats.of('e', info);
+                    check_value(&layout, bytes, system, "sent")?;
                 }
                 world.send_bytes(id, bytes)
             }),
             Command::SetParent { child, parent } => resolve(*child, &spawned).and_then(|child| {
                 let parent = resolve(*parent, &spawned)?;
+                if world.contains(parent) && depth(world, parent) + 1 >= MAX_HIERARCHY_DEPTH {
+                    return Err(Diagnostic::error(
+                        "hierarchy_too_deep",
+                        format!(
+                            "the hierarchy would be deeper than {MAX_HIERARCHY_DEPTH} levels"
+                        ),
+                        "Attach to an entity nearer the root; a chain this deep is usually a parent set every tick by mistake.",
+                    ));
+                }
                 world.set_parent(child, parent)
             }),
             Command::RemoveParent(child) => {

@@ -319,8 +319,26 @@ fn sim_restore(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<
             .ok_or_else(|| unknown_snapshot(&label, &session.saved))?;
         session.app.restore(&snapshot)?;
         let tick = session.app.tick();
-        if let Some(trail) = session.recording.as_mut() {
-            trail.rewind(tick);
+        let recorded = session
+            .recording
+            .as_ref()
+            .map(|trail| trail.hashes.len() as u64);
+        match recorded {
+            Some(len) if tick <= len => {
+                if let Some(trail) = session.recording.as_mut() {
+                    trail.rewind(tick);
+                }
+            }
+            Some(_) => {
+                // A snapshot later than what is recorded now (ticks in
+                // between were undone): the recording cannot continue.
+                session.recording = None;
+                out.insert(
+                    "recording_stopped".to_owned(),
+                    json!("The snapshot is later than the recording (the ticks before it were undone since), so recording stopped. Record again from tick 0."),
+                );
+            }
+            None => {}
         }
         // Same state, same reports: what the inspector already said after
         // the snapshot is forgotten with the rest.
@@ -425,8 +443,17 @@ pub(crate) fn parse_input(
     given: Option<&Value>,
 ) -> Result<wish_input::Values> {
     let mut values = wish_input::Values::new();
-    let Some(Value::Object(given)) = given else {
-        return Ok(values);
+    let given = match given {
+        None | Some(Value::Null) => return Ok(values),
+        Some(Value::Object(given)) => given,
+        Some(other) => {
+            return Err(Diagnostic::error(
+                "invalid_parameter",
+                format!("'input' must be an object of actions and values, not {other}."),
+                "Write it like {\"move\": [0, 1], \"jump\": true}: each action of input.json with its value (true for a button, a number for an axis, [x, y] for a 2D axis).",
+            )
+            .at_path("/input"));
+        }
     };
     let map = &workspace.session(session)?.input;
     let names: Vec<&str> = map.names().collect();

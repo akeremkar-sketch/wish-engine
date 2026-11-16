@@ -11,7 +11,7 @@ use crate::workspace::Workspace;
 pub(crate) const TEST_RUN: Tool = Tool {
     name: "test_run",
     title: "Run scenario tests",
-    description: "Runs the project's scenario tests (tests/*.test.json): each starts a play session on a scene with a seed and goes through its steps: run ticks (frames, with input held, or until a condition), expect a condition (same language as entity_query's where), capture a picture and compare it with a golden image. `passed` is false if any test fails; the first failing step of each test is explained with its step number, the tick, and the values the condition read. Pictures are drawn on the software adapter, the same on every machine. update_golden saves the pictures as the golden images (after you have looked at them). Tests are deterministic: a failure is a real change in how the game plays.",
+    description: "Runs the project's scenario tests (tests/*.test.json): each starts a play session on a scene with a seed and goes through its steps: run ticks (frames, with input held, or until a condition), expect a condition (same language as entity_query's where; with \"entity\" it is checked on that entity, without it it holds if the resources or some entity satisfy it, so say \"no coin is left\" as count(Coin) == 0), capture a picture and compare it with a golden image. `passed` is false if any test fails; the first failing step of each test is explained with its step number, the tick, and the values the condition read. Pictures are drawn on the software adapter, the same on every machine. update_golden saves the pictures as the golden images (after you have looked at them). Tests are deterministic: a failure is a real change in how the game plays.",
     params: &[
         Param::optional(
             "paths",

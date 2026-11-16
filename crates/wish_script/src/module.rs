@@ -255,6 +255,15 @@ impl Live {
         let len = i32::try_from(frame.len())
             .map_err(|_| wasmtime::format_err!("the frame is larger than 2 GiB"))?;
         let ptr = self.alloc.call(&mut self.store, len)?;
+        if ptr == 0 {
+            self.store
+                .data_mut()
+                .memory_denied
+                .get_or_insert(frame.len());
+            return Err(wasmtime::format_err!(
+                "the module could not allocate the {len}-byte frame"
+            ));
+        }
         let start = usize::try_from(ptr)
             .map_err(|_| wasmtime::format_err!("wish_alloc returned a negative pointer"))?;
         self.memory
