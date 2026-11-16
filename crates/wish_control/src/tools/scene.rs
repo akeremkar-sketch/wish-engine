@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 
 use serde_json::{Map, Value, json};
 use wish_core::{Diagnostic, Entity, Result};
-use wish_scene::{Action, Actor, SceneDocument, Transaction};
+use wish_scene::{Action, Actor, Applied, SceneDocument, Transaction};
 
 use super::DETAIL;
 use crate::documents::touched;
@@ -160,6 +160,11 @@ pub(crate) const EDIT_APPLY: Tool = Tool {
             Kind::Boolean,
             "Create the scene file if it does not exist.",
         ),
+        Param::optional(
+            "reason",
+            Kind::String,
+            "Why, in a sentence (shown on this change's card in the editor's activity feed, and in edit_history).",
+        ),
     ],
     mutates: true,
     run: edit_apply,
@@ -173,10 +178,18 @@ pub(crate) const EDIT_HISTORY: Tool = Tool {
         SCENE,
         Param::optional(
             "action",
-            Kind::Choice(&["list", "undo", "redo"]),
-            "list the history, or undo / redo the latest changes.",
+            Kind::Choice(&["list", "undo", "redo", "revert"]),
+            "list the history; undo / redo the latest changes; or revert one earlier change on its own (revision), if nothing later touched what it changed.",
         )
         .or("\"list\""),
+        Param::optional(
+            "revision",
+            Kind::Integer {
+                min: 1,
+                max: i64::MAX,
+            },
+            "For revert: the revision the change produced (from list, or from edit_apply's answer).",
+        ),
         Param::optional(
             "steps",
             Kind::Integer { min: 1, max: 100 },
@@ -198,6 +211,56 @@ pub(crate) const EDIT_HISTORY: Tool = Tool {
     mutates: true,
     run: edit_history,
 };
+
+/// `edit_history` revert: one earlier change taken back on its own.
+fn revert_one(
+    workspace: &mut Workspace,
+    args: &Args,
+    actor: &Actor,
+    path: &str,
+    notes: Vec<Diagnostic>,
+) -> Result<Map<String, Value>> {
+    let Some(revision) = args.int("revision").and_then(|r| u64::try_from(r).ok()) else {
+        return Err(Diagnostic::error(
+            "missing_parameter",
+            "revert needs \"revision\": the change to take back.",
+            "Give the revision from edit_history list (or from edit_apply's answer), like \"revision\": 12.",
+        )
+        .at_path("/revision"));
+    };
+    let registry = workspace.registry().clone();
+    let others = workspace.others_since(path, actor);
+    let dry_run = args.flag("dry_run");
+    let mut working = workspace.document(path)?.doc.clone();
+    let reason = Some(format!("took back r{revision}"));
+    let applied = if dry_run {
+        working.revertible(revision)?;
+        Applied {
+            revision: working.revision(),
+            changes: Vec::new(),
+        }
+    } else {
+        working.revert(revision, actor.clone(), reason, &registry)?
+    };
+    if !dry_run {
+        workspace.commit_document(path, working)?;
+        workspace.mark_seen(path, actor);
+    }
+    let mut out = Map::new();
+    out.insert("scene".to_owned(), json!(path));
+    out.insert("action".to_owned(), json!("revert"));
+    out.insert("reverted".to_owned(), json!(revision));
+    out.insert("revision".to_owned(), json!(applied.revision));
+    out.insert("changes".to_owned(), changes_json(&applied.changes));
+    if dry_run {
+        out.insert("dry_run".to_owned(), json!(true));
+    }
+    if let Some(others) = others {
+        out.insert("changed_by_others".to_owned(), others);
+    }
+    finish(&mut out, notes, workspace, path);
+    Ok(out)
+}
 
 // --------------------------------------------------------------------------
 
@@ -756,6 +819,11 @@ fn edit_apply(workspace: &mut Workspace, args: &Args, actor: &Actor) -> Result<M
     let ops = crate::ops::parse_ops(args.value("ops").unwrap_or(&Value::Null))?;
     let transaction = Transaction {
         actor: actor.clone(),
+        reason: args
+            .str("reason")
+            .map(str::trim)
+            .filter(|reason| !reason.is_empty())
+            .map(|reason| reason.chars().take(500).collect()),
         base_revision: args
             .int("base_revision")
             .and_then(|r| u64::try_from(r).ok()),
@@ -816,17 +884,39 @@ fn edit_history(
             .rev()
             .take(limit)
             .map(|entry| {
-                json!({
+                let mut item = json!({
                     "revision": entry.revision,
                     "actor": entry.actor.label(),
                     "action": match entry.action {
                         Action::Edit => "edit",
                         Action::Undo => "undo",
                         Action::Redo => "redo",
+                        Action::Revert => "revert",
                     },
                     "entities": touched(&entry.changes),
                     "changes": entry.changes.len(),
-                })
+                });
+                if let Some(reason) = &entry.reason {
+                    item["reason"] = json!(reason);
+                }
+                if let Some(reverts) = entry.reverts {
+                    item["reverts"] = json!(reverts);
+                }
+                // Whether this one change can be taken back on its own now,
+                // and if not, why (a card's "Undo this").
+                match doc.revertible(entry.revision) {
+                    Ok(()) => item["revertible"] = json!(true),
+                    Err(problem) => {
+                        item["revertible"] = json!(false);
+                        if problem.code != "not_revertible" {
+                            item["not_revertible"] = json!(problem.code);
+                        }
+                    }
+                }
+                if doc.is_reverted(entry.revision) {
+                    item["reverted"] = json!(true);
+                }
+                item
             })
             .collect();
         out.insert("revision".to_owned(), json!(doc.revision()));
@@ -840,6 +930,9 @@ fn edit_history(
         return Ok(out);
     }
     refuse_if_file_invalid(workspace, &path)?;
+    if action == "revert" {
+        return revert_one(workspace, args, actor, &path, notes);
+    }
     let steps = args.int("steps").unwrap_or(1);
     let dry_run = args.flag("dry_run");
     let registry = workspace.registry().clone();

@@ -15,7 +15,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 use wish_core::suggest::unknown_name_hint;
 use wish_core::{Diagnostic, Result};
 use wish_ecs::Registry;
@@ -241,6 +241,9 @@ pub struct Transaction {
     pub base_revision: Option<u64>,
     /// The changes, applied in order.
     pub ops: Vec<EditOp>,
+    /// Why, in the actor's words (shown on the change's card in the
+    /// activity feed).
+    pub reason: Option<String>,
 }
 
 impl Transaction {
@@ -250,6 +253,7 @@ impl Transaction {
             actor,
             base_revision: None,
             ops,
+            reason: None,
         }
     }
 }
@@ -272,6 +276,8 @@ pub enum Action {
     Undo,
     /// A redo.
     Redo,
+    /// One earlier transaction taken back on its own (selective undo).
+    Revert,
 }
 
 /// One entry of the activity log: who changed what, when.
@@ -285,6 +291,10 @@ pub struct LogEntry {
     pub action: Action,
     /// JSON pointers of everything that changed.
     pub changes: Vec<String>,
+    /// Why, if the actor said.
+    pub reason: Option<String>,
+    /// For a revert: the revision of the transaction it took back.
+    pub reverts: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -292,6 +302,63 @@ struct Entry {
     actor: Actor,
     forward: Vec<EditOp>,
     inverse: Vec<EditOp>,
+    /// The revision it produced (when it was applied).
+    revision: u64,
+    /// For a revert: the revision it took back.
+    reverts: Option<u64>,
+    /// Taken back by a revert (that has not been undone).
+    reverted: bool,
+    /// What each changed thing was right after it: taking it back on its
+    /// own is safe while every one of them is still so.
+    after: Vec<(String, Option<Value>)>,
+}
+
+/// The value at a change's JSON pointer, as precisely as the pointer says:
+/// a resource, a component, an override, an entity's parent, or (for any
+/// other pointer into an entity) the whole entity.
+fn value_at(doc: &SceneDocument, pointer: &str) -> Option<Value> {
+    if let Some(name) = pointer.strip_prefix("/resources/") {
+        return doc.resources.get(name).cloned();
+    }
+    let rest = pointer.strip_prefix("/entities/")?;
+    let (id, inner) = rest.split_once('/').unwrap_or((rest, ""));
+    let entity = doc.entities.get(id)?;
+    let parts: Vec<&str> = inner.split('/').collect();
+    match parts.as_slice() {
+        ["components", component] => entity.components.get(*component).cloned(),
+        ["parent"] => Some(json!(entity.parent)),
+        ["overrides", part, "components", component] => entity
+            .overrides
+            .get(*part)
+            .and_then(|all| all.get(*component))
+            .cloned(),
+        _ => Some(json!({
+            "parent": entity.parent,
+            "order": entity.order,
+            "components": entity.components,
+            "notes": entity.notes,
+            "prefab": entity.prefab,
+            "overrides": entity.overrides,
+        })),
+    }
+}
+
+fn values_after(doc: &SceneDocument, changes: &[String]) -> Vec<(String, Option<Value>)> {
+    changes
+        .iter()
+        .map(|pointer| (pointer.clone(), value_at(doc, pointer)))
+        .collect()
+}
+
+/// Whether two JSON pointers touch the same thing: equal, or one inside the
+/// other (`/entities/x` and `/entities/x/components/T`).
+fn overlaps(a: &str, b: &str) -> bool {
+    let inside = |outer: &str, inner: &str| {
+        inner.len() > outer.len()
+            && inner.starts_with(outer)
+            && inner.as_bytes().get(outer.len()) == Some(&b'/')
+    };
+    a == b || inside(a, b) || inside(b, a)
 }
 
 /// A document's undo and redo stacks and activity log.
@@ -361,17 +428,181 @@ impl SceneDocument {
         }
         let (content, changes, inverse) = self.run(&transaction.ops, registry)?;
         self.commit(content);
-        let entry = Entry {
+        let applied = self.record(
+            transaction.actor.clone(),
+            Action::Edit,
+            changes,
+            transaction.reason.clone(),
+            None,
+        );
+        let after = values_after(self, &applied.changes);
+        self.push_entry(Entry {
             actor: transaction.actor.clone(),
             forward: transaction.ops.clone(),
             inverse,
-        };
+            revision: applied.revision,
+            reverts: None,
+            reverted: false,
+            after,
+        });
+        Ok(applied)
+    }
+
+    fn push_entry(&mut self, entry: Entry) {
         self.history.redo.clear();
         self.history.undo.push_back(entry);
         if self.history.undo.len() > MAX_UNDO {
             self.history.undo.pop_front();
         }
-        Ok(self.record(transaction.actor.clone(), Action::Edit, changes))
+    }
+
+    /// Marks the transaction of `revision` as reverted or not (a revert
+    /// undone puts it back in force).
+    fn mark_reverted(&mut self, revision: Option<u64>, reverted: bool) {
+        let Some(revision) = revision else {
+            return;
+        };
+        if let Some(entry) = self
+            .history
+            .undo
+            .iter_mut()
+            .find(|entry| entry.revision == revision)
+        {
+            entry.reverted = reverted;
+        }
+    }
+
+    /// Whether the transaction that produced `revision` can be taken back
+    /// on its own now; if not, why (as the refusal [`Self::revert`] gives).
+    pub fn revertible(&self, revision: u64) -> Result<()> {
+        let Some(entry) = self
+            .history
+            .undo
+            .iter()
+            .find(|entry| entry.revision == revision)
+        else {
+            let known = self.history.log.iter().any(|log| log.revision == revision);
+            return Err(Diagnostic::error(
+                "not_revertible",
+                format!("The change of revision {revision} cannot be taken back on its own."),
+                if known {
+                    "It was undone already, was itself an undo or redo, or is older than a change made outside the engine (which replaced the scene). Undo or edit by hand instead."
+                } else {
+                    "No change has that revision in this scene's history; edit_history lists the revisions."
+                },
+            ));
+        };
+        if entry.reverted {
+            return Err(Diagnostic::error(
+                "already_reverted",
+                format!("The change of revision {revision} was taken back already."),
+                "edit_history lists the revert; undo it to bring the change back.",
+            ));
+        }
+        // Safe while everything it changed is still as it left it; else
+        // taking it back would undo part of a later change (named from the
+        // log: the later changes that touched what moved).
+        let moved: Vec<&String> = entry
+            .after
+            .iter()
+            .filter(|(pointer, after)| value_at(self, pointer) != *after)
+            .map(|(pointer, _)| pointer)
+            .collect();
+        if !moved.is_empty() {
+            let mut later: Vec<String> = self
+                .history
+                .log
+                .iter()
+                .filter(|log| log.revision > revision)
+                .filter(|log| {
+                    log.changes
+                        .iter()
+                        .any(|later| moved.iter().any(|own| overlaps(own, later)))
+                })
+                .map(|log| format!("r{} by {}", log.revision, log.actor.label()))
+                .collect();
+            if later.is_empty() {
+                later.push("a change no longer in the history".to_owned());
+            }
+            return Err(Diagnostic::error(
+                "revert_conflict",
+                format!(
+                    "Later changes touched what revision {revision} changed: {}.",
+                    later.join(", ")
+                ),
+                "Take those back first (newest first), or change the scene by hand: reverting now would undo part of them.",
+            ));
+        }
+        if self
+            .history
+            .log
+            .front()
+            .is_some_and(|first| first.revision > revision)
+        {
+            return Err(Diagnostic::error(
+                "not_revertible",
+                format!(
+                    "Revision {revision} is older than the history kept, so later changes cannot be checked."
+                ),
+                "Edit by hand instead.",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Takes back the transaction that produced `revision`, and only it,
+    /// if no later change touched what it changed. The revert is a new
+    /// transaction by `actor` (it can be undone like any other).
+    pub fn revert(
+        &mut self,
+        revision: u64,
+        actor: Actor,
+        reason: Option<String>,
+        registry: &Registry,
+    ) -> Result<Applied> {
+        self.revertible(revision)?;
+        let Some(entry) = self
+            .history
+            .undo
+            .iter()
+            .find(|entry| entry.revision == revision)
+            .cloned()
+        else {
+            return self.revertible(revision).map(|()| Applied {
+                revision: self.revision,
+                changes: Vec::new(),
+            });
+        };
+        let (content, changes, _) = self.run(&entry.inverse, registry)?;
+        self.commit(content);
+        let applied = self.record(
+            actor.clone(),
+            Action::Revert,
+            changes,
+            reason,
+            Some(revision),
+        );
+        self.mark_reverted(Some(revision), true);
+        let after = values_after(self, &applied.changes);
+        self.push_entry(Entry {
+            actor,
+            forward: entry.inverse.clone(),
+            inverse: entry.forward.clone(),
+            revision: applied.revision,
+            reverts: Some(revision),
+            reverted: false,
+            after,
+        });
+        Ok(applied)
+    }
+
+    /// Whether the transaction of `revision` was taken back by a revert
+    /// that is still in force.
+    pub fn is_reverted(&self, revision: u64) -> bool {
+        self.history
+            .undo
+            .iter()
+            .any(|entry| entry.revision == revision && entry.reverted)
     }
 
     /// What applying a transaction would change, without changing anything.
@@ -392,8 +623,10 @@ impl SceneDocument {
         match self.run(&entry.inverse, registry) {
             Ok((content, changes, _)) => {
                 self.commit(content);
+                // Undoing a revert puts the change it took back in force.
+                self.mark_reverted(entry.reverts, false);
                 self.history.redo.push(entry);
-                Ok(Some(self.record(actor, Action::Undo, changes)))
+                Ok(Some(self.record(actor, Action::Undo, changes, None, None)))
             }
             Err(problem) => {
                 self.history.undo.push_back(entry);
@@ -411,8 +644,10 @@ impl SceneDocument {
         match self.run(&entry.forward, registry) {
             Ok((content, changes, _)) => {
                 self.commit(content);
+                let reverts = entry.reverts;
                 self.history.undo.push_back(entry);
-                Ok(Some(self.record(actor, Action::Redo, changes)))
+                self.mark_reverted(reverts, true);
+                Ok(Some(self.record(actor, Action::Redo, changes, None, None)))
             }
             Err(problem) => {
                 self.history.redo.push(entry);
@@ -469,7 +704,7 @@ impl SceneDocument {
         self.resources = other.resources.clone();
         self.history.undo.clear();
         self.history.redo.clear();
-        self.record(actor, Action::Edit, changes)
+        self.record(actor, Action::Edit, changes, None, None)
     }
 
     fn commit(&mut self, content: SceneDocument) {
@@ -477,13 +712,22 @@ impl SceneDocument {
         self.resources = content.resources;
     }
 
-    fn record(&mut self, actor: Actor, action: Action, changes: Vec<String>) -> Applied {
+    fn record(
+        &mut self,
+        actor: Actor,
+        action: Action,
+        changes: Vec<String>,
+        reason: Option<String>,
+        reverts: Option<u64>,
+    ) -> Applied {
         self.revision += 1;
         self.history.log.push_back(LogEntry {
             revision: self.revision,
             actor,
             action,
             changes: changes.clone(),
+            reason,
+            reverts,
         });
         if self.history.log.len() > MAX_LOG {
             self.history.log.pop_front();

@@ -759,6 +759,7 @@ impl Workspace {
                 actor: Actor::Human,
                 base_revision: None,
                 ops,
+                reason: None,
             },
             &registry,
         )?;

@@ -431,3 +431,58 @@ fn the_tests_run_from_the_menu() {
         app.problems()
     );
 }
+
+/// M8b WP1: a card of the history is taken back on its own; the person's
+/// later change stays (the hand-off of exit criterion 3).
+#[test]
+fn one_change_is_taken_back_from_the_history_tab() {
+    let dir = project("revert");
+    let mut app = open(&dir);
+    let agent = app.workspace().call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "spawn", "id": "crate", "components": { "Transform": {} } }],
+            "reason": "a crate to jump on" }),
+        &parse_actor("agent:helper"),
+    );
+    assert_eq!(agent["ok"], true, "{agent}");
+    app.call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "spawn", "id": "lamp", "components": { "Transform": {} } }] }),
+    );
+    play(&mut app, json!([{ "seconds": 0.5 }, { "idle": 2 }]));
+    let tab = named(&app, "History");
+    click(&mut app, tab);
+    assert!(
+        has_text(&app, "a crate to jump on"),
+        "the reason is on the card"
+    );
+    // Two cards can be taken back; the agent's is the lower (older) one.
+    let buttons: Vec<Rect> = app
+        .widgets()
+        .iter()
+        .filter(|w| w.role == "Button" && w.label.as_deref() == Some("Undo this"))
+        .map(|w| w.rect)
+        .collect();
+    assert_eq!(buttons.len(), 2, "{}", app.status());
+    let older = *buttons
+        .iter()
+        .max_by(|a, b| a.min.y.total_cmp(&b.min.y))
+        .unwrap();
+    click(&mut app, older);
+    assert!(app.status().starts_with("took back r"), "{}", app.status());
+    let names = wish_editor::ids(app.rows());
+    assert!(
+        !names.contains("crate") && names.contains("lamp"),
+        "{names:?}"
+    );
+    // The take-back is itself in the history, and Undo brings the crate back.
+    let undo = app
+        .widgets()
+        .iter()
+        .filter(|w| w.role == "Button" && w.label.as_deref() == Some("Undo"))
+        .find(|w| w.rect.min.y < 30.0)
+        .map(|w| w.rect)
+        .unwrap();
+    click(&mut app, undo);
+    assert!(wish_editor::ids(app.rows()).contains("crate"));
+}

@@ -47,6 +47,8 @@ pub(crate) struct PanelActions {
     pub select: Option<(String, String)>,
     pub undo: bool,
     pub redo: bool,
+    /// Take back one earlier change on its own (its revision).
+    pub revert: Option<u64>,
 }
 
 impl PanelActions {
@@ -57,6 +59,7 @@ impl PanelActions {
             || self.select.is_some()
             || self.undo
             || self.redo
+            || self.revert.is_some()
     }
 }
 
@@ -278,18 +281,44 @@ pub(crate) fn history(
                 let action = match entry["action"].as_str() {
                     Some("undo") => t("undo"),
                     Some("redo") => t("redo"),
+                    Some("revert") => t("taken back"),
                     _ => t("edit"),
                 };
-                ui.label(tf(
-                    "r{revision}  {actor}  {action}  {entities} ({changes} change(s))",
-                    &[
-                        ("revision", &entry["revision"].as_u64().unwrap_or(0)),
-                        ("actor", &entry["actor"].as_str().unwrap_or("?")),
-                        ("action", &action),
-                        ("entities", &touched.join(", ")),
-                        ("changes", &entry["changes"].as_u64().unwrap_or(0)),
-                    ],
-                ));
+                let revision = entry["revision"].as_u64().unwrap_or(0);
+                ui.horizontal(|ui| {
+                    // A change, on its own: taken back if nothing later
+                    // touched what it changed.
+                    if entry["revertible"] == true
+                        && entry["action"] == "edit"
+                        && ui
+                            .add(egui::Button::new(t("Undo this")).small())
+                            .on_hover_text(t(
+                                "Takes back only this change; later changes stay (refused if one touched the same things)",
+                            ))
+                            .clicked()
+                    {
+                        actions.revert = Some(revision);
+                    }
+                    let text = tf(
+                        "r{revision}  {actor}  {action}  {entities} ({changes} change(s))",
+                        &[
+                            ("revision", &revision),
+                            ("actor", &entry["actor"].as_str().unwrap_or("?")),
+                            ("action", &action),
+                            ("entities", &touched.join(", ")),
+                            ("changes", &entry["changes"].as_u64().unwrap_or(0)),
+                        ],
+                    );
+                    if entry["reverted"] == true {
+                        ui.label(RichText::new(text).strikethrough().weak())
+                            .on_hover_text(t("Taken back"));
+                    } else {
+                        ui.label(text);
+                    }
+                    if let Some(reason) = entry["reason"].as_str() {
+                        ui.weak(format!("— {reason}"));
+                    }
+                });
             }
         });
 }

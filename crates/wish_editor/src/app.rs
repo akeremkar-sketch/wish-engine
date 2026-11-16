@@ -2123,6 +2123,34 @@ impl EditorApp {
                 self.read_log();
             }
         }
+        if let Some(revision) = actions.panels.revert
+            && self.play.is_none()
+        {
+            let done = self.call(
+                "edit_history",
+                &json!({ "scene": self.scene.clone(), "action": "revert", "revision": revision }),
+            );
+            self.status = if done["ok"] == true {
+                tf("took back r{revision}", &[("revision", &revision)])
+            } else {
+                let message = done["error"]["message"]
+                    .as_str()
+                    .unwrap_or(t("it did not work"));
+                let hint = done["error"]["hint"].as_str().unwrap_or("");
+                tf(
+                    "could not take back r{revision}: {message} {hint}",
+                    &[
+                        ("revision", &revision),
+                        ("message", &message),
+                        ("hint", &hint),
+                    ],
+                )
+            };
+            self.revision = u64::MAX;
+            self.refresh_scene();
+            self.inspected_for = (Vec::new(), u64::MAX);
+            self.picture_stale = true;
+        }
         if actions.panels.clear_console {
             self.log.clear();
         }

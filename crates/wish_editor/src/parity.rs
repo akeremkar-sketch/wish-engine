@@ -131,6 +131,11 @@ pub const PARITY: &[Capability] = &[
         "Menu bar: Redo; Ctrl+Y / Ctrl+Shift+Z; the History tab",
         "polish::ctrl_z_undoes_ctrl_y_redoes_and_ctrl_p_plays",
     ),
+    op(
+        "edit_history:revert",
+        "The History tab: Undo this (one change on its own)",
+        "parity_ops::one_change_is_taken_back_from_the_history_tab",
+    ),
     query(
         "edit_history:list",
         "The History tab: who changed what, newest first",

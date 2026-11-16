@@ -17,6 +17,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "A model has materials that blend alpha (glass, smoke); blending is not drawn yet, so they are drawn opaque. Use alpha mode MASK for cut-outs.",
     ),
     (
+        "already_reverted",
+        "That change was taken back already (edit_history revert). Undo the revert to bring it back.",
+    ),
+    (
         "asset_exists",
         "A move would put an asset where a file already exists. Moves never overwrite: pick another destination or remove the other file first.",
     ),
@@ -401,6 +405,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "A file is valid but not in canonical form. The engine writes canonical files itself; wen fmt rewrites hand-edited ones.",
     ),
     (
+        "not_revertible",
+        "That change cannot be taken back on its own: it was undone already, was itself an undo or redo, or is older than a change made outside the engine or than the history kept. Undo or edit by hand.",
+    ),
+    (
         "nothing_found",
         "A search found nothing. Try fewer or shorter words.",
     ),
@@ -531,6 +539,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "retype_refused",
         "An engine type's layout cannot change while a world exists; only types declared by game code can. Rename the game's type if it clashes with an engine type.",
+    ),
+    (
+        "revert_conflict",
+        "Later changes touched what the change to take back changed; reverting it would undo part of theirs. Take those back first (newest first) or edit by hand.",
     ),
     (
         "rigid_body_without_collider",
