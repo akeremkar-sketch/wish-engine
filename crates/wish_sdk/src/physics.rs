@@ -127,7 +127,8 @@ pub fn decode_answer(bytes: &[u8]) -> Option<RayHit> {
 
 /// Casts a ray into the physics world: the first collider it hits within
 /// `max` meters (sensors are not hit). Sees the world as it was at the start
-/// of the tick.
+/// of the tick; a character controller's collider is where it stood before
+/// its last move.
 pub fn raycast(from: Vec3, dir: Vec3, max: f32) -> Option<RayHit> {
     cast(Ray {
         from,

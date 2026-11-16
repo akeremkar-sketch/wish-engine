@@ -244,3 +244,39 @@ Eşlik testi yeni araç için örnek ister (M4 kuralı); tanı kataloğu her yen
 - **Gözlem:** `describe_view` → `sprites` (kutu, katman) ve `particles` (kutu, canlı sayısı); kimlik tamponunda olmadıkları için kutuları konumlarından hesaplanır (görünürlük yüzdesi yok). `entity_get` `ParticleState`; `until: "ParticleState.alive == 20"`.
 - **Kanıtlar:** `wish_particles/tests/particles.rs` (5: elle hesaplanan sayılar, patlama/süre/sınır/durdurma, formül, düşmanca sayılar, sistem), `wish_render/tests/sprites.rs` (3 + altın `sprites.png`: resim, ters çevirme, katman, küpün gizlemesi, parçacıklar, kutular), `wish_control/tests/two_d_tools.rs` (2).
 - Yapılmadı: sprite'lara ışık/gölge, parçacık resmi (yalnız disk), kimlik tamponunda sprite (tıkla-seç), sprite karesi listesi (M10 adayı, tasarımda zaten).
+
+### WP9 — değerlendirme görevleri, örnek oyun, kapanış incelemesi
+
+- **Değerlendirme görevleri 13–25** (`crates/wish_evals/src/m6_tasks.rs`): düşen kutu, seken top, tetikleme bölgesi, oyun koduyla zıplayan karakter, döngüde müzik, masa lambası, animasyon oynatma, puan yazısı, başla düğmesi, oyun koduyla tıklama sayacı, 2D sprite sahnesi, kamp ateşi kıvılcımları, kameranın orta ışınının ilk çarptığı varlık. Denetimler motorun yaptığına bakar (oturum koşusu, `describe_view`, günlükler, gizli senaryo testleri). **`selftest` 25/25**; gerçek koşum kota harcar → kullanıcı en sonda.
+- **Örnek oyun `examples/hop`:** fizikli karakter (yürü/zıpla), sensör paralar (`CollisionStarted`), toplayınca parıltı (anında başlatılan `ParticleEmitter`), arayüzde puan ve kazanma yazısı (oyun kodu `text()`). Testi oyunu kazanır; CI'da derlenir, test edilir, kaydedilip bit düzeyinde tekrar oynatılır (`script_tools.rs`).
+- **Yolda bulunan düzeltmeler:** `Collider.restitution` belgesi "1 aynı yüksekliğe seker" diyordu ama Rapier iki sekmenin ortalamasını alıyordu → birleşim kuralı "en büyük" (test). `wen fmt`/`wen check` artık `--example` olmadan projenin kendi türleriyle (oyun kodu dahil) çalışıyor. Eski SDK paketi: bir derleme hatası motorun bildiği bir türü bulamıyorsa ipucu "SDK paketi motordan eski; `wen sdk`" diyor (geliştirme ortamındaki eski paket iki görevi düşürmüştü).
+- **Bağımsız kapanış incelemesi:** 13 bulgu (1 yüksek, 5 orta, 7 düşük); determinizm ve `WorldRef *mut` güvenliği temiz çıktı. Hepsi ele alındı:
+  1. (yüksek) Oyun kodu dünyanın metin tablosunu sınırsız büyütebiliyordu → dünya bütçesi (16 MiB, 1M metin; aşınca reddedilir ve günlüğe yazılır), çağrı başına sayaç gerçekten çağrı başına sıfırlanıyor (test: `game_code_cannot_fill_the_world_with_text`).
+  2. Oturum başında var olan temaslar için `CollisionStarted` gelmiyordu (hazırlık adımı olayları yutuyordu) → hazırlıkta toplanıp ilk adımda gönderiliyor (test).
+  3. Değen bir çarpıştırıcı kaldırılınca `CollisionEnded` gelmiyordu → bu tick kaldırılanların tutamacı → varlık eşlemesi (test).
+  4. Parçacık çiziminde gerçek sınır yoktu, oyun kodu aralık dışı değer yazabiliyordu → `max`/`lifetime`/`burst`/`rate` kırpılıyor, çizim bütçesi yayıcılar arasında paylaşılıyor (test).
+  5. `#alt` parçalı model başvurusunda ve adsız klipte (`#1`) animasyon zamanı sarmıyordu/yanlış çiziliyordu → ikisi de düzeltildi (testler).
+  6. `wen play` sonradan kullanılan resim/modeli yüklemiyordu → `Content::refresh` her oyun adımından sonra yenilerini yüklüyor (gerçek pencerede denendi).
+  7. Ses çözmede pratik sınır yoktu → çözülmüş örnek bütçesi (128 MiB), en çok 384 kHz, okumadan önce dosya boyutu denetimi; resimlerde de.
+  8. Karakterin çarpıştırıcısı sorgularda bir tick geride → **belgelendi** (`physics_query` ve SDK `raycast`); düzeltmesi Rapier geniş evresini elle güncellemeyi gerektirir, M7'de vitrin oyunu isterse.
+  9. Parçacık sayımında taşma → kırpma ve doygun aritmetik (4'ün testi kapsıyor).
+  10. Oyun sistemi `after = "physics"` döngü hatasıyla oturumu açamıyordu → derlemede `script_after_engine_system` ile açıklanarak reddediliyor (test).
+  11. Fizik ve ses durumu her tick kopyalanıyordu → `World::take_extension` (kopyasız; `wish_ecs` testli).
+  12. Tekrar kayıtları oyunun okuduğu dosyaların (klip uzunlukları, yazı tipleri) değiştiğini bilmiyordu → başlıkta `assets` parmak izi, değişince `replay_assets_changed` (test: `review_m6.rs`).
+  13. Resimden taşan sprite `rect`'i gerilmiş çiziliyordu → boyut resmin gösterilen parçasından.
+
+## 16. M6 sonucu
+
+**Tamamlandı — 16 Kasım 2026.** Bir doğrulama kullanıcı adımı bekliyor (değerlendirme koşumu).
+
+| Çıkış ölçütü | Kanıt | Sonuç |
+|---|---|---|
+| Her alt sistem kontrol düzleminden gözlemlenebilir ve başsız testli | Fizik: `physics_query`, `entity_get`, `colliders` görünümü, denetçi; ses: `logs_get kinds: ["audio"]`; ışık: `lights` görünümü, altın görüntüler; animasyon: `entity_get`, kimlik tamponuyla poz testi; arayüz: `describe_view interface`, `sim_step pointer/click`; parçacık/2D: `describe_view sprites/particles`, `ParticleState`. Her biri için başsız testler (WP bölümleri). | ✔ |
+| Fizikli sahne anlık görüntü/geri yükleme ve tekrar determinizm testlerini geçer | Kayıtlı Rapier hash'i Windows = Linux (CI); anlık görüntü → geri yükle → devam = kesintisiz; çatal; 600 tick tekrar (`physics_tools.rs`); Hop örneği kaydedilip tekrar oynatılıyor (CI). | ✔ |
+| Değerlendirme takımı 25 göreve çıkar; Sonnet 5.5 · medium ≥ %85 | 25 görev, **`selftest` 25/25**. Gerçek koşum abonelik kotası harcar. | ◐ **kullanıcı onayı bekliyor** (`wish-evals run`) |
+
+- **Sayılar:** 24 araç; 6 yeni crate (`wish_physics`, `wish_audio`, `wish_anim`, `wish_text`, `wish_ui`, `wish_particles`); 2 örnek oyun (`collect`, `hop`); 530+ test.
+- **Bekleyen kullanıcı adımları (M5'ten kalanlarla birlikte):** (1) `wish-evals run` — 25 görev, kota harcar, onay gerekir; (2) Windows Sandbox'ta `C:\wish-build\package\clean-test.wsb` (M5). Ses çıkışı kulakla da denenmeli (`wen play` ile Hop ya da bir ses kaynağı olan sahne).
+- **M7'ye devredilenler:** spot ışık gölgesi; oyun kodunun kemik konumunu okuması (elde kılıç); karakter çarpıştırıcısının sorgularda aynı tick'te güncellenmesi (bulgu 8); sprite'ların kimlik tamponunda olması (tıkla-seç) ve ışık alması; parçacık resmi; kamerasız (yalnız arayüz) sahne çizimi.
+- **M8'e:** metin girişi kutusu, arayüz kaydırma/kırpma, arayüz düzenleyicisi (M8a).
+- **M9'a:** GPU'da deri (skinning); Linux/macOS ses çıkışı; dünya metin tablosunda kullanılmayan metinlerin toplanması (bugün bütçeyle sınırlı).

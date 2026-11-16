@@ -17,7 +17,7 @@ use crate::workspace::Workspace;
 pub(crate) const PHYSICS_QUERY: Tool = Tool {
     name: "physics_query",
     title: "Ask the physics world",
-    description: "Asks the physics world one question, in a play session (the world as of its last step) or in a scene file (colliders where the scene puts them). Give exactly one of: ray {from: [x,y,z], dir: [x,y,z], max (m, default 100), ignore: id} → the first collider hit, with point, normal and distance (sensors are not hit); overlap {sphere: radius | box: [half x, half y, half z], at: [x,y,z]} → every entity whose collider overlaps (sensors too); touching: id → the entities in contact with it or overlapping it. mask limits hits to colliders whose layer has one of its bits. Use it to check what is under a character, whether a path is clear, or why something does not fall.",
+    description: "Asks the physics world one question, in a play session (the world as of its last step) or in a scene file (colliders where the scene puts them). Give exactly one of: ray {from: [x,y,z], dir: [x,y,z], max (m, default 100), ignore: id} → the first collider hit, with point, normal and distance (sensors are not hit); overlap {sphere: radius | box: [half x, half y, half z], at: [x,y,z]} → every entity whose collider overlaps (sensors too); touching: id → the entities in contact with it or overlapping it. mask limits hits to colliders whose layer has one of its bits. Use it to check what is under a character, whether a path is clear, or why something does not fall. A character controller's collider is found where it stood before its last move (physics places characters after its step).",
     params: &[
         Param::optional(
             "scene",

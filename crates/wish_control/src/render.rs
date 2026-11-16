@@ -166,15 +166,27 @@ pub fn load_ui_pictures(
         if known.get(path) == Some(&stamp) && renderer.has_ui_picture(path) {
             continue;
         }
-        let loaded = std::fs::read(&file)
-            .map_err(|error| {
+        // Larger than any picture may be: not read at all.
+        let too_big = stamp.0 > 4 * 4096 * 4096 + (1 << 20);
+        let loaded = (if too_big {
+            Err(Diagnostic::error(
+                "image_invalid",
+                format!(
+                    "it is {} bytes, more than a 4096x4096 picture needs.",
+                    stamp.0
+                ),
+                "Use a PNG of at most 4096x4096 pixels.",
+            ))
+        } else {
+            std::fs::read(&file).map_err(|error| {
                 Diagnostic::error(
                     "file_unreadable",
                     format!("could not read it ({error})."),
                     "Check the path: asset_list shows the project's pictures.",
                 )
             })
-            .and_then(|bytes| wish_import::load_png(&bytes, path));
+        })
+        .and_then(|bytes| wish_import::load_png(&bytes, path));
         match loaded {
             Ok(texture) => {
                 renderer.set_ui_picture(

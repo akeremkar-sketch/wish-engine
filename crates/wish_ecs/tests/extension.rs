@@ -20,6 +20,12 @@ fn extensions_are_stored_changed_and_removed_by_type() {
     assert_eq!(world.extension::<Cache>().unwrap().steps, [1, 2]);
     assert!(world.remove_extension::<Cache>());
     assert!(!world.remove_extension::<Cache>());
+    world.insert_extension(Cache { steps: vec![7] });
+    assert_eq!(
+        world.take_extension::<Cache>().map(|c| c.steps),
+        Some(vec![7])
+    );
+    assert!(world.take_extension::<Cache>().is_none());
 }
 
 #[test]

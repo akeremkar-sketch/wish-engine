@@ -27,7 +27,7 @@ pub mod clip;
 #[cfg(feature = "output")]
 pub mod output;
 
-pub use clip::{Clip, decode, sine_wav};
+pub use clip::{Clip, MAX_DECODED_SAMPLES, MAX_FILE_BYTES, decode, sine_wav};
 
 /// The name of the audio system in an app.
 pub const SYSTEM: &str = "audio";
@@ -209,8 +209,7 @@ fn mix(
 
 /// One audio tick for `world`: the system [`SYSTEM`].
 pub fn step(world: &mut World, since: ChangeTick) -> Result<()> {
-    let mut state = world.extension::<AudioState>().cloned().unwrap_or_default();
-    world.remove_extension::<AudioState>();
+    let mut state = world.take_extension::<AudioState>().unwrap_or_default();
     let result = run(world, &mut state, since);
     world.insert_extension(state);
     result

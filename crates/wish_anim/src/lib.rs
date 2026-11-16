@@ -76,11 +76,13 @@ pub fn step(world: &mut World) -> Result<()> {
         if !player.playing {
             continue;
         }
+        // Clip lengths are known per model file: a `#sub` part of the
+        // reference names something inside it.
         let model = world
             .get::<Model>(entity)
             .and_then(|m| world.text(m.asset.text()))
-            .unwrap_or_default()
-            .to_owned();
+            .unwrap_or_default();
+        let model = model.split('#').next().unwrap_or(model).to_owned();
         let clip = world.text(player.clip).unwrap_or_default().to_owned();
         let speed = if player.speed.is_finite() {
             player.speed

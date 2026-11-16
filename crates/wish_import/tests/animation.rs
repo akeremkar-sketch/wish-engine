@@ -88,3 +88,14 @@ fn broken_animation_data_is_refused() {
     assert!(error.code == "gltf_invalid", "{error:?}");
     assert!(!error.hint.is_empty());
 }
+
+#[test]
+fn clips_are_found_by_name_or_by_number() {
+    let model = bar();
+    assert_eq!(model.animation_index(""), Some(0));
+    assert_eq!(model.animation_index("still"), Some(1));
+    // The name the tools give clips without one in the file.
+    assert_eq!(model.animation_index("#1"), Some(1));
+    assert_eq!(model.animation_index("#7"), None);
+    assert_eq!(model.animation_index("missing"), None);
+}

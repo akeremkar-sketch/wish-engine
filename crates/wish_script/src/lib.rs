@@ -27,7 +27,9 @@ pub use game::{
     ColumnSpec, GameModule, Manifest, ModuleType, ParamSpec, Role, ScriptLog, ScriptRuntime,
     SystemSpec,
 };
-pub use host::HostServices;
+pub use host::{
+    HostServices, MAX_NEW_TEXTS_PER_CALL, MAX_TEXT_BYTES, MAX_WORLD_TEXT_BYTES, MAX_WORLD_TEXTS,
+};
 pub use module::{CallReport, GuestLog, ScriptModule};
 
 /// The ABI version this host speaks (design note §3). A module reports its

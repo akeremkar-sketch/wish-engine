@@ -208,6 +208,7 @@ impl Live {
         state.memory_denied = None;
         state.logs.clear();
         state.logs_dropped = 0;
+        state.texts_added = 0;
         state.rng = rng;
         let fuel = self.fuel;
         let name = self.name.clone();

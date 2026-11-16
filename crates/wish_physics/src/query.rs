@@ -56,6 +56,9 @@ pub fn query_state(world: &World) -> Result<Cow<'_, PhysicsState>> {
     }
     // Collision detection only: places the colliders in the query tree and
     // finds contacts; nothing moves.
+    // The contacts found here are reported by the first step (Rapier reports
+    // a contact once, when it is first found).
+    let collected = crate::Collected::default();
     let PhysicsState {
         islands,
         broad,
@@ -64,7 +67,17 @@ pub fn query_state(world: &World) -> Result<Cow<'_, PhysicsState>> {
         colliders,
         ..
     } = &mut state;
-    rp::CollisionPipeline::new().step(0.002, islands, broad, narrow, bodies, colliders, &(), &());
+    rp::CollisionPipeline::new().step(
+        0.002,
+        islands,
+        broad,
+        narrow,
+        bodies,
+        colliders,
+        &(),
+        &collected,
+    );
+    state.pending = collected.events.into_inner().unwrap_or_default();
     Ok(Cow::Owned(state))
 }
 

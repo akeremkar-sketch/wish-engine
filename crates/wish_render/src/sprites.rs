@@ -38,8 +38,12 @@ fn sprite_quad(view: &SpriteView, pictures: &BTreeMap<String, UiPicture>) -> Opt
         .rect
         .map(|v| if v.is_finite() { v.max(0.0) } else { 0.0 });
     let (width, height) = match picture {
-        Some(_) if rw > 0.0 && rh > 0.0 => (rw, rh),
-        Some(picture) => (picture.width as f32, picture.height as f32),
+        // The part of the picture shown (a rect reaching past the picture
+        // is cut to it, and so is the sprite: no stretched edge pixels).
+        Some(picture) => {
+            let (_, _, w, h) = source_rect(sprite.rect, picture);
+            (w as f32, h as f32)
+        }
         None if rw > 0.0 && rh > 0.0 => (rw, rh),
         None => (100.0, 100.0),
     };
@@ -178,10 +182,11 @@ pub(crate) fn build(
     let up = to_world.transform_vector3(Vec3::Y).normalize_or(Vec3::Y);
     let mut particles = 0usize;
     for view in &scene.emitters {
-        for particle in wish_particles::particles(&view.emitter, &view.world, scene.time) {
-            if particles >= MAX_PARTICLES {
-                break;
-            }
+        let budget = MAX_PARTICLES.saturating_sub(particles);
+        if budget == 0 {
+            break;
+        }
+        for particle in wish_particles::particles(&view.emitter, &view.world, scene.time, budget) {
             if particle.size <= 0.0 || !particle.position.is_finite() {
                 continue;
             }
@@ -325,7 +330,9 @@ pub(crate) fn elements(
         });
     }
     for view in &scene.emitters {
-        let particles = wish_particles::particles(&view.emitter, &view.world, scene.time);
+        let alive = wish_particles::count(&view.emitter, scene.time);
+        let particles =
+            wish_particles::particles(&view.emitter, &view.world, scene.time, MAX_PARTICLES);
         let points: Vec<Vec3> = particles
             .iter()
             .flat_map(|p| {
@@ -336,7 +343,7 @@ pub(crate) fn elements(
         found.push(OverlayElement {
             entity: view.entity,
             bounding_box: picture_box(&points, &view_proj, width, height),
-            particles: Some(u32::try_from(particles.len()).unwrap_or(u32::MAX)),
+            particles: Some(alive),
             layer: None,
         });
     }

@@ -506,3 +506,33 @@ fn the_colliders_and_lights_views_come_through_the_tools() {
     assert_eq!(wrong["error"]["code"], "invalid_parameter", "{wrong}");
     assert!(wrong.to_string().contains("colliders"), "{wrong}");
 }
+
+/// A game system ordered after an engine system is refused with an
+/// explanation, not left to a cycle at session start (M6 closing review).
+#[test]
+fn game_code_cannot_ask_to_run_after_physics() {
+    let (dir, mut ws) = project("after-physics");
+    ws.set_toolchain(toolchain().clone());
+    std::fs::write(
+        dir.join(SCRIPTS_ENTRY),
+        r#"
+use wish_sdk::prelude::*;
+
+#[system(after = "physics")]
+fn late(_time: Res<Time>) {}
+
+wish_sdk::export! {
+    systems: [late],
+}
+"#,
+    )
+    .unwrap();
+    let built = ws.call("script_build", &json!({}), &parse_actor("agent"));
+    let error = if built["ok"] == true {
+        built["diagnostics"][0].clone()
+    } else {
+        built["error"].clone()
+    };
+    assert_eq!(error["code"], "script_after_engine_system", "{built}");
+    assert!(error["hint"].as_str().unwrap().contains("next tick"));
+}

@@ -53,8 +53,10 @@ impl Workspace {
             let seconds = match cached {
                 Some(known) if known.bytes == bytes && known.modified == modified => known.seconds,
                 _ => {
-                    let seconds = std::fs::read(&file)
-                        .ok()
+                    // Not read at all when larger than any clip may be.
+                    let seconds = (bytes <= wish_audio::MAX_FILE_BYTES as u64)
+                        .then(|| std::fs::read(&file).ok())
+                        .flatten()
                         .and_then(|data| wish_audio::decode(&path, &data).ok())
                         .map(|clip| clip.seconds());
                     self.sessions.clips.insert(

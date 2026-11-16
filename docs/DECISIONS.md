@@ -23,7 +23,7 @@ Bir kararı değiştirmek serbesttir; sessizce çiğnemek değildir. Değişikli
 | 012 | Render | wgpu, render grafiği, önce taban çizgisi, sonra katmanlı gelişmiş özellikler | Kabul |
 | 013 | Gölgelendiriciler | WGSL + WESL modül sistemi | Geçici |
 | 014 | Fizik | Rapier 3D, kendi bileşen API'mizin arkasında | Kabul |
-| 015 | Ses | Kira + gözlemlenebilir ses olay günlüğü | Kabul |
+| 015 | Ses | cpal + kendi karıştırıcımız (Kira bırakıldı, M6) + gözlemlenebilir ses olay günlüğü | Kabul (güncellendi) |
 | 016 | Girdi | Metin tanımlı eylem haritaları, enjeksiyon ve kayıt | Kabul |
 | 017 | Test | Senaryo testleri, altın görüntüler, hash doğrulama, ajan değerlendirmeleri | Kabul |
 | 018 | Arayüz | **Hibrit:** yapay zekâ kokpiti + tam elle düzenleme, ikisi de birinci sınıf; motor yapay zekâsız da eksiksiz çalışır | Kabul (arayüz teknolojisi Geçici) |
@@ -214,9 +214,9 @@ Taslak araç listesi: [MCP_API.md](MCP_API.md).
 
 **Tetikleyici.** Karakter denetleyicisi ya da araç fiziği ihtiyaçları Rapier'i aşarsa Jolt yeniden değerlendirilir; sarmalayıcı sayesinde oyun kodu etkilenmez.
 
-## ADR-015 — Ses: Kira
+## ADR-015 — Ses: cpal + kendi karıştırıcımız
 
-**Karar.** `kira`. Ajan sesi duyamayacağı için **ses olay günlüğü** tutulur ("tick 412: `jump.ogg` çalındı, ses düzeyi 0.8, konum …") ve kontrol düzleminden sorgulanır. Ses çıkışı determinizm sınırının dışındadır; ses *olayları* içindedir.
+**Karar.** Çıkış `cpal` (Apache-2.0) ve `wish_audio`'nun kendi küçük karıştırıcısı; çözücüler `hound` (WAV) ve `lewton` (Ogg Vorbis). **Güncelleme (M6 WP4, 16 Kasım 2026):** ilk karar `kira` idi; Kira'nın bağımlılıkları (`symphonia`, `triple_buffer`) MPL-2.0 olduğu için lisans kuralına (yalnızca MIT/Apache/BSD benzeri) uymadı ve bırakıldı. Ajan sesi duyamayacağı için **ses olay günlüğü** tutulur ("tick 412: `jump.ogg` çalındı, ses düzeyi 0.8, konum …") ve kontrol düzleminden sorgulanır. Ses çıkışı determinizm sınırının dışındadır; ses *olayları* içindedir.
 
 ## ADR-016 — Girdi: eylem haritaları
 

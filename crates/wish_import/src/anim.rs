@@ -245,14 +245,23 @@ impl Channel {
 }
 
 impl Model {
-    /// The index of the clip called `name`; the first clip for an empty name.
+    /// The index of the clip called `name`: the first clip for an empty
+    /// name; `#<n>` is the n-th clip (0-based), how clips without a name in
+    /// the file are called.
     pub fn animation_index(&self, name: &str) -> Option<usize> {
         if name.is_empty() {
             return (!self.animations.is_empty()).then_some(0);
         }
-        self.animations
+        if let Some(found) = self
+            .animations
             .iter()
             .position(|a| a.name.as_deref() == Some(name))
+        {
+            return Some(found);
+        }
+        name.strip_prefix('#')
+            .and_then(|n| n.parse::<usize>().ok())
+            .filter(|n| *n < self.animations.len())
     }
 
     /// Every node's matrix in the model's space with clip `animation` at

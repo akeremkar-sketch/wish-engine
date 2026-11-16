@@ -37,6 +37,10 @@ struct Game {
     owed: f64,
     /// What the game reported while it ran (a system that failed).
     messages: Vec<String>,
+    /// The pictures loaded so far, and when their files were read.
+    pictures: std::collections::BTreeMap<String, wish_control::render::Stamp>,
+    /// What could not be loaded, said once.
+    reported: BTreeSet<String>,
 }
 
 impl Game {
@@ -121,7 +125,54 @@ impl Content for Game {
         }
         let scene = self.scene_now()?;
         warnings.extend(load_models(&scene, &self.root, gpu, renderer));
+        warnings.extend(wish_control::render::load_ui_pictures(
+            renderer,
+            &scene,
+            &self.root,
+            &mut self.pictures,
+        ));
         Ok(Loaded { scene, warnings })
+    }
+
+    fn refresh(
+        &mut self,
+        gpu: &Gpu,
+        renderer: &mut Renderer,
+        scene: &RenderScene,
+    ) -> Vec<Diagnostic> {
+        // Models the game started using since the last picture: only the
+        // new ones are read (the rest are loaded already).
+        let mut fresh: Vec<&str> = scene
+            .draws
+            .iter()
+            .filter_map(|draw| draw.model_path.as_deref())
+            .map(|path| path.split('#').next().unwrap_or(path))
+            .filter(|path| !renderer.has_model(path) && !self.reported.contains(*path))
+            .collect();
+        fresh.sort_unstable();
+        fresh.dedup();
+        let mut problems = Vec::new();
+        for path in fresh {
+            if wish_core::asset::validate_asset_ref(path).is_err() {
+                self.reported.insert(path.to_owned());
+                continue;
+            }
+            let loaded = wish_import::load_model_file(&self.root.join(path), path)
+                .and_then(|model| renderer.upload_model(gpu, path, &model));
+            if let Err(problem) = loaded {
+                self.reported.insert(path.to_owned());
+                problems.push(problem);
+            }
+        }
+        let pictures =
+            wish_control::render::load_ui_pictures(renderer, scene, &self.root, &mut self.pictures);
+        for problem in pictures {
+            let key = problem.location.file.clone().unwrap_or_default();
+            if self.reported.insert(key) {
+                problems.push(problem);
+            }
+        }
+        problems
     }
 
     fn name_of(&mut self, entity: Entity) -> String {
@@ -198,6 +249,8 @@ pub fn play(args: &PlayArgs, as_json: bool) -> Result<String> {
         session: None,
         owed: 0.0,
         messages: Vec::new(),
+        pictures: std::collections::BTreeMap::new(),
+        reported: BTreeSet::new(),
     };
     let report = wish_window::run(
         ViewerOptions {

@@ -39,26 +39,52 @@ fn finite(value: f32, otherwise: f32) -> f32 {
     if value.is_finite() { value } else { otherwise }
 }
 
+/// The most particles one emitter has alive (its `max` is cut to it).
+pub const MAX_ALIVE: u32 = 100_000;
+/// The longest lifetime, in seconds.
+const MAX_LIFETIME: f32 = 1000.0;
+/// The largest burst.
+const MAX_BURST: u32 = 10_000;
+/// The highest rate, per second.
+const MAX_RATE: f32 = 10_000.0;
+
+/// The emitter's numbers made safe: written by game code, they are not
+/// limited by the schema's ranges (M6 closing review).
+fn sane(emitter: &ParticleEmitter) -> ParticleEmitter {
+    ParticleEmitter {
+        lifetime: finite(emitter.lifetime, 1.0).clamp(0.001, MAX_LIFETIME),
+        burst: emitter.burst.min(MAX_BURST),
+        rate: finite(emitter.rate, 0.0).clamp(0.0, MAX_RATE),
+        duration: finite(emitter.duration, 0.0).clamp(0.0, 1.0e6),
+        start_time: finite(emitter.start_time, 0.0),
+        max: emitter.max.min(MAX_ALIVE),
+        ..*emitter
+    }
+}
+
 /// The numbers of the particles of `emitter` alive at simulation time `now`
 /// (seconds), oldest first, at most `max`.
 pub fn alive(emitter: &ParticleEmitter, now: f64) -> std::ops::Range<u64> {
-    if !emitter.playing {
+    let emitter = &sane(emitter);
+    if !emitter.playing || !now.is_finite() {
         return 0..0;
     }
-    let since = now - f64::from(finite(emitter.start_time, 0.0));
-    let lifetime = f64::from(finite(emitter.lifetime, 1.0).max(0.001));
+    // Ages beyond a year are as good as for ever, and keep the numbers
+    // below far from overflowing.
+    let since = (now - f64::from(emitter.start_time)).min(3.2e7);
+    let lifetime = f64::from(emitter.lifetime);
     if since < 0.0 {
         return 0..0;
     }
-    let burst = u64::from(emitter.burst.min(100_000));
+    let burst = u64::from(emitter.burst);
     // Burst particles are born at 0 and alive while younger than lifetime.
     let burst_alive = if since < lifetime {
         0..burst
     } else {
         burst..burst
     };
-    let rate = f64::from(finite(emitter.rate, 0.0).clamp(0.0, 10_000.0));
-    let duration = f64::from(finite(emitter.duration, 0.0).max(0.0));
+    let rate = f64::from(emitter.rate);
+    let duration = f64::from(emitter.duration);
     let mut first = burst_alive.start;
     let mut end = burst_alive.end;
     if rate > 0.0 {
@@ -78,8 +104,8 @@ pub fn alive(emitter: &ParticleEmitter, now: f64) -> std::ops::Range<u64> {
             last_exclusive = last_exclusive.min((duration * rate).ceil());
         }
         if last_exclusive > oldest {
-            let from = burst + oldest as u64;
-            let to = burst + last_exclusive as u64;
+            let from = burst.saturating_add(oldest as u64);
+            let to = burst.saturating_add(last_exclusive as u64);
             if burst_alive.is_empty() {
                 first = from;
             }
@@ -87,10 +113,10 @@ pub fn alive(emitter: &ParticleEmitter, now: f64) -> std::ops::Range<u64> {
         }
     }
     let max = u64::from(emitter.max);
-    if end - first > max {
+    if end.saturating_sub(first) > max {
         first = end - max;
     }
-    first..end
+    first.min(end)..end
 }
 
 /// How many particles of `emitter` are alive at time `now`.
@@ -131,6 +157,7 @@ fn unit(seed: u32, number: u64, salt: u64) -> f32 {
 /// When particle `number` of `emitter` was born, in seconds after it
 /// started.
 fn born(emitter: &ParticleEmitter, number: u64) -> f64 {
+    let emitter = &sane(emitter);
     let burst = u64::from(emitter.burst);
     if number < burst {
         0.0
@@ -144,10 +171,17 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }
 
-/// Every particle of `emitter` alive at time `now`, for an emitter placed
-/// by `world` (its `GlobalTransform`).
-pub fn particles(emitter: &ParticleEmitter, world: &Mat4, now: f64) -> Vec<Particle> {
-    let since = now - f64::from(finite(emitter.start_time, 0.0));
+/// The particles of `emitter` alive at time `now`, for an emitter placed by
+/// `world` (its `GlobalTransform`): the newest `budget` of them at most
+/// (drawing shares a budget between emitters).
+pub fn particles(
+    emitter: &ParticleEmitter,
+    world: &Mat4,
+    now: f64,
+    budget: usize,
+) -> Vec<Particle> {
+    let emitter = &sane(emitter);
+    let since = now - f64::from(emitter.start_time);
     let lifetime = finite(emitter.lifetime, 1.0).max(0.001);
     let spread = finite(emitter.spread_deg, 0.0)
         .clamp(0.0, 180.0)
@@ -165,7 +199,9 @@ pub fn particles(emitter: &ParticleEmitter, world: &Mat4, now: f64) -> Vec<Parti
     let other = up.cross(side);
     let start = emitter.color_start.to_array();
     let end = emitter.color_end.to_array();
-    alive(emitter, now)
+    let range = alive(emitter, now);
+    let skip = (range.end - range.start).saturating_sub(budget as u64);
+    (range.start + skip..range.end)
         .map(|number| {
             let age = (since - born(emitter, number)).max(0.0) as f32;
             let t = (age / lifetime).clamp(0.0, 1.0);

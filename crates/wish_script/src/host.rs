@@ -59,6 +59,14 @@ pub(crate) struct QueryContext {
 pub const MAX_TEXT_BYTES: usize = 4096;
 /// The most new texts one call may add to the world.
 pub const MAX_NEW_TEXTS_PER_CALL: u32 = 1024;
+/// The most the world's text table may hold, in bytes, for game code to
+/// add to it: texts are kept for the life of the world (snapshots copy
+/// them, the hash reads them), so a game making a new text every tick must
+/// not grow it without end (M6 closing review). Beyond it new texts are
+/// refused; texts the world already has are still found.
+pub const MAX_WORLD_TEXT_BYTES: usize = 16 * 1024 * 1024;
+/// The most distinct texts the world may hold for game code to add one.
+pub const MAX_WORLD_TEXTS: usize = 1_000_000;
 /// The fuel adding or reading a text costs, plus one per byte.
 const TEXT_FUEL: u64 = 2_000;
 
@@ -294,7 +302,18 @@ pub(crate) fn link(linker: &mut wasmtime::Linker<HostState>) -> wasmtime::Result
             #[allow(unsafe_code)]
             let world = unsafe { &mut *context.world.0 };
             let known = world.texts().find(&text);
-            if known.is_none() && state.texts_added >= MAX_NEW_TEXTS_PER_CALL {
+            let full = world.texts().bytes() + text.len() > MAX_WORLD_TEXT_BYTES
+                || world.texts().len() >= MAX_WORLD_TEXTS;
+            if known.is_none() && (state.texts_added >= MAX_NEW_TEXTS_PER_CALL || full) {
+                if full && state.logs.len() < MAX_LOGS_PER_CALL {
+                    state.logs.push(GuestLog {
+                        severity: Severity::Warning,
+                        message: format!(
+                            "The world holds as much text as game code may add ({} MiB, {MAX_WORLD_TEXTS} texts); a new text was refused. Reuse texts (a fixed set of messages) rather than making a new one every tick.",
+                            MAX_WORLD_TEXT_BYTES / (1024 * 1024)
+                        ),
+                    });
+                }
                 return -1;
             }
             match known.map_or_else(|| world.intern(&text), Ok) {

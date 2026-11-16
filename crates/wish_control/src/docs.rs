@@ -453,6 +453,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     ),
     ("project_not_found", "The project folder does not exist."),
     (
+        "replay_assets_changed",
+        "Project files the simulation reads (sound and animation clip lengths, fonts) changed since the replay was recorded, so the run may differ. Re-record the replay if the change was intended.",
+    ),
+    (
         "replay_code_changed",
         "The game code is not the code the replay was recorded with. The replay still plays: if it passes, the change did not alter the run.",
     ),
@@ -523,6 +527,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "script_abi_mismatch",
         "The game module was built for a different game ABI version than this engine speaks. Rebuild it with this engine's SDK (script_build).",
+    ),
+    (
+        "script_after_engine_system",
+        "A game system asks to run after one of the engine's systems (physics, animation, ui, particles, audio, transform_propagation). Those always run after every game system; remove the after and read their results (positions, collisions, clicks) the next tick.",
     ),
     (
         "script_bad_manifest",

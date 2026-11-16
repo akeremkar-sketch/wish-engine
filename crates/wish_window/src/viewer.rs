@@ -76,6 +76,18 @@ pub trait Content {
     ) -> Option<Result<RenderScene>> {
         None
     }
+
+    /// For live content: after `play`, uploads what the new `scene` needs
+    /// that the renderer does not have yet (a model or picture game code
+    /// started using); returns what could not be loaded.
+    fn refresh(
+        &mut self,
+        _gpu: &Gpu,
+        _renderer: &mut Renderer,
+        _scene: &RenderScene,
+    ) -> Vec<Diagnostic> {
+        Vec::new()
+    }
 }
 
 /// The name `input.json` uses for a keyboard key, if it has one.
@@ -637,6 +649,9 @@ impl ApplicationHandler for App<'_> {
             });
             match self.content.play(&self.held, pointing, f64::from(seconds)) {
                 Some(Ok(scene)) => {
+                    for problem in self.content.refresh(&self.gpu, &mut self.renderer, &scene) {
+                        self.say(&format!("{problem}"));
+                    }
                     self.scene = scene;
                     self.dirty = true;
                 }

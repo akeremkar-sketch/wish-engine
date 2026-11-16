@@ -21,6 +21,8 @@ pub(crate) struct KnownFont {
     bytes: u64,
     modified: Option<SystemTime>,
     font: std::result::Result<Font, Diagnostic>,
+    /// The hash of the file's content (replays notice a changed font).
+    content: u64,
 }
 
 /// The fonts read so far (part of the sessions).
@@ -36,11 +38,19 @@ impl Workspace {
     /// The project's fonts (`.ttf` and `.otf` files), and what is wrong with
     /// the ones that cannot be used (`font_invalid`).
     pub(crate) fn fonts(&mut self) -> (Fonts, Vec<Diagnostic>) {
+        let (fonts, problems, _) = self.fonts_and_fingerprint();
+        (fonts, problems)
+    }
+
+    /// The project's fonts, the problems with them, and a fingerprint of
+    /// their content (what layout depends on).
+    pub(crate) fn fonts_and_fingerprint(&mut self) -> (Fonts, Vec<Diagnostic>, u64) {
+        let mut fingerprint = wish_core::StableHasher::new();
         let root = self.root().to_path_buf();
         let mut fonts = Fonts::default();
         let mut problems = Vec::new();
         let Ok(index) = wish_asset::AssetIndex::scan(&root) else {
-            return (fonts, problems);
+            return (fonts, problems, 0);
         };
         let paths: Vec<String> = index
             .paths()
@@ -60,6 +70,7 @@ impl Workspace {
                 .get(&path)
                 .is_some_and(|known| known.bytes == bytes && known.modified == modified);
             if !fresh {
+                let mut content = 0;
                 let font = if bytes > wish_text::MAX_FONT_BYTES as u64 {
                     Font::parse(vec![0; wish_text::MAX_FONT_BYTES + 1], &path)
                 } else {
@@ -72,7 +83,10 @@ impl Workspace {
                             )
                             .at_file(&path)
                         })
-                        .and_then(|data| Font::parse(data, &path))
+                        .and_then(|data| {
+                            content = (wish_core::hash_bytes(&data).as_u128() >> 64) as u64;
+                            Font::parse(data, &path)
+                        })
                 };
                 self.sessions.fonts.insert(
                     path.clone(),
@@ -80,8 +94,13 @@ impl Workspace {
                         bytes,
                         modified,
                         font,
+                        content,
                     },
                 );
+            }
+            if let Some(known) = self.sessions.fonts.get(&path) {
+                fingerprint.write_str(&path);
+                fingerprint.write_u64(known.content);
             }
             match self.sessions.fonts.get(&path).map(|known| &known.font) {
                 Some(Ok(font)) => fonts.insert(&path, font.clone()),
@@ -89,7 +108,8 @@ impl Workspace {
                 None => {}
             }
         }
-        (fonts, problems)
+        let fingerprint = (fingerprint.finish().as_u128() >> 64) as u64;
+        (fonts, problems, fingerprint)
     }
 }
 

@@ -106,16 +106,18 @@ pub mod prelude {
 
 /// The handle of `text`, to write into a field of type `Text` (such as
 /// `UiText.text`): `text(&format!("Score: {score}"))`. The engine keeps
-/// each distinct text once. A text longer than 4096 bytes, or more than 1024
-/// new texts in one call, is refused: the result is the empty text and a
-/// warning is logged.
+/// each distinct text once, for the life of the world, so reuse texts
+/// rather than make a new one every tick. A text longer than 4096 bytes,
+/// more than 1024 new texts in one system call, or a world already holding
+/// 16 MiB of text, is refused: the result is the empty text and a warning
+/// is logged.
 pub fn text(text: &str) -> Text {
     match abi::text_intern(text) {
         Some(index) => Text::from_index(index),
         None => {
             abi::log(
                 1,
-                "a text was refused (longer than 4096 bytes, or more than 1024 new texts in one tick); the empty text is used",
+                "a text was refused (longer than 4096 bytes, more than 1024 new texts in one system call, or the world's text is full); the empty text is used",
             );
             Text::EMPTY
         }

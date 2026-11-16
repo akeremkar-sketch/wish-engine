@@ -45,6 +45,9 @@ pub(crate) struct Session {
     pub input: wish_input::InputMap,
     /// What the session is recording for a replay, if anything.
     pub recording: Option<Trail>,
+    /// A fingerprint of the project files the simulation read when the
+    /// session started (sound and animation clip lengths, fonts).
+    pub assets: String,
 }
 
 /// What a replay needs of a session that was recorded from tick 0: what the
@@ -61,6 +64,8 @@ pub(crate) struct Trail {
     pub code: Option<String>,
     /// The hash of the scene file when recording started.
     pub scene_hash: String,
+    /// The session's asset fingerprint when recording started.
+    pub assets: String,
 }
 
 impl Trail {
@@ -209,7 +214,7 @@ fn build_app(
     workspace: &mut Workspace,
     scene: &str,
     seed: u64,
-) -> Result<(App, Option<wish_script::ScriptRuntime>)> {
+) -> Result<(App, Option<wish_script::ScriptRuntime>, String)> {
     let example = workspace.example().map(str::to_owned);
     let mut app = App::new(AppConfig {
         seed,
@@ -231,13 +236,29 @@ fn build_app(
     // Physics knows the scene before the first tick, so that questions
     // asked during it (game code's ray casts) see it.
     wish_physics::prepare(app.world_mut())?;
-    wish_audio::install(app.world_mut(), workspace.audio_clips());
-    wish_anim::install(app.world_mut(), workspace.animation_clips());
+    let clips = workspace.audio_clips();
+    let animations = workspace.animation_clips();
     // The interface is laid out before the first tick, so that a picture
     // or a click at tick 0 finds it.
-    let (fonts, _) = workspace.fonts();
+    let (fonts, _, font_print) = workspace.fonts_and_fingerprint();
+    // What the simulation takes from project files, for replays to notice
+    // when it changed (M6 closing review).
+    let mut print = wish_core::StableHasher::new();
+    for (path, seconds) in &clips {
+        print.write_str(path);
+        print.write_u32(seconds.to_bits());
+    }
+    for ((model, clip), seconds) in &animations {
+        print.write_str(model);
+        print.write_str(clip);
+        print.write_u32(seconds.to_bits());
+    }
+    print.write_u64(font_print);
+    let assets = format!("{:016x}", (print.finish().as_u128() >> 64) as u64);
+    wish_audio::install(app.world_mut(), clips);
+    wish_anim::install(app.world_mut(), animations);
     crate::ui::prepare(app.world_mut(), fonts)?;
-    Ok((app, runtime))
+    Ok((app, runtime, assets))
 }
 
 /// What a run of ticks did.
@@ -563,7 +584,7 @@ impl Workspace {
                 "Close one with sim_stop first.",
             ));
         }
-        let (app, script) = build_app(self, scene, seed)?;
+        let (app, script, assets) = build_app(self, scene, seed)?;
         let input = self.input_map()?;
         let id = self.sessions.new_id();
         let tick = app.tick();
@@ -578,6 +599,7 @@ impl Workspace {
                 script,
                 input,
                 recording: None,
+                assets,
             },
         );
         let started = Diagnostic::info(

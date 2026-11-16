@@ -21,6 +21,8 @@ pub trait Extension: Any + Send + Sync {
     fn as_any(&self) -> &dyn Any;
     /// For downcasting.
     fn as_any_mut(&mut self) -> &mut dyn Any;
+    /// For taking it out by value.
+    fn into_any(self: Box<Self>) -> Box<dyn Any>;
 }
 
 impl<T: Any + Clone + Send + Sync> Extension for T {
@@ -33,6 +35,10 @@ impl<T: Any + Clone + Send + Sync> Extension for T {
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
         self
     }
 }
@@ -80,5 +86,10 @@ impl Extensions {
 
     pub(crate) fn remove<T: Extension>(&mut self) -> bool {
         self.items.remove(&TypeId::of::<T>()).is_some()
+    }
+
+    pub(crate) fn take<T: Extension>(&mut self) -> Option<T> {
+        let item = self.items.remove(&TypeId::of::<T>())?;
+        item.into_any().downcast::<T>().ok().map(|boxed| *boxed)
     }
 }

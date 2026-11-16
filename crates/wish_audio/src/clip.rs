@@ -62,15 +62,26 @@ pub fn decode(path: &str, bytes: &[u8]) -> Result<Clip> {
     Ok(clip)
 }
 
+/// The most samples a decoded clip may hold (all channels): 128 MiB of
+/// `f32`, about 12 minutes of 48 kHz stereo. A small file can decode to far
+/// more (M6 closing review).
+pub const MAX_DECODED_SAMPLES: usize = 32 * 1024 * 1024;
+/// The highest sample rate accepted.
+const MAX_RATE: u32 = 384_000;
+
 fn wav(path: &str, bytes: &[u8]) -> Result<Clip> {
     let reader = hound::WavReader::new(Cursor::new(bytes)).map_err(|e| bad(path, e))?;
     let spec = reader.spec();
-    if spec.channels == 0 || spec.channels > 8 || spec.sample_rate == 0 {
+    if spec.channels == 0
+        || spec.channels > 8
+        || spec.sample_rate == 0
+        || spec.sample_rate > MAX_RATE
+    {
         return Err(bad(path, "its format is not one games use"));
     }
     // Refuse before reading: a header can promise far more than the file has.
     let promised = u64::from(reader.len());
-    if promised > (MAX_FILE_BYTES as u64) {
+    if promised > (MAX_FILE_BYTES as u64) || promised > MAX_DECODED_SAMPLES as u64 {
         return Err(bad(path, "it holds more samples than allowed"));
     }
     let mut samples = Vec::with_capacity(reader.len().min(1 << 22) as usize);
@@ -101,17 +112,21 @@ fn ogg(path: &str, bytes: &[u8]) -> Result<Clip> {
         .map_err(|e| bad(path, format!("{e:?}")))?;
     let rate = reader.ident_hdr.audio_sample_rate;
     let channels = u16::from(reader.ident_hdr.audio_channels);
-    if channels == 0 || channels > 8 || rate == 0 {
+    if channels == 0 || channels > 8 || rate == 0 || rate > MAX_RATE {
         return Err(bad(path, "its format is not one games use"));
     }
-    let limit = (f64::from(rate) * MAX_SECONDS) as usize * usize::from(channels);
+    let limit =
+        ((f64::from(rate) * MAX_SECONDS) as usize * usize::from(channels)).min(MAX_DECODED_SAMPLES);
     let mut samples: Vec<f32> = Vec::new();
     loop {
         match reader.read_dec_packet_itl() {
             Ok(Some(packet)) => {
                 samples.extend(packet.iter().map(|s| f32::from(*s) / 32768.0));
                 if samples.len() > limit {
-                    return Err(bad(path, "it is longer than an hour"));
+                    return Err(bad(
+                        path,
+                        "it decodes to too many samples (longer than an hour, or more than 128 MiB)",
+                    ));
                 }
             }
             Ok(None) => break,

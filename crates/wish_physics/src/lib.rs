@@ -140,6 +140,10 @@ pub struct PhysicsState {
     soft: rp::SoftBodySet,
     ccd: rp::CCDSolver,
     links: BTreeMap<Entity, Link>,
+    /// Collision events found while the state was prepared (before the
+    /// first step): sent with the first step's own, so that contacts that
+    /// exist at the start are reported like any other.
+    pending: Vec<rp::CollisionEvent>,
 }
 
 impl Clone for PhysicsState {
@@ -156,6 +160,7 @@ impl Clone for PhysicsState {
             soft: self.soft.clone(),
             ccd: self.ccd.clone(),
             links: self.links.clone(),
+            pending: self.pending.clone(),
         }
     }
 }
@@ -174,6 +179,7 @@ impl Default for PhysicsState {
             soft: rp::SoftBodySet::new(),
             ccd: rp::CCDSolver::new(),
             links: BTreeMap::new(),
+            pending: Vec::new(),
         }
     }
 }
@@ -195,8 +201,11 @@ impl PhysicsState {
         self.bodies.get(link.body).map(rp::RigidBody::is_sleeping)
     }
 
-    fn remove(&mut self, entity: Entity) {
-        if let Some(link) = self.links.remove(&entity) {
+    /// Forgets `entity`; returns its collider's handle, so that events about
+    /// it found in this step can still name it.
+    fn remove(&mut self, entity: Entity) -> Option<rp::ColliderHandle> {
+        let link = self.links.remove(&entity)?;
+        {
             self.bodies.remove(
                 link.body,
                 &mut self.islands,
@@ -207,6 +216,7 @@ impl PhysicsState {
                 true,
             );
         }
+        Some(link.collider)
     }
 }
 
@@ -413,8 +423,8 @@ fn local_for(world: &World, entity: Entity, translation: Vec3, rotation: Quat) -
 /// Collects Rapier's collision events during a step (in the order Rapier
 /// reports them, which is deterministic).
 #[derive(Default)]
-struct Collected {
-    events: Mutex<Vec<rp::CollisionEvent>>,
+pub(crate) struct Collected {
+    pub(crate) events: Mutex<Vec<rp::CollisionEvent>>,
 }
 
 impl rp::EventHandler for Collected {
@@ -465,13 +475,9 @@ fn internal(what: &str) -> Diagnostic {
 /// One physics tick for `world`: the system [`SYSTEM`]. `since` is where
 /// the system last ran (events sent after it are read).
 pub fn step(world: &mut World, since: ChangeTick) -> Result<()> {
-    let mut state = world
-        .extension::<PhysicsState>()
-        .cloned()
-        .unwrap_or_default();
-    // Taken out while it works, put back at the end (also on failure: the
-    // state stays consistent with what it last did).
-    world.remove_extension::<PhysicsState>();
+    // Taken out while it works (not copied), put back at the end (also on
+    // failure: the state stays consistent with what it last did).
+    let mut state = world.take_extension::<PhysicsState>().unwrap_or_default();
     let result = run(world, &mut state, since);
     world.insert_extension(state);
     result
@@ -496,8 +502,13 @@ fn run(world: &mut World, state: &mut PhysicsState, since: ChangeTick) -> Result
         .filter(|entity| present.binary_search(entity).is_err())
         .copied()
         .collect();
+    // Colliders removed this tick, so that "stopped touching" events about
+    // them still reach the entity that stays (M6 closing review).
+    let mut removed: Vec<(rp::ColliderHandle, Entity)> = Vec::new();
     for entity in gone {
-        state.remove(entity);
+        if let Some(handle) = state.remove(entity) {
+            removed.push((handle, entity));
+        }
     }
 
     // 2. Bring Rapier up to date.
@@ -560,8 +571,9 @@ fn run(world: &mut World, state: &mut PhysicsState, since: ChangeTick) -> Result
         write_back(world, state, entity)?;
     }
 
-    // 7. Events, a before b.
-    let events = collected.events.into_inner().unwrap_or_default();
+    // 7. Events, a before b (those found when the state was prepared first).
+    let mut events = std::mem::take(&mut state.pending);
+    events.extend(collected.events.into_inner().unwrap_or_default());
     for event in events {
         let (h1, h2, started, sensor) = match event {
             rp::CollisionEvent::Started(a, b, flags) => {
@@ -571,10 +583,11 @@ fn run(world: &mut World, state: &mut PhysicsState, since: ChangeTick) -> Result
                 (a, b, false, flags.contains(rp::CollisionEventFlags::SENSOR))
             }
         };
-        let (Some(e1), Some(e2)) = (
-            entity_of(&state.colliders, h1),
-            entity_of(&state.colliders, h2),
-        ) else {
+        let named = |handle: rp::ColliderHandle| {
+            entity_of(&state.colliders, handle)
+                .or_else(|| removed.iter().find(|(h, _)| *h == handle).map(|(_, e)| *e))
+        };
+        let (Some(e1), Some(e2)) = (named(h1), named(h2)) else {
             continue;
         };
         let (a, b) = if e1 <= e2 { (e1, e2) } else { (e2, e1) };

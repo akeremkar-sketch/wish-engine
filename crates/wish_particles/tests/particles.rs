@@ -88,32 +88,37 @@ fn particles_follow_from_the_emitter_alone() {
         ..emitter()
     };
     let at = Mat4::from_translation(Vec3::new(3.0, 0.0, 0.0));
-    let shown = particles(&e, &at, 0.55);
+    let shown = particles(&e, &at, 0.55, usize::MAX);
     assert_eq!(shown.len(), 6);
     // Straight up at 2 m/s from the emitter: the oldest is 0.55 s old.
     let oldest = shown[0];
     assert!((oldest.position - Vec3::new(3.0, 1.1, 0.0)).length() < 1e-4);
     assert!((oldest.size - 0.45).abs() < 1e-4, "{}", oldest.size);
     // Halfway through its life the colour is halfway to transparent.
-    let half = particles(&e, &at, 0.5)[0];
+    let half = particles(&e, &at, 0.5, usize::MAX)[0];
     assert!((half.color[3] - 0.5).abs() < 1e-4);
     // The same moment gives the same particles.
-    assert_eq!(particles(&e, &at, 0.55), shown);
+    assert_eq!(particles(&e, &at, 0.55, usize::MAX), shown);
 
     // Gravity bends them; another seed scatters them differently.
     let falling = ParticleEmitter {
         gravity: Vec3::new(0.0, -10.0, 0.0),
         ..e
     };
-    let p = particles(&falling, &Mat4::IDENTITY, 1.0)[0];
+    let p = particles(&falling, &Mat4::IDENTITY, 1.0, usize::MAX)[0];
     assert!(p.position.y < 2.0 * 0.95);
     let wide = ParticleEmitter {
         spread_deg: 60.0,
         speed_variation: 0.5,
         ..e
     };
-    let a = particles(&wide, &Mat4::IDENTITY, 2.0);
-    let b = particles(&ParticleEmitter { seed: 7, ..wide }, &Mat4::IDENTITY, 2.0);
+    let a = particles(&wide, &Mat4::IDENTITY, 2.0, usize::MAX);
+    let b = particles(
+        &ParticleEmitter { seed: 7, ..wide },
+        &Mat4::IDENTITY,
+        2.0,
+        usize::MAX,
+    );
     assert_ne!(a, b);
     // Within the cone: no particle more than 60 degrees from +Y.
     for p in a.iter().filter(|p| p.position.length() > 1e-3) {
@@ -146,7 +151,7 @@ fn hostile_numbers_give_no_particles_and_no_panics() {
     ] {
         let alive = count(&e, 3.0);
         assert!(alive <= e.max);
-        for p in particles(&e, &Mat4::IDENTITY, 3.0) {
+        for p in particles(&e, &Mat4::IDENTITY, 3.0, usize::MAX) {
             assert!(p.size.is_finite());
         }
     }
@@ -164,4 +169,24 @@ fn the_system_writes_how_many_are_alive() {
     let hash = world.hash();
     wish_particles::step(&mut world).unwrap();
     assert_eq!(world.hash(), hash, "unchanged counts are not rewritten");
+}
+
+#[test]
+fn values_beyond_the_ranges_from_game_code_are_bounded() {
+    // Game code is not held to the schema's ranges (M6 closing review).
+    let wild = ParticleEmitter {
+        max: u32::MAX,
+        lifetime: 1.0e9,
+        rate: 1.0e9,
+        burst: u32::MAX,
+        start_time: -1.0e30,
+        ..emitter()
+    };
+    let living = count(&wild, 100.0);
+    assert!(living <= wish_particles::MAX_ALIVE, "{living}");
+    // A drawing budget is kept: the newest come first.
+    let shown = particles(&wild, &Mat4::IDENTITY, 100.0, 500);
+    assert_eq!(shown.len(), 500);
+    let all = alive(&wild, 100.0);
+    assert_eq!(shown.last().unwrap().number, all.end - 1);
 }

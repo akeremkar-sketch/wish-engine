@@ -203,6 +203,26 @@ pub(crate) fn check_system_names(example: Option<&str>, module: &GameModule) -> 
         wish_ui::SYSTEM.to_owned(),
         wish_particles::SYSTEM.to_owned(),
     ];
+    // Engine systems run after every game system (their results are seen
+    // the next tick): a game system asking to run after one is a cycle the
+    // author never wrote (M6 closing review).
+    let engine = reserved.clone();
+    for system in &module.manifest().systems {
+        if let Some(name) = system.after.iter().find(|name| engine.contains(name)) {
+            return Err(Diagnostic::error(
+                "script_after_engine_system",
+                format!(
+                    "The game system '{}' asks to run after the engine's '{name}' system, which always runs after every game system.",
+                    system.name
+                ),
+                format!(
+                    "Remove after = \"{name}\": the engine's systems ({}) run after all game code, and what they do this tick (moves, collisions, clicks, clip ends) is seen by game systems the next tick.",
+                    engine.join(", ")
+                ),
+            )
+            .at_file(SCRIPTS_ENTRY));
+        }
+    }
     if let Some(example) = example {
         let mut app = wish_app::App::new(wish_app::AppConfig::default());
         if wish_examples::add_systems(example, &mut app).is_ok() {

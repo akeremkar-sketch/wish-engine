@@ -478,3 +478,58 @@ fn a_bouncy_ball_bounces_off_a_dull_floor() {
     assert!(touched);
     assert!(highest > 3.0, "bounced back up to {highest}");
 }
+
+#[test]
+fn contacts_that_exist_at_the_start_are_reported() {
+    // A crate already in a sensor zone when the session prepares physics
+    // (M6 closing review): the first tick still says it started touching.
+    let mut app = app();
+    let zone = {
+        let world = app.world_mut();
+        let zone = world.spawn().unwrap();
+        world.insert(zone, Transform::default()).unwrap();
+        world
+            .insert(
+                zone,
+                Collider {
+                    size: Vec3::splat(4.0),
+                    sensor: true,
+                    ..Collider::default()
+                },
+            )
+            .unwrap();
+        zone
+    };
+    let inside = crate_at(&mut app, Vec3::ZERO);
+    app.world_mut()
+        .insert(
+            inside,
+            RigidBody {
+                kind: BodyKind::Kinematic,
+                ..RigidBody::default()
+            },
+        )
+        .unwrap();
+    wish_transform::update_global_transforms(app.world_mut()).unwrap();
+    wish_physics::prepare(app.world_mut()).unwrap();
+    run(&mut app, 1);
+    assert_eq!(app.world().events_sent("CollisionStarted").unwrap(), 1);
+    let _ = zone;
+}
+
+#[test]
+fn removing_a_touching_collider_says_they_stopped_touching() {
+    let mut app = app();
+    let ground = floor(&mut app);
+    let resting = crate_at(&mut app, Vec3::new(0.0, 0.5, 0.0));
+    run(&mut app, 30);
+    assert_eq!(app.world().events_sent("CollisionEnded").unwrap(), 0);
+    app.world_mut().despawn(resting).unwrap();
+    run(&mut app, 1);
+    assert_eq!(
+        app.world().events_sent("CollisionEnded").unwrap(),
+        1,
+        "the floor hears that the crate is gone"
+    );
+    let _ = ground;
+}

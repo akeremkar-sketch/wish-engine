@@ -785,3 +785,56 @@ fn texts_from_game_code_cannot_hurt_the_host() {
     assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
     assert_whole(&mut app);
 }
+
+#[test]
+fn game_code_cannot_fill_the_world_with_text() {
+    // Every call makes 1024 new 4096-byte texts (random letters up front):
+    // 4 MiB a tick. The world stops taking new ones at its budget.
+    let body = "
+      (memory.fill (i32.const 0x40000) (i32.const 97) (i32.const 4096))
+      (loop $more
+        (i64.store (i32.const 0x40000)
+          (i64.or (i64.and (call $rng) (i64.const 0x0f0f0f0f0f0f0f0f)) (i64.const 0x4040404040404040)))
+        (drop (call $t (i32.const 0x40000) (i32.const 4096)))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br_if $more (i32.lt_u (local.get $i) (i32.const 1024))))";
+    let manifest_text = manifest(json!([{ "name": "flood", "params": [{ "commands": {} }] }]));
+    let wat = format!(
+        r#"(module
+  (import "wish" "text_intern" (func $t (param i32 i32) (result i64)))
+  (import "wish" "rng_next" (func $rng (result i64)))
+  (memory (export "memory") 64)
+  (data (i32.const {MANIFEST_AT}) "{m}")
+  (func (export "wish_abi_version") (result i32) (i32.const 1))
+  (func (export "wish_alloc") (param i32) (result i32) (i32.const {FRAME_AT}))
+  (func (export "wish_manifest") (result i64) (i64.const {packed}))
+  (func (export "wish_run") (param $system i32) (param $frame i32) (result i32)
+    (local $i i32)
+    {body}
+    (i32.const 0)))"#,
+        m = escape(manifest_text.as_bytes()),
+        packed = (u64::from(MANIFEST_AT) << 32) | manifest_text.len() as u64,
+    );
+    let module = load(&wat::parse_str(wat).unwrap());
+    let mut app = App::new(AppConfig::default());
+    wish_transform::register(app.world_mut()).unwrap();
+    module.install(app.world_mut()).unwrap();
+    let runtime = ScriptRuntime::new(Arc::clone(&module));
+    for system in runtime.systems() {
+        app.add_system(system).unwrap();
+    }
+    for _ in 0..8 {
+        let report = app.step().unwrap();
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+    }
+    let bytes = app.world().texts().bytes();
+    assert!(
+        bytes <= wish_script::MAX_WORLD_TEXT_BYTES,
+        "{bytes} bytes of text"
+    );
+    assert!(
+        bytes > wish_script::MAX_WORLD_TEXT_BYTES - 8192,
+        "it filled up: {bytes}"
+    );
+    assert_whole(&mut app);
+}

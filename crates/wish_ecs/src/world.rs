@@ -227,6 +227,12 @@ impl World {
         self.state.extensions.remove::<T>()
     }
 
+    /// Takes the extension of type `T` out of the world, without copying it
+    /// (a system works on it, then puts it back with `insert_extension`).
+    pub fn take_extension<T: Extension>(&mut self) -> Option<T> {
+        self.state.extensions.take::<T>()
+    }
+
     /// The registered component, resource and event types.
     pub fn registry(&self) -> &Registry {
         &self.registry
