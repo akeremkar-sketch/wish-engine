@@ -19,6 +19,10 @@
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
+mod query;
+
+pub use query::{OverlapShape, RayHit, query_state};
+
 use rapier3d::control::{CharacterAutostep, CharacterLength, KinematicCharacterController};
 use rapier3d::prelude as rp;
 use wish_core::math::{Mat4, Quat, Vec3};
@@ -34,6 +38,17 @@ use wish_types::transform::{GlobalTransform, Transform};
 
 /// The name of the physics system in an app.
 pub const SYSTEM: &str = "physics";
+
+/// Builds the physics state of a world that has none (a session about to
+/// start): colliders placed, contacts found, nothing moved. The first tick
+/// then continues from it, and queries during that tick see the scene.
+pub fn prepare(world: &mut World) -> Result<()> {
+    if world.extension::<PhysicsState>().is_none() {
+        let state = query_state(world)?.into_owned();
+        world.insert_extension(state);
+    }
+    Ok(())
+}
 
 /// The physics system, for `App::add_system`. Order it after the systems
 /// that move things and before transform propagation.
@@ -568,7 +583,7 @@ fn run(world: &mut World, state: &mut PhysicsState, since: ChangeTick) -> Result
     Ok(())
 }
 
-fn sync_entity(world: &mut World, state: &mut PhysicsState, entity: Entity) -> Result<()> {
+fn sync_entity(world: &World, state: &mut PhysicsState, entity: Entity) -> Result<()> {
     let Some(collider_desc) = world.get::<Collider>(entity).copied() else {
         return Ok(());
     };

@@ -277,3 +277,203 @@ fn game_code_drives_a_physics_character() {
     let down = y(&mut ws, &s, "hero");
     assert!((down - 0.92).abs() < 0.05, "landed: {down}");
 }
+
+#[test]
+fn physics_query_answers_in_scenes_and_sessions() {
+    let (_dir, mut ws) = project("query");
+    stack(&mut ws);
+    // In the scene file: the ray straight down from above the stack hits
+    // the top crate where the scene puts it (y = 6.6, top face at 7.1).
+    let down = call(
+        &mut ws,
+        "physics_query",
+        json!({ "ray": { "from": [0.3, 20, 0], "dir": [0, -1, 0] } }),
+    );
+    assert_eq!(down["hit"]["id"], "crate_5", "{down}");
+    assert!((down["hit"]["distance"].as_f64().unwrap() - 12.9).abs() < 1e-3);
+    // In a session after the stack settled, lower.
+    let s = call(&mut ws, "sim_start", json!({}))["session"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    call(&mut ws, "sim_step", json!({ "session": s, "frames": 300 }));
+    let settled = call(
+        &mut ws,
+        "physics_query",
+        json!({ "session": s, "ray": { "from": [0.3, 20, 0], "dir": [0, -1, 0], "ignore": "crate_5" } }),
+    );
+    assert_eq!(settled["hit"]["id"], "crate_4", "{settled}");
+    let touching = call(
+        &mut ws,
+        "physics_query",
+        json!({ "session": s, "touching": "crate_0" }),
+    );
+    assert!(
+        touching["ids"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("floor")),
+        "{touching}"
+    );
+    let near = call(
+        &mut ws,
+        "physics_query",
+        json!({ "session": s, "overlap": { "sphere": 0.2, "at": [0, 0.5, 0] } }),
+    );
+    assert_eq!(near["ids"], json!(["crate_0"]), "{near}");
+    // Mistakes are explained.
+    let agent = parse_actor("agent");
+    let two = ws.call(
+        "physics_query",
+        &json!({ "touching": "floor", "ray": { "from": [0, 1, 0], "dir": [0, -1, 0] } }),
+        &agent,
+    );
+    assert_eq!(two["error"]["code"], "invalid_parameter");
+    let unknown = ws.call("physics_query", &json!({ "touching": "flor" }), &agent);
+    assert_eq!(unknown["error"]["code"], "entity_not_found");
+    assert_eq!(unknown["error"]["hint"], "Did you mean 'floor'?");
+    let bad = ws.call(
+        "physics_query",
+        &json!({ "ray": { "from": [0, 1], "dir": [0, -1, 0] } }),
+        &agent,
+    );
+    assert_eq!(bad["error"]["location"]["path"], "/ray/from");
+}
+
+/// Game code that measures the height above whatever is below.
+const PROBE: &str = r#"
+use wish_sdk::prelude::*;
+
+/// Measures how high it floats.
+#[component]
+pub struct Probe {
+    /// Distance to what is below, -1 if nothing.
+    pub below: f32,
+    /// Ray casts so far.
+    pub casts: u32,
+}
+
+#[system]
+fn measure(mut probes: Query<(Entity, &Transform, &mut Probe)>) {
+    for (entity, transform, probe) in probes.iter_mut() {
+        let ray = Ray {
+            from: transform.translation,
+            dir: Vec3::new(0.0, -1.0, 0.0),
+            max: 100.0,
+            mask: u32::MAX,
+            ignore: Some(entity),
+        };
+        probe.below = match wish_sdk::physics::cast(ray) {
+            Some(hit) => hit.distance,
+            None => -1.0,
+        };
+        probe.casts += 1;
+    }
+}
+
+wish_sdk::export! {
+    components: [Probe],
+    systems: [measure],
+}
+"#;
+
+#[test]
+fn game_code_casts_rays_into_the_physics_world() {
+    let (dir, mut ws) = project("probe");
+    ws.set_toolchain(toolchain().clone());
+    std::fs::write(dir.join(SCRIPTS_ENTRY), PROBE).unwrap();
+    let built = call(&mut ws, "script_build", json!({}));
+    assert_eq!(built["passed"], true, "{built}");
+    stack(&mut ws);
+    call(
+        &mut ws,
+        "edit_apply",
+        json!({ "ops": [
+            { "op": "spawn", "id": "probe", "components": {
+                "Transform": { "translation": [5, 3, 0] }, "Probe": {} } },
+            { "op": "spawn", "id": "over_crates", "components": {
+                "Transform": { "translation": [0.3, 20, 0] }, "Probe": {} } }
+        ] }),
+    );
+    let s = call(&mut ws, "sim_start", json!({}))["session"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let probe = |ws: &mut Workspace, id: &str| {
+        call(ws, "entity_get", json!({ "session": s, "ids": [id] }))["entities"][0]["components"]
+            ["Probe"]
+            .clone()
+    };
+    // On the very first tick the scene is already there.
+    call(&mut ws, "sim_step", json!({ "session": s, "frames": 1 }));
+    let first = probe(&mut ws, "probe");
+    assert!(
+        (first["below"].as_f64().unwrap() - 3.0).abs() < 1e-3,
+        "{first}"
+    );
+    let over = probe(&mut ws, "over_crates");
+    assert!(
+        (over["below"].as_f64().unwrap() - 12.9).abs() < 1e-3,
+        "the top crate where the scene puts it: {over}"
+    );
+    // Later, the crates have settled lower.
+    let straight =
+        call(&mut ws, "sim_step", json!({ "session": s, "frames": 300 }))["world_hash"].clone();
+    let later = probe(&mut ws, "over_crates");
+    assert!(later["below"].as_f64().unwrap() > 13.5, "{later}");
+    assert_eq!(later["casts"], 301);
+    // The answers are part of a deterministic run: a replay of it holds.
+    let again = call(&mut ws, "sim_start", json!({}))["session"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let rerun = call(
+        &mut ws,
+        "sim_step",
+        json!({ "session": again, "frames": 301 }),
+    )["world_hash"]
+        .clone();
+    assert_eq!(rerun, straight);
+}
+
+#[test]
+fn the_inspector_explains_physics_mistakes() {
+    let (_dir, mut ws) = project("inspect");
+    call(
+        &mut ws,
+        "edit_apply",
+        json!({ "ops": [
+            { "op": "spawn", "id": "ghost", "components": {
+                "Transform": { "translation": [0, 5, 0] }, "RigidBody": { "kind": "Dynamic" } } },
+            { "op": "spawn", "id": "walker", "components": {
+                "Transform": {}, "Collider": { "shape": "Capsule" },
+                "RigidBody": { "kind": "Dynamic" }, "CharacterController": {} } },
+            { "op": "spawn", "id": "faller", "components": {
+                "Transform": { "translation": [9, 2, 9] }, "Collider": {},
+                "RigidBody": { "kind": "Dynamic" } } }
+        ] }),
+    );
+    let s = call(&mut ws, "sim_start", json!({}))["session"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let stepped = call(&mut ws, "sim_step", json!({ "session": s, "frames": 1200 }));
+    let codes: Vec<&str> = stepped["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|d| d["code"].as_str())
+        .collect();
+    assert!(codes.contains(&"rigid_body_without_collider"), "{stepped}");
+    assert!(codes.contains(&"character_not_kinematic"), "{stepped}");
+    let fell = stepped["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["code"] == "entity_out_of_bounds")
+        .unwrap();
+    assert!(
+        fell["hint"].as_str().unwrap().contains("Collider"),
+        "{fell}"
+    );
+}

@@ -216,14 +216,15 @@ fn build_app(
     if let Some(name) = &example {
         wish_examples::add_systems(name, &mut app)?;
     }
-    let runtime = workspace
-        .game_module()
-        .map(|module| wish_script::ScriptRuntime::new(std::sync::Arc::clone(module)));
+    let runtime = workspace.game_module().map(crate::script::runtime);
     if let Some(runtime) = &runtime {
         crate::script::add_game_systems(&mut app, runtime)?;
     }
     crate::script::propagation_after_all(&mut app)?;
     wish_transform::update_global_transforms(app.world_mut())?;
+    // Physics knows the scene before the first tick, so that questions
+    // asked during it (game code's ray casts) see it.
+    wish_physics::prepare(app.world_mut())?;
     Ok((app, runtime))
 }
 
@@ -359,6 +360,31 @@ fn inspect(session: &mut Session) -> Vec<Diagnostic> {
             continue;
         };
         let name = name_of(world, entity);
+        let body = world.get::<wish_physics::RigidBody>(entity);
+        if body.is_some() && !world.has::<wish_physics::Collider>(entity) {
+            found.push((
+                name.clone(),
+                Diagnostic::warning(
+                    "rigid_body_without_collider",
+                    format!(
+                        "Entity '{name}' has a RigidBody but no Collider, so physics ignores it."
+                    ),
+                    "Add a Collider (shape Box, Sphere, Capsule or Cylinder) to the same entity.",
+                ),
+            ));
+        }
+        if world.has::<wish_physics::CharacterController>(entity)
+            && body.map(|b| b.kind) != Some(wish_physics::BodyKind::Kinematic)
+        {
+            found.push((
+                name.clone(),
+                Diagnostic::warning(
+                    "character_not_kinematic",
+                    format!("Entity '{name}' has a CharacterController but its RigidBody is not Kinematic, so the controller does nothing."),
+                    "Give it a RigidBody with kind Kinematic (and a Collider, usually a Capsule), then write CharacterMotion.velocity.",
+                ),
+            ));
+        }
         let numbers: Vec<f64> = ["translation", "rotation", "scale"]
             .iter()
             .filter_map(|key| transform.get(*key).and_then(Value::as_array))
@@ -389,7 +415,11 @@ fn inspect(session: &mut Session) -> Vec<Diagnostic> {
                     format!(
                         "Entity '{name}' is at y = {y:.0} m; it probably fell out of the world."
                     ),
-                    "Add a floor under it, or something that removes entities that fall too far.",
+                    if body.map(|b| b.kind) == Some(wish_physics::BodyKind::Dynamic) {
+                        "It is a dynamic body: give the ground a Collider (an entity with a Collider and no RigidBody is fixed ground), or despawn entities that fall too far (a sensor Collider below the level and CollisionStarted)."
+                    } else {
+                        "Add a floor under it, or something that removes entities that fall too far."
+                    },
                 ),
             ));
         }

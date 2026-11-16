@@ -19,6 +19,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
+      # The Linux runner has about 14 GB free; the build (wasmtime, Rapier,
+      # wgpu, every test binary) plus the cache save did not fit (M6 WP2).
+      # Remove preinstalled toolchains this project never uses.
+      - name: Free disk space
+        if: runner.os == 'Linux'
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
       # Rendering tests use the software adapter: WARP ships with Windows;
       # on Linux it is Mesa's lavapipe (Vulkan on the CPU).
       - name: Install the software Vulkan driver

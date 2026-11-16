@@ -5,7 +5,7 @@ use wish_core::{Diagnostic, Hash128, Result, Rng, Severity, StableHasher};
 use crate::ABI_VERSION;
 use crate::engine::ScriptEngine;
 use crate::failure::{call_failed, load_failed};
-use crate::host::{self, HostState};
+use crate::host::{self, HostState, QueryContext};
 
 /// A message the guest logged during a call.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -180,7 +180,8 @@ impl ScriptModule {
     /// random stream; it advances by what the guest drew.
     pub fn run(&self, system: i32, frame: &mut [u8], rng: &mut Rng) -> Result<CallReport> {
         let mut live = self.live()?;
-        live.call(system, frame, rng).map(|(report, _)| report)
+        live.call(system, frame, rng, None)
+            .map(|(report, _)| report)
     }
 }
 
@@ -221,9 +222,13 @@ impl Live {
         system: i32,
         frame: &mut [u8],
         rng: &mut Rng,
+        query: Option<QueryContext>,
     ) -> Result<(CallReport, Vec<u8>)> {
         self.reset(*rng)?;
+        self.store.data_mut().query = query;
         let result = self.call_in(system, frame);
+        // The world may change after the call: nothing may point at it.
+        self.store.data_mut().query = None;
         *rng = self.store.data().rng;
         let (returned, commands) = result
             .map_err(|error| call_failed(&self.name, "wish_run", &error, self.store.data()))?;

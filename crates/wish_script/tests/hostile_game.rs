@@ -657,3 +657,63 @@ fn r3_a_hierarchy_cannot_grow_without_end() {
     );
     assert_whole(&mut game.app);
 }
+
+/// Answers every physics question with a fixed hit, to see what reaches
+/// the guest.
+struct Echo;
+
+impl wish_script::HostServices for Echo {
+    fn physics_query(&self, _world: &wish_ecs::World, request: &[u8]) -> Option<Vec<u8>> {
+        (request.len() == wish_sdk::physics::REQUEST_LEN).then(|| vec![7; 37])
+    }
+}
+
+#[test]
+fn physics_questions_cannot_hurt_the_host() {
+    // Garbage pointers and lengths, an answer that does not fit, then a
+    // loop of questions until the fuel runs out.
+    let body = format!(
+        "(drop (call $q (i32.const -5) (i32.const 999999) (i32.const 0) (i32.const 64)))
+         (drop (call $q (i32.const 0) (i32.const {req}) (i32.const 0x7fffff00) (i32.const 64)))
+         (drop (call $q (i32.const 0) (i32.const {req}) (local.get $frame) (i32.const 4)))
+         (i32.store (i32.const 0x30000) (call $q (i32.const 0) (i32.const {req}) (i32.const 0x30010) (i32.const 64)))
+         (loop $again
+           (drop (call $q (i32.const 0) (i32.const {req}) (i32.const 0x30010) (i32.const 64)))
+           (br $again))",
+        req = wish_sdk::physics::REQUEST_LEN
+    );
+    // The guest needs the import declared, so it is written out here.
+    let manifest_text = manifest(json!([{ "name": "ask", "params": [{ "commands": {} }] }]));
+    let wat = format!(
+        r#"(module
+  (import "wish" "physics_query" (func $q (param i32 i32 i32 i32) (result i32)))
+  (memory (export "memory") 64)
+  (data (i32.const {MANIFEST_AT}) "{m}")
+  (func (export "wish_abi_version") (result i32) (i32.const 1))
+  (func (export "wish_alloc") (param i32) (result i32) (i32.const {FRAME_AT}))
+  (func (export "wish_manifest") (result i64) (i64.const {packed}))
+  (func (export "wish_run") (param $system i32) (param $frame i32) (result i32)
+    {body}
+    (i32.const 0)))"#,
+        m = escape(manifest_text.as_bytes()),
+        packed = (u64::from(MANIFEST_AT) << 32) | manifest_text.len() as u64,
+    );
+    let module = load(&wat::parse_str(wat).unwrap());
+    let mut app = App::new(AppConfig::default());
+    wish_transform::register(app.world_mut()).unwrap();
+    module.install(app.world_mut()).unwrap();
+    let runtime = ScriptRuntime::new(Arc::clone(&module)).with_services(Arc::new(Echo));
+    for system in runtime.systems() {
+        app.add_system(system).unwrap();
+    }
+    let report = app.step().unwrap();
+    assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
+    assert!(
+        report.failures[0].message.contains("[script_out_of_fuel]"),
+        "{:?}",
+        report.failures[0]
+    );
+    // The app goes on.
+    app.step().unwrap();
+    assert_whole(&mut app);
+}

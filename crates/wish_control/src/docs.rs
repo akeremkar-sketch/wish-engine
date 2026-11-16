@@ -33,6 +33,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "A scenario test's capture step could not take its picture (no camera, or the camera named does not exist); the message says which.",
     ),
     (
+        "character_not_kinematic",
+        "An entity has a CharacterController but its RigidBody is not Kinematic (or it has none); the controller only moves kinematic bodies. Set RigidBody.kind to Kinematic.",
+    ),
+    (
         "component_not_found",
         "The entity does not have the component the operation needs. Add it first (set adds a missing component) or check the name with schema_get.",
     ),
@@ -463,6 +467,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "retype_refused",
         "An engine type's layout cannot change while a world exists; only types declared by game code can. Rename the game's type if it clashes with an engine type.",
+    ),
+    (
+        "rigid_body_without_collider",
+        "An entity has a RigidBody but no Collider, so physics ignores it. Add a Collider to the same entity.",
     ),
     (
         "scene_file_invalid",
@@ -1179,6 +1187,9 @@ sent.send(BodyImpulse { entity: crate_, linear: Vec3::new(0.0, 5000.0, 0.0), ang
   gravity included) and read `CharacterState { grounded, blocked, moved }`:
   `vy = if state.grounded { if actions.pressed("jump") { 5.0 } else { -1.0 } } else { vy - 9.81 * time.delta }`.
 - `BodyForce` pushes every tick while present; `PhysicsSettings` holds gravity and substeps.
+- Ray casts: `raycast(from, dir, max) -> Option<RayHit { entity, point, normal, distance }>`, or
+  `wish_sdk::physics::cast(Ray { from, dir, max, mask, ignore: Some(me) })`. They see the physics world as it was at
+  the start of the tick (the same for every system); each costs a fixed amount of fuel.
 - A game may still declare its own `Velocity` for things it moves itself; physics uses `BodyVelocity`.
 
 ## Rules

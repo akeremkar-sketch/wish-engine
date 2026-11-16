@@ -21,6 +21,7 @@ wish_render.workspace = true
 wish_scene.workspace = true
 wish_schema.workspace = true
 wish_script.workspace = true
+wish_sdk.workspace = true
 wish_transform.workspace = true
 
 [lints]

@@ -517,6 +517,7 @@ struct Slot {
 pub struct ScriptRuntime {
     module: Arc<GameModule>,
     slot: Arc<Mutex<Slot>>,
+    services: Option<Arc<dyn crate::host::HostServices>>,
 }
 
 impl std::fmt::Debug for ScriptRuntime {
@@ -541,7 +542,16 @@ impl ScriptRuntime {
         Self {
             module,
             slot: Arc::new(Mutex::new(Slot::default())),
+            services: None,
         }
+    }
+
+    /// Lets the module's systems ask the engine questions during a call
+    /// (physics ray casts). Without services such questions get no answer.
+    #[must_use]
+    pub fn with_services(mut self, services: Arc<dyn crate::host::HostServices>) -> Self {
+        self.services = Some(services);
+        self
     }
 
     /// The module.
@@ -605,7 +615,14 @@ impl ScriptRuntime {
         };
         let system = i32::try_from(index).map_err(|_| poisoned())?;
         let sent = call.frame.clone();
-        let outcome = live.call(system, &mut call.frame, context.rng);
+        let query = self
+            .services
+            .as_ref()
+            .map(|services| crate::host::QueryContext {
+                world: crate::host::WorldRef::new(world),
+                services: Arc::clone(services),
+            });
+        let outcome = live.call(system, &mut call.frame, context.rng, query);
         let (report, commands) = match outcome {
             Ok(done) => done,
             Err(failure) => {

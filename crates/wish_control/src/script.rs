@@ -221,6 +221,36 @@ pub(crate) fn check_system_names(example: Option<&str>, module: &GameModule) -> 
     Ok(())
 }
 
+/// What the engine answers game code during a call: physics ray casts,
+/// against the physics world as it was at the start of the tick.
+struct EngineServices;
+
+impl wish_script::HostServices for EngineServices {
+    fn physics_query(&self, world: &wish_ecs::World, request: &[u8]) -> Option<Vec<u8>> {
+        use wish_sdk::physics::{Ray, RayHit, encode_answer};
+        let ray = Ray::decode(request)?;
+        let hit = world
+            .extension::<wish_physics::PhysicsState>()
+            .and_then(|state| {
+                state
+                    .raycast(ray.from, ray.dir, ray.max, ray.mask, ray.ignore)
+                    .ok()
+                    .flatten()
+            });
+        Some(encode_answer(hit.map(|hit| RayHit {
+            entity: hit.entity,
+            point: hit.point,
+            normal: hit.normal,
+            distance: hit.distance,
+        })))
+    }
+}
+
+/// A runtime for `module` in a session, with the engine's services.
+pub(crate) fn runtime(module: &Arc<GameModule>) -> ScriptRuntime {
+    ScriptRuntime::new(Arc::clone(module)).with_services(Arc::new(EngineServices))
+}
+
 /// The systems of a session for a module, and the propagation system that
 /// runs after all of them.
 pub(crate) fn add_game_systems(app: &mut wish_app::App, runtime: &ScriptRuntime) -> Result<()> {
@@ -264,7 +294,7 @@ fn reload_session(
     // the new layout from it, so going back still works after new code.
     let before = session.app.world().clone();
     let mut changed = module.install(session.app.world_mut())?;
-    let runtime = ScriptRuntime::new(Arc::clone(module));
+    let runtime = runtime(module);
     if let Some(old) = &session.script {
         let keep: Vec<&str> = module
             .manifest()

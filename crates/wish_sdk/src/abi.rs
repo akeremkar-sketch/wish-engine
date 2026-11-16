@@ -22,6 +22,7 @@ mod imports {
             column: i32,
         );
         pub fn rng_next() -> i64;
+        pub fn physics_query(request: *const u8, len: i32, out: *mut u8, capacity: i32) -> i32;
     }
 }
 
@@ -85,6 +86,34 @@ pub fn log(severity: i32, message: &str) {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let _ = (severity, message);
+    }
+}
+
+/// Asks the engine a physics question (`wish.physics_query`); the answer's
+/// bytes, or `None` off the engine or if the engine could not answer.
+pub fn physics_query(request: &[u8]) -> Option<Vec<u8>> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let mut out = vec![0u8; crate::physics::ANSWER_LEN];
+        // SAFETY: the engine reads `len` bytes at `request` and writes at
+        // most `capacity` bytes at `out`, both inside this module's memory
+        // and alive for the call.
+        let written = unsafe {
+            imports::physics_query(
+                request.as_ptr(),
+                request.len() as i32,
+                out.as_mut_ptr(),
+                out.len() as i32,
+            )
+        };
+        let written = usize::try_from(written).ok()?;
+        out.truncate(written);
+        Some(out)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = request;
+        None
     }
 }
 

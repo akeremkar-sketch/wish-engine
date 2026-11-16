@@ -382,3 +382,67 @@ fn the_recorded_world_hash_holds() {
 }
 
 const RECORDED_PILE: &str = "ffb4e84321e450fe594a7d4cbde3a7d7";
+
+#[test]
+fn rays_overlaps_and_contacts_answer_questions() {
+    use wish_core::math::Quat;
+    use wish_physics::{OverlapShape, query_state};
+    let mut app = app();
+    let floor = floor(&mut app);
+    let crate_ = crate_at(&mut app, Vec3::new(2.0, 0.5, 0.0));
+    // Before any step: a state is built for the question.
+    {
+        let state = query_state(app.world()).unwrap();
+        let hit = state
+            .raycast(Vec3::new(2.0, 5.0, 0.0), Vec3::NEG_Y, 10.0, u32::MAX, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(hit.entity, crate_);
+        assert!((hit.distance - 4.0).abs() < 1e-4, "{hit:?}");
+        assert!((hit.normal - Vec3::Y).length() < 1e-4);
+    }
+    run(&mut app, 5);
+    let state = query_state(app.world()).unwrap();
+    // Excluding the crate, the ray reaches the floor.
+    let hit = state
+        .raycast(
+            Vec3::new(2.0, 5.0, 0.0),
+            Vec3::NEG_Y,
+            10.0,
+            u32::MAX,
+            Some(crate_),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(hit.entity, floor);
+    assert!((hit.point.y).abs() < 1e-3, "{hit:?}");
+    // Nothing above.
+    assert!(
+        state
+            .raycast(Vec3::new(2.0, 5.0, 0.0), Vec3::Y, 10.0, u32::MAX, None)
+            .unwrap()
+            .is_none()
+    );
+    // A sphere around the crate overlaps it and the floor.
+    let found = state
+        .overlap(
+            OverlapShape::Sphere(0.8),
+            Vec3::new(2.0, 0.5, 0.0),
+            Quat::IDENTITY,
+            u32::MAX,
+        )
+        .unwrap();
+    assert_eq!(found, {
+        let mut v = vec![floor, crate_];
+        v.sort();
+        v
+    });
+    // The crate touches the floor.
+    assert_eq!(state.touching(crate_), vec![floor]);
+    // Bad questions are explained.
+    let bad = state
+        .raycast(Vec3::ZERO, Vec3::ZERO, 10.0, u32::MAX, None)
+        .unwrap_err();
+    assert_eq!(bad.code, "invalid_parameter");
+    assert!(!bad.hint.is_empty());
+}

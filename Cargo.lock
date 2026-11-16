@@ -4067,6 +4067,7 @@ dependencies = [
  "wish_scene",
  "wish_schema",
  "wish_script",
+ "wish_sdk",
  "wish_transform",
 ]
 

@@ -55,6 +55,7 @@ pub mod command;
 pub mod frame;
 pub mod manifest;
 mod param;
+pub mod physics;
 mod query;
 
 pub use param::{
@@ -72,6 +73,8 @@ pub use wish_types::{
     PhysicsSettings, Primitive, RigidBody, Shape, Sky, Time, Transform, world_position,
 };
 
+pub use physics::{Ray, RayHit, raycast};
+
 /// The ABI version this SDK speaks.
 pub const ABI_VERSION: i32 = 1;
 
@@ -83,8 +86,9 @@ pub mod prelude {
         CharacterController, CharacterMotion, CharacterState, Collider, ColliderShape,
         CollisionEnded, CollisionStarted, Color, Commands, DirectionalLight, Entity, EventReader,
         EventWriter, Exposure, GlobalTransform, Material, Model, PhysicsSettings, Primitive, Query,
-        Res, ResMut, RigidBody, Shape, Sky, Text, Time, Transform, With, Without, component, event,
-        random_f32, random_range, random_u64, resource, schema, system, world_position,
+        Ray, RayHit, Res, ResMut, RigidBody, Shape, Sky, Text, Time, Transform, With, Without,
+        component, event, random_f32, random_range, random_u64, raycast, resource, schema, system,
+        world_position,
     };
 }
 
