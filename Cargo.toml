@@ -75,6 +75,10 @@ wasmtime = { version = "=50.0.1", default-features = false, features = [
 # WebAssembly text format, for hand-written hostile guests in tests.
 wat = "1"
 
+# Physics (wish_physics only, ADR-014). Apache-2.0. Features: only the 3D f32
+# engine with `enhanced-determinism` (no SIMD, no threads).
+rapier3d = { version = "0.36", default-features = false, features = ["dim3", "f32", "std", "enhanced-determinism"] }
+
 # Procedural macros. syn 3, the same major version serde_derive uses, so the
 # build compiles one syn.
 proc-macro2 = "1"

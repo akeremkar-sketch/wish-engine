@@ -1,0 +1,19 @@
+[package]
+name = "wish_physics"
+description = "Physics for Wish Engine: a deterministic Rapier integration (rigid bodies, colliders, queries, character controller)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+wish_core.workspace = true
+# Cross-platform bit-exact results: `enhanced-determinism` forces libm math
+# and turns off SIMD; `parallel` stays off (ADR-005, ADR-014).
+rapier3d.workspace = true
+
+[lints]
+workspace = true
