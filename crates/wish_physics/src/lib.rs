@@ -732,8 +732,16 @@ fn move_characters(world: &mut World, state: &mut PhysicsState, delta: f32) -> R
         let (shape, position) = {
             let collider = state
                 .colliders
-                .get(link.collider)
+                .get_mut(link.collider)
                 .ok_or_else(|| internal("a character's collider is missing"))?;
+            // The controller keeps the character a skin away from what it
+            // stands on; contacts count from twice that, so that walking
+            // does not start and end the contact with the ground every tick
+            // (M7 friction log).
+            let skin = controller.skin.clamp(0.001, 0.5) * 2.0;
+            if (collider.contact_skin() - skin).abs() > f32::EPSILON {
+                collider.set_contact_skin(skin);
+            }
             (collider.shared_shape().clone(), *collider.position())
         };
         let kcc = KinematicCharacterController {

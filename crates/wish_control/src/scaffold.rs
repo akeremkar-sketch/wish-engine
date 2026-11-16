@@ -153,7 +153,21 @@ A Wish Engine project. You work on it through the engine's tools (MCP server `wi
   says which step failed, at which tick, and what the values were. Run it before you finish.
 - Input is actions, not keys: `input.json` maps keys to named actions (`move`, `jump`), and a system takes\n\
   `actions: Actions` (`actions.axis2(\"move\")`, `actions.pressed(\"jump\")`). To play the game yourself, give\n\
-  `sim_step` an `input` such as `{{ \"move\": [0, 1], \"jump\": true }}`: it is held for that many ticks.\n"
+  `sim_step` an `input` such as `{{ \"move\": [0, 1], \"jump\": true }}`: it is held for that many ticks.\n\
+\n\
+## Game systems\n\
+\n\
+Built in, set up with components (`schema_get` and `docs_search` say how; `wish://docs/sdk` for game code):\n\
+\n\
+- Physics: `Collider` (+ `RigidBody` to move), `CharacterController` for characters, `CollisionStarted` events,\n\
+  `physics_query` to ask what a ray hits.\n\
+- Sound: `AudioSource`, `AudioListener` on the camera; `logs_get` with kinds [\"audio\"] says what played.\n\
+- Lights: `DirectionalLight`, `PointLight`, `SpotLight`. Animation: `AnimationPlayer` on a glTF `Model`.\n\
+- Interface: `UiNode` boxes with `UiText`, `UiImage`, `UiButton` (`ButtonClicked`); game code writes text with\n\
+  `text(...)`; `describe_view` lists the interface; `sim_step` input `pointer` and `click` press buttons.\n\
+- Particles: `ParticleEmitter`. 2D: an orthographic `Camera` and `Sprite`s.\n\
+- Reading values: scene tools read the scene file; pass `session` to `entity_get` / `entity_query` to read a\n\
+  running game.\n"
     )
 }
 

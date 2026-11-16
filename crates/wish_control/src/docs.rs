@@ -525,6 +525,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "No scene file has that path. To create a new scene, use edit_apply with create: true.",
     ),
     (
+        "scene_not_session",
+        "A scene tool (entity_get, entity_query) read the scene file while a play session was open. The answer is the file's values; pass session to read the live world.",
+    ),
+    (
         "script_abi_mismatch",
         "The game module was built for a different game ABI version than this engine speaks. Rebuild it with this engine's SDK (script_build).",
     ),

@@ -533,3 +533,50 @@ fn removing_a_touching_collider_says_they_stopped_touching() {
     );
     let _ = ground;
 }
+
+#[test]
+fn a_walking_character_touches_the_ground_once() {
+    // The controller keeps a skin of air under the character; walking must
+    // not start and end the contact with the floor every tick (M7 friction
+    // log, F4).
+    let mut app = app();
+    floor(&mut app);
+    let world = app.world_mut();
+    let hero = world.spawn().unwrap();
+    world
+        .insert(hero, Transform::from_translation(Vec3::new(0.0, 0.92, 0.0)))
+        .unwrap();
+    world
+        .insert(
+            hero,
+            Collider {
+                shape: ColliderShape::Capsule,
+                size: Vec3::new(0.6, 1.8, 0.6),
+                ..Collider::default()
+            },
+        )
+        .unwrap();
+    world
+        .insert(
+            hero,
+            RigidBody {
+                kind: BodyKind::Kinematic,
+                ..RigidBody::default()
+            },
+        )
+        .unwrap();
+    world.insert(hero, CharacterController::default()).unwrap();
+    world
+        .insert(
+            hero,
+            CharacterMotion {
+                velocity: Vec3::new(3.0, -1.0, 0.0),
+            },
+        )
+        .unwrap();
+    run(&mut app, 120);
+    let world = app.world();
+    assert!(world.get::<CharacterState>(hero).unwrap().grounded);
+    assert_eq!(world.events_sent("CollisionStarted").unwrap(), 1);
+    assert_eq!(world.events_sent("CollisionEnded").unwrap(), 0);
+}

@@ -363,11 +363,14 @@ fn entity_query(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map
         Some(id) => Some(workspace.session_id(Some(id))?),
         None => None,
     };
-    let (path, notes) = if session_id.is_some() {
+    let (path, mut notes) = if session_id.is_some() {
         (String::new(), Vec::new())
     } else {
         open(workspace, args, false)?
     };
+    if session_id.is_none() {
+        notes.extend(scene_not_session(workspace));
+    }
     let with = args.strings("with");
     check_component_names(workspace, &with, "with")?;
     let include = args.strings("components");
@@ -538,11 +541,14 @@ fn entity_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<S
         Some(id) => Some(workspace.session_id(Some(id))?),
         None => None,
     };
-    let (path, notes) = if session_id.is_some() {
+    let (path, mut notes) = if session_id.is_some() {
         (String::new(), Vec::new())
     } else {
         open(workspace, args, false)?
     };
+    if session_id.is_none() {
+        notes.extend(scene_not_session(workspace));
+    }
     let ids = args.strings("ids");
     if ids.is_empty() || ids.len() > 100 {
         return Err(Diagnostic::error(
@@ -816,4 +822,25 @@ fn edit_history(
         finish(&mut out, notes, workspace, &path);
     }
     Ok(out)
+}
+
+/// A note for reading the scene file while play sessions are open: the
+/// values are the file's, not the live world's (M7 friction log, F3).
+fn scene_not_session(workspace: &Workspace) -> Option<Diagnostic> {
+    let open: Vec<String> = workspace
+        .sessions
+        .open
+        .iter()
+        .map(|(id, session)| format!("{id} (tick {})", session.app.tick()))
+        .collect();
+    (!open.is_empty()).then(|| {
+        Diagnostic::info(
+            "scene_not_session",
+            format!(
+                "These values are the scene file's, not a play session's; open: {}.",
+                open.join(", ")
+            ),
+            "Pass \"session\" to read the live world (sim_step and the other session tools use the only open session by themselves; scene tools do not).",
+        )
+    })
 }

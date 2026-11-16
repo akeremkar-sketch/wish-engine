@@ -1,0 +1,14 @@
+{
+  "format": 1,
+  "scene": "scenes/main.scene.json",
+  "seed": 1,
+  "steps": [
+    { "frames": 30 },
+    { "expect": "CharacterState.grounded == true", "entity": "player", "message": "the player stands on the start island" },
+    { "input": { "move": [0, 1] }, "frames": 40 },
+    { "input": { "move": [0, 1], "jump": true }, "frames": 1 },
+    { "input": { "move": [0, 1] }, "frames": 45 },
+    { "expect": "CharacterState.grounded == true && Transform.translation.y > 1.3 && Transform.translation.z < -5", "entity": "player", "message": "a run and a jump land on the first island" },
+    { "expect": "Transform.translation.z < 4", "entity": "camera", "message": "the camera followed the player forward (it started at z = 8)" }
+  ]
+}
