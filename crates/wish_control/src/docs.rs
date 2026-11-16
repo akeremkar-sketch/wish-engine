@@ -428,10 +428,6 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "No prefab file has that path. Prefabs are project-relative .prefab.json files.",
     ),
     (
-        "prefab_read_only",
-        "The tools can read prefabs (scene_get, entity_get, entity_query with the prefab path as scene) but not change them yet. Change instances instead: set / replace for an instance's root, set_override for the prefab's other entities.",
-    ),
-    (
         "prefab_root_with_parent",
         "A prefab's root entity cannot have a parent.",
     ),

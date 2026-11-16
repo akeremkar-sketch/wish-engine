@@ -322,3 +322,77 @@ fn a_preview_shows_a_change_without_making_it() {
         .unwrap();
     assert!(!error.hint.is_empty());
 }
+
+/// M8a WP6: a prefab is made and edited with `edit_apply` like a scene; the
+/// scenes that hold instances of it see the change at once.
+#[test]
+fn a_prefab_is_made_and_edited_and_its_instances_follow() {
+    let (dir, mut ws) = project("prefab-edit");
+    let made = call(
+        &mut ws,
+        "edit_apply",
+        json!({ "scene": "prefabs/lamp.prefab.json", "create": true, "ops": [
+            { "op": "spawn", "id": "root", "components": { "Transform": {} } },
+            { "op": "spawn", "id": "bulb", "parent": "root", "components": {
+                "Transform": { "translation": [0, 1, 0] },
+                "Primitive": { "shape": "Sphere" }, "Material": {} } }] }),
+    );
+    assert_eq!(made["ok"], true, "{made}");
+    assert!(dir.join("prefabs/lamp.prefab.json").exists());
+    let placed = call(
+        &mut ws,
+        "edit_apply",
+        json!({ "ops": [{ "op": "instantiate", "id": "lamp_1", "prefab": "prefabs/lamp.prefab.json" }] }),
+    );
+    assert_eq!(placed["ok"], true, "{placed}");
+    let read = |ws: &mut Workspace| {
+        call(
+            ws,
+            "entity_get",
+            json!({ "ids": ["lamp_1/bulb"], "components": ["Material"] }),
+        )["entities"][0]["components"]["Material"]["metallic"]
+            .clone()
+    };
+    assert_eq!(read(&mut ws), 0.0);
+    // Edit the prefab: the instance follows, with no call to refresh.
+    let edited = call(
+        &mut ws,
+        "edit_apply",
+        json!({ "scene": "prefabs/lamp.prefab.json", "ops": [
+            { "op": "set", "id": "bulb", "component": "Material", "value": { "metallic": 0.8 } }] }),
+    );
+    assert_eq!(edited["ok"], true, "{edited}");
+    assert_eq!(read(&mut ws), 0.8);
+    // An instance's own override wins over the prefab, and survives the edit.
+    call(
+        &mut ws,
+        "edit_apply",
+        json!({ "ops": [{ "op": "set_override", "id": "lamp_1", "entity": "bulb",
+                          "component": "Material", "value": { "metallic": 0.2 } }] }),
+    );
+    call(
+        &mut ws,
+        "edit_apply",
+        json!({ "scene": "prefabs/lamp.prefab.json", "ops": [
+            { "op": "set", "id": "bulb", "component": "Material", "value": { "roughness": 0.9 } }] }),
+    );
+    assert_eq!(read(&mut ws), 0.2);
+    // The prefab has its own history: undo takes the last edit back.
+    let undone = call(
+        &mut ws,
+        "edit_history",
+        json!({ "scene": "prefabs/lamp.prefab.json", "action": "undo" }),
+    );
+    assert_eq!(undone["ok"], true, "{undone}");
+    let got = call(
+        &mut ws,
+        "entity_get",
+        json!({ "ids": ["lamp_1/bulb"], "components": ["Material"] }),
+    );
+    assert_eq!(
+        got["entities"][0]["components"]["Material"]["roughness"],
+        0.5
+    );
+    // `check` still passes.
+    assert_eq!(call(&mut ws, "check", json!({}))["passed"], true);
+}

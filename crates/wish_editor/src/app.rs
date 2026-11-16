@@ -22,6 +22,7 @@ use wish_render::{CameraView, RgbaImage, View};
 use wish_window::{Button, FlyCamera, Modifiers, Movement, Picture, Shell, ShellEvent};
 
 use crate::Editor;
+use crate::browser::{Asset, AssetDrag, BrowserActions, BrowserState, BrowserView};
 use crate::gizmo::{self, Drag, Eye, Handle, Mode, Space, Target};
 use crate::inspector::{self, Inspected, InspectorActions, InspectorState, InspectorView};
 use crate::raster::Canvas;
@@ -98,6 +99,16 @@ pub struct EditorApp {
     drawn_size: (u32, u32),
     picture_stale: bool,
     ui_state: RefCell<UiState>,
+    /// The project's prefabs, and its files.
+    prefabs: Vec<String>,
+    files: Vec<Asset>,
+    /// How many files `project_info` counted when `assets` was read.
+    asset_count: u64,
+    asset_selected: Option<String>,
+    asset_detail: Option<Value>,
+    browser_state: RefCell<BrowserState>,
+    /// A component's values copied in the inspector.
+    clipboard: Option<(String, Value)>,
     /// What the handles do, along which axes, and whether they snap.
     mode: Mode,
     space: Space,
@@ -164,6 +175,12 @@ struct Actions {
     mode: Option<Mode>,
     toggle_space: bool,
     toggle_snap: bool,
+    /// What the browser asked for.
+    browser: BrowserActions,
+    /// A file was dropped on the view: its path, and where.
+    drop: Option<(String, Pos2)>,
+    /// Make a prefab of this entity and its children.
+    make_prefab: Option<String>,
 }
 
 impl Actions {
@@ -186,6 +203,9 @@ impl Actions {
             || self.mode.is_some()
             || self.toggle_space
             || self.toggle_snap
+            || self.browser.any()
+            || self.drop.is_some()
+            || self.make_prefab.is_some()
     }
 }
 
@@ -219,6 +239,13 @@ impl EditorApp {
             drawn_size: (0, 0),
             picture_stale: true,
             ui_state: RefCell::new(UiState::default()),
+            prefabs: Vec::new(),
+            files: Vec::new(),
+            asset_count: u64::MAX,
+            asset_selected: None,
+            asset_detail: None,
+            browser_state: RefCell::new(BrowserState::default()),
+            clipboard: None,
             mode: Mode::Translate,
             space: Space::World,
             snap: false,
@@ -242,6 +269,46 @@ impl EditorApp {
         app.refresh_project();
         app.load_schemas();
         app
+    }
+
+    /// Reads the project's files and prefabs for the browser.
+    fn load_assets(&mut self) {
+        let listed = self.call("asset_list", &json!({}));
+        let mut rows: Vec<Asset> = listed["assets"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|a| {
+                let path = a["path"].as_str()?.to_owned();
+                Some(Asset {
+                    kind: Asset::kind_of(&path),
+                    bytes: a["bytes"].as_u64().unwrap_or(0),
+                    path,
+                })
+            })
+            .collect();
+        rows.extend(self.prefabs.iter().map(|path| Asset {
+            path: path.clone(),
+            kind: "prefab",
+            bytes: 0,
+        }));
+        rows.sort_by(|a, b| a.path.cmp(&b.path));
+        self.files = rows;
+        self.asset_detail = None;
+        if let Some(path) = self.asset_selected.clone() {
+            self.select_asset(&path);
+        }
+    }
+
+    /// Selects a file in the browser and reads what is known about it.
+    fn select_asset(&mut self, path: &str) {
+        self.asset_selected = Some(path.to_owned());
+        if path.ends_with(".prefab.json") {
+            self.asset_detail = Some(json!({ "kind": "prefab" }));
+            return;
+        }
+        let info = self.call("asset_info", &json!({ "path": path }));
+        self.asset_detail = (info["ok"] == true).then_some(info);
     }
 
     /// Reads every component's schema (again after game code changed: a
@@ -527,6 +594,48 @@ impl EditorApp {
                 .collect();
             self.edit(&format!("set {component}.{field}"), ops);
         }
+        if let Some(component) = asked.copy {
+            if let Some(value) = self
+                .inspected
+                .first()
+                .and_then(|entity| entity.components.get(&component))
+            {
+                self.clipboard = Some((component.clone(), value.clone()));
+                self.status = format!("copied {component}");
+            }
+            self.inspected_for = (Vec::new(), u64::MAX);
+            return;
+        }
+        if let Some(component) = asked.paste {
+            if let Some((name, value)) = self
+                .clipboard
+                .clone()
+                .filter(|(name, _)| *name == component)
+            {
+                let ops = targets
+                    .iter()
+                    .map(|(id, part)| op_for(id, *part, &name, value.clone()))
+                    .collect();
+                self.edit(&format!("pasted {name}"), ops);
+            }
+            self.inspected_for = (Vec::new(), u64::MAX);
+            return;
+        }
+        if let Some(component) = asked.reset {
+            let ops = targets
+                .iter()
+                .map(|(id, part)| match (part, id.split_once('/')) {
+                    (true, Some((instance, inner))) => json!({
+                        "op": "replace_override", "id": instance, "entity": inner,
+                        "component": component, "value": {}
+                    }),
+                    _ => json!({ "op": "replace", "id": id, "component": component, "value": {} }),
+                })
+                .collect();
+            self.edit(&format!("reset {component}"), ops);
+            self.inspected_for = (Vec::new(), u64::MAX);
+            return;
+        }
         if let Some(component) = asked.add {
             let ops = targets
                 .iter()
@@ -648,7 +757,27 @@ impl EditorApp {
 
     /// Reads what the title and lists need: the project, its scenes, the
     /// problems.
-    fn refresh_project(&mut self) {
+    fn refresh_project(&mut self) -> bool {
+        let shown_before = (
+            self.problems,
+            self.scenes.clone(),
+            self.prefabs.clone(),
+            self.asset_count,
+            self.scripts.clone(),
+        );
+        self.read_project();
+        let shown_after = (
+            self.problems,
+            self.scenes.clone(),
+            self.prefabs.clone(),
+            self.asset_count,
+            self.scripts.clone(),
+        );
+        shown_before != shown_after
+    }
+
+    /// The reading part of [`EditorApp::refresh_project`].
+    fn read_project(&mut self) {
         let info = self.call("project_info", &json!({}));
         if info["ok"] != true {
             self.status = info["error"]["message"]
@@ -677,6 +806,18 @@ impl EditorApp {
             info["problems"]["errors"].as_u64().unwrap_or(0),
             info["problems"]["warnings"].as_u64().unwrap_or(0),
         );
+        let prefabs: Vec<String> = info["prefabs"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|p| p.as_str().map(str::to_owned))
+            .collect();
+        let count = info["assets"].as_u64().unwrap_or(0);
+        if prefabs != self.prefabs || count != self.asset_count {
+            self.prefabs = prefabs;
+            self.asset_count = count;
+            self.load_assets();
+        }
         // Game code rebuilt (by the person, an agent, `wen build`): its
         // components come and go with it.
         let scripts = info["scripts"]["module"]["fingerprint"]
@@ -785,6 +926,166 @@ impl EditorApp {
         applied
     }
 
+    /// A scene id made from a file's name.
+    fn id_from_path(&self, path: &str) -> String {
+        let name = path.rsplit('/').next().unwrap_or(path);
+        let stem = name.split('.').next().unwrap_or(name);
+        let clean: String = stem
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        self.unused_id(if clean.is_empty() { "entity" } else { &clean })
+    }
+
+    /// Where a window pixel is on the ground (y = 0), or six metres along
+    /// the pointer's ray when it does not meet the ground.
+    fn ground_point(&self, at: Pos2) -> Vec3 {
+        let Some(eye) = self.eye_now() else {
+            return Vec3::ZERO;
+        };
+        let (origin, direction) = eye.ray(at);
+        if direction.y < -1e-4 {
+            let t = -origin.y / direction.y;
+            if t > 0.0 && t < 500.0 {
+                return origin + direction * t;
+            }
+        }
+        origin + direction * 6.0
+    }
+
+    /// Puts a prefab or a model in the scene: a prefab becomes an instance,
+    /// a model an entity with a `Model`; where the pointer dropped it, or
+    /// in the middle of the view.
+    fn place_asset(&mut self, path: &str, at: Option<Pos2>) {
+        let place = self.ground_point(at.unwrap_or_else(|| self.viewport.center()));
+        let translation = json!([place.x, place.y, place.z]);
+        let id = self.id_from_path(path);
+        let op = match Asset::kind_of(path) {
+            "prefab" => json!({
+                "op": "instantiate", "id": id, "prefab": path,
+                "components": { "Transform": { "translation": translation } }
+            }),
+            "model" => json!({
+                "op": "spawn", "id": id,
+                "components": { "Transform": { "translation": translation }, "Model": { "asset": path } }
+            }),
+            _ => {
+                self.status = format!("{path} cannot be put in a scene (a prefab or a model can)");
+                return;
+            }
+        };
+        if self.scene.ends_with(".prefab.json") && Asset::kind_of(path) == "prefab" {
+            self.status = "a prefab cannot hold another prefab".to_owned();
+            return;
+        }
+        if self.edit(&format!("added {id} ({path})"), vec![op]) {
+            self.selected = vec![id];
+        }
+    }
+
+    /// Makes a prefab of an entity and its children (in `prefabs/`), and puts
+    /// an instance of it where they were. Two changes, in two files: the new
+    /// prefab (its own history) and the scene (undoable).
+    fn make_prefab(&mut self, id: &str) {
+        let scene = self.scene.clone();
+        let got = self.call(
+            "scene_get",
+            &json!({ "scene": scene, "detail": "normal", "root": id }),
+        );
+        let Some(node) = got["tree"].get(0).filter(|_| got["ok"] == true) else {
+            self.status = "make prefab failed: the entity could not be read".to_owned();
+            return;
+        };
+        let transform = node["components"].get("Transform").cloned();
+        let mut ops = Vec::new();
+        fn collect(node: &Value, parent: Option<&str>, root: bool, ops: &mut Vec<Value>) -> bool {
+            if node.get("prefab").is_some() {
+                return false;
+            }
+            let own = node["id"].as_str().unwrap_or_default();
+            let name = if root { "root" } else { own };
+            let mut components = node["components"].clone();
+            if root {
+                // The instance gets the place; the prefab's own is neutral.
+                components["Transform"] = json!({});
+            }
+            let mut op = json!({ "op": "spawn", "id": name, "components": components });
+            if let Some(parent) = parent {
+                op["parent"] = json!(parent);
+            }
+            ops.push(op);
+            for child in node["children"].as_array().into_iter().flatten() {
+                if !collect(child, Some(name), false, ops) {
+                    return false;
+                }
+            }
+            true
+        }
+        if !collect(node, None, true, &mut ops) {
+            self.status = "make prefab failed: it already contains prefab instances".to_owned();
+            return;
+        }
+        let base = id
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>();
+        let path = (0..)
+            .map(|n| {
+                if n == 0 {
+                    format!("prefabs/{base}.prefab.json")
+                } else {
+                    format!("prefabs/{base}_{n}.prefab.json")
+                }
+            })
+            .find(|path| !self.prefabs.contains(path))
+            .unwrap_or_default();
+        let made = self.call(
+            "edit_apply",
+            &json!({ "scene": path.clone(), "create": true, "ops": ops }),
+        );
+        if made["ok"] != true {
+            let message = made["error"]["message"]
+                .as_str()
+                .unwrap_or("it did not work");
+            let hint = made["error"]["hint"].as_str().unwrap_or("");
+            self.status = format!("make prefab failed: {message} {hint}");
+            return;
+        }
+        let parent = self
+            .rows
+            .iter()
+            .find(|row| row.id == id)
+            .and_then(|row| row.parent.clone());
+        let mut instance = json!({ "op": "instantiate", "id": id, "prefab": path.clone() });
+        if let Some(parent) = parent {
+            instance["parent"] = json!(parent);
+        }
+        if let Some(transform) = transform {
+            instance["components"] = json!({ "Transform": transform });
+        }
+        let swapped = self.edit(
+            &format!("made prefab {path}"),
+            vec![json!({ "op": "despawn", "id": id }), instance],
+        );
+        self.asset_count = u64::MAX;
+        self.refresh_project();
+        if swapped {
+            self.selected = vec![id.to_owned()];
+        }
+    }
+
     /// An id that no entity has, built on `base`.
     fn unused_id(&self, base: &str) -> String {
         let taken: BTreeSet<&str> = self.rows.iter().map(|row| row.id.as_str()).collect();
@@ -815,6 +1116,44 @@ impl EditorApp {
         if actions.reset_camera {
             *self.eye.borrow_mut() = None;
             self.picture_stale = true;
+        }
+        if let Some(path) = actions.browser.select {
+            self.select_asset(&path);
+        }
+        if let Some(path) = actions.browser.place {
+            self.place_asset(&path, None);
+        }
+        if let Some((path, at)) = actions.drop {
+            self.place_asset(&path, Some(at));
+        }
+        if let Some((from, to)) = actions.browser.rename
+            && from != to
+            && !to.is_empty()
+        {
+            let moved = self.call(
+                "asset_move",
+                &json!({ "from": from.clone(), "to": to.clone() }),
+            );
+            self.status = if moved["ok"] == true {
+                let updated = moved["updated"].as_array().map_or(0, Vec::len);
+                format!("moved {from} to {to} ({updated} file(s) that use it updated)")
+            } else {
+                let message = moved["error"]["message"]
+                    .as_str()
+                    .unwrap_or("it did not work");
+                let hint = moved["error"]["hint"].as_str().unwrap_or("");
+                format!("move failed: {message} {hint}")
+            };
+            if self.asset_selected.as_deref() == Some(from.as_str()) {
+                self.asset_selected = Some(to);
+            }
+            self.asset_count = u64::MAX;
+            self.revision = u64::MAX;
+            self.refresh_project();
+            self.refresh_scene();
+        }
+        if let Some(id) = actions.make_prefab {
+            self.make_prefab(&id);
         }
         if let Some(mode) = actions.mode {
             self.mode = mode;
@@ -1241,6 +1580,15 @@ impl EditorApp {
                                 Some((row.id.clone(), row.id.clone()));
                             ui.close();
                         }
+                        if !self.scene.ends_with(".prefab.json")
+                            && ui
+                                .button("Make prefab")
+                                .on_hover_text("Saves it and its children as a prefab and puts an instance in its place")
+                                .clicked()
+                        {
+                            actions.make_prefab = Some(row.id.clone());
+                            ui.close();
+                        }
                         if ui.button("Delete").clicked() {
                             actions.select = Some((row.id.clone(), false));
                             actions.delete = true;
@@ -1278,6 +1626,15 @@ impl EditorApp {
                         for scene in &self.scenes {
                             if ui.selectable_label(*scene == self.scene, scene).clicked() {
                                 actions.scene = Some(scene.clone());
+                            }
+                        }
+                        if !self.prefabs.is_empty() {
+                            ui.separator();
+                            ui.weak("Prefabs");
+                        }
+                        for prefab in &self.prefabs {
+                            if ui.selectable_label(*prefab == self.scene, prefab).clicked() {
+                                actions.scene = Some(prefab.clone());
                             }
                         }
                     });
@@ -1362,6 +1719,20 @@ impl EditorApp {
                 ui.label(&self.status);
             });
         });
+        egui::Panel::bottom("assets")
+            .resizable(true)
+            .default_size(190.0)
+            .size_range(110.0..=420.0)
+            .show(ui, |ui| {
+                let view = BrowserView {
+                    assets: &self.files,
+                    selected: self.asset_selected.as_deref(),
+                    detail: self.asset_detail.as_ref(),
+                    root: self.workspace.root(),
+                    state: &self.browser_state,
+                };
+                crate::browser::panel(ui, &view, &mut actions.browser);
+            });
         egui::Panel::left("hierarchy")
             .default_size(220.0)
             .show(ui, |ui| self.hierarchy(ui, &mut actions));
@@ -1373,6 +1744,7 @@ impl EditorApp {
                     schemas: &self.schemas,
                     entities: self.rows.iter().map(|row| row.id.as_str()).collect(),
                     assets: &self.assets,
+                    copied: self.clipboard.as_ref().map(|(name, _)| name.as_str()),
                     state: &self.inspector_state,
                 };
                 inspector::panel(ui, &view, &mut actions.inspector);
@@ -1381,7 +1753,16 @@ impl EditorApp {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
-                *viewport = ui.max_rect();
+                let area = ui.max_rect();
+                *viewport = area;
+                // A file dragged from the browser is dropped on the view.
+                let target = ui.allocate_rect(area, Sense::hover());
+                if let Some(dropped) = target.dnd_release_payload::<AssetDrag>() {
+                    let at = ui
+                        .input(|input| input.pointer.interact_pos())
+                        .unwrap_or_else(|| area.center());
+                    actions.drop = Some((dropped.0.clone(), at));
+                }
             });
         actions
     }
@@ -1396,11 +1777,13 @@ impl EditorApp {
     ) -> bool {
         self.since_poll += seconds;
         self.since_project_poll += seconds;
+        let mut project_changed = false;
         if self.since_project_poll >= PROJECT_POLL_SECONDS {
             self.since_project_poll = 0.0;
-            self.refresh_project();
+            project_changed = self.refresh_project();
         }
         let mut changed = !events.is_empty()
+            || project_changed
             || self.frames < 3
             || self.movement.any()
             || self.editor.as_ref().is_some_and(Editor::wants_repaint);

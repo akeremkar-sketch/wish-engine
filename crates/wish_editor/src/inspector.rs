@@ -62,11 +62,22 @@ pub(crate) struct InspectorActions {
     pub add: Option<String>,
     /// Remove a component.
     pub remove: Option<String>,
+    /// Copy a component's values (to paste on another entity).
+    pub copy: Option<String>,
+    /// Paste the copied values into this component of the selection.
+    pub paste: Option<String>,
+    /// Put a component back to its default values.
+    pub reset: Option<String>,
 }
 
 impl InspectorActions {
     pub fn any(&self) -> bool {
-        self.set.is_some() || self.add.is_some() || self.remove.is_some()
+        self.set.is_some()
+            || self.add.is_some()
+            || self.remove.is_some()
+            || self.copy.is_some()
+            || self.paste.is_some()
+            || self.reset.is_some()
     }
 }
 
@@ -79,6 +90,9 @@ pub(crate) struct InspectorView<'a> {
     pub entities: Vec<&'a str>,
     /// The project's files, for asset fields.
     pub assets: &'a [String],
+    /// The component copied last (its name), so that "Paste" knows where
+    /// it fits.
+    pub copied: Option<&'a str>,
     pub state: &'a RefCell<InspectorState>,
 }
 
@@ -147,8 +161,29 @@ pub(crate) fn panel(ui: &mut Ui, view: &InspectorView<'_>, actions: &mut Inspect
                             actions.remove = Some(name.clone());
                         }
                     });
+                let header_response = header.header_response;
+                header_response.context_menu(|ui| {
+                    if ui.button("Copy values").clicked() {
+                        actions.copy = Some(name.clone());
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            view.copied == Some(name.as_str()),
+                            egui::Button::new("Paste values"),
+                        )
+                        .clicked()
+                    {
+                        actions.paste = Some(name.clone());
+                        ui.close();
+                    }
+                    if ui.button("Reset to defaults").clicked() {
+                        actions.reset = Some(name.clone());
+                        ui.close();
+                    }
+                });
                 if let Some(doc) = schema.and_then(|s| s["description"].as_str()) {
-                    header.header_response.on_hover_text(doc);
+                    header_response.on_hover_text(doc);
                 }
             }
             if !part {
@@ -525,6 +560,10 @@ fn text(
         .horizontal(|ui| {
             let response = ui.add(egui::TextEdit::singleline(&mut typed).desired_width(150.0));
             if asset {
+                // A file dragged from the browser is dropped on the box.
+                if let Some(dropped) = response.dnd_release_payload::<crate::browser::AssetDrag>() {
+                    picked = Some(json!(dropped.0));
+                }
                 egui::ComboBox::from_id_salt(("asset", key))
                     .selected_text("")
                     .width(24.0)

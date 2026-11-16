@@ -143,7 +143,7 @@ fn prepare_with(
         Some(id) => Some(workspace.session_id(Some(id))?),
         None => None,
     };
-    let (scene, by_name, notes, source) = match &session {
+    let (mut scene, by_name, notes, source) = match &session {
         Some(id) => {
             let session = workspace.session(id)?;
             let world = session.app.world();
@@ -177,6 +177,14 @@ fn prepare_with(
             }
         }
     };
+    // A prefab has no camera or light of its own: it is looked at from a
+    // default stage (from the front and above, in daylight).
+    if source["scene"]
+        .as_str()
+        .is_some_and(|path| path.ends_with(".prefab.json"))
+    {
+        stage(&mut scene);
+    }
     let names = by_name
         .iter()
         .map(|(name, entity)| (*entity, name.clone()))
@@ -188,6 +196,36 @@ fn prepare_with(
         notes,
         source,
     })
+}
+
+/// Gives a scene with no camera one, and one with no light a sun: what a
+/// prefab needs to be looked at.
+fn stage(scene: &mut RenderScene) {
+    use wish_core::math::Vec3;
+    if scene.cameras.is_empty() {
+        let eye = Vec3::new(0.0, 2.5, 6.5);
+        scene.cameras.push(wish_render::CameraView {
+            entity: Entity::NULL,
+            view: wish_core::math::camera::rh::view::look_at_mat4(
+                eye,
+                Vec3::new(0.0, 0.8, 0.0),
+                Vec3::Y,
+            ),
+            position: eye,
+            fov_y: 50f32.to_radians(),
+            near: 0.1,
+            far: 200.0,
+            ortho_height: None,
+        });
+    }
+    if scene.lights.is_empty() {
+        scene.lights.push(wish_render::LightView {
+            entity: Entity::NULL,
+            direction: Vec3::new(-0.4, -1.0, -0.3).normalize(),
+            radiance: [100_000.0, 98_000.0, 92_000.0],
+            shadows: true,
+        });
+    }
 }
 
 fn camera_entity(prepared: &Prepared, args: &Args) -> Result<Option<Entity>> {

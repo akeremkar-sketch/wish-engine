@@ -631,6 +631,12 @@ impl Workspace {
         open.doc = doc;
         open.disk_text = Some(text);
         open.view = None;
+        if path.ends_with(".prefab.json") {
+            // A prefab changed: every scene that has instances of it is
+            // built again, now (a file's size and time alone could miss a
+            // change made within the same clock tick).
+            self.docs.prefab_stamp = None;
+        }
         Ok(())
     }
 

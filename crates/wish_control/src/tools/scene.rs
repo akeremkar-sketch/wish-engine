@@ -717,14 +717,6 @@ fn changes_json(changes: &[String]) -> Value {
 }
 
 fn refuse_if_file_invalid(workspace: &Workspace, path: &str) -> Result<()> {
-    if path.ends_with(".prefab.json") {
-        return Err(Diagnostic::error(
-            "prefab_read_only",
-            format!("'{path}' is a prefab: the tools can look at prefabs but not change them yet."),
-            "Change an instance instead: set / replace on the instance's id for its root, set_override for the prefab's other entities. Editing prefabs themselves comes with the prefab editor.",
-        )
-        .at_path("/scene"));
-    }
     if let Some(problem) = &workspace.document(path)?.disk_problem {
         let mut refusal = problem.clone();
         refusal.severity = wish_core::Severity::Error;
