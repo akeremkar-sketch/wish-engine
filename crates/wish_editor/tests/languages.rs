@@ -132,9 +132,16 @@ fn the_font_has_every_letter_of_every_language() {
     let mut lacking = Vec::new();
     for language in LANGUAGES {
         let table = translations(language.code).unwrap();
+        // English is the code's own texts (the keys).
+        let english = if language.code == "en" {
+            texts_in_code()
+        } else {
+            std::collections::BTreeSet::new()
+        };
         let all = table
             .values()
             .map(String::as_str)
+            .chain(english.iter().map(String::as_str))
             .chain([language.name])
             .collect::<Vec<_>>();
         for text in all {

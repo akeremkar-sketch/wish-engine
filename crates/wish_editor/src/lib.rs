@@ -6,6 +6,7 @@
 
 mod app;
 mod browser;
+mod cockpit;
 mod gizmo;
 pub mod i18n;
 mod inspector;

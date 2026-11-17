@@ -172,6 +172,10 @@ pub struct EditorApp {
     permission_mode: String,
     /// Agents' proposals (waiting ones are shown in the Activity tab).
     proposals: Vec<Value>,
+    /// The agent's panel, its task and the editor's MCP endpoint (M8b).
+    cockpit: crate::cockpit::Cockpit,
+    /// The "connect an outside agent" window is open.
+    connect_open: bool,
     /// A before/after comparison being shown: the checkpoint, its picture
     /// and now's, and their textures once made.
     compare: Option<Compare>,
@@ -300,6 +304,12 @@ struct Actions {
     save_checkpoint: bool,
     /// Set the permission mode.
     permission: Option<&'static str>,
+    /// Show or hide the agent's panel.
+    toggle_cockpit: bool,
+    /// Open (true) or close (false) the "connect an outside agent" window.
+    connect: Option<bool>,
+    /// What the agent's panel asked for.
+    cockpit: crate::cockpit::CockpitActions,
     /// Go back to this checkpoint.
     restore_checkpoint: Option<String>,
     /// Compare this checkpoint with now.
@@ -367,6 +377,9 @@ impl Actions {
             || self.run_tests
             || self.save_checkpoint
             || self.permission.is_some()
+            || self.toggle_cockpit
+            || self.connect.is_some()
+            || self.cockpit.any()
             || self.restore_checkpoint.is_some()
             || self.compare_checkpoint.is_some()
             || self.delete_checkpoint.is_some()
@@ -480,6 +493,10 @@ impl EditorApp {
             checkpoints: Vec::new(),
             permission_mode: "apply".to_owned(),
             proposals: Vec::new(),
+            connect_open: false,
+            cockpit: crate::cockpit::Cockpit::new(Box::new(
+                wish_agent::claude::ClaudeCode::default(),
+            )),
             compare: None,
             record: false,
             unbuilt: false,
@@ -1505,6 +1522,240 @@ impl EditorApp {
         }
     }
 
+    /// Replaces the way the agent runs (tests use a scripted one).
+    pub fn set_agent(&mut self, agent: Box<dyn wish_agent::Adapter>) {
+        self.cockpit.agent = agent;
+    }
+
+    /// The agent's transcript, one line each (`You: ...`, `edit_apply: done`).
+    pub fn transcript(&self) -> Vec<String> {
+        use crate::cockpit::Who;
+        self.cockpit
+            .transcript
+            .iter()
+            .map(|line| match line.who {
+                Who::Person => format!("You: {}", line.text),
+                Who::Agent => line.text.clone(),
+                Who::Tool => crate::cockpit::tool_line(&line.text, line.ok == Some(true)),
+                Who::Note => line.text.clone(),
+            })
+            .collect()
+    }
+
+    /// Whether an agent's task is running.
+    pub fn agent_running(&self) -> bool {
+        self.cockpit.run.is_some()
+    }
+
+    /// What the last task told the agent.
+    pub fn last_instructions(&self) -> Option<&str> {
+        self.cockpit.last_instructions.as_deref()
+    }
+
+    /// What goes with the next request.
+    pub fn agent_context(&self) -> &[String] {
+        &self.cockpit.context
+    }
+
+    /// The agent's calls waiting at the endpoint run now, against this
+    /// editor's workspace; and what the task reported is taken in. Returns
+    /// whether anything happened.
+    fn cockpit_tick(&mut self) -> bool {
+        let mut ran = 0;
+        if let Some((endpoint, _)) = self.cockpit.mcp.as_mut() {
+            ran = endpoint.serve_pending(
+                &mut wish_mcp::Server::new(&mut self.workspace),
+                std::time::Duration::ZERO,
+            );
+        }
+        let (reported, changed) = self.cockpit.take_events();
+        if ran > 0 || changed {
+            // The agent changed things: show them now, not at the next poll.
+            self.revision = u64::MAX;
+            self.refresh_scene();
+            self.inspected_for = (Vec::new(), u64::MAX);
+            self.picture_stale = true;
+        }
+        if reported && self.cockpit.run.is_none() {
+            self.status = t("the agent finished").to_owned();
+            self.refresh_project();
+        }
+        ran > 0 || reported
+    }
+
+    /// A line about an entity, for the agent: its id and where it is.
+    fn describe_for_agent(&mut self, id: &str) -> String {
+        let got = self.call(
+            "entity_get",
+            &json!({ "scene": self.scene.clone(), "ids": [id], "components": ["Transform"] }),
+        );
+        match got["entities"][0]["components"]["Transform"]["translation"].as_array() {
+            Some(at) => {
+                let at: Vec<String> = at
+                    .iter()
+                    .map(|v| format!("{:.2}", v.as_f64().unwrap_or(0.0)))
+                    .collect();
+                format!("the entity `{id}` (at {})", at.join(", "))
+            }
+            None => format!("the entity `{id}`"),
+        }
+    }
+
+    /// The agent panel's actions.
+    fn cockpit_act(&mut self, asked: &crate::cockpit::CockpitActions) {
+        if let Some(index) = asked.remove_context
+            && index < self.cockpit.context.len()
+        {
+            self.cockpit.context.remove(index);
+        }
+        if asked.point {
+            self.cockpit.pointing = !self.cockpit.pointing;
+        }
+        if asked.add_selection {
+            for id in self.selected.clone() {
+                let line = self.describe_for_agent(&id);
+                if !self.cockpit.context.contains(&line) {
+                    self.cockpit.context.push(line);
+                }
+            }
+        }
+        if asked.stop
+            && let Some(run) = self.cockpit.run.as_mut()
+        {
+            run.stop();
+            self.cockpit.transcript.push(crate::cockpit::Line {
+                who: crate::cockpit::Who::Note,
+                text: t("Stopped. What was done stays (it is in the history).").to_owned(),
+                ok: Some(false),
+            });
+            self.cockpit.run = None;
+        }
+        if asked.send && self.cockpit.run.is_none() {
+            self.send_task();
+        }
+    }
+
+    /// The editor's MCP endpoint (loopback, a fresh token), started once.
+    fn ensure_endpoint(&mut self) -> Result<(), ()> {
+        if self.cockpit.mcp.is_some() {
+            return Ok(());
+        }
+        let token = wish_mcp::http::random_token();
+        let started = std::net::TcpListener::bind("127.0.0.1:0").and_then(|listener| {
+            wish_mcp::http::Endpoint::start(
+                listener,
+                wish_mcp::http::HttpOptions {
+                    token: Some(token.clone()),
+                    ..wish_mcp::http::HttpOptions::default()
+                },
+            )
+        });
+        match started {
+            Ok(endpoint) => {
+                self.cockpit.mcp = Some((endpoint, token));
+                Ok(())
+            }
+            Err(error) => {
+                self.status = tf("the agent cannot connect: {error}", &[("error", &error)]);
+                Err(())
+            }
+        }
+    }
+
+    /// Where an outside agent connects to this editor: its endpoint's
+    /// address and token (once the endpoint is started).
+    pub fn mcp_endpoint(&self) -> Option<(String, String)> {
+        self.cockpit
+            .mcp
+            .as_ref()
+            .map(|(endpoint, token)| (format!("http://{}/mcp", endpoint.address()), token.clone()))
+    }
+
+    /// The window that tells how an outside agent connects to this editor.
+    fn connect_window(&self, ui: &mut Ui, actions: &mut Actions) {
+        if !self.connect_open {
+            return;
+        }
+        let Some((url, token)) = self.mcp_endpoint() else {
+            return;
+        };
+        let mut open = true;
+        egui::Window::new(t("Connect an outside agent"))
+            .open(&mut open)
+            .default_width(560.0)
+            .show(ui.ctx(), |ui| {
+                ui.label(t(
+                    "An agent connected here works in this editor, in its one history and activity feed, at the same time as the agent panel and you. While the editor is open:",
+                ));
+                let mut command = format!(
+                    "claude mcp add --transport http wish-editor {url} --header \"Authorization: Bearer {token}\""
+                );
+                ui.add(egui::TextEdit::multiline(&mut command).desired_rows(2).desired_width(f32::INFINITY));
+                ui.weak(tf("Address: {url}", &[("url", &url)]));
+                let mut shown = token.clone();
+                ui.horizontal(|ui| {
+                    ui.weak(t("Token:"));
+                    ui.add(egui::TextEdit::singleline(&mut shown).desired_width(300.0));
+                });
+                ui.weak(t(
+                    "Only programs on this computer can connect, and only with the token. A new token is made each time the editor starts.",
+                ));
+            });
+        if !open {
+            actions.connect = Some(false);
+        }
+    }
+
+    /// Starts the agent on the request written in the panel.
+    fn send_task(&mut self) {
+        let request = self.cockpit.request.borrow().trim().to_owned();
+        if request.is_empty() {
+            return;
+        }
+        // Before every task: a way back.
+        let short: String = request.chars().take(40).collect();
+        self.call(
+            "checkpoint",
+            &json!({ "action": "save", "note": tf("before: {request}", &[("request", &short)]) }),
+        );
+        self.read_checkpoints();
+        if self.ensure_endpoint().is_err() {
+            return;
+        }
+        let Some((endpoint, token)) = &self.cockpit.mcp else {
+            return;
+        };
+        let task = wish_agent::Task {
+            request: request.clone(),
+            context: self.cockpit.context.clone(),
+            endpoint: format!("http://{}/mcp", endpoint.address()),
+            token: token.clone(),
+            project: self.workspace.root().to_path_buf(),
+            scene: self.scene.clone(),
+        };
+        self.cockpit.last_instructions = Some(wish_agent::instructions(&task));
+        self.cockpit.transcript.push(crate::cockpit::Line {
+            who: crate::cockpit::Who::Person,
+            text: request,
+            ok: None,
+        });
+        match self.cockpit.agent.start(&task) {
+            Ok(run) => {
+                self.cockpit.run = Some(run);
+                self.cockpit.request.borrow_mut().clear();
+                self.cockpit.context.clear();
+                self.status = t("the agent is working").to_owned();
+            }
+            Err(problem) => {
+                self.cockpit.transcript.push(crate::cockpit::Line {
+                    who: crate::cockpit::Who::Note,
+                    text: problem,
+                    ok: Some(false),
+                });
+            }
+        }
+    }
+
     /// Reads the permission mode and the agents' proposals.
     fn read_proposals(&mut self) {
         let got = self.call("proposals", &json!({}));
@@ -2272,6 +2523,19 @@ impl EditorApp {
             self.run_tests(false);
         }
         self.checkpoint_act(&actions);
+        if actions.toggle_cockpit {
+            self.cockpit.open = !self.cockpit.open;
+        }
+        match actions.connect {
+            Some(true) => {
+                if self.ensure_endpoint().is_ok() {
+                    self.connect_open = true;
+                }
+            }
+            Some(false) => self.connect_open = false,
+            None => {}
+        }
+        self.cockpit_act(&actions.cockpit);
         if let Some(mode) = actions.permission {
             let set = self.call("permissions", &json!({ "action": "set", "mode": mode }));
             if set["ok"] == true {
@@ -2956,10 +3220,21 @@ impl EditorApp {
                     (y - origin.y).max(0.0) as u32,
                 )
                 .and_then(|entity| ids.names.get(&entity).cloned());
-            match hit {
-                Some(name) => self.click_entity(&name, toggle),
-                None if !toggle => self.selected.clear(),
-                None => {}
+            if self.cockpit.pointing {
+                // Show and tell: what was clicked goes with the request.
+                self.cockpit.pointing = false;
+                if let Some(name) = hit {
+                    let line = self.describe_for_agent(&name);
+                    if !self.cockpit.context.contains(&line) {
+                        self.cockpit.context.push(line);
+                    }
+                }
+            } else {
+                match hit {
+                    Some(name) => self.click_entity(&name, toggle),
+                    None if !toggle => self.selected.clear(),
+                    None => {}
+                }
             }
         }
         let mut boxes: BTreeMap<_, _> = ids
@@ -3236,6 +3511,14 @@ impl EditorApp {
                             }
                         }
                     });
+                    if ui
+                        .button(t("Connect an outside agent..."))
+                        .on_hover_text(t("Let Claude Code (or any MCP client) work in this editor"))
+                        .clicked()
+                    {
+                        actions.connect = Some(true);
+                        ui.close();
+                    }
                     ui.menu_button(t("Checkpoints"), |ui| {
                         if ui
                             .button(t("Save checkpoint"))
@@ -3417,6 +3700,14 @@ impl EditorApp {
                     }
                 }
                 ui.separator();
+                if ui
+                    .selectable_label(self.cockpit.open, t("Agent"))
+                    .on_hover_text(t("The agent's panel: ask, point at things, watch it work"))
+                    .clicked()
+                {
+                    actions.toggle_cockpit = true;
+                }
+                ui.separator();
                 if ui.button(t("Reset camera")).clicked() {
                     actions.reset_camera = true;
                 }
@@ -3530,8 +3821,21 @@ impl EditorApp {
                 };
                 inspector::panel(ui, &view, &mut actions.inspector);
             });
+        if self.cockpit.open {
+            egui::Panel::right("cockpit")
+                .default_size(320.0)
+                .show(ui, |ui| {
+                    crate::cockpit::panel(
+                        ui,
+                        &self.cockpit,
+                        mode_label(&self.permission_mode),
+                        &mut actions.cockpit,
+                    );
+                });
+        }
         crate::settings::window(ui, &self.settings, &self.scenes, &mut actions.settings);
         self.compare_window(ui, &mut actions);
+        self.connect_window(ui, &mut actions);
         // The middle is not painted: the scene's picture shows through.
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
@@ -3643,6 +3947,7 @@ impl EditorApp {
             self.since_poll = 0.0;
             changed |= self.refresh_scene();
         }
+        changed |= self.cockpit_tick() || self.cockpit.run.is_some();
         self.refresh_target();
         self.view_input(&events);
         self.tick_play(seconds);
