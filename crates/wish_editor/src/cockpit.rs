@@ -95,15 +95,25 @@ impl Cockpit {
                         ok: Some(*ok),
                     });
                 }
-                Event::Finished { ok, text } => self.transcript.push(Line {
-                    who: Who::Note,
-                    text: if text.trim().is_empty() || text == "done" {
-                        t("Done.").to_owned()
-                    } else {
-                        text.clone()
-                    },
-                    ok: Some(*ok),
-                }),
+                Event::Finished { ok, text } => {
+                    // Claude Code repeats its last message as the result:
+                    // said once is enough (found in the first real run).
+                    let repeated = self
+                        .transcript
+                        .iter()
+                        .rev()
+                        .find(|line| line.who == Who::Agent)
+                        .is_some_and(|line| line.text.trim() == text.trim());
+                    self.transcript.push(Line {
+                        who: Who::Note,
+                        text: if text.trim().is_empty() || text == "done" || repeated {
+                            t("Done.").to_owned()
+                        } else {
+                            text.clone()
+                        },
+                        ok: Some(*ok),
+                    });
+                }
                 Event::Failed(problem) => self.transcript.push(Line {
                     who: Who::Note,
                     text: problem.clone(),

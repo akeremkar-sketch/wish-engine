@@ -200,7 +200,7 @@ Kod okuyan bağımsız bir ajan 12 bulgu verdi; hepsi ele alındı. Regresyon te
 | Sıfırdan oynanabilir mini oyun, tek ajan oturumu | Değerlendirme görevleri 11–12 ve 26–41 (oyun kodu yazan, gizli senaryo testiyle denetlenen); vitrin oyunu yalnızca araçlarla kuruldu (M7) | ✔ |
 | Yapay zekâsız kullanım eksiksiz | Editör: sahne kurma, oynatma, test, dışa aktarma. Hepsi `wish_editor/tests` altında elle yapılıyor; karşılama ekranı "Kimse" seçeneği | ✔ |
 | Elle/ajan eşliği (otomatik denetlenir) | `wish_editor::parity::PARITY` + `tests/parity.rs`: her araç ve her `edit_apply` işlemi elle yapan bir teste bağlı | ✔ |
-| İlk çalıştırma: indir → yapay zekâyı bağla → ilk istek → çalışan sahne < 5 dk | Karşılama ekranı → şablon → derleme → editör ~10 sn (`welcome.rs` testi, şablon derlemesiyle). Gerçek Claude Code ile ilk istek kullanıcı onayı ister (kota) | ◐ |
+| İlk çalıştırma: indir → yapay zekâyı bağla → ilk istek → çalışan sahne < 5 dk | Karşılama ekranı → şablon → derleme → editör ~10 sn (`welcome.rs` testi). **Gerçek Claude Code** ile ilk istek ("kırmızı küp koy") → doğru yerde küp + `check` temiz: **25,7 sn** (`wish_editor/tests/cockpit_real.rs`, elle çalıştırılır). Temiz makinede tekrar kullanıcıda | ✔ |
 | Kurulum: tek paket, derleyici kurulmaz | `wen package`: `wen` + oynatıcı + SDK + paketlenmiş derleyici + şablonlar; boş ortamda derleme (M5). Temiz Windows Sandbox denemesi kullanıcıda | ◐ |
 | Ajan kaynaklı çökme/donma sıfır | Düşmanca oyun modülleri (`wish_script/tests/hostile_game.rs`), bulanıklaştırma (`wish_control/tests/fuzz.rs`), yakıt sınırı; M4–M9 kapanış incelemeleri | ✔ |
 | Geri alınabilirlik: her ajan değişikliği tek tıkla | Etkinlik kartı başına geri al; seçmeli geri al (`edit_history revert`); denetim noktaları (M8b) | ✔ |
@@ -210,14 +210,14 @@ Kod okuyan bağımsız bir ajan 12 bulgu verdi; hepsi ele alındı. Regresyon te
 | Bilinen çökme sıfır, açık yüksek öncelikli hata sıfır | Her kilometre taşı kapanış incelemesinin bulguları kapatıldı (M9: 12/12). Paket denemesinin bulduğu göreli yol hatası düzeltildi. Açık hata kaydı yok | ✔ |
 | İsteğe bağlı çökme raporu | Yalnızca yerel: `wish_control::crash` (yakalanmayan panik → rapor dosyası; hiçbir şey gönderilmez); editör bir kez söyler | ✔ |
 | Depo herkese açık, katkı kılavuzu yazılmış | `CONTRIBUTING.md` yazıldı. Depoyu açmak kullanıcı kararı | ◐ |
-| Ad, marka ve alan adı uygunluğu | Kullanıcı (hukuki/para) | ✗ |
+| Ad, marka ve alan adı uygunluğu | Ön web araştırması: `docs/release/ad-arastirmasi.md` (aynı adlı motor yok; "WISH" yazılım sınıflarında başka şirketin markası). Uzman araştırması ve alan adı kullanıcıda | ◐ |
 | Son kullanıcı sözleşmesi, Steam sayfası, web sitesi | Taslaklar: `docs/release/` (sözleşme TR/EN, Steam metinleri TR/EN, tek sayfa site). Hukuki inceleme, hesap, alan adı ve yayın kullanıcıda | ◐ |
 | Güncelleyici (web) | Bir indirme adresi (barındırma, alan adı) ister; adres belli olunca "yeni sürüm var" denetimi eklenir. O zamana kadar kılavuz ve sözleşme "kendiliğinden indirmez" der | ✗ |
 
 **Kullanıcıya ait adımlar (1.0 öncesi), önerilen sırayla:**
 1. ~~Paketi yeniden üret~~: yapıldı (aşağıda "Paket ve uçtan uca deneme").
 2. **Temiz makine denemesi.** Windows Sandbox'ta `clean-test.wsb`. Ayrıca bir dışa aktarılan oyunu motorsuz açmak.
-3. **Gerçek Claude Code ile kokpit koşumu ve ilk çalıştırma süresi.** Kota harcar.
+3. ~~Gerçek Claude Code ile kokpit koşumu~~: yapıldı (aşağıda).
 4. **3 kişiyle kullanıcı testi** (M8b ölçüt 1) ve T1 maketleri.
 5. **Ses çıkışını kulakla dinlemek** (`wen play`).
 6. **CI faturalandırma.** GitHub işleri başlatmıyor.
@@ -264,3 +264,17 @@ Bağımsız inceleme 7 bulgu verdi; hepsi düzeltildi. Testler:
 | 5 | Çökme bildirimi dil ayarlanmadan önce çevriliyordu | Dil (ve `--lang`) ayarlandıktan sonra |
 | 6 | Raporlar dolaşan `%APPDATA%`'ya gidiyordu; aynı saniyede üzerine yazma; sınırsız birikme | `%LOCALAPPDATA%\Wish\crashes`; adda süreç numarası; en yeni 20 rapor tutulur |
 | 7 | Göreli yol testi farklı sürücüde yanlış çalışırdı | Sürücüler farklıysa test atlanır |
+
+### Gerçek Claude Code koşumu (17 Kasım 2026; kullanıcının "yapabileceklerini sen yap" onayıyla)
+
+- **Düzenek:** `wish_editor/tests/cockpit_real.rs` (`#[ignore]`; `cargo test -p wish_editor --test cockpit_real -- --ignored --nocapture`).
+  - Editör açılır, Ajan paneline istek yazılır, Gönder'e basılır.
+  - Claude Code (npm `claude.cmd`, kişinin hesabı) editörün MCP uç noktası üzerinden çalışır.
+- **Sonuç:** "kamera önünde 2 m, zemine oturan kırmızı küp, adı crate" isteği → `[0, 0.5, 5]`'te kırmızı küp. Ajanın akışı:
+  1. Sahneyi ve şemayı okudu.
+  2. `edit_apply` yaptı.
+  3. `describe_view` ve `capture_frame` ile kendi işine baktı.
+  4. `check` çalıştırdı.
+
+  Değişiklik tek geçmişte ajanın adıyla ve etkinlik akışında; görevden önce denetim noktası alındı. Süre 27,3 sn ve 25,7 sn (iki koşu).
+- **Bulduğu hata:** Claude Code son mesajını sonuç olarak tekrarlıyor; dökümde iki kez görünüyordu. Kokpit artık aynı metni "Bitti." diye kapatır. `Scripted` sahte ajan da artık böyle davranır, yani regresyon testi `cockpit.rs`'te.

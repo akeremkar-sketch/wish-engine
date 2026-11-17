@@ -65,9 +65,10 @@ impl Adapter for Scripted {
                         ok,
                     });
                 }
+                // Like Claude Code, the result repeats the last message.
                 let _ = events.send(Event::Finished {
                     ok: all_ok,
-                    text: "done".to_owned(),
+                    text: script.says.clone(),
                 });
             })
             .map_err(|e| format!("could not start the agent: {e}"))?;
