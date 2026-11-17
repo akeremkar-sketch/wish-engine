@@ -9,7 +9,6 @@ use egui::{RichText, Ui};
 use serde_json::Value;
 
 use crate::i18n::{t, tf};
-use crate::style::{AMBER, GO, WEAK};
 
 /// What the window shows and what is being written in it.
 #[derive(Default)]
@@ -74,19 +73,19 @@ fn list(ui: &mut Ui, packages: &[Value], scope: &'static str, actions: &mut Pack
                 package["license"].as_str().unwrap_or("?")
             ));
             if package["locked"] == true {
-                ui.label(RichText::new(t("locked")).color(GO))
+                ui.label(RichText::new(t("locked")).color(crate::style::pal().go))
                     .on_hover_text(t("Its files are the ones wish.lock records"));
             } else if package["locked"] == false {
-                ui.label(RichText::new(t("not locked")).color(AMBER))
+                ui.label(RichText::new(t("not locked")).color(crate::style::pal().amber))
                     .on_hover_text(t("Its files differ from wish.lock: write the lock again if the change is yours"));
             }
         });
         ui.weak(format!("{id} · {}", kinds(package)));
         if let Some(problem) = package["problem"].as_str() {
-            ui.label(RichText::new(problem).color(AMBER));
+            ui.label(RichText::new(problem).color(crate::style::pal().amber));
         }
         if let Some(text) = package["description"].as_str().filter(|d| !d.is_empty()) {
-            ui.add(egui::Label::new(RichText::new(text).color(WEAK)).wrap());
+            ui.add(egui::Label::new(RichText::new(text).color(crate::style::pal().weak)).wrap());
         }
         ui.add_space(4.0);
     }
@@ -119,7 +118,7 @@ pub(crate) fn window(ui: &mut Ui, state: &PackagesState, actions: &mut PackagesA
             for problem in state.listing["diagnostics"].as_array().into_iter().flatten() {
                 ui.label(
                     RichText::new(problem["message"].as_str().unwrap_or(""))
-                        .color(AMBER)
+                        .color(crate::style::pal().amber)
                         .size(12.0),
                 );
             }

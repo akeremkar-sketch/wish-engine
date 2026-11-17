@@ -1,0 +1,31 @@
+{
+  "colors": {
+    "accent": "#4c9aff",
+    "accent_soft": "#2a244e",
+    "amber": "#f0be5a",
+    "backdrop": "#0c0e14",
+    "field": "#090a0f",
+    "go": "#60d296",
+    "hover": "#2c3346",
+    "hover_line": "#4e5a7a",
+    "icon": "#c4cee8",
+    "line": "#262c3d",
+    "panel": "#12151e",
+    "pressed": "#384056",
+    "raised": "#191d29",
+    "red": "#f05c6c",
+    "select": "#aa8cff",
+    "sky": "#78baf0",
+    "sun": "#fad66e",
+    "text": "#e2e8f5",
+    "weak": "#8c96af",
+    "widget": "#212635"
+  },
+  "format": 1,
+  "name": "Midnight",
+  "radius": {
+    "menu": 5,
+    "widget": 4,
+    "window": 7
+  }
+}

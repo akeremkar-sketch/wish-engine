@@ -805,6 +805,7 @@ pub fn package(out: Option<&str>, as_json: bool) -> wish_core::Result<String> {
             "wish-engine.exe",
             "wish-engine",
             "wish-engine.ico",
+            "packages",
             "sdk",
             "toolchain",
             "templates",
@@ -852,6 +853,31 @@ pub fn package(out: Option<&str>, as_json: bool) -> wish_core::Result<String> {
     }
     std::fs::write(out.join("wish-engine.ico"), icon_file()?)
         .map_err(|e| failed("write the icon", e))?;
+    // The engine's own packages (themes, workspaces...): `packages/` of the
+    // repository, each copied as a package (hidden files left out).
+    let engine_packages = std::path::Path::new(&manifest)
+        .parent()
+        .map(|root| root.join("packages"))
+        .unwrap_or_default();
+    for entry in std::fs::read_dir(&engine_packages)
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
+        let from = entry.path();
+        if !from.join(wish_control::packages::MANIFEST).is_file() {
+            continue;
+        }
+        let to = out.join("packages").join(entry.file_name());
+        for file in wish_control::packages::package_files(&from)? {
+            let target = to.join(&file);
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| failed("create a package folder", e))?;
+            }
+            std::fs::copy(from.join(&file), &target).map_err(|e| failed("copy a package", e))?;
+        }
+    }
     // The templates the welcome screen offers: the engine's examples.
     let examples = std::path::Path::new(&manifest)
         .parent()

@@ -19,6 +19,7 @@ pub mod raster;
 pub mod script;
 mod settings;
 mod style;
+mod themes;
 mod vector;
 pub mod welcome;
 
@@ -109,6 +110,11 @@ impl Default for Editor {
 }
 
 impl Editor {
+    /// Puts the theme in use on the interface again (after it changed).
+    pub(crate) fn restyle(&self) {
+        style::apply(&self.context);
+    }
+
     /// An editor with the engine's own font (Roboto) in both families.
     pub fn new() -> Self {
         let context = Context::default();

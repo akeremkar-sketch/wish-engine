@@ -21,7 +21,6 @@ use serde_json::{Map, Value, json};
 
 use crate::cockpit::{Cockpit, CockpitActions, Who};
 use crate::i18n::{t, tf};
-use crate::style::{ACCENT, ACCENT_SOFT, AMBER, GO, LINE, RAISED, RED, SELECT, TEXT, WEAK};
 
 /// A text of the interface, in the language shown.
 type Text = fn() -> &'static str;
@@ -228,8 +227,8 @@ pub(crate) struct AiView<'a> {
 pub(crate) fn switch(ui: &mut Ui, ai: bool) -> Option<bool> {
     let mut asked = None;
     egui::Frame::new()
-        .fill(RAISED)
-        .stroke(Stroke::new(1.0, LINE))
+        .fill(crate::style::pal().raised)
+        .stroke(Stroke::new(1.0, crate::style::pal().line))
         .corner_radius(CornerRadius::same(13))
         .inner_margin(Margin::same(2))
         .show(ui, |ui| {
@@ -250,7 +249,7 @@ pub(crate) fn switch(ui: &mut Ui, ai: bool) -> Option<bool> {
                     ),
                 ] {
                     let chosen = ai == on;
-                    let tint = if chosen { Some(if on { ACCENT } else { SELECT }) } else { None };
+                    let tint = if chosen { Some(if on { crate::style::pal().accent } else { crate::style::pal().select }) } else { None };
                     if crate::style::tool_button(ui, icon, name, true, chosen, true, tint)
                         .on_hover_text(hover)
                         .clicked()
@@ -267,7 +266,7 @@ pub(crate) fn switch(ui: &mut Ui, ai: bool) -> Option<bool> {
 fn card_frame(ui: &mut Ui, fill: Color32, add: impl FnOnce(&mut Ui)) {
     egui::Frame::new()
         .fill(fill)
-        .stroke(Stroke::new(1.0, LINE))
+        .stroke(Stroke::new(1.0, crate::style::pal().line))
         .corner_radius(CornerRadius::same(4))
         .inner_margin(Margin::same(8))
         .show(ui, |ui| {
@@ -277,7 +276,11 @@ fn card_frame(ui: &mut Ui, fill: Color32, add: impl FnOnce(&mut Ui)) {
 }
 
 fn tab(ui: &mut Ui, selected: bool, name: &str) -> bool {
-    let text = RichText::new(name).color(if selected { TEXT } else { WEAK });
+    let text = RichText::new(name).color(if selected {
+        crate::style::pal().text
+    } else {
+        crate::style::pal().weak
+    });
     let response = ui.selectable_label(selected, text);
     response.clicked() && !selected
 }
@@ -334,10 +337,22 @@ pub(crate) fn game_panel(ui: &mut Ui, view: &AiView, actions: &mut AiActions) {
     if !title.is_empty() || !pitch.is_empty() {
         ui.add_space(2.0);
         if !title.is_empty() {
-            ui.label(RichText::new(title).size(20.0).strong().color(TEXT));
+            ui.label(
+                RichText::new(title)
+                    .size(20.0)
+                    .strong()
+                    .color(crate::style::pal().text),
+            );
         }
         if !pitch.is_empty() {
-            ui.add(egui::Label::new(RichText::new(pitch).italics().color(WEAK)).wrap());
+            ui.add(
+                egui::Label::new(
+                    RichText::new(pitch)
+                        .italics()
+                        .color(crate::style::pal().weak),
+                )
+                .wrap(),
+            );
         }
         ui.add_space(4.0);
     }
@@ -375,7 +390,11 @@ fn card(ui: &mut Ui, view: &AiView, state: &mut AiState, actions: &mut AiActions
     ));
     ui.add_space(4.0);
     for (key, name, hint, tall) in CARD {
-        ui.label(RichText::new(name()).color(WEAK).size(12.0));
+        ui.label(
+            RichText::new(name())
+                .color(crate::style::pal().weak)
+                .size(12.0),
+        );
         let text = state.card.entry((*key).to_owned()).or_default();
         let edit = if *tall {
             egui::TextEdit::multiline(text).desired_rows(2)
@@ -447,7 +466,7 @@ fn decisions(ui: &mut Ui, view: &AiView, state: &mut AiState, actions: &mut AiAc
     for decision in items(view.design, "decisions") {
         any = true;
         let id = decision["id"].as_u64().unwrap_or(0);
-        card_frame(ui, RAISED, |ui| {
+        card_frame(ui, crate::style::pal().raised, |ui| {
             ui.horizontal(|ui| {
                 if ui
                     .small_button("x")
@@ -513,9 +532,9 @@ pub(crate) fn board(ui: &mut Ui, view: &AiView, actions: &mut AiActions) {
             state.board = Board::Notes;
         }
         let health = if unwell {
-            RichText::new(t("Health")).color(RED)
+            RichText::new(t("Health")).color(crate::style::pal().red)
         } else {
-            RichText::new(t("Health")).color(GO)
+            RichText::new(t("Health")).color(crate::style::pal().go)
         };
         let selected = state.board == Board::Health;
         if ui.selectable_label(selected, health).clicked() && !selected {
@@ -547,7 +566,9 @@ fn plan(ui: &mut Ui, view: &AiView, state: &mut AiState, actions: &mut AiActions
         if ui
             .add_enabled(
                 next.is_some() && view.cockpit.run.is_none(),
-                egui::Button::new(RichText::new(t("Do the next step")).color(ACCENT)),
+                egui::Button::new(
+                    RichText::new(t("Do the next step")).color(crate::style::pal().accent),
+                ),
             )
             .on_hover_text(t("The agent does the first step that is not done"))
             .clicked()
@@ -566,9 +587,9 @@ fn plan(ui: &mut Ui, view: &AiView, state: &mut AiState, actions: &mut AiActions
         let status = step["status"].as_str().unwrap_or("todo");
         ui.horizontal(|ui| {
             let (color, following) = match status {
-                "todo" => (WEAK, "doing"),
-                "doing" => (AMBER, "done"),
-                _ => (GO, "todo"),
+                "todo" => (crate::style::pal().weak, "doing"),
+                "doing" => (crate::style::pal().amber, "done"),
+                _ => (crate::style::pal().go, "todo"),
             };
             if ui
                 .add(egui::Button::new(RichText::new(status_name(status)).color(color)).small())
@@ -582,7 +603,9 @@ fn plan(ui: &mut Ui, view: &AiView, state: &mut AiState, actions: &mut AiActions
             }
             let text = step["text"].as_str().unwrap_or("");
             let text = if status == "done" {
-                RichText::new(text).strikethrough().color(WEAK)
+                RichText::new(text)
+                    .strikethrough()
+                    .color(crate::style::pal().weak)
             } else {
                 RichText::new(text)
             };
@@ -652,7 +675,7 @@ fn notes(ui: &mut Ui, view: &AiView, state: &mut AiState, actions: &mut AiAction
         .collect();
     for note in &open {
         let id = note["id"].as_u64().unwrap_or(0);
-        card_frame(ui, RAISED, |ui| {
+        card_frame(ui, crate::style::pal().raised, |ui| {
             ui.horizontal(|ui| {
                 if ui
                     .small_button(t("Done"))
@@ -680,7 +703,9 @@ fn notes(ui: &mut Ui, view: &AiView, state: &mut AiState, actions: &mut AiAction
     } else if ui
         .add_enabled(
             view.cockpit.run.is_none(),
-            egui::Button::new(RichText::new(t("Send the notes to the agent")).color(ACCENT)),
+            egui::Button::new(
+                RichText::new(t("Send the notes to the agent")).color(crate::style::pal().accent),
+            ),
         )
         .on_hover_text(t(
             "One task: the agent fixes what the notes say and closes them",
@@ -701,7 +726,11 @@ fn health(ui: &mut Ui, view: &AiView, actions: &mut AiActions) {
     let (errors, warnings) = view.problems;
     let row = |ui: &mut Ui, good: bool, text: String| {
         ui.horizontal(|ui| {
-            let color = if good { GO } else { RED };
+            let color = if good {
+                crate::style::pal().go
+            } else {
+                crate::style::pal().red
+            };
             let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
             ui.painter().circle_filled(rect.center(), 4.0, color);
             ui.label(text);
@@ -752,7 +781,9 @@ fn health(ui: &mut Ui, view: &AiView, actions: &mut AiActions) {
         if ui
             .add_enabled(
                 (errors > 0 || failed || view.unbuilt) && view.cockpit.run.is_none(),
-                egui::Button::new(RichText::new(t("Let the agent fix it")).color(ACCENT)),
+                egui::Button::new(
+                    RichText::new(t("Let the agent fix it")).color(crate::style::pal().accent),
+                ),
             )
             .on_hover_text(t(
                 "The problems and failing tests go to the agent as one task",
@@ -852,7 +883,7 @@ pub(crate) fn conversation(ui: &mut Ui, view: &AiView, actions: &mut AiActions) 
         ],
     ));
     if view.waiting > 0 {
-        card_frame(ui, ACCENT_SOFT, |ui| {
+        card_frame(ui, crate::style::pal().accent_soft, |ui| {
             ui.label(tf(
                 "{count} change(s) by the agent wait for you",
                 &[("count", &view.waiting)],
@@ -887,8 +918,12 @@ fn ask(ui: &mut Ui, view: &AiView, actions: &mut AiActions) {
     let mut state = view.state.borrow_mut();
     for question in questions {
         let id = question["id"].as_u64().unwrap_or(0);
-        card_frame(ui, ACCENT_SOFT, |ui| {
-            ui.label(RichText::new(t("The agent asks")).color(ACCENT).size(11.5));
+        card_frame(ui, crate::style::pal().accent_soft, |ui| {
+            ui.label(
+                RichText::new(t("The agent asks"))
+                    .color(crate::style::pal().accent)
+                    .size(11.5),
+            );
             ui.add(
                 egui::Label::new(RichText::new(question["text"].as_str().unwrap_or("")).strong())
                     .wrap(),
@@ -941,7 +976,9 @@ fn ask(ui: &mut Ui, view: &AiView, actions: &mut AiActions) {
             {
                 actions.cockpit.remove_context = Some(index);
             }
-            ui.add(egui::Label::new(RichText::new(item).color(SELECT)).truncate());
+            ui.add(
+                egui::Label::new(RichText::new(item).color(crate::style::pal().select)).truncate(),
+            );
         });
     }
     ui.horizontal_wrapped(|ui| {
@@ -976,7 +1013,8 @@ fn ask(ui: &mut Ui, view: &AiView, actions: &mut AiActions) {
         } else if ui
             .add_enabled(
                 !empty,
-                egui::Button::new(RichText::new(t("Send")).color(Color32::WHITE)).fill(ACCENT),
+                egui::Button::new(RichText::new(t("Send")).color(crate::style::on_accent()))
+                    .fill(crate::style::pal().accent),
             )
             .on_hover_text(t("A checkpoint is saved first: you can always go back"))
             .clicked()
@@ -1015,12 +1053,16 @@ fn transcript(ui: &mut Ui, cockpit: &Cockpit, actions: &mut AiActions) {
             .unwrap_or(cockpit.transcript.len());
         let lines = &cockpit.transcript[*start..end];
         let running = end == cockpit.transcript.len() && cockpit.run.is_some();
-        card_frame(ui, RAISED, |ui| {
+        card_frame(ui, crate::style::pal().raised, |ui| {
             let mut tools: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
             for line in lines {
                 match line.who {
                     Who::Person => {
-                        ui.label(RichText::new(&line.text).strong().color(TEXT));
+                        ui.label(
+                            RichText::new(&line.text)
+                                .strong()
+                                .color(crate::style::pal().text),
+                        );
                     }
                     Who::Agent => {
                         ui.add(egui::Label::new(&line.text).wrap());
@@ -1033,7 +1075,11 @@ fn transcript(ui: &mut Ui, cockpit: &Cockpit, actions: &mut AiActions) {
                         }
                     }
                     Who::Note => {
-                        let color = if line.ok == Some(false) { RED } else { GO };
+                        let color = if line.ok == Some(false) {
+                            crate::style::pal().red
+                        } else {
+                            crate::style::pal().go
+                        };
                         ui.label(RichText::new(&line.text).color(color));
                     }
                 }
@@ -1066,7 +1112,14 @@ fn transcript(ui: &mut Ui, cockpit: &Cockpit, actions: &mut AiActions) {
                         &[("count", &total), ("tools", &summary.join(", "))],
                     )
                 };
-                ui.add(egui::Label::new(RichText::new(text).color(WEAK).size(11.5)).wrap());
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(text)
+                            .color(crate::style::pal().weak)
+                            .size(11.5),
+                    )
+                    .wrap(),
+                );
             }
             if running {
                 ui.horizontal(|ui| {
@@ -1118,7 +1171,7 @@ pub(crate) fn settings(ui: &mut Ui, view: &AiView, actions: &mut AiActions) {
                     ui.weak(tf("found: {path}", &[("path", &path)]));
                 }
                 None => {
-                    ui.label(RichText::new(t("Claude Code was not found.")).color(AMBER));
+                    ui.label(RichText::new(t("Claude Code was not found.")).color(crate::style::pal().amber));
                     ui.weak(t(
                         "Install it and sign in once (claude), or set WISH_CLAUDE to where it is. The engine works without it too: the manual mode does everything by hand.",
                     ));

@@ -143,7 +143,7 @@ pub(crate) fn panel(ui: &mut Ui, view: &InspectorView<'_>, actions: &mut Inspect
         ui.label(
             egui::RichText::new(&first.id)
                 .size(16.0)
-                .color(crate::style::TEXT),
+                .color(crate::style::pal().text),
         );
     } else {
         ui.strong(tf("{count} entities", &[("count", &view.inspected.len())]));

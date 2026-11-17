@@ -22,7 +22,6 @@ use crate::raster::Canvas;
 use crate::script::Driven;
 use crate::{Editor, EditorApp, Widget};
 
-const BACKDROP: [u8; 4] = crate::style::BACKDROP;
 /// The empty project's picture (its starting scene, drawn by the engine).
 const EMPTY_PICTURE: &[u8] = include_bytes!("../assets/empty-project.png");
 
@@ -137,6 +136,8 @@ struct Welcome {
     empty_picture: Option<egui::TextureHandle>,
     /// The pictures were read (once).
     pictures_loaded: bool,
+    /// The person's theme (the editor keeps it too).
+    theme: crate::style::Theme,
     /// How long the opening animation has played (`None`: it is over).
     splash: Option<f64>,
 }
@@ -190,9 +191,16 @@ impl Launcher {
         // (The default name is in the person's language.)
         crate::i18n::set_language(language);
         let name = first_free_name(&options.projects_folder);
+        // The person's theme, from the engine's and their own packages.
+        let theme = prefs
+            .get("theme")
+            .and_then(Value::as_str)
+            .and_then(|key| crate::themes::load(&crate::themes::available(None), key).ok())
+            .unwrap_or(crate::style::ATELIER);
+        crate::style::set_theme(theme);
         let welcome = Welcome {
             editor: Editor::new(),
-            canvas: Canvas::new(1, 1, BACKDROP),
+            canvas: Canvas::new(1, 1, crate::style::pal().backdrop),
             frames: 0,
             language,
             recent,
@@ -208,6 +216,7 @@ impl Launcher {
             pictures: Vec::new(),
             empty_picture: None,
             pictures_loaded: false,
+            theme,
             splash: options.splash.then_some(0.0),
         };
         Self {
@@ -438,6 +447,7 @@ impl Launcher {
             return false;
         };
         crate::i18n::set_language(welcome.language);
+        crate::style::set_theme(welcome.theme);
         if let Some(played) = welcome.splash.as_mut() {
             *played += seconds;
             let skipped = events.iter().any(|event| {
@@ -464,7 +474,7 @@ impl Launcher {
             return false;
         }
         if (welcome.canvas.width, welcome.canvas.height) != size {
-            welcome.canvas = Canvas::new(size.0, size.1, BACKDROP);
+            welcome.canvas = Canvas::new(size.0, size.1, crate::style::pal().backdrop);
         }
         let egui_events = crate::app::convert(&events, welcome.pointer);
         for event in &events {
@@ -523,7 +533,7 @@ impl Launcher {
             break frame;
         };
         for pixel in welcome.canvas.pixels.as_chunks_mut::<4>().0 {
-            *pixel = BACKDROP;
+            *pixel = crate::style::pal().backdrop;
         }
         editor.paint(&frame, &mut welcome.canvas);
         welcome.editor = editor;
@@ -587,13 +597,12 @@ fn layout(
     templates: &[Template],
     claude: Option<&Path>,
 ) -> Asked {
-    use crate::style::{RAISED, WEAK};
     let mut asked = Asked::default();
     welcome.load_pictures(ui.ctx(), templates);
     egui::Panel::bottom("welcome_status")
         .frame(
             egui::Frame::new()
-                .fill(RAISED)
+                .fill(crate::style::pal().raised)
                 .inner_margin(egui::Margin::symmetric(16, 6)),
         )
         .show(ui, |ui| {
@@ -601,7 +610,7 @@ fn layout(
                 RichText::new(t(
                     "Everything can be done by hand or with an assistant, and both land in the same history.",
                 ))
-                .color(WEAK)
+                .color(crate::style::pal().weak)
             } else {
                 RichText::new(welcome.status.as_str())
             };
@@ -610,16 +619,16 @@ fn layout(
     egui::Panel::bottom("welcome_action")
         .frame(
             egui::Frame::new()
-                .fill(crate::style::PANEL)
-                .stroke(egui::Stroke::new(1.0, crate::style::LINE))
+                .fill(crate::style::pal().panel)
+                .stroke(egui::Stroke::new(1.0, crate::style::pal().line))
                 .inner_margin(egui::Margin::symmetric(16, 10)),
         )
         .show(ui, |ui| action_bar(ui, welcome, &mut asked));
     egui::CentralPanel::default()
         .frame(egui::Frame::new().fill(egui::Color32::from_rgb(
-            BACKDROP[0],
-            BACKDROP[1],
-            BACKDROP[2],
+            crate::style::pal().backdrop[0],
+            crate::style::pal().backdrop[1],
+            crate::style::pal().backdrop[2],
         )))
         .show(ui, |ui| {
             // A faint dot grid, like drafting paper on the bench.
@@ -681,7 +690,7 @@ const MARK_SECONDS: f64 = 1.4;
 /// middle, the name fades in under it.
 fn splash_frame(welcome: &mut Welcome, size: (u32, u32), played: f64, seconds: f64) -> bool {
     if (welcome.canvas.width, welcome.canvas.height) != size {
-        welcome.canvas = Canvas::new(size.0, size.1, BACKDROP);
+        welcome.canvas = Canvas::new(size.0, size.1, crate::style::pal().backdrop);
     }
     let mut editor = std::mem::take(&mut welcome.editor);
     let t = played / MARK_SECONDS;
@@ -705,7 +714,7 @@ fn splash_frame(welcome: &mut Welcome, size: (u32, u32), played: f64, seconds: f
                 // The name comes in as the bone settles.
                 let shown = ((t - 0.55) / 0.35).clamp(0.0, 1.0) as f32;
                 if shown > 0.0 {
-                    let color = crate::style::TEXT.gamma_multiply(shown);
+                    let color = crate::style::pal().text.gamma_multiply(shown);
                     ui.painter().text(
                         egui::pos2(area.center().x, mark.bottom() + 18.0 + 8.0 * (1.0 - shown)),
                         egui::Align2::CENTER_TOP,
@@ -717,7 +726,7 @@ fn splash_frame(welcome: &mut Welcome, size: (u32, u32), played: f64, seconds: f
             });
     });
     for pixel in welcome.canvas.pixels.as_chunks_mut::<4>().0 {
-        *pixel = BACKDROP;
+        *pixel = crate::style::pal().backdrop;
     }
     editor.paint(&frame, &mut welcome.canvas);
     welcome.editor = editor;
@@ -726,18 +735,17 @@ fn splash_frame(welcome: &mut Welcome, size: (u32, u32), played: f64, seconds: f
 
 /// The engine's mark, its name, what it is, and the language.
 fn header(ui: &mut Ui, welcome: &Welcome, asked: &mut Asked) {
-    use crate::style::{TEXT, WEAK};
     ui.horizontal(|ui| {
         let (logo, _) = ui.allocate_exact_size(egui::vec2(44.0, 44.0), egui::Sense::hover());
         crate::style::paint_logo(ui.painter(), logo);
         ui.add_space(6.0);
         ui.vertical(|ui| {
-            ui.label(RichText::new(t("Welcome to Wish Engine")).size(26.0).color(TEXT));
+            ui.label(RichText::new(t("Welcome to Wish Engine")).size(26.0).color(crate::style::pal().text));
             ui.label(
                 RichText::new(t(
                     "Make a game by hand, with an assistant, or both: everything can be done either way.",
                 ))
-                .color(WEAK),
+                .color(crate::style::pal().weak),
             );
         });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
@@ -760,8 +768,8 @@ fn header(ui: &mut Ui, welcome: &Welcome, asked: &mut Asked) {
 /// A raised card with room inside.
 fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
     egui::Frame::new()
-        .fill(crate::style::RAISED)
-        .stroke(egui::Stroke::new(1.0, crate::style::LINE))
+        .fill(crate::style::pal().raised)
+        .stroke(egui::Stroke::new(1.0, crate::style::pal().line))
         .corner_radius(egui::CornerRadius::same(5))
         .inner_margin(egui::Margin::same(16))
         .show(ui, |ui| {
@@ -773,20 +781,24 @@ fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
 
 /// A step's title: its number in a circle and what it asks.
 fn step_title(ui: &mut Ui, number: u8, text: &str) {
-    use crate::style::{ACCENT, TEXT};
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::hover());
-        ui.painter().rect_filled(rect, 3.0, ACCENT);
+        ui.painter()
+            .rect_filled(rect, 3.0, crate::style::pal().accent);
         ui.painter().text(
             rect.center(),
             egui::Align2::CENTER_CENTER,
             number.to_string(),
             egui::FontId::proportional(12.5),
-            egui::Color32::WHITE,
+            crate::style::on_accent(),
         );
         // The number is drawn; the title keeps only the words.
         let words = text.split_once(". ").map_or(text, |(_, rest)| rest);
-        ui.label(RichText::new(words).size(15.0).color(TEXT));
+        ui.label(
+            RichText::new(words)
+                .size(15.0)
+                .color(crate::style::pal().text),
+        );
     });
 }
 
@@ -800,7 +812,6 @@ fn choice(
     name: &str,
     paint: impl FnOnce(&egui::Painter, egui::Rect, bool),
 ) -> egui::Response {
-    use crate::style::{HOVER, LINE, RAISED, SELECT, WIDGET};
     let sense = if enabled {
         egui::Sense::click()
     } else {
@@ -812,17 +823,17 @@ fn choice(
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
         let fill = if response.hovered() && enabled {
-            HOVER
+            crate::style::pal().hover
         } else if chosen {
-            WIDGET
+            crate::style::pal().widget
         } else {
-            RAISED
+            crate::style::pal().raised
         };
         painter.rect_filled(rect, 4.0, fill);
         let stroke = if chosen {
-            egui::Stroke::new(2.0, SELECT)
+            egui::Stroke::new(2.0, crate::style::pal().select)
         } else {
-            egui::Stroke::new(1.0, LINE)
+            egui::Stroke::new(1.0, crate::style::pal().line)
         };
         painter.rect_stroke(rect, 4.0, stroke, egui::StrokeKind::Inside);
         paint(painter, rect.shrink(12.0), enabled);
@@ -832,9 +843,13 @@ fn choice(
 
 /// The left column: a new game, in three steps.
 fn new_game(ui: &mut Ui, welcome: &mut Welcome, templates: &[Template], claude: Option<&Path>) {
-    use crate::style::{Icon, TEXT, WEAK};
+    use crate::style::Icon;
     card(ui, |ui| {
-        ui.label(RichText::new(t("Start a new game")).size(19.0).color(TEXT));
+        ui.label(
+            RichText::new(t("Start a new game"))
+                .size(19.0)
+                .color(crate::style::pal().text),
+        );
         ui.add_space(10.0);
 
         step_title(ui, 1, t("1. Who helps you?"));
@@ -958,7 +973,11 @@ fn new_game(ui: &mut Ui, welcome: &mut Welcome, templates: &[Template], claude: 
                                     );
                                 }
                                 None => {
-                                    painter.rect_filled(picture_rect, 3.0, crate::style::WIDGET);
+                                    painter.rect_filled(
+                                        picture_rect,
+                                        3.0,
+                                        crate::style::pal().widget,
+                                    );
                                 }
                             }
                             let text_top = picture_rect.bottom() + 8.0;
@@ -967,18 +986,18 @@ fn new_game(ui: &mut Ui, welcome: &mut Welcome, templates: &[Template], claude: 
                                 egui::Align2::LEFT_TOP,
                                 name,
                                 egui::FontId::proportional(14.0),
-                                TEXT,
+                                crate::style::pal().text,
                             );
                             let galley = painter.layout(
                                 about_text.to_owned(),
                                 egui::FontId::proportional(11.5),
-                                WEAK,
+                                crate::style::pal().weak,
                                 outer.width() - 24.0,
                             );
                             painter.galley(
                                 egui::pos2(outer.left() + 12.0, text_top + 20.0),
                                 galley,
-                                WEAK,
+                                crate::style::pal().weak,
                             );
                         },
                     );
@@ -995,7 +1014,6 @@ fn new_game(ui: &mut Ui, welcome: &mut Welcome, templates: &[Template], claude: 
 /// The bar at the bottom of the welcome screen: the new game's name and
 /// folder and Create, always in sight whatever the window's height.
 fn action_bar(ui: &mut Ui, welcome: &mut Welcome, asked: &mut Asked) {
-    use crate::style::{ACCENT, WEAK};
     let width = ui.available_width().min(1180.0);
     let side = ((ui.available_width() - width) * 0.5).max(0.0);
     ui.horizontal(|ui| {
@@ -1006,13 +1024,13 @@ fn action_bar(ui: &mut Ui, welcome: &mut Welcome, asked: &mut Asked) {
             step_title(ui, 3, t("3. Name and place"));
             ui.horizontal(|ui| {
                 let field = ((width - 260.0) * 0.5).max(120.0);
-                ui.label(RichText::new(t("Name")).color(WEAK));
+                ui.label(RichText::new(t("Name")).color(crate::style::pal().weak));
                 ui.add(
                     egui::TextEdit::singleline(&mut welcome.name)
                         .desired_width(field * 0.7)
                         .margin(egui::vec2(8.0, 5.0)),
                 );
-                ui.label(RichText::new(t("Folder")).color(WEAK));
+                ui.label(RichText::new(t("Folder")).color(crate::style::pal().weak));
                 ui.add(
                     egui::TextEdit::singleline(&mut welcome.folder)
                         .desired_width(field * 1.3)
@@ -1023,9 +1041,9 @@ fn action_bar(ui: &mut Ui, welcome: &mut Welcome, asked: &mut Asked) {
                     let create = egui::Button::new(
                         RichText::new(t("Create"))
                             .size(15.5)
-                            .color(egui::Color32::WHITE),
+                            .color(crate::style::on_accent()),
                     )
-                    .fill(ACCENT)
+                    .fill(crate::style::pal().accent)
                     .corner_radius(egui::CornerRadius::same(3))
                     .min_size(egui::vec2(140.0, 34.0));
                     if ui.add_enabled(!busy, create).clicked() {
@@ -1044,7 +1062,7 @@ fn action_bar(ui: &mut Ui, welcome: &mut Welcome, asked: &mut Asked) {
                     )],
                 ))
                 .small()
-                .color(WEAK),
+                .color(crate::style::pal().weak),
             );
             ui.add_space(4.0);
         });
@@ -1060,10 +1078,13 @@ fn option_face(
     detail: &str,
     enabled: bool,
 ) {
-    use crate::style::{ACCENT, TEXT, WEAK};
     let icon_rect =
         egui::Rect::from_min_size(rect.min + egui::vec2(0.0, 2.0), egui::vec2(26.0, 26.0));
-    let color = if enabled { ACCENT } else { WEAK };
+    let color = if enabled {
+        crate::style::pal().accent
+    } else {
+        crate::style::pal().weak
+    };
     crate::style::paint(painter, icon_rect, icon, color);
     let left = icon_rect.right() + 12.0;
     painter.text(
@@ -1071,27 +1092,42 @@ fn option_face(
         egui::Align2::LEFT_TOP,
         title,
         egui::FontId::proportional(14.5),
-        if enabled { TEXT } else { WEAK },
+        if enabled {
+            crate::style::pal().text
+        } else {
+            crate::style::pal().weak
+        },
     );
     let galley = painter.layout(
         detail.to_owned(),
         egui::FontId::proportional(11.5),
-        WEAK,
+        crate::style::pal().weak,
         rect.right() - left,
     );
-    painter.galley(egui::pos2(left, rect.top() + 22.0), galley, WEAK);
+    painter.galley(
+        egui::pos2(left, rect.top() + 22.0),
+        galley,
+        crate::style::pal().weak,
+    );
 }
 
 /// The right column: a game made before.
 fn open_game(ui: &mut Ui, welcome: &mut Welcome, asked: &mut Asked) {
-    use crate::style::{HOVER, Icon, TEXT, WEAK};
+    use crate::style::Icon;
     card(ui, |ui| {
-        ui.label(RichText::new(t("Open a game")).size(19.0).color(TEXT));
+        ui.label(
+            RichText::new(t("Open a game"))
+                .size(19.0)
+                .color(crate::style::pal().text),
+        );
         ui.add_space(10.0);
         if welcome.recent.is_empty() {
-            ui.label(RichText::new(t("Projects you open are listed here.")).color(WEAK));
+            ui.label(
+                RichText::new(t("Projects you open are listed here."))
+                    .color(crate::style::pal().weak),
+            );
         } else {
-            ui.label(RichText::new(t("Recent projects")).color(WEAK));
+            ui.label(RichText::new(t("Recent projects")).color(crate::style::pal().weak));
             ui.add_space(2.0);
             for root in &welcome.recent {
                 let name = Path::new(root)
@@ -1106,24 +1142,24 @@ fn open_game(ui: &mut Ui, welcome: &mut Welcome, asked: &mut Asked) {
                 if ui.is_rect_visible(rect) {
                     let painter = ui.painter();
                     if response.hovered() {
-                        painter.rect_filled(rect, 3.0, HOVER);
+                        painter.rect_filled(rect, 3.0, crate::style::pal().hover);
                     }
                     let icon = egui::Rect::from_center_size(
                         egui::pos2(rect.left() + 20.0, rect.center().y),
                         egui::vec2(20.0, 20.0),
                     );
-                    crate::style::paint(painter, icon, Icon::Folder, crate::style::AMBER);
+                    crate::style::paint(painter, icon, Icon::Folder, crate::style::pal().amber);
                     painter.text(
                         egui::pos2(rect.left() + 40.0, rect.top() + 7.0),
                         egui::Align2::LEFT_TOP,
                         &name,
                         egui::FontId::proportional(14.0),
-                        TEXT,
+                        crate::style::pal().text,
                     );
                     let path = painter.layout_no_wrap(
                         root.clone(),
                         egui::FontId::proportional(11.0),
-                        WEAK,
+                        crate::style::pal().weak,
                     );
                     let clip = egui::Rect::from_min_max(
                         egui::pos2(rect.left() + 40.0, rect.top()),
@@ -1132,7 +1168,7 @@ fn open_game(ui: &mut Ui, welcome: &mut Welcome, asked: &mut Asked) {
                     painter.with_clip_rect(clip).galley(
                         egui::pos2(rect.left() + 40.0, rect.top() + 26.0),
                         path,
-                        WEAK,
+                        crate::style::pal().weak,
                     );
                 }
                 if response.on_hover_text(root.as_str()).clicked() {
@@ -1141,7 +1177,7 @@ fn open_game(ui: &mut Ui, welcome: &mut Welcome, asked: &mut Asked) {
             }
         }
         ui.add_space(14.0);
-        ui.label(RichText::new(t("A project folder")).color(WEAK));
+        ui.label(RichText::new(t("A project folder")).color(crate::style::pal().weak));
         ui.horizontal(|ui| {
             let field = ui.available_width() - 70.0;
             ui.add(
@@ -1157,27 +1193,31 @@ fn open_game(ui: &mut Ui, welcome: &mut Welcome, asked: &mut Asked) {
     });
     ui.add_space(14.0);
     card(ui, |ui| {
-        ui.label(RichText::new(t("Good to know")).size(16.0).color(TEXT));
+        ui.label(
+            RichText::new(t("Good to know"))
+                .size(16.0)
+                .color(crate::style::pal().text),
+        );
         ui.add_space(6.0);
         for (icon, color, tip) in [
             (
                 Icon::Play,
-                crate::style::GO,
+                crate::style::pal().go,
                 t("Ctrl+P plays the game in the view; Stop brings the scene back."),
             ),
             (
                 Icon::Chat,
-                crate::style::ACCENT,
+                crate::style::pal().accent,
                 t("The Agent panel: point at things in the scene and say what to change."),
             ),
             (
                 Icon::Undo,
-                TEXT,
+                crate::style::pal().text,
                 t("Every change, yours or an agent's, can be undone on its own (History)."),
             ),
             (
                 Icon::Folder,
-                crate::style::AMBER,
+                crate::style::pal().amber,
                 t("Project menu, Export game: a folder that runs without the engine."),
             ),
         ] {
@@ -1185,7 +1225,7 @@ fn open_game(ui: &mut Ui, welcome: &mut Welcome, asked: &mut Asked) {
                 let (rect, _) =
                     ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
                 crate::style::paint(ui.painter(), rect.shrink(1.0), icon, color);
-                ui.add(egui::Label::new(RichText::new(tip).color(WEAK)).wrap());
+                ui.add(egui::Label::new(RichText::new(tip).color(crate::style::pal().weak)).wrap());
             });
             ui.add_space(4.0);
         }
@@ -1364,7 +1404,7 @@ impl Driven for Launcher {
 }
 
 static EMPTY: std::sync::LazyLock<Canvas> =
-    std::sync::LazyLock::new(|| Canvas::new(1, 1, BACKDROP));
+    std::sync::LazyLock::new(|| Canvas::new(1, 1, crate::style::pal().backdrop));
 
 impl Shell for Launcher {
     fn title(&self) -> String {

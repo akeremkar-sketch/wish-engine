@@ -1,0 +1,31 @@
+{
+  "colors": {
+    "accent": "#ffd600",
+    "accent_soft": "#00465a",
+    "amber": "#ffc800",
+    "backdrop": "#000000",
+    "field": "#000000",
+    "go": "#50ff78",
+    "hover": "#3c3c3c",
+    "hover_line": "#ffffff",
+    "icon": "#ffffff",
+    "line": "#c8c8c8",
+    "panel": "#000000",
+    "pressed": "#5a5a5a",
+    "raised": "#101010",
+    "red": "#ff5a5a",
+    "select": "#00e6ff",
+    "sky": "#78d2ff",
+    "sun": "#ffe650",
+    "text": "#ffffff",
+    "weak": "#d7d7d7",
+    "widget": "#1c1c1c"
+  },
+  "format": 1,
+  "name": "High contrast",
+  "radius": {
+    "menu": 2,
+    "widget": 2,
+    "window": 3
+  }
+}

@@ -9,49 +9,254 @@ use egui::{
     Vec2, WidgetInfo, pos2, vec2,
 };
 
-/// The canvas behind everything (the editor's backdrop): warm near-black,
-/// like a workbench in the dark.
-pub const BACKDROP: [u8; 4] = [21, 20, 18, 255];
-/// Panels.
-pub const PANEL: Color32 = Color32::from_rgb(29, 28, 25);
-/// Raised areas inside panels: cards, groups of tools.
-pub const RAISED: Color32 = Color32::from_rgb(37, 35, 32);
-/// Widgets at rest.
-pub const WIDGET: Color32 = Color32::from_rgb(46, 44, 40);
-/// Widgets under the pointer.
-pub const HOVER: Color32 = Color32::from_rgb(58, 55, 50);
-/// Widgets being pressed.
-pub const PRESSED: Color32 = Color32::from_rgb(70, 66, 60);
-/// Thin lines between areas.
-pub const LINE: Color32 = Color32::from_rgb(52, 49, 44);
-/// Text: paper white.
-pub const TEXT: Color32 = Color32::from_rgb(237, 230, 216);
-/// Quieter text: hints, paths, numbers that are not the point.
-pub const WEAK: Color32 = Color32::from_rgb(158, 150, 136);
-/// The engine's own colour, signal orange: what to do next (Create, the
-/// agent), never decoration.
-pub const ACCENT: Color32 = Color32::from_rgb(255, 107, 44);
-/// What is chosen: teal (a selected row, a held tool, a chosen card).
-pub const SELECT: Color32 = Color32::from_rgb(72, 196, 180);
-/// The chosen thing's background, quiet.
-pub const ACCENT_SOFT: Color32 = Color32::from_rgb(30, 64, 60);
-/// Running: play.
-pub const GO: Color32 = Color32::from_rgb(110, 200, 120);
-/// Recording, deleting, errors.
-pub const RED: Color32 = Color32::from_rgb(236, 88, 80);
-/// Warnings.
-pub const AMBER: Color32 = Color32::from_rgb(232, 172, 64);
-/// Lights and the sun.
-pub const SUN: Color32 = Color32::from_rgb(250, 204, 92);
-/// Cameras.
-pub const SKY: Color32 = Color32::from_rgb(120, 186, 240);
+/// The editor's colours and corners (M10a): a theme. The engine's default
+/// is Atelier (warm near-black, paper-white text, signal orange for what to
+/// do next, teal for what is chosen); theme packages bring others. Every
+/// panel reads the theme through [`pal`], so a new theme needs no rebuild.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Theme {
+    /// The canvas behind everything.
+    pub backdrop: [u8; 4],
+    /// Panels.
+    pub panel: Color32,
+    /// Raised areas inside panels: cards, groups of tools, windows.
+    pub raised: Color32,
+    /// Widgets at rest.
+    pub widget: Color32,
+    /// Widgets under the pointer.
+    pub hover: Color32,
+    /// Widgets being pressed.
+    pub pressed: Color32,
+    /// Thin lines between areas.
+    pub line: Color32,
+    /// The outline of a widget under the pointer.
+    pub hover_line: Color32,
+    /// Text.
+    pub text: Color32,
+    /// Quieter text: hints, paths, numbers that are not the point.
+    pub weak: Color32,
+    /// What to do next (Create, the agent), never decoration.
+    pub accent: Color32,
+    /// What is chosen (a selected row, a held tool, a chosen card).
+    pub select: Color32,
+    /// The chosen thing's background, quiet.
+    pub accent_soft: Color32,
+    /// Running: play.
+    pub go: Color32,
+    /// Recording, deleting, errors.
+    pub red: Color32,
+    /// Warnings.
+    pub amber: Color32,
+    /// Lights and the sun.
+    pub sun: Color32,
+    /// Cameras.
+    pub sky: Color32,
+    /// Text fields and other sunken areas.
+    pub field: Color32,
+    /// Icons on tool buttons at rest.
+    pub icon: Color32,
+    /// Corners of widgets, windows and menus, in pixels.
+    pub radius_widget: u8,
+    pub radius_window: u8,
+    pub radius_menu: u8,
+}
 
-/// Corners: crisp, not pillowy.
-const ROUND: u8 = 3;
+/// The engine's own theme, Atelier (the same as
+/// `packages/wish.theme.atelier/atelier.json`, which a test checks).
+pub const ATELIER: Theme = Theme {
+    backdrop: [21, 20, 18, 255],
+    panel: Color32::from_rgb(29, 28, 25),
+    raised: Color32::from_rgb(37, 35, 32),
+    widget: Color32::from_rgb(46, 44, 40),
+    hover: Color32::from_rgb(58, 55, 50),
+    pressed: Color32::from_rgb(70, 66, 60),
+    line: Color32::from_rgb(52, 49, 44),
+    hover_line: Color32::from_rgb(92, 87, 78),
+    text: Color32::from_rgb(237, 230, 216),
+    weak: Color32::from_rgb(158, 150, 136),
+    accent: Color32::from_rgb(255, 107, 44),
+    select: Color32::from_rgb(72, 196, 180),
+    accent_soft: Color32::from_rgb(30, 64, 60),
+    go: Color32::from_rgb(110, 200, 120),
+    red: Color32::from_rgb(236, 88, 80),
+    amber: Color32::from_rgb(232, 172, 64),
+    sun: Color32::from_rgb(250, 204, 92),
+    sky: Color32::from_rgb(120, 186, 240),
+    field: Color32::from_rgb(14, 15, 20),
+    icon: Color32::from_rgb(200, 205, 222),
+    radius_widget: 3,
+    radius_window: 5,
+    radius_menu: 4,
+};
+
+thread_local! {
+    static CURRENT: std::cell::Cell<Theme> = const { std::cell::Cell::new(ATELIER) };
+}
+
+/// The theme in use (on this thread: each editor sets its own before its
+/// frame, as with the language).
+pub fn pal() -> Theme {
+    CURRENT.with(std::cell::Cell::get)
+}
+
+/// Text drawn on the accent colour: dark on a light accent (a yellow, a
+/// pale blue), white on a dark one, so it stays readable in every theme.
+pub fn on_accent() -> Color32 {
+    let accent = pal().accent;
+    let light = 0.299 * f32::from(accent.r())
+        + 0.587 * f32::from(accent.g())
+        + 0.114 * f32::from(accent.b());
+    if light > 170.0 {
+        Color32::from_rgb(16, 16, 16)
+    } else {
+        Color32::WHITE
+    }
+}
+
+/// Uses `theme` from now on (on this thread).
+pub fn set_theme(theme: Theme) {
+    CURRENT.with(|current| current.set(theme));
+}
+
+/// The colour keys of a theme file, and how to set each.
+const COLOR_KEYS: &[&str] = &[
+    "accent",
+    "accent_soft",
+    "amber",
+    "backdrop",
+    "field",
+    "go",
+    "hover",
+    "hover_line",
+    "icon",
+    "line",
+    "panel",
+    "pressed",
+    "raised",
+    "red",
+    "select",
+    "sky",
+    "sun",
+    "text",
+    "weak",
+    "widget",
+];
+
+fn set_color(theme: &mut Theme, key: &str, color: Color32) {
+    match key {
+        "accent" => theme.accent = color,
+        "accent_soft" => theme.accent_soft = color,
+        "amber" => theme.amber = color,
+        "backdrop" => theme.backdrop = [color.r(), color.g(), color.b(), 255],
+        "field" => theme.field = color,
+        "go" => theme.go = color,
+        "hover" => theme.hover = color,
+        "hover_line" => theme.hover_line = color,
+        "icon" => theme.icon = color,
+        "line" => theme.line = color,
+        "panel" => theme.panel = color,
+        "pressed" => theme.pressed = color,
+        "raised" => theme.raised = color,
+        "red" => theme.red = color,
+        "select" => theme.select = color,
+        "sky" => theme.sky = color,
+        "sun" => theme.sun = color,
+        "text" => theme.text = color,
+        "weak" => theme.weak = color,
+        _ => theme.widget = color,
+    }
+}
+
+/// Reads a theme file: `{ "format": 1, "name": "...", "colors": { "accent":
+/// "#ff6b2c", ... }, "radius": { "widget": 3, "window": 5, "menu": 4 } }`.
+/// Colours it leaves out are Atelier's. The error says what is wrong and
+/// how to fix it.
+pub fn parse_theme(source: &str) -> Result<(String, Theme), (String, String)> {
+    let value: serde_json::Value = serde_json::from_str(source).map_err(|error| {
+        (
+            format!("not valid JSON: {error}"),
+            "Fix the JSON.".to_owned(),
+        )
+    })?;
+    let Some(object) = value.as_object() else {
+        return Err((
+            "not a JSON object".to_owned(),
+            "Start it with { \"format\": 1 }.".to_owned(),
+        ));
+    };
+    for key in object.keys() {
+        if !["colors", "format", "name", "radius"].contains(&key.as_str()) {
+            return Err((
+                format!("it has no setting '{key}'"),
+                wish_core::suggest::unknown_name_hint(key, &["colors", "format", "name", "radius"]),
+            ));
+        }
+    }
+    if value["format"] != 1 {
+        return Err((
+            "it needs \"format\": 1".to_owned(),
+            "Add \"format\": 1.".to_owned(),
+        ));
+    }
+    let name = value["name"].as_str().unwrap_or("").trim().to_owned();
+    if name.is_empty() || name.chars().count() > 40 {
+        return Err((
+            "it needs a \"name\" of 1 to 40 characters".to_owned(),
+            "Write it like \"name\": \"Dusk\".".to_owned(),
+        ));
+    }
+    let mut theme = ATELIER;
+    for (key, color) in value["colors"].as_object().into_iter().flatten() {
+        if !COLOR_KEYS.contains(&key.as_str()) {
+            return Err((
+                format!("it has no colour '{key}'"),
+                wish_core::suggest::unknown_name_hint(key, COLOR_KEYS),
+            ));
+        }
+        let parsed = color.as_str().and_then(|text| {
+            let hex = text.strip_prefix('#')?;
+            (hex.len() == 6).then_some(())?;
+            let byte = |at: usize| u8::from_str_radix(hex.get(at..at + 2)?, 16).ok();
+            Some(Color32::from_rgb(byte(0)?, byte(2)?, byte(4)?))
+        });
+        let Some(parsed) = parsed else {
+            return Err((
+                format!("the colour '{key}' is not #rrggbb"),
+                "Write colours like \"#ff6b2c\".".to_owned(),
+            ));
+        };
+        set_color(&mut theme, key, parsed);
+    }
+    for (key, radius) in value["radius"].as_object().into_iter().flatten() {
+        let Some(radius) = radius
+            .as_u64()
+            .filter(|r| *r <= 16)
+            .and_then(|r| u8::try_from(r).ok())
+        else {
+            return Err((
+                format!("the radius '{key}' is not a whole number from 0 to 16"),
+                "Write it like \"widget\": 3.".to_owned(),
+            ));
+        };
+        match key.as_str() {
+            "widget" => theme.radius_widget = radius,
+            "window" => theme.radius_window = radius,
+            "menu" => theme.radius_menu = radius,
+            other => {
+                return Err((
+                    format!("it has no radius '{other}'"),
+                    wish_core::suggest::unknown_name_hint(other, &["menu", "widget", "window"]),
+                ));
+            }
+        }
+    }
+    Ok((name, theme))
+}
 
 /// Puts the engine's look on a context: colours, rounded corners, room
 /// around widgets, text sizes.
 pub fn apply(context: &Context) {
+    let theme = pal();
     context.all_styles_mut(|style| {
         style.text_styles = [
             (
@@ -84,11 +289,11 @@ pub fn apply(context: &Context) {
         let visuals = &mut style.visuals;
         visuals.dark_mode = true;
         visuals.override_text_color = None;
-        visuals.panel_fill = PANEL;
-        visuals.window_fill = RAISED;
-        visuals.window_stroke = Stroke::new(1.0, LINE);
-        visuals.window_corner_radius = CornerRadius::same(5);
-        visuals.menu_corner_radius = CornerRadius::same(4);
+        visuals.panel_fill = pal().panel;
+        visuals.window_fill = pal().raised;
+        visuals.window_stroke = Stroke::new(1.0, pal().line);
+        visuals.window_corner_radius = CornerRadius::same(theme.radius_window);
+        visuals.menu_corner_radius = CornerRadius::same(theme.radius_menu);
         visuals.window_shadow = Shadow {
             offset: [0, 6],
             blur: 18,
@@ -101,41 +306,41 @@ pub fn apply(context: &Context) {
             spread: 0,
             color: Color32::from_black_alpha(100),
         };
-        visuals.faint_bg_color = RAISED;
-        visuals.extreme_bg_color = Color32::from_rgb(14, 15, 20);
-        visuals.code_bg_color = Color32::from_rgb(20, 22, 29);
-        visuals.hyperlink_color = ACCENT;
-        visuals.warn_fg_color = AMBER;
-        visuals.error_fg_color = RED;
-        visuals.selection.bg_fill = ACCENT_SOFT;
-        visuals.selection.stroke = Stroke::new(1.0, SELECT);
-        visuals.weak_text_color = Some(WEAK);
+        visuals.faint_bg_color = pal().raised;
+        visuals.extreme_bg_color = theme.field;
+        visuals.code_bg_color = theme.field;
+        visuals.hyperlink_color = pal().accent;
+        visuals.warn_fg_color = pal().amber;
+        visuals.error_fg_color = pal().red;
+        visuals.selection.bg_fill = pal().accent_soft;
+        visuals.selection.stroke = Stroke::new(1.0, pal().select);
+        visuals.weak_text_color = Some(pal().weak);
         visuals.indent_has_left_vline = true;
         visuals.collapsing_header_frame = true;
         visuals.slider_trailing_fill = true;
 
-        let round = CornerRadius::same(ROUND);
+        let round = CornerRadius::same(theme.radius_widget);
         let widgets = &mut visuals.widgets;
-        widgets.noninteractive.bg_fill = PANEL;
-        widgets.noninteractive.weak_bg_fill = PANEL;
-        widgets.noninteractive.bg_stroke = Stroke::new(1.0, LINE);
-        widgets.noninteractive.fg_stroke = Stroke::new(1.0, TEXT);
+        widgets.noninteractive.bg_fill = pal().panel;
+        widgets.noninteractive.weak_bg_fill = pal().panel;
+        widgets.noninteractive.bg_stroke = Stroke::new(1.0, pal().line);
+        widgets.noninteractive.fg_stroke = Stroke::new(1.0, pal().text);
         widgets.noninteractive.corner_radius = round;
         for (state, fill) in [
-            (&mut widgets.inactive, WIDGET),
-            (&mut widgets.hovered, HOVER),
-            (&mut widgets.active, PRESSED),
-            (&mut widgets.open, HOVER),
+            (&mut widgets.inactive, pal().widget),
+            (&mut widgets.hovered, pal().hover),
+            (&mut widgets.active, pal().pressed),
+            (&mut widgets.open, pal().hover),
         ] {
             state.bg_fill = fill;
             state.weak_bg_fill = fill;
             state.corner_radius = round;
             state.bg_stroke = Stroke::NONE;
-            state.fg_stroke = Stroke::new(1.0, TEXT);
+            state.fg_stroke = Stroke::new(1.0, pal().text);
             state.expansion = 0.0;
         }
-        widgets.hovered.bg_stroke = Stroke::new(1.0, Color32::from_rgb(92, 87, 78));
-        widgets.active.bg_stroke = Stroke::new(1.0, SELECT);
+        widgets.hovered.bg_stroke = Stroke::new(1.0, theme.hover_line);
+        widgets.active.bg_stroke = Stroke::new(1.0, pal().select);
     });
 }
 
@@ -195,14 +400,14 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
 pub fn entity_icon(components: &[String], prefab: bool) -> (Icon, Color32) {
     let has = |name: &str| components.iter().any(|c| c == name);
     if prefab {
-        return (Icon::Prefab, SELECT);
+        return (Icon::Prefab, pal().select);
     }
     if has("Camera") {
-        (Icon::Camera, SKY)
+        (Icon::Camera, pal().sky)
     } else if has("DirectionalLight") {
-        (Icon::Sun, SUN)
+        (Icon::Sun, pal().sun)
     } else if has("PointLight") || has("SpotLight") {
-        (Icon::Bulb, SUN)
+        (Icon::Bulb, pal().sun)
     } else if components.iter().any(|c| c.starts_with("Ui")) {
         (Icon::Text, Color32::from_rgb(120, 214, 200))
     } else if has("AudioSource") || has("AudioListener") {
@@ -214,7 +419,7 @@ pub fn entity_icon(components: &[String], prefab: bool) -> (Icon, Color32) {
     } else if has("Model") || has("Primitive") {
         (Icon::Cube, Color32::from_rgb(170, 178, 204))
     } else {
-        (Icon::Dot, WEAK)
+        (Icon::Dot, pal().weak)
     }
 }
 
@@ -233,7 +438,7 @@ pub fn tool_button(
     let font = TextStyle::Button.resolve(ui.style());
     let galley = show_text.then(|| {
         ui.painter()
-            .layout_no_wrap(name.to_owned(), font.clone(), TEXT)
+            .layout_no_wrap(name.to_owned(), font.clone(), pal().text)
     });
     let icon_size = 15.0;
     let pad = vec2(8.0, 4.0);
@@ -249,33 +454,29 @@ pub fn tool_button(
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
         let fill = if selected {
-            ACCENT_SOFT
+            pal().accent_soft
         } else if !enabled {
             Color32::TRANSPARENT
         } else if response.is_pointer_button_down_on() {
-            PRESSED
+            pal().pressed
         } else if response.hovered() {
-            HOVER
+            pal().hover
         } else {
             Color32::TRANSPARENT
         };
-        painter.rect_filled(rect, f32::from(ROUND), fill);
+        painter.rect_filled(rect, f32::from(pal().radius_widget), fill);
         if selected {
             painter.rect_stroke(
                 rect,
-                f32::from(ROUND),
-                Stroke::new(1.0, SELECT),
+                f32::from(pal().radius_widget),
+                Stroke::new(1.0, pal().select),
                 egui::StrokeKind::Inside,
             );
         }
         let color = if !enabled {
             Color32::from_rgb(86, 92, 110)
         } else {
-            tint.unwrap_or(if selected {
-                TEXT
-            } else {
-                Color32::from_rgb(200, 205, 222)
-            })
+            tint.unwrap_or(if selected { pal().text } else { pal().icon })
         };
         let icon_rect = Rect::from_center_size(
             pos2(rect.left() + pad.x + icon_size * 0.5, rect.center().y),
@@ -284,7 +485,7 @@ pub fn tool_button(
         paint(painter, icon_rect, icon, color);
         if let Some(galley) = galley {
             let text_color = if enabled {
-                TEXT
+                pal().text
             } else {
                 Color32::from_rgb(96, 102, 120)
             };
@@ -312,7 +513,7 @@ pub fn tool_group<R>(ui: &mut Ui, width: f32, add: impl FnOnce(&mut Ui) -> R) ->
         ui.end_row();
     }
     egui::Frame::new()
-        .fill(RAISED)
+        .fill(pal().raised)
         .corner_radius(CornerRadius::same(4))
         .inner_margin(Margin::same(2))
         .show(ui, |ui| {
@@ -329,7 +530,7 @@ pub fn panel_title(ui: &mut Ui, text: &str) {
         egui::RichText::new(caps(text))
             .size(11.5)
             .extra_letter_spacing(1.2)
-            .color(WEAK),
+            .color(pal().weak),
     );
 }
 
@@ -353,4 +554,44 @@ pub fn paint_logo(painter: &Painter, rect: Rect) {
         Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
         Color32::WHITE,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_default_theme_is_the_atelier_package() {
+        let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../packages/wish.theme.atelier/atelier.json");
+        let text = std::fs::read_to_string(file).unwrap_or_default();
+        let parsed = parse_theme(&text);
+        assert_eq!(parsed, Ok(("Atelier".to_owned(), ATELIER)));
+    }
+
+    #[test]
+    fn a_wrong_theme_file_says_what_and_how() {
+        let wrong = [
+            r##"{ "format": 1, "name": "X", "colours": {} }"##,
+            r##"{ "format": 1, "name": "X", "colors": { "acent": "#ffffff" } }"##,
+            r##"{ "format": 1, "name": "X", "colors": { "accent": "orange" } }"##,
+            r##"{ "format": 1, "name": "X", "radius": { "widget": 40 } }"##,
+            r##"{ "format": 2, "name": "X" }"##,
+            r##"{ "format": 1 }"##,
+        ];
+        for text in wrong {
+            let (message, hint) = parse_theme(text).expect_err(text);
+            assert!(!message.is_empty() && !hint.is_empty(), "{text}");
+        }
+        let (_, hint) =
+            parse_theme(r##"{ "format": 1, "name": "X", "colors": { "acent": "#ffffff" } }"##)
+                .expect_err("a typo");
+        assert!(hint.contains("accent"), "{hint}");
+        // Colours left out are Atelier's.
+        let (_, theme) =
+            parse_theme(r##"{ "format": 1, "name": "X", "colors": { "accent": "#010203" } }"##)
+                .expect("a small theme");
+        assert_eq!(theme.accent, Color32::from_rgb(1, 2, 3));
+        assert_eq!(theme.text, ATELIER.text);
+    }
 }

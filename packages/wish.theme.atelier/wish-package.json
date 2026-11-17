@@ -1,0 +1,14 @@
+{
+  "contents": {
+    "themes": [
+      "atelier.json"
+    ]
+  },
+  "description": "The engine's own look: warm near-black, paper-white text, signal orange for what to do next, teal for what is chosen.",
+  "engine": ">=0.1",
+  "format": 1,
+  "id": "wish.theme.atelier",
+  "license": "MIT OR Apache-2.0",
+  "name": "Atelier",
+  "version": "1.0.0"
+}

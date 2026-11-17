@@ -239,3 +239,8 @@ Not a separate program, but the evolution of the welcome screen (the screen that
 - Remove moves the package to `.wish/trash/packages/` (project) or `<config>/trash/packages/` (user), never deletes it: a removal can be undone by hand (ADR-022).
 - `lock` writes `wish.lock` from what is installed; `list` warns (`package_lock_mismatch`) when a package's files no longer match its lock entry.
 - Every mutating action has `dry_run`; every action enters the history and activity feed with its actor.
+
+## 13. Results
+
+- **WP1 (packages core):** `wish_control::packages` and the `packages` tool (33rd); the editor's Packages window; `wish.json` gains `packages` only when there is one; no packages means no `wish.lock`. A parity run caught absolute paths in diagnostics (the same call in two processes must give the same bytes): diagnostics name the manifest, not the folder.
+- **WP2 (themes):** the palette became `style::Theme`, read through `pal()`; the three engine themes are packages in `packages/` (Atelier, Midnight, High contrast). Atelier is the old look exactly: the golden images did not change. A theme chosen from the menu is applied before the next layout (the editor's context is out of reach while a frame is laid out). Text on the accent picks dark or white by the accent's lightness (High contrast's yellow).

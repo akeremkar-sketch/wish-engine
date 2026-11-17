@@ -106,7 +106,6 @@ fn game_key(name: &str) -> &str {
     }
 }
 /// The window's backdrop where nothing is drawn.
-const BACKDROP: [u8; 4] = crate::style::BACKDROP;
 /// A viewport smaller than this is not drawn (a window being squeezed).
 const MIN_VIEWPORT: f32 = 32.0;
 /// The colour of the box around the selection in the view.
@@ -189,6 +188,12 @@ pub struct EditorApp {
     connect_open: bool,
     /// The Packages window (M10a).
     packages: crate::packages_window::PackagesState,
+    /// The theme in use, its key, and the themes there are (M10a).
+    theme: crate::style::Theme,
+    theme_key: String,
+    themes: Vec<crate::themes::ThemeEntry>,
+    /// The theme changed: the interface takes it before its next layout.
+    restyle: bool,
     /// An earlier export of this name is there: the person is asked before
     /// it is replaced (its folder).
     export_confirm: Option<String>,
@@ -351,6 +356,8 @@ struct Actions {
     ai: crate::ai_mode::AiActions,
     /// Open the Packages window.
     open_packages: bool,
+    /// Use this theme.
+    theme: Option<String>,
     /// What the Packages window asked for.
     packages: crate::packages_window::PackagesActions,
     /// Go back to this checkpoint.
@@ -429,6 +436,7 @@ impl Actions {
             || self.cockpit.any()
             || self.switch_mode.is_some()
             || self.open_packages
+            || self.theme.is_some()
             || self.packages.any()
             || self.ai.any()
             || self.restore_checkpoint.is_some()
@@ -473,7 +481,7 @@ impl EditorApp {
         let mut app = Self {
             editor: Some(Editor::new()),
             workspace,
-            canvas: Canvas::new(1, 1, BACKDROP),
+            canvas: Canvas::new(1, 1, crate::style::pal().backdrop),
             project: String::new(),
             scene: String::new(),
             scenes: Vec::new(),
@@ -550,6 +558,10 @@ impl EditorApp {
             proposals: Vec::new(),
             connect_open: false,
             packages: crate::packages_window::PackagesState::default(),
+            theme: crate::style::ATELIER,
+            theme_key: crate::themes::DEFAULT_KEY.to_owned(),
+            themes: Vec::new(),
+            restyle: false,
             export_confirm: None,
             cockpit: crate::cockpit::Cockpit::new(Box::new(
                 wish_agent::claude::ClaudeCode::default(),
@@ -567,6 +579,7 @@ impl EditorApp {
         };
         app.refresh_project();
         app.load_schemas();
+        app.themes = crate::themes::available(Some(app.workspace.root()));
         app
     }
 
@@ -1503,6 +1516,9 @@ impl EditorApp {
         if let Some(shown) = prefs.get("game_view").and_then(Value::as_bool) {
             self.game_view = shown;
         }
+        if let Some(key) = prefs.get("theme").and_then(Value::as_str) {
+            self.set_theme(key);
+        }
         if let Some(on) = prefs.get("ai_mode").and_then(Value::as_bool) {
             self.ai_mode = on;
         }
@@ -1546,6 +1562,47 @@ impl EditorApp {
         self.cockpit.open = true;
         self.ai_mode = true;
         self.picture_stale = true;
+    }
+
+    /// The themes there are: key and name.
+    pub fn themes(&self) -> Vec<(String, String)> {
+        self.themes
+            .iter()
+            .map(|theme| (theme.key.clone(), theme.name.clone()))
+            .collect()
+    }
+
+    /// The theme in use (its key).
+    pub fn theme_key(&self) -> &str {
+        &self.theme_key
+    }
+
+    /// Uses the theme `key` (a package's theme file); whether it could be
+    /// read (if not, the status bar says why and the theme stays).
+    pub fn set_theme(&mut self, key: &str) -> bool {
+        // A package may have brought it since the themes were read.
+        if !self.themes.iter().any(|theme| theme.key == key) {
+            self.themes = crate::themes::available(Some(self.workspace.root()));
+        }
+        match crate::themes::load(&self.themes, key) {
+            Ok(theme) => {
+                self.theme = theme;
+                self.theme_key = key.to_owned();
+                crate::style::set_theme(theme);
+                // (The interface takes it before its next layout.)
+                self.restyle = true;
+                self.canvas = Canvas::new(self.canvas.width, self.canvas.height, theme.backdrop);
+                self.picture_stale = true;
+                true
+            }
+            Err(problem) => {
+                self.status = tf(
+                    "the theme could not be used: {problem}",
+                    &[("problem", &problem)],
+                );
+                false
+            }
+        }
     }
 
     /// Whether the AI mode is on.
@@ -1604,6 +1661,7 @@ impl EditorApp {
             return;
         };
         let language = self.language;
+        let theme_key = self.theme_key.clone();
         let game_view = self.game_view;
         let ai_mode = self.ai_mode;
         let settings = &self.cockpit.settings;
@@ -1615,6 +1673,7 @@ impl EditorApp {
         });
         let written = crate::prefs::update(&path, |prefs| {
             prefs.insert("language".to_owned(), json!(language));
+            prefs.insert("theme".to_owned(), json!(theme_key));
             prefs.insert("game_view".to_owned(), json!(game_view));
             prefs.insert("ai_mode".to_owned(), json!(ai_mode));
             prefs.insert("agent".to_owned(), agent);
@@ -1898,6 +1957,7 @@ impl EditorApp {
                 .to_owned();
         }
         self.read_packages();
+        self.themes = crate::themes::available(Some(self.workspace.root()));
     }
 
     /// The AI mode's actions.
@@ -3099,6 +3159,11 @@ impl EditorApp {
             None => {}
         }
         self.cockpit_act(&actions.cockpit);
+        if let Some(key) = actions.theme.take()
+            && self.set_theme(&key)
+        {
+            self.save_preferences();
+        }
         if actions.open_packages {
             self.packages.open = true;
             self.read_packages();
@@ -4226,6 +4291,20 @@ impl EditorApp {
                             }
                         }
                     });
+                    ui.menu_button(t("Theme"), |ui| {
+                        for theme in &self.themes {
+                            if ui
+                                .selectable_label(self.theme_key == theme.key, &theme.name)
+                                .on_hover_text(&theme.key)
+                                .clicked()
+                            {
+                                actions.theme = Some(theme.key.clone());
+                                ui.close();
+                            }
+                        }
+                        ui.separator();
+                        ui.weak(t("More themes come in packages (Packages...)"));
+                    });
                     ui.separator();
                     if ui.button(t("Quit")).clicked() {
                         actions.quit = true;
@@ -4253,7 +4332,7 @@ impl EditorApp {
                             }
                         }
                     });
-                use crate::style::{GO, Icon, RED, tool_button, tool_group};
+                use crate::style::{Icon, tool_button, tool_group};
                 let editing = self.play.is_none();
                 tool_group(ui, 64.0, |ui| {
                     if tool_button(ui, Icon::Undo, t("Undo"), false, false, self.can_undo && editing, None)
@@ -4297,7 +4376,7 @@ impl EditorApp {
                             true,
                             false,
                             !self.scene.ends_with(".prefab.json"),
-                            Some(GO),
+                            Some(crate::style::pal().go),
                         )
                         .on_hover_text(t(
                             "Run the game here; changes made while it runs are not kept (Ctrl+P)",
@@ -4306,7 +4385,7 @@ impl EditorApp {
                         {
                             actions.play_start = true;
                         }
-                        if tool_button(ui, Icon::Record, t("Record"), true, self.record, true, Some(RED))
+                        if tool_button(ui, Icon::Record, t("Record"), true, self.record, true, Some(crate::style::pal().red))
                             .on_hover_text(t(
                                 "Record the next run as a replay (saved under replays/ when it stops)",
                             ))
@@ -4317,7 +4396,7 @@ impl EditorApp {
                     }
                     Some(play) => {
                         if play.recording {
-                            ui.label(egui::RichText::new(t("REC")).color(RED))
+                            ui.label(egui::RichText::new(t("REC")).color(crate::style::pal().red))
                                 .on_hover_text(t("This run is being recorded as a replay"));
                         }
                         let (icon, pause) = if play.paused {
@@ -4325,7 +4404,7 @@ impl EditorApp {
                         } else {
                             (Icon::Pause, t("Pause"))
                         };
-                        if tool_button(ui, icon, pause, true, false, true, Some(GO)).clicked() {
+                        if tool_button(ui, icon, pause, true, false, true, Some(crate::style::pal().go)).clicked() {
                             actions.play_pause = true;
                         }
                         if tool_button(ui, Icon::Step, t("Step"), false, false, play.paused, None)
@@ -4334,12 +4413,12 @@ impl EditorApp {
                         {
                             actions.play_step = true;
                         }
-                        if tool_button(ui, Icon::Stop, t("Stop"), true, false, true, Some(RED)).clicked() {
+                        if tool_button(ui, Icon::Stop, t("Stop"), true, false, true, Some(crate::style::pal().red)).clicked() {
                             actions.play_stop = true;
                         }
                         ui.label(
                             egui::RichText::new(tf("tick {tick}", &[("tick", &play.tick)]))
-                                .color(crate::style::WEAK),
+                                .color(crate::style::pal().weak),
                         );
                         if play.snapshots.len() > 1 {
                             let pending = self.ui_state.borrow().timeline;
@@ -4419,7 +4498,7 @@ impl EditorApp {
                         true,
                         self.cockpit.open,
                         true,
-                        Some(crate::style::ACCENT),
+                        Some(crate::style::pal().accent),
                     )
                     .on_hover_text(t("The agent's panel: ask, point at things, watch it work"))
                     .clicked()
@@ -4434,11 +4513,11 @@ impl EditorApp {
                 let (errors, warnings) = self.problems;
                 // Problems in their colour; none in a quiet one.
                 let color = if errors > 0 {
-                    crate::style::RED
+                    crate::style::pal().red
                 } else if warnings > 0 {
-                    crate::style::AMBER
+                    crate::style::pal().amber
                 } else {
-                    crate::style::WEAK
+                    crate::style::pal().weak
                 };
                 ui.label(
                     egui::RichText::new(tf(
@@ -4695,6 +4774,7 @@ impl EditorApp {
     ) -> bool {
         // The language is per thread; this editor's is set for its frame.
         crate::i18n::set_language(self.language);
+        crate::style::set_theme(self.theme);
         self.since_poll += seconds;
         self.since_project_poll += seconds;
         self.since_log += seconds;
@@ -4738,7 +4818,7 @@ impl EditorApp {
         if changed || self.picture_stale || self.pending_pick.is_some() {
             let egui_events = convert(&events, self.pointer);
             if self.canvas.width != size.0 || self.canvas.height != size.1 {
-                self.canvas = Canvas::new(size.0, size.1, BACKDROP);
+                self.canvas = Canvas::new(size.0, size.1, crate::style::pal().backdrop);
             }
             let Some(mut editor) = self.editor.take() else {
                 return false;
@@ -4749,6 +4829,10 @@ impl EditorApp {
             let mut seconds = seconds;
             let mut passes = 0;
             let frame = loop {
+                // A theme chosen last pass goes on the interface now.
+                if std::mem::take(&mut self.restyle) {
+                    editor.restyle();
+                }
                 let mut viewport = self.viewport;
                 let mut game_area = Rect::NOTHING;
                 let mut actions = Actions::default();
@@ -4786,7 +4870,7 @@ impl EditorApp {
             };
             // Backdrop, then the scene, then the panels over it.
             for pixel in self.canvas.pixels.as_chunks_mut::<4>().0 {
-                *pixel = BACKDROP;
+                *pixel = crate::style::pal().backdrop;
             }
             if let Some(picture) = &self.picture {
                 blit(&mut self.canvas, picture, self.viewport);
@@ -4861,12 +4945,12 @@ fn view_badge(ui: &Ui, area: Rect, name: &str) {
     let font = egui::FontId::proportional(12.0);
     let galley = ui
         .painter()
-        .layout_no_wrap(name.to_owned(), font, crate::style::TEXT);
+        .layout_no_wrap(name.to_owned(), font, crate::style::pal().text);
     let rect = Rect::from_min_size(area.min + vec2(8.0, 8.0), galley.size() + vec2(16.0, 6.0));
     ui.painter()
         .rect_filled(rect, 6.0, egui::Color32::from_black_alpha(150));
     ui.painter()
-        .galley(rect.min + vec2(8.0, 3.0), galley, crate::style::TEXT);
+        .galley(rect.min + vec2(8.0, 3.0), galley, crate::style::pal().text);
 }
 
 /// A two-pixel frame around `rect`, kept inside `clip`.

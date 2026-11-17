@@ -1,0 +1,14 @@
+{
+  "contents": {
+    "themes": [
+      "midnight.json"
+    ]
+  },
+  "description": "Cool blue-black with an electric blue accent and soft violet selection.",
+  "engine": ">=0.1",
+  "format": 1,
+  "id": "wish.theme.midnight",
+  "license": "MIT OR Apache-2.0",
+  "name": "Midnight",
+  "version": "1.0.0"
+}
