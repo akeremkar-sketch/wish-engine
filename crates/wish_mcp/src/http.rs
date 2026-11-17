@@ -38,6 +38,10 @@ use serde_json::{Value, json};
 use wish_core::{Diagnostic, Result};
 use wish_scene::Actor;
 
+use std::borrow::BorrowMut;
+
+use wish_control::Workspace;
+
 use crate::{Busy, SUPPORTED_VERSIONS, Server};
 
 /// The endpoint's path.
@@ -649,90 +653,159 @@ fn connection(shared: &Shared, mut stream: TcpStream) {
 /// The client name and protocol version each session gave at `initialize`.
 type SessionState = BTreeMap<String, (Actor, Option<String>)>;
 
+/// An MCP endpoint over Streamable HTTP whose calls run wherever its
+/// owner wants: [`serve_http`] runs them on its own loop; the editor runs
+/// them in its frame, against its own workspace (so an agent's changes are
+/// in the editor's one history, at once). Connections are read and answered
+/// on their own threads. Dropping it stops listening.
+pub struct Endpoint {
+    shared: Arc<Shared>,
+    received: mpsc::Receiver<Job>,
+    stop: Arc<AtomicBool>,
+    acceptor: Option<std::thread::JoinHandle<()>>,
+    /// The client name and protocol version of each session.
+    sessions: SessionState,
+    address: SocketAddr,
+}
+
+impl std::fmt::Debug for Endpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Endpoint")
+            .field("address", &self.address)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Endpoint {
+    /// Starts listening on `listener`.
+    pub fn start(listener: TcpListener, options: HttpOptions) -> std::io::Result<Self> {
+        listener.set_nonblocking(true)?;
+        let address = listener.local_addr()?;
+        let (jobs, received) = mpsc::channel::<Job>();
+        let shared = Arc::new(Shared {
+            options,
+            loopback: address.ip().is_loopback(),
+            sessions: Mutex::new(VecDeque::new()),
+            busy: Arc::new(Busy::new()),
+            jobs: Mutex::new(jobs),
+            open: AtomicUsize::new(0),
+            waiting: AtomicUsize::new(0),
+        });
+        let stop = Arc::new(AtomicBool::new(false));
+        let accept_shared = Arc::clone(&shared);
+        let accept_stop = Arc::clone(&stop);
+        let acceptor = std::thread::spawn(move || {
+            while !accept_stop.load(Ordering::Relaxed) {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        if accept_shared.open.load(Ordering::Relaxed) >= MAX_CONNECTIONS {
+                            let _ = stream.set_nonblocking(false);
+                            let _ = write_response(
+                                &mut stream,
+                                &Response::refuse(503, "Too many connections at once."),
+                            );
+                            continue;
+                        }
+                        accept_shared.open.fetch_add(1, Ordering::Relaxed);
+                        let slot = Slot(Arc::clone(&accept_shared));
+                        let _ = std::thread::Builder::new()
+                            .name("wish-mcp-http".to_owned())
+                            .spawn(move || {
+                                connection(&slot.0, stream);
+                                drop(slot);
+                            });
+                    }
+                    Err(_) => std::thread::sleep(Duration::from_millis(10)),
+                }
+            }
+        });
+        Ok(Self {
+            shared,
+            received,
+            stop,
+            acceptor: Some(acceptor),
+            sessions: SessionState::new(),
+            address,
+        })
+    }
+
+    /// Where it listens.
+    pub fn address(&self) -> SocketAddr {
+        self.address
+    }
+
+    /// Runs the calls that are waiting (the first one waited for up to
+    /// `wait`), against `server`'s workspace; returns how many ran.
+    pub fn serve_pending<W: BorrowMut<Workspace>>(
+        &mut self,
+        server: &mut Server<W>,
+        wait: Duration,
+    ) -> usize {
+        server
+            .workspace()
+            .set_cancel_flag(Arc::clone(&self.shared.busy.flag));
+        let default_actor = server.actor.clone();
+        let mut ran = 0;
+        let mut next = if wait.is_zero() {
+            self.received.try_recv().ok()
+        } else {
+            self.received.recv_timeout(wait).ok()
+        };
+        while let Some(job) = next {
+            // This session's client, not the last one to initialize.
+            let (actor, protocol) = self
+                .sessions
+                .get(&job.session)
+                .cloned()
+                .unwrap_or_else(|| (default_actor.clone(), None));
+            server.actor = actor;
+            server.protocol = protocol;
+            self.shared.busy.start(&job.session, job.id.as_ref());
+            let answer = server.handle(&job.body);
+            self.shared.busy.finish();
+            self.sessions.insert(
+                job.session.clone(),
+                (server.actor.clone(), server.protocol.clone()),
+            );
+            // Ended sessions are forgotten here too.
+            if self.sessions.len() > MAX_SESSIONS
+                && let Ok(live) = self.shared.sessions.lock()
+            {
+                self.sessions
+                    .retain(|id, _| *id == job.session || live.contains(id));
+            }
+            self.shared.waiting.fetch_sub(1, Ordering::Relaxed);
+            let _ = job.reply.send(answer);
+            ran += 1;
+            next = self.received.try_recv().ok();
+        }
+        server.actor = default_actor;
+        ran
+    }
+}
+
+impl Drop for Endpoint {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(acceptor) = self.acceptor.take() {
+            let _ = acceptor.join();
+        }
+    }
+}
+
 /// Serves MCP over HTTP on `listener` until `stop` is set. The calls run on
 /// this thread, one at a time; connections are read and answered on their
 /// own threads.
-pub fn serve_http(
-    server: &mut Server,
+pub fn serve_http<W: BorrowMut<Workspace>>(
+    server: &mut Server<W>,
     listener: TcpListener,
     options: HttpOptions,
     stop: Arc<AtomicBool>,
 ) -> std::io::Result<()> {
-    listener.set_nonblocking(true)?;
-    let loopback = listener.local_addr()?.ip().is_loopback();
-    server
-        .workspace
-        .set_cancel_flag(Arc::clone(&server.busy.flag));
-    let (jobs, received) = mpsc::channel::<Job>();
-    let shared = Arc::new(Shared {
-        options,
-        loopback,
-        sessions: Mutex::new(VecDeque::new()),
-        busy: Arc::clone(&server.busy),
-        jobs: Mutex::new(jobs),
-        open: AtomicUsize::new(0),
-        waiting: AtomicUsize::new(0),
-    });
-    let accept_shared = Arc::clone(&shared);
-    let accept_stop = Arc::clone(&stop);
-    let acceptor = std::thread::spawn(move || {
-        while !accept_stop.load(Ordering::Relaxed) {
-            match listener.accept() {
-                Ok((mut stream, _)) => {
-                    if accept_shared.open.load(Ordering::Relaxed) >= MAX_CONNECTIONS {
-                        let _ = stream.set_nonblocking(false);
-                        let _ = write_response(
-                            &mut stream,
-                            &Response::refuse(503, "Too many connections at once."),
-                        );
-                        continue;
-                    }
-                    accept_shared.open.fetch_add(1, Ordering::Relaxed);
-                    let slot = Slot(Arc::clone(&accept_shared));
-                    let _ = std::thread::Builder::new()
-                        .name("wish-mcp-http".to_owned())
-                        .spawn(move || {
-                            connection(&slot.0, stream);
-                            drop(slot);
-                        });
-                }
-                Err(_) => std::thread::sleep(Duration::from_millis(10)),
-            }
-        }
-    });
-    let default_actor = server.actor.clone();
-    let mut sessions = SessionState::new();
+    let mut endpoint = Endpoint::start(listener, options)?;
     while !stop.load(Ordering::Relaxed) {
-        match received.recv_timeout(Duration::from_millis(50)) {
-            Ok(job) => {
-                // This session's client, not the last one to initialize.
-                let (actor, protocol) = sessions
-                    .get(&job.session)
-                    .cloned()
-                    .unwrap_or_else(|| (default_actor.clone(), None));
-                server.actor = actor;
-                server.protocol = protocol;
-                server.busy.start(&job.session, job.id.as_ref());
-                let answer = server.handle(&job.body);
-                server.busy.finish();
-                sessions.insert(
-                    job.session.clone(),
-                    (server.actor.clone(), server.protocol.clone()),
-                );
-                // Ended sessions are forgotten here too.
-                if sessions.len() > MAX_SESSIONS
-                    && let Ok(live) = shared.sessions.lock()
-                {
-                    sessions.retain(|id, _| *id == job.session || live.contains(id));
-                }
-                shared.waiting.fetch_sub(1, Ordering::Relaxed);
-                let _ = job.reply.send(answer);
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
-        }
+        endpoint.serve_pending(server, Duration::from_millis(50));
     }
-    let _ = acceptor.join();
     Ok(())
 }
 

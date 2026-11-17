@@ -4448,6 +4448,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "wish_agent"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wish_control",
+ "wish_mcp",
+]
+
+[[package]]
 name = "wish_anim"
 version = "0.1.0"
 dependencies = [

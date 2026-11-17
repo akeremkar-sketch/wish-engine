@@ -16,6 +16,7 @@
 
 pub mod http;
 
+use std::borrow::BorrowMut;
 use std::io::{BufRead, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
@@ -58,8 +59,8 @@ const READ_ONLY: &[&str] = &[
 const INSTRUCTIONS: &str = "Wish Engine: a deterministic 3D game engine driven by these tools. Start with project_info, then read the resource wish://docs/guide (short). Change scenes with edit_apply (many operations at once, all or nothing), run them with sim_start and sim_step, and check what is on screen with describe_view and capture_frame. Every error carries a hint that says how to fix the call; read it before retrying. Game code lives in scripts/src/lib.rs (Rust; read wish://docs/sdk, and wish://docs/recipes for working pieces of games): edit it, build with script_build, prove behaviour with a scenario test (test_run). A person may be editing the same project: mind changed_by_others.";
 
 /// One MCP session over one workspace.
-pub struct Server {
-    workspace: Workspace,
+pub struct Server<W: BorrowMut<Workspace> = Workspace> {
+    workspace: W,
     actor: Actor,
     protocol: Option<String>,
     /// The call being worked on, for cancellations.
@@ -162,7 +163,7 @@ impl Busy {
     }
 }
 
-impl std::fmt::Debug for Server {
+impl<W: BorrowMut<Workspace>> std::fmt::Debug for Server<W> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Server")
             .field("actor", &self.actor)
@@ -279,9 +280,9 @@ happens. Report the cause, the fix and the evidence.",
     }
 }
 
-impl Server {
-    /// A server over `workspace`.
-    pub fn new(workspace: Workspace) -> Self {
+impl<W: BorrowMut<Workspace>> Server<W> {
+    /// A server over `workspace` (owned, or borrowed: `&mut Workspace`).
+    pub fn new(workspace: W) -> Self {
         Self {
             workspace,
             actor: Actor::Agent("mcp-client".to_owned()),
@@ -292,7 +293,7 @@ impl Server {
 
     /// The workspace (for tests).
     pub fn workspace(&mut self) -> &mut Workspace {
-        &mut self.workspace
+        self.workspace.borrow_mut()
     }
 
     /// Handles one line of input and returns the line to send back, if any
@@ -407,7 +408,10 @@ impl Server {
                     );
                 }
                 let arguments = params.get("arguments").cloned().unwrap_or(Value::Null);
-                let answer = self.workspace.call(name, &arguments, &self.actor);
+                let answer = self
+                    .workspace
+                    .borrow_mut()
+                    .call(name, &arguments, &self.actor);
                 response(id, tool_result(answer))
             }
             "resources/list" => response(id, self.resource_list()),
@@ -474,7 +478,7 @@ impl Server {
     }
 
     fn type_names(&self) -> Vec<String> {
-        let registry = self.workspace.registry();
+        let registry = self.workspace.borrow().registry();
         registry
             .components()
             .map(|(_, info)| info.name().to_owned())
@@ -512,13 +516,14 @@ impl Server {
             return Ok(("text/markdown", docs::recipes_page().to_owned()));
         }
         if uri == "wish://project/status" {
-            let answer = self
-                .workspace
-                .call("project_info", &Value::Null, &self.actor);
+            let answer =
+                self.workspace
+                    .borrow_mut()
+                    .call("project_info", &Value::Null, &self.actor);
             return Ok(("application/json", answer.to_string()));
         }
         if let Some(name) = uri.strip_prefix("wish://docs/components/") {
-            if let Some(page) = docs::type_page(self.workspace.registry(), name) {
+            if let Some(page) = docs::type_page(self.workspace.borrow().registry(), name) {
                 return Ok(("text/markdown", page));
             }
             let names = self.type_names();
@@ -559,14 +564,13 @@ fn request_id(line: &str) -> Option<Value> {
 /// a long `sim_step` at the next tick boundary. Lines are read as bytes
 /// (invalid UTF-8 becomes a parse error for that line, not the end of the
 /// server) and a leading byte-order mark is dropped.
-pub fn serve(
-    server: &mut Server,
+pub fn serve<W: BorrowMut<Workspace>>(
+    server: &mut Server<W>,
     mut input: impl BufRead + Send + 'static,
     mut output: impl Write,
 ) -> std::io::Result<()> {
-    server
-        .workspace
-        .set_cancel_flag(Arc::clone(&server.busy.flag));
+    let flag = Arc::clone(&server.busy.flag);
+    server.workspace().set_cancel_flag(flag);
     let (lines, received) = mpsc::channel::<String>();
     let busy = Arc::clone(&server.busy);
     let reader = std::thread::spawn(move || -> std::io::Result<()> {
