@@ -373,3 +373,45 @@ fn the_mark_plays_when_the_engine_opens_and_a_click_skips_it() {
     assert!(!again.splash_playing());
     named(&again, "Create");
 }
+
+#[test]
+fn the_hub_tabs_change_the_look_and_the_assistant() {
+    let (options, base) = options("hub");
+    let prefs = base.join("prefs").join("editor.json");
+    let mut launcher = Launcher::new(options);
+    play(&mut launcher, json!([{ "idle": 2 }]));
+    assert!(
+        launcher
+            .widgets()
+            .iter()
+            .any(|w| w.label.as_deref() == Some("Create"))
+    );
+    // Look: a theme for everything that follows.
+    click(&mut launcher, "Look");
+    assert!(
+        !launcher
+            .widgets()
+            .iter()
+            .any(|w| w.label.as_deref() == Some("Create")),
+        "the Projects page's bar is gone"
+    );
+    click(&mut launcher, "Midnight");
+    let saved: Value = serde_json::from_str(&std::fs::read_to_string(&prefs).unwrap()).unwrap();
+    assert_eq!(saved["theme"], "wish.theme.midnight/midnight.json");
+    // AI: the default model.
+    click(&mut launcher, "AI");
+    click(&mut launcher, "Sonnet");
+    let saved: Value = serde_json::from_str(&std::fs::read_to_string(&prefs).unwrap()).unwrap();
+    assert_eq!(saved["agent"]["model"], "sonnet");
+    // Learn: the shortcuts are listed.
+    click(&mut launcher, "Learn");
+    assert!(
+        launcher
+            .widgets()
+            .iter()
+            .any(|w| w.value.as_deref() == Some("Ctrl+K") || w.label.as_deref() == Some("Ctrl+K"))
+    );
+    // Back to the projects.
+    click(&mut launcher, "Projects");
+    named(&launcher, "Create");
+}

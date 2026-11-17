@@ -49,7 +49,7 @@ pub type Opener = Box<dyn FnMut(&std::path::Path) -> Result<(), String>>;
 
 /// The default way to open a file: the program named by the `WISH_EDITOR`
 /// environment variable (such as `code`), or the system's own choice.
-fn open_with_system(path: &std::path::Path) -> Result<(), String> {
+pub(crate) fn open_with_system(path: &std::path::Path) -> Result<(), String> {
     use std::process::Command;
     let spawned = match std::env::var("WISH_EDITOR") {
         Ok(program) if !program.trim().is_empty() => Command::new(program.trim()).arg(path).spawn(),

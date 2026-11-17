@@ -113,6 +113,13 @@ pub fn on_accent() -> Color32 {
     }
 }
 
+impl Theme {
+    /// The backdrop as a colour (the page behind cards).
+    pub fn panel_backdrop(&self) -> Color32 {
+        Color32::from_rgb(self.backdrop[0], self.backdrop[1], self.backdrop[2])
+    }
+}
+
 /// Uses `theme` from now on (on this thread).
 pub fn set_theme(theme: Theme) {
     CURRENT.with(|current| current.set(theme));

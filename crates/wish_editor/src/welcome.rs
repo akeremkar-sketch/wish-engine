@@ -138,6 +138,38 @@ struct Welcome {
     theme: crate::style::Theme,
     /// How long the opening animation has played (`None`: it is over).
     splash: Option<f64>,
+    /// The Hub (M10b): the tab shown, and what its pages show.
+    tab: crate::hub::Tab,
+    theme_key: String,
+    themes: Vec<crate::themes::ThemeEntry>,
+    user_packages: Vec<Value>,
+    engine_packages: Vec<Value>,
+    /// The `agent` preferences (the AI mode reads them too).
+    agent: serde_json::Map<String, Value>,
+    /// The folder typed on the Packages tab.
+    package_path: String,
+    /// A theme was chosen: the interface takes it before its next layout.
+    restyle: bool,
+}
+
+impl Welcome {
+    /// Reads the person's packages and the engine's for the Hub.
+    fn read_packages(&mut self) {
+        let here = Path::new(".");
+        self.user_packages =
+            wish_control::packages::listing(wish_control::packages::Scope::User, here, &[]).0;
+        self.engine_packages = wish_control::packages::engine_packages_folder()
+            .and_then(|folder| std::fs::read_dir(folder).ok())
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|entry| wish_control::packages::read_manifest(&entry.path()).ok())
+            .map(|manifest| manifest.to_value())
+            .collect();
+        self.engine_packages
+            .sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+        self.themes = crate::themes::available(None);
+    }
 }
 
 /// What a frame of the welcome screen asked for.
@@ -146,6 +178,8 @@ struct Asked {
     create: bool,
     open: Option<PathBuf>,
     language: Option<&'static str>,
+    /// What a Hub tab asked for.
+    hub: crate::hub::HubAsked,
 }
 
 /// The window `wen edit` opens without a project: the welcome screen, then
@@ -217,6 +251,22 @@ impl Launcher {
             empty_picture: None,
             pictures_loaded: false,
             theme,
+            tab: crate::hub::Tab::Projects,
+            theme_key: prefs
+                .get("theme")
+                .and_then(Value::as_str)
+                .unwrap_or(crate::themes::DEFAULT_KEY)
+                .to_owned(),
+            themes: Vec::new(),
+            user_packages: Vec::new(),
+            engine_packages: Vec::new(),
+            agent: prefs
+                .get("agent")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default(),
+            package_path: String::new(),
+            restyle: false,
             splash: options.splash.then_some(0.0),
         };
         Self {
@@ -490,7 +540,11 @@ impl Launcher {
         let mut editor = std::mem::take(&mut welcome.editor);
         let mut egui_events = Some(egui_events);
         let mut seconds = seconds;
+        let preferences = self.options.preferences.clone();
         let frame = loop {
+            if std::mem::take(&mut welcome.restyle) {
+                editor.restyle();
+            }
             let frame = editor.layout(
                 size,
                 seconds,
@@ -502,6 +556,10 @@ impl Launcher {
             let mut acted = false;
             if let Some(code) = asked.language.take() {
                 welcome.set_language(code);
+                acted = true;
+            }
+            let hub = std::mem::take(&mut asked.hub);
+            if hub_act(welcome, hub, preferences.as_deref(), templates) {
                 acted = true;
             }
             if asked.create {
@@ -599,6 +657,18 @@ fn layout(
 ) -> Asked {
     let mut asked = Asked::default();
     welcome.load_pictures(ui.ctx(), templates);
+    if welcome.themes.is_empty() {
+        welcome.read_packages();
+    }
+    egui::Panel::left("hub_tabs")
+        .resizable(false)
+        .exact_size(150.0)
+        .frame(
+            egui::Frame::new()
+                .fill(crate::style::pal().panel)
+                .inner_margin(egui::Margin::symmetric(10, 8)),
+        )
+        .show(ui, |ui| crate::hub::tabs(ui, welcome.tab, &mut asked.hub));
     egui::Panel::bottom("welcome_status")
         .frame(
             egui::Frame::new()
@@ -616,14 +686,64 @@ fn layout(
             };
             ui.label(text);
         });
-    egui::Panel::bottom("welcome_action")
-        .frame(
-            egui::Frame::new()
-                .fill(crate::style::pal().panel)
-                .stroke(egui::Stroke::new(1.0, crate::style::pal().line))
-                .inner_margin(egui::Margin::symmetric(16, 10)),
-        )
-        .show(ui, |ui| action_bar(ui, welcome, &mut asked));
+    if welcome.tab == crate::hub::Tab::Projects {
+        egui::Panel::bottom("welcome_action")
+            .frame(
+                egui::Frame::new()
+                    .fill(crate::style::pal().panel)
+                    .stroke(egui::Stroke::new(1.0, crate::style::pal().line))
+                    .inner_margin(egui::Margin::symmetric(16, 10)),
+            )
+            .show(ui, |ui| action_bar(ui, welcome, &mut asked));
+    }
+    if welcome.tab != crate::hub::Tab::Projects {
+        let mut path = std::mem::take(&mut welcome.package_path);
+        let config_folder = welcome.folder.clone();
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(crate::style::pal().panel_backdrop()))
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("hub_page")
+                    .show(ui, |ui| {
+                        let width = ui.available_width().min(900.0);
+                        let side = ((ui.available_width() - width) * 0.5).max(0.0);
+                        ui.horizontal(|ui| {
+                            ui.add_space(side);
+                            ui.vertical(|ui| {
+                                ui.set_width(width);
+                                let view = crate::hub::HubView {
+                                    theme_key: &welcome.theme_key,
+                                    language: welcome.language,
+                                    themes: &welcome.themes,
+                                    user_packages: &welcome.user_packages,
+                                    engine_packages: &welcome.engine_packages,
+                                    agent: &welcome.agent,
+                                    claude,
+                                    templates,
+                                    projects_folder: &config_folder,
+                                };
+                                match welcome.tab {
+                                    crate::hub::Tab::Packages => {
+                                        crate::hub::packages(ui, &view, &mut path, &mut asked.hub);
+                                    }
+                                    crate::hub::Tab::Look => {
+                                        crate::hub::look(ui, &view, &mut asked.hub)
+                                    }
+                                    crate::hub::Tab::Ai => {
+                                        crate::hub::ai(ui, &view, &mut asked.hub)
+                                    }
+                                    crate::hub::Tab::Learn => {
+                                        crate::hub::learn(ui, &view, &mut asked.hub)
+                                    }
+                                    _ => crate::hub::settings(ui, &view, &mut asked.hub),
+                                }
+                            });
+                        });
+                    });
+            });
+        welcome.package_path = path;
+        return asked;
+    }
     egui::CentralPanel::default()
         .frame(egui::Frame::new().fill(egui::Color32::from_rgb(
             crate::style::pal().backdrop[0],
@@ -633,7 +753,7 @@ fn layout(
         .show(ui, |ui| {
             // A faint dot grid, like drafting paper on the bench.
             let page = ui.max_rect();
-            let dot = egui::Color32::from_rgb(44, 42, 38);
+            let dot = crate::style::pal().widget;
             let step = 22.0;
             let mut y = page.top() + step * 0.5;
             while y < page.bottom() {
@@ -678,6 +798,103 @@ fn layout(
                 });
         });
     asked
+}
+
+/// Does what a Hub tab asked for; whether anything changed.
+fn hub_act(
+    welcome: &mut Welcome,
+    hub: crate::hub::HubAsked,
+    preferences: Option<&Path>,
+    templates: &[Template],
+) -> bool {
+    let mut acted = false;
+    let save = |change: &dyn Fn(&mut serde_json::Map<String, Value>)| {
+        if let Some(path) = preferences {
+            let _ = crate::prefs::update(path, |prefs| change(prefs));
+        }
+    };
+    if let Some(tab) = hub.tab {
+        welcome.tab = tab;
+        acted = true;
+    }
+    if let Some(key) = hub.theme {
+        match crate::themes::load(&welcome.themes, &key) {
+            Ok(theme) => {
+                welcome.theme = theme;
+                crate::style::set_theme(theme);
+                welcome.theme_key = key.clone();
+                welcome.restyle = true;
+                save(&|prefs| {
+                    prefs.insert("theme".to_owned(), json!(key));
+                });
+            }
+            Err(problem) => {
+                welcome.status = tf(
+                    "the theme could not be used: {problem}",
+                    &[("problem", &problem)],
+                );
+            }
+        }
+        acted = true;
+    }
+    if let Some(code) = hub.language {
+        welcome.set_language(code);
+        save(&|prefs| {
+            prefs.insert("language".to_owned(), json!(code));
+        });
+        acted = true;
+    }
+    if let Some(agent) = hub.agent {
+        welcome.agent = agent.clone();
+        save(&|prefs| {
+            prefs.insert("agent".to_owned(), Value::Object(agent.clone()));
+        });
+        acted = true;
+    }
+    let here = Path::new(".");
+    let user = wish_control::packages::Scope::User;
+    if let Some(folder) = hub.install {
+        let from = PathBuf::from(folder.trim());
+        let done = wish_control::packages::plan_install(&from, user, here, true).and_then(|plan| {
+            wish_control::packages::install(&from, &plan, user, here).map(|()| plan)
+        });
+        welcome.status = match done {
+            Ok(plan) => {
+                welcome.package_path.clear();
+                tf(
+                    "installed {name} {version}",
+                    &[
+                        ("name", &plan.manifest.name),
+                        ("version", &plan.manifest.version),
+                    ],
+                )
+            }
+            Err(problem) => format!("{} {}", problem.message, problem.hint),
+        };
+        welcome.read_packages();
+        crate::themes::load_languages(None);
+        acted = true;
+    }
+    if let Some(id) = hub.remove {
+        welcome.status = match wish_control::packages::remove(&id, user, here) {
+            Ok(_) => tf("{id} moved to the trash", &[("id", &id)]),
+            Err(problem) => format!("{} {}", problem.message, problem.hint),
+        };
+        welcome.read_packages();
+        acted = true;
+    }
+    if let Some(place) = hub.open {
+        if let Err(error) = crate::app::open_with_system(Path::new(&place)) {
+            welcome.status = error;
+        }
+        acted = true;
+    }
+    if let Some(id) = hub.template {
+        welcome.template = templates.iter().position(|template| template.id == id);
+        welcome.tab = crate::hub::Tab::Projects;
+        acted = true;
+    }
+    acted
 }
 
 /// How long the opening animation lasts: the mark's animation, then a

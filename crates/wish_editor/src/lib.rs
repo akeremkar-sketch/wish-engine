@@ -10,6 +10,7 @@ mod browser;
 mod cockpit;
 mod commands;
 mod gizmo;
+mod hub;
 pub mod i18n;
 mod inspector;
 mod packages_window;
