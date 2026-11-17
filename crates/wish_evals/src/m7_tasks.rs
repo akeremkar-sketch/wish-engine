@@ -650,14 +650,14 @@ fn menu_check(probe: &mut Probe, _: &Path, _: &Value) -> Verdict {
             .find(|e| e["text"].as_str().is_some_and(|t| t.trim() == text))
     };
     let (Some(title), Some(play), Some(quit)) =
-        (find_text("Menü"), find_text("Oyna"), find_text("Çık"))
+        (find_text("Menu"), find_text("Play"), find_text("Quit"))
     else {
-        return Err("the screen needs texts \"Menü\", \"Oyna\" and \"Çık\"".to_owned());
+        return Err("the screen needs texts \"Menu\", \"Play\" and \"Quit\"".to_owned());
     };
     let (title, play, quit) = (bbox(title), bbox(play), bbox(quit));
     if !(title[1] < play[1] && play[1] < quit[1]) {
         return Err(format!(
-            "the order from the top should be Menü, Oyna, Çık, but they are at y = {}, {}, {}",
+            "the order from the top should be Menu, Play, Quit, but they are at y = {}, {}, {}",
             title[1], play[1], quit[1]
         ));
     }
@@ -672,7 +672,7 @@ fn menu_check(probe: &mut Probe, _: &Path, _: &Value) -> Verdict {
             buttons.len()
         ));
     }
-    for (label, name) in [(play, "Oyna"), (quit, "Çık")] {
+    for (label, name) in [(play, "Play"), (quit, "Quit")] {
         let inside = buttons.iter().any(|b| {
             label[0] >= b[0] - 1.0
                 && label[1] >= b[1] - 1.0
@@ -706,9 +706,9 @@ fn menu_reference(probe: &mut Probe) -> Result<(), String> {
         json!([
             { "op": "spawn", "id": "menu", "components": { "UiNode": {
                 "width": full, "height": full, "justify": "Center", "align": "Center", "gap": 14 } } },
-            label("menu_title", "menu", "Menü", 56, 0),
-            button("play_button", 1), label("play_label", "play_button", "Oyna", 36, 0),
-            button("quit_button", 2), label("quit_label", "quit_button", "Çık", 36, 0)
+            label("menu_title", "menu", "Menu", 56, 0),
+            button("play_button", 1), label("play_label", "play_button", "Play", 36, 0),
+            button("quit_button", 2), label("quit_label", "quit_button", "Quit", 36, 0)
         ]),
     )
 }
@@ -1025,7 +1025,7 @@ fn timer_setup(dir: &Path) -> Result<(), String> {
         dir,
         json!([{ "op": "spawn", "id": "timer", "components": {
             "UiNode": { "position": "Absolute", "offset": [24, 24] },
-            "UiText": { "text": "Süre: 0", "size": 40 } } }]),
+            "UiText": { "text": "Time: 0", "size": 40 } } }]),
     )
 }
 
@@ -1035,11 +1035,11 @@ fn timer_check(probe: &mut Probe, dir: &Path, _: &Value) -> Verdict {
         dir,
         &hidden(json!([
             { "frames": 10 },
-            { "expect": "UiText.text == \"Süre: 0\"", "entity": "timer", "message": "it starts at 0" },
+            { "expect": "UiText.text == \"Time: 0\"", "entity": "timer", "message": "it starts at 0" },
             { "frames": 120 },
-            { "expect": "UiText.text == \"Süre: 2\"", "entity": "timer", "message": "after about 2.2 s it says 2" },
+            { "expect": "UiText.text == \"Time: 2\"", "entity": "timer", "message": "after about 2.2 s it says 2" },
             { "frames": 70 },
-            { "expect": "UiText.text == \"Süre: 3\"", "entity": "timer", "message": "after about 3.3 s it says 3" }
+            { "expect": "UiText.text == \"Time: 3\"", "entity": "timer", "message": "after about 3.3 s it says 3" }
         ])),
     )
 }
@@ -1060,7 +1060,7 @@ fn tick(time: Res<Time>, mut labels: Query<(&mut TimerLabel, &mut UiText)>) {
     for (label, words) in labels.iter_mut() {
         if label.shown != seconds {
             label.shown = seconds;
-            words.text = text(&format!("Süre: {seconds}"));
+            words.text = text(&format!("Time: {seconds}"));
         }
     }
 }
@@ -1202,7 +1202,7 @@ pub fn all() -> Vec<Task> {
     vec![
         task(
             "26_follow_camera",
-            "'player' adlı küpü oyuncu yürütebilsin (input.json'daki 'move': x sağa +X, y ileri -Z, saniyede 4 metre) ve 'camera' adlı kamera oyuncuyu arkadan ve yukarıdan izlesin (oyuncu hareket ettikçe kamera da gelsin). Oyun kodunu (scripts/src/lib.rs) yaz, script_build ile derle ve davranışı tests/ altına yazacağın bir senaryo testiyle kanıtla.",
+            "Make the cube named 'player' walkable by the player ('move' in input.json: x right +X, y forward -Z, 4 meters per second), and the camera named 'camera' should follow the player from behind and above (as the player moves, the camera comes along). Write the game code (scripts/src/lib.rs), build it with script_build and prove the behaviour with a scenario test that you write under tests/.",
             follow_setup,
             nothing,
             follow_check,
@@ -1211,7 +1211,7 @@ pub fn all() -> Vec<Task> {
         ),
         task(
             "27_moving_platform",
-            "'lift' adlı platform oyun başlayınca x ekseninde (+X) saniyede 3 metre hızla 6 metre gidip aynı hızla başa dönsün ve bunu sürekli tekrarlasın (y'si değişmesin). Oyun kodunu (scripts/src/lib.rs) yaz, script_build ile derle ve davranışı tests/ altına yazacağın bir senaryo testiyle kanıtla.",
+            "When the game starts, the platform named 'lift' should move 6 meters along the x axis (+X) at 3 meters per second, come back to the start at the same speed, and repeat this continuously (its y should not change). Write the game code (scripts/src/lib.rs), build it with script_build and prove the behaviour with a scenario test that you write under tests/.",
             lift_setup,
             nothing,
             lift_check,
@@ -1220,7 +1220,7 @@ pub fn all() -> Vec<Task> {
         ),
         task(
             "28_respawn_fall",
-            "'crate' adlı sandık zeminsiz boşlukta düşüyor. Oyun kodu (scripts/src/lib.rs) yaz: y değeri -10'un altına inince sandık (0, 2, 0) noktasına geri konsun ve hızı sıfırlansın; bu her düşüşte tekrarlansın. script_build ile derle ve davranışı tests/ altına yazacağın bir senaryo testiyle kanıtla.",
+            "The crate named 'crate' is falling in empty space with no ground. Write game code (scripts/src/lib.rs): when its y value goes below -10, the crate should be put back at the point (0, 2, 0) and its velocity set to zero; this should repeat on every fall. Build it with script_build and prove the behaviour with a scenario test that you write under tests/.",
             crate_setup,
             nothing,
             crate_check,
@@ -1229,7 +1229,7 @@ pub fn all() -> Vec<Task> {
         ),
         task(
             "29_gem_pickup",
-            "'ball' topu +X yönünde yuvarlanıyor; yolunda 'gem_a', 'gem_b', 'gem_c' adlı üç algılayıcı (sensör) mücevher var. Oyun kodunda (scripts/src/lib.rs) Gem bileşeni ve Score kaynağı (points alanı) olsun: top bir mücevhere değince mücevher yok olsun ve Score.points bir artsın. Sahnedeki üç mücevhere Gem bileşenini ekle. script_build ile derle ve davranışı tests/ altına yazacağın bir senaryo testiyle kanıtla.",
+            "The ball 'ball' rolls in the +X direction; on its way there are three sensor gems named 'gem_a', 'gem_b', 'gem_c'. In the game code (scripts/src/lib.rs) there should be a Gem component and a Score resource (field points): when the ball touches a gem, the gem disappears and Score.points goes up by one. Add the Gem component to the three gems in the scene. Build it with script_build and prove the behaviour with a scenario test that you write under tests/.",
             gems_setup,
             nothing,
             gems_check,
@@ -1238,7 +1238,7 @@ pub fn all() -> Vec<Task> {
         ),
         task(
             "30_bell_sound",
-            "assets/sounds/bell.wav adında 0,1 ile 0,4 saniye uzunlukta, yüksek perdeli (800 Hz'in üstünde) bir zil sesi üret (indirme yok; motorun aracıyla yap). 'bell' adlı varlık oyun başlar başlamaz bu sesi çalsın; kameraya da bir dinleyici ekle.",
+            "Generate a high-pitched (above 800 Hz) bell sound named assets/sounds/bell.wav, between 0.1 and 0.4 seconds long (no download; do it with the engine's tool). The entity named 'bell' should play this sound as soon as the game starts; also add a listener to the camera.",
             bell_setup,
             nothing,
             bell_check,
@@ -1247,7 +1247,7 @@ pub fn all() -> Vec<Task> {
         ),
         task(
             "31_ring_icon",
-            "assets/ui/ring.png adında 64x64 bir halka resmi üret (ortası ve köşeleri şeffaf; indirme yok, motorun aracıyla yap) ve onu 'icon' adlı bir arayüz öğesinde göster: ekranın sağ üst köşesinde, en az 16 piksel büyüklükte olsun.",
+            "Generate a 64x64 ring picture named assets/ui/ring.png (transparent in the middle and in the corners; no download, do it with the engine's tool) and show it in an interface element named 'icon': in the top right corner of the screen, at least 16 pixels in size.",
             plain,
             nothing,
             icon_check,
@@ -1256,7 +1256,7 @@ pub fn all() -> Vec<Task> {
         ),
         task(
             "32_read_counter",
-            "Oyun kodundaki Counter kaynağının ticks alanı oyun ilerledikçe değişiyor. Simülasyonu 90 tick çalıştır, Counter.ticks değerini oku ve sahnedeki 'report' varlığına not olarak yalnızca o sayıyı yaz.",
+            "The ticks field of the Counter resource in the game code changes as the game goes on. Run the simulation for 90 ticks, read the value of Counter.ticks, and write only that number as a note on the 'report' entity in the scene.",
             counter_setup,
             nothing,
             counter_check,
@@ -1265,7 +1265,7 @@ pub fn all() -> Vec<Task> {
         ),
         task(
             "33_vertical_menu",
-            "Oyun içi arayüzle ekranın ortasında dikey bir menü kur: en üstte 'Menü' başlığı, altında sırayla 'Oyna' ve 'Çık' yazılı iki düğme (yazılar düğmelerin içinde olsun, düğmeler yatayda ortada dursun).",
+            "Using the in-game interface, build a vertical menu in the middle of the screen: a 'Menu' title at the top, and below it, in order, two buttons labelled 'Play' and 'Quit' (the texts should be inside the buttons, and the buttons should be centred horizontally).",
             plain,
             nothing,
             menu_check,
@@ -1274,7 +1274,7 @@ pub fn all() -> Vec<Task> {
         ),
         task(
             "34_bouncing_ball_2d",
-            "Sahne 2B: ortografik kamera, 'floor' ve 'ball' adlı sprite'lar var ama fizik yok. Fizik ekle: 'ball' yerçekimiyle düşüp 'floor'a çarpsın ve zıplasın (sekmeli), 2B düzlemde kalsın (z değişmesin).",
+            "The scene is 2D: there is an orthographic camera and sprites named 'floor' and 'ball', but no physics. Add physics: 'ball' should fall with gravity, hit 'floor' and bounce (bouncy), and stay in the 2D plane (z should not change).",
             bounce2d_setup,
             nothing,
             bounce2d_check,
@@ -1283,7 +1283,7 @@ pub fn all() -> Vec<Task> {
         ),
         task(
             "35_stage_spot",
-            "'actor' adlı nesnenin tepesinden aşağı doğru bir sahne ışığı (SpotLight) koy: nesnenin tepesinin 2,5–8 metre üstünde (yatayda en çok 1,5 m kayık), aşağıya baksın, koni açısı en çok 45 derece olsun (iç açı dış açıdan küçük) ve nesneye erişsin.",
+            "Put a spotlight (SpotLight) above the entity named 'actor', pointing down: 2.5–8 meters above the top of the entity (at most 1.5 m off horizontally), looking down, with a cone angle of at most 45 degrees (the inner angle smaller than the outer angle), and reaching the entity.",
             stage_setup,
             nothing,
             stage_check,
@@ -1292,7 +1292,7 @@ pub fn all() -> Vec<Task> {
         ),
         task(
             "36_animate_once",
-            "'bar' modelinin 'bend' animasyonunu oyun başlayınca bir kez oynat: bitince sonda dursun (döngü yok).",
+            "Play the 'bend' animation of the 'bar' model once when the game starts: when it ends it should stay at the end (no loop).",
             once_setup,
             nothing,
             once_check,
@@ -1301,7 +1301,7 @@ pub fn all() -> Vec<Task> {
         ),
         task(
             "37_ghost_layers",
-            "'ghost' ve 'solid' adlı toplar +X yönünde 'wall' duvarına doğru gidiyor. 'ghost' duvardan içinden geçsin ama 'solid' duvara çarpıp dursun; duvar sağlam ve sabit kalsın, topların hızlarını ve konumlarını değiştirme. (Çarpışma katmanı ve maskeleri kullan.)",
+            "The balls named 'ghost' and 'solid' move in the +X direction toward the wall 'wall'. 'ghost' should pass through the wall, but 'solid' should hit the wall and stop; the wall should stay solid and fixed; do not change the balls' velocities or positions. (Use collision layers and masks.)",
             layers_setup,
             nothing,
             layers_check,
@@ -1310,7 +1310,7 @@ pub fn all() -> Vec<Task> {
         ),
         task(
             "38_impulse_jump",
-            "'box' adlı dinamik kutu zeminde duruyor. Oyun kodunda (scripts/src/lib.rs) 'jump' eylemi basılınca kutuya yukarı bir itme verilsin (Jumper bileşeni ile işaretle): kutu 0,8 metreden fazla zıplasın. script_build ile derle ve davranışı tests/ altına yazacağın bir senaryo testiyle kanıtla.",
+            "The dynamic box named 'box' is resting on the ground. In the game code (scripts/src/lib.rs), when the 'jump' action is pressed the box should get an upward impulse (mark it with a Jumper component): the box should jump higher than 0.8 meters. Build it with script_build and prove the behaviour with a scenario test that you write under tests/.",
             jumper_setup,
             nothing,
             jumper_check,
@@ -1319,7 +1319,7 @@ pub fn all() -> Vec<Task> {
         ),
         task(
             "39_seconds_label",
-            "'timer' adlı arayüz yazısı 'Süre: 0' diyor. Oyun kodunda (scripts/src/lib.rs) bu yazı geçen tam saniyeyi göstersin: 'Süre: 1', 'Süre: 2', ... script_build ile derle ve davranışı tests/ altına yazacağın bir senaryo testiyle kanıtla.",
+            "The interface text named 'timer' says 'Time: 0'. In the game code (scripts/src/lib.rs), this text should show the whole seconds that have passed: 'Time: 1', 'Time: 2', ... Build it with script_build and prove the behaviour with a scenario test that you write under tests/.",
             timer_setup,
             nothing,
             timer_check,
@@ -1328,7 +1328,7 @@ pub fn all() -> Vec<Task> {
         ),
         task(
             "40_second_level",
-            "scenes/level2.scene.json adında ikinci bir sahne oluştur: ana sahnenin tüm varlıkları (aynı kimliklerle) olsun, bir de 'bonus' adlı altın sarısı bir küre eklensin. Ana sahneyi değiştirme.",
+            "Create a second scene named scenes/level2.scene.json: it should have all the entities of the main scene (with the same ids), plus a golden-yellow sphere named 'bonus'. Do not change the main scene.",
             plain,
             level_baseline,
             level_check,
@@ -1337,7 +1337,7 @@ pub fn all() -> Vec<Task> {
         ),
         task(
             "41_save_replay",
-            "Oyunu başlat, tekrar kaydını aç, 20 tick bekle, 'jump' girdisini bir tick ver, 60 tick daha bekle ve kaydı 'jump' adıyla kaydet.",
+            "Start the game, start a replay recording, wait 20 ticks, give the 'jump' input for one tick, wait 60 more ticks, and save the recording under the name 'jump'.",
             plain,
             nothing,
             replay_check,

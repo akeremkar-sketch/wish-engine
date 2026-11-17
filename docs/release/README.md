@@ -1,12 +1,12 @@
-# Yayın taslakları (M9 WP5)
+# Release drafts (M9 WP5)
 
-> **TASLAK.** Bu klasördekiler sizin onayınız olmadan hiçbir yere konmaz ve yayımlanmaz. Hukuki metinler bir hukukçuya gösterilmelidir; ben hukuk danışmanı değilim.
+> **DRAFT.** Nothing in this folder is put anywhere or published without your approval. The legal texts must be shown to a lawyer; I am not a legal adviser.
 
-| Dosya | Ne | Sizin kararınız |
+| File | What | Your decision |
 |---|---|---|
-| [sozlesme-taslak.md](sozlesme-taslak.md) | Son kullanıcı sözleşmesi taslağı (TR + EN): ücretsiz, komisyonsuz, açık kaynak; gizlilik (telemetri yok, çökme raporu yerel) | Metin, hukuki inceleme, yürürlük |
-| [steam-sayfasi.md](steam-sayfasi.md) | Steam mağaza sayfası metinleri (TR + EN): kısa açıklama, uzun açıklama, özellikler, sistem gereksinimleri | Steamworks hesabı ve ücreti, görseller, yayın tarihi |
-| [ad-arastirmasi.md](ad-arastirmasi.md) | "Wish Engine" adı için ön web araştırması (hukuki görüş değil) | Marka vekiline danışmak, alan adı |
-| [site/index.html](site/index.html) | Tek sayfalık statik web sitesi (TR + EN, dış kaynak yok) | Alan adı, barındırma, indirme bağlantısı |
+| [eula-draft.md](eula-draft.md) | End-user agreement draft: free, commission-free, open source; privacy (no telemetry, crash report stays local) | The text, legal review, when it takes effect |
+| [steam-page.md](steam-page.md) | Steam store page texts: short description, long description, features, system requirements | Steamworks account and fee, images, release date |
+| [name-research.md](name-research.md) | Preliminary web research on the name "Wish Engine" (not a legal opinion) | Ask a trademark attorney, domain name |
+| [site/index.html](site/index.html) | One-page static web site (no outside resources) | Domain name, hosting, download link |
 
-**Boş bırakılan yerler** `[...]` biçimindedir: indirme adresi, iletişim adresi, alan adı, depo adresi (depo şu an özel).
+**Blanks** are written as `[...]`: the download address, the contact address, the domain name, the repository address (the repository is private for now).

@@ -339,7 +339,7 @@ def run(args):
         else:
             scene_rel = f"Assets/Scenes/Compare_{task}.unity"
             shutil.copyfile(base, os.path.join(project, scene_rel))
-            full = f"Unity'de {scene_rel} sahnesini aç. {prompt} {NOTE}"
+            full = f"Open the scene {scene_rel} in Unity. {prompt} {NOTE}"
             metrics = claude(full, task, "unity-mcp", UNITY_MCP, model, effort)
             passed, why = unity_check(task, os.path.join(project, scene_rel), project)
         row = {"engine": engine, "task": task, "passed": passed, "why": why, **metrics}

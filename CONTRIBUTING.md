@@ -3,8 +3,7 @@
 Thank you for helping. Wish Engine is a deterministic, schema-first 3D engine written in Rust. It
 is fully usable by hand and fully controllable by AI agents over MCP. These rules keep it that way.
 
-*Türkçe:* katkı kuralları aşağıda İngilizcedir, çünkü kod, tanılar ve commit iletileri İngilizce
-yazılır. Planlama belgeleri (`docs/`) Türkçedir. Sorularınızı Türkçe de sorabilirsiniz.
+*Questions are welcome in Turkish too.*
 
 ## Build and test
 

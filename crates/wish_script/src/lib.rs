@@ -12,7 +12,7 @@
 //! loop forever, trap, panic, ask for gigabytes — the call returns a
 //! [`Diagnostic`](wish_core::Diagnostic) and the engine keeps running.
 //!
-//! Design: `docs/design/M5-oyun-mantigi.md` §3 (ABI) and §6 (sandbox).
+//! Design: `docs/design/M5-game-logic.md` §3 (ABI) and §6 (sandbox).
 
 pub mod build;
 mod engine;

@@ -1,126 +1,126 @@
-# Wish Engine — Vizyon
+# Wish Engine — Vision
 
-> **Wish Engine** — "dile, olsun". Komut satırı aracı `wen` (**W**ish **En**gine), crate öneki `wish_`.
+> **Wish Engine** — "dile, olsun" (wish it, and it is). The command-line tool is `wen` (**W**ish **En**gine), and the crate prefix is `wish_`.
 
-## Tek cümle
+## In one sentence
 
-Yapay zekâya **tamamen entegre**; arayüzü yapay zekâyı en etkili biçimde yönetmek üzerine kurulmuş ama yapay zekâ olmadan da eksiksiz kullanılabilen (**hibrit**); MCP'nin eklenti değil omurga olduğu; deterministik, metin tabanlı, modern ve **tamamen ücretsiz** bir 3D oyun motoru. Öncelik Claude; MCP konuşan diğer yapay zekâlar da aynı yüzeyi kullanır.
+A 3D game engine that is **fully integrated with AI**; whose interface is built around steering AI as effectively as possible, yet is complete to use without AI (**hybrid**); where MCP is the backbone, not an add-on; and that is deterministic, text-based, modern and **completely free**. Claude comes first; other AIs that speak MCP use the same surface.
 
-## Ürün vizyonu
+## Product vision
 
-- **Açık kaynak.** MIT + Apache-2.0. Herkes kodu okuyabilir, katkı verebilir; herkese açık kod, yapay zekâ modellerinin motoru zamanla daha iyi tanımasını da sağlar.
-- **Ücretsiz ve komisyonsuz.** Motor ücretsizdir. Motorla yapılan oyunlardan gelir payı, lisans ücreti ya da abonelik alınmaz.
-- **Dağıtım.** Steam ve kendi web sitemiz.
-- **Yapay zekâ kullanıcıya aittir.** Kullanıcı kendi Claude (ya da başka bir sağlayıcı) hesabını bağlar. Motor araya girmez, yapay zekâ kullanımından pay almaz.
-- **Hibrit.** Yapay zekâyla da, günümüz motorlarındaki gibi tamamen elle de çalışılır; ikisi aynı sahnede karışık kullanılır. Yapay zekâ bağlamak isteğe bağlıdır.
-- **Sıfır kurulum.** İndir → aç → yapay zekânı bağla (ya da bağlamadan elle başla) → oyun yapmaya başla. Kullanıcıdan derleyici ya da ek araç kurması istenmez.
-- **Uçtan uca.** Fikirden, dağıtılabilir oyun dosyasına (dışa aktarma) kadar her adım motorun içindedir.
-- **"Sorunsuz" bir kalite çıtasıdır.** Bu belgenin sonundaki ölçütlerle ölçülür; sürüm bu ölçütler sağlanmadan çıkmaz.
+- **Open source.** MIT + Apache-2.0. Anyone can read the code and contribute. Public code also helps AI models get to know the engine better over time.
+- **Free, with no commission.** The engine is free. No revenue share, license fee or subscription is taken from games made with the engine.
+- **Distribution.** Steam and our own website.
+- **The AI belongs to the user.** The user connects their own Claude (or another provider) account. The engine does not step in between and takes no share of AI usage.
+- **Hybrid.** You can work with AI, or fully by hand like in today's engines; the two can be mixed in the same scene. Connecting an AI is optional.
+- **Zero setup.** Download → open → connect your AI (or start by hand without it) → start making a game. The user is not asked to install a compiler or any extra tool.
+- **End to end.** Every step from the idea to a distributable game file (export) is inside the engine.
+- **"Seamless" is a quality bar.** It is measured with the criteria at the end of this document; a release does not ship until these criteria are met.
 
-## Çözdüğümüz problem
+## The problem we solve
 
-Bugünkü motorlarda (Unity, Unreal, Godot) MCP entegrasyonları, ajan düşünülmeden tasarlanmış bir editörün üstüne sonradan eklenir. Ajanın yaşadığı sorunlar hep aynı köke dayanır:
+In today's engines (Unity, Unreal, Godot), MCP integrations are added afterwards on top of an editor that was designed without an agent in mind. The problems the agent has all come from the same roots:
 
-| Sorun | Kök neden |
+| Problem | Root cause |
 |---|---|
-| "Değişikliğim oldu mu?" belirsizliği | Durum editörün içinde gizli, sorgulanamıyor |
-| Aynı hata iki kez üretilemiyor | Simülasyon deterministik değil |
-| Alan adlarını tahmin etme, yanlış API çağrıları | Motor kendi şemasını makineye okunur biçimde yayınlamıyor |
-| Sahne dosyaları düzenlenemiyor | Binary ya da GUID dolu, diff'lenemeyen formatlar |
-| Ajanın yazdığı hatalı kod editörü çökertiyor/donduruyor | Oyun kodu motorla aynı süreçte, korumasız çalışıyor |
-| Her deneme dakikalar sürüyor | Derle → yeniden başlat döngüsü |
-| "Bitti" deniyor ama çalışmıyor | Doğrulama araçları (test, görsel karşılaştırma) ajana açık değil |
+| Uncertainty: "did my change happen?" | State is hidden inside the editor and cannot be queried |
+| The same bug cannot be reproduced twice | The simulation is not deterministic |
+| Guessing field names, wrong API calls | The engine does not publish its own schema in a machine-readable form |
+| Scene files cannot be edited | Binary formats, or formats full of GUIDs that cannot be diffed |
+| Faulty code written by the agent crashes or freezes the editor | Game code runs in the same process as the engine, unprotected |
+| Every attempt takes minutes | The compile → restart loop |
+| "Done" is claimed but it does not work | Verification tools (tests, visual comparison) are not open to the agent |
 
-Wish Engine bu kök nedenleri **çekirdek tasarım değişmezleri** olarak çözer; sonradan yamayla değil.
+Wish Engine solves these root causes as **core design invariants**, not with patches afterwards.
 
-## Hibrit: yapay zekâyla ya da elle
+## Hybrid: with AI or by hand
 
-Motor iki biçimde de eksiksiz kullanılır ve kullanıcı aralarında istediği an geçer:
+The engine is complete in both modes, and the user switches between them at any moment:
 
-- **Yapay zekâyla:** insan niyetini söyler, gösterir, sonucu inceler, onaylar ya da geri alır; ajan (Claude ve MCP konuşan diğer yapay zekâlar) işi yapar.
-- **Elle:** günümüz motorlarındaki gibi — nesneyi tut, taşı, değerini değiştir, oynat. Yapay zekâ bağlı olmasa da her şey çalışır.
+- **With AI:** the human states their intent, shows, reviews the result, approves or undoes; the agent (Claude and other AIs that speak MCP) does the work.
+- **By hand:** like in today's engines — grab the entity, move it, change its value, play. Everything works even with no AI connected.
 
-İkisi rakip değil, tamamlayıcıdır: küçük ve görsel ayarlar elle daha hızlıdır, büyük ve tekrarlı işler yapay zekâyla. Elle yapılan değişiklikler de aynı geçmişe girer; ajan bunları görür ve kaldığı yerden devam eder.
+The two are not rivals but complements: small and visual adjustments are faster by hand, big and repetitive jobs are faster with AI. Changes made by hand go into the same history too; the agent sees them and continues where it left off.
 
-**Yapay zekâ tarafı.** Arayüz klasik bir editörün içine sohbet penceresi eklenmiş hâli **değildir**; yapay zekâyı yönetme ögeleri baştan tasarımın parçasıdır (**kokpit**):
+**The AI side.** The interface is **not** a chat window added to a classic editor; the elements for steering AI are part of the design from the start (the **cockpit**):
 
-| Kokpit ögesi | Ne sağlar |
+| Cockpit element | What it provides |
 |---|---|
-| Görünüm + konuşma yan yana | İstek yazılırken sahne görünür; yanıtlar sahnede canlı izlenir |
-| "Göster ve söyle" | Sahnede bir nesneye, bölgeye ya da zaman aralığına tıklamak onu isteğe bağlam olarak ekler ("**şunu** biraz büyüt") |
-| Etkinlik akışı | Ajanın her değişikliği bir kart: ne değişti (fark), neden, sonucu. Kart başına tek tıkla geri al |
-| Otomatik denetim noktaları | Her ajan görevinden önce anlık görüntü; "yapay zekâ buna başlamadan önceki hâle dön" |
-| Önce/sonra karşılaştırma | Sahnenin ve oyunun görsel farkı; değişikliği kabul et / reddet |
-| Yetki kipleri | "Yalnızca öner" · "Uygula, ben incelerim" · "Tam özerk" |
-| Canlı gözlem | Ajanın yürüttüğü denemeler, aldığı görüntüler ve testler izlenebilir |
+| View + conversation side by side | The scene is visible while a request is written; replies can be watched live in the scene |
+| "Show and tell" | Clicking an entity, a region or a time range in the scene adds it to the request as context ("make **this one** a bit bigger") |
+| Activity feed | Every change by the agent is a card: what changed (diff), why, and the result. One-click undo per card |
+| Automatic checkpoints | A snapshot before every agent task; "go back to the state before the AI started this" |
+| Before/after comparison | The visual difference of the scene and the game; accept / reject the change |
+| Permission modes | "Only suggest" · "Apply, I will review" · "Fully autonomous" |
+| Live observation | The trials the agent runs, the images it takes and the tests can be watched |
 
-**Elle taraf.** Klasik editör araçları eksiksizdir ve birinci sınıftır: görünüm penceresi, hiyerarşi, denetçi (her bileşen için otomatik üretilir), taşıma/döndürme/ölçekleme tutamaçları, varlık tarayıcı, materyal ve prefab düzenleme, oynat/duraklat/adım at/geri sar denetimleri, konsol ve performans panelleri. Oyun kodu, dış bir kod düzenleyiciyle elle de yazılabilir.
+**The manual side.** The classic editor tools are complete and first-class: viewport, hierarchy, inspector (generated automatically for every component), move/rotate/scale handles, asset browser, material and prefab editing, play/pause/step/rewind controls, console and performance panels. Game code can also be written by hand with an external code editor.
 
-İnsan da ajan da **aynı kontrol düzlemi** üzerinden çalışır. Ajanın yapabildiği her şey elle, elle yapılabilen her şey MCP'den ve komut satırından yapılabilir. İkisi aynı sahneyi aynı anda düzenleyebilir.
+Both the human and the agent work through the **same control plane**. Everything the agent can do can be done by hand, and everything that can be done by hand can be done from MCP and the command line. The two can edit the same scene at the same time.
 
-## Tasarım ilkeleri (değişmezler)
+## Design principles (invariants)
 
-Her ilke test edilebilir olacak şekilde yazılmıştır. Bir özellik bunlardan birini çiğniyorsa tasarım yanlıştır.
+Each principle is written so that it can be tested. If a feature breaks one of them, the design is wrong.
 
-1. **Şema önce.** Dünyadaki her veri türü (bileşen, kaynak, olay) çalışma zamanında sorgulanabilir bir şemaya sahiptir. Şemasız veri dünyaya giremez. Ajan hiçbir alan adını tahmin etmez.
-2. **Her şey metin.** Sahne, prefab, materyal, girdi haritası, test — hepsi kanonik biçimlendirilmiş, diff'lenebilir metin dosyasıdır. Dosyalar tek doğruluk kaynağıdır.
-3. **Deterministik simülasyon.** Aynı derleme + aynı sahne + aynı tohum + aynı girdiler = bit düzeyinde aynı dünya. Her tick'in bir dünya özeti (hash) vardır.
-4. **Gözlemlenebilirlik.** Dünyanın her parçası sorgulanabilir: varlıklar, bileşenler, olaylar, günlükler, performans, ekranda ne göründüğü (yalnızca piksel değil, anlamsal olarak da).
-5. **Geri alınabilirlik.** Her düzenleme atomik bir işlemdir ve geri alınabilir. Her simülasyon anı kaydedilip geri yüklenebilir.
-6. **Çökmeyen döngü.** Ajanın yazdığı oyun kodu korumalı alanda (Wasm) çalışır. Hatalı kod motoru çökertmez, dondurmaz; yapılandırılmış bir tanı mesajı üretir.
-7. **Hızlı döngü.** Değişiklik → gözlem süresi saniyelerle ölçülür. Oyun mantığı değişince motor yeniden derlenmez.
-8. **Tek kontrol düzlemi.** MCP, komut satırı ve editör aynı iç API'nin üç yüzüdür. Hiçbirinin diğerinde olmayan özel yeteneği yoktur.
-9. **Kanıtla bitir.** Motor, "çalışıyor" iddiasını kanıtlayacak araçları (senaryo testi, görsel karşılaştırma, hash doğrulama) ajana verir.
-10. **Ölç, varsayma.** Motorun ajan-dostu olduğu iddiası, otomatik ajan değerlendirme takımıyla (evals) sürekli ölçülür.
-11. **Hibrit eşlik.** Ajanın yapabildiği her sahne/varlık işlemi elle de yapılabilir. Motor, hiçbir yapay zekâ bağlı değilken eksiksiz çalışır. Elle ve ajanla yapılan değişiklikler tek bir geçmişte tutulur.
+1. **Schema first.** Every data type in the world (component, resource, event) has a schema that can be queried at run time. Data without a schema cannot enter the world. The agent never guesses a field name.
+2. **Everything is text.** Scene, prefab, material, input map, test — all are canonically formatted, diffable text files. Files are the single source of truth.
+3. **Deterministic simulation.** Same build + same scene + same seed + same inputs = a bit-for-bit identical world. Every tick has a world digest (hash).
+4. **Observability.** Every part of the world can be queried: entities, components, events, logs, performance, what is shown on screen (not only as pixels, but semantically too).
+5. **Reversibility.** Every edit is an atomic transaction and can be undone. Every simulation moment can be saved and restored.
+6. **A loop that does not crash.** Game code written by the agent runs in a sandbox (Wasm). Faulty code does not crash or freeze the engine; it produces a structured diagnostic message.
+7. **A fast loop.** The time from change to observation is measured in seconds. The engine is not recompiled when game logic changes.
+8. **One control plane.** MCP, the command line and the editor are three faces of the same internal API. None of them has a special capability that the others lack.
+9. **Finish with proof.** The engine gives the agent the tools to prove a "it works" claim (scenario tests, visual comparison, hash verification).
+10. **Measure, do not assume.** The claim that the engine is agent-friendly is measured continuously by an automatic agent evaluation suite (evals).
+11. **Hybrid parity.** Every scene/entity operation the agent can do can also be done by hand. The engine works completely when no AI is connected. Changes made by hand and by the agent are kept in a single history.
 
-## Fark yaratan özellikler
+## Features that set it apart
 
-- **Motorun içinde yerleşik MCP sunucusu** — `wen new` ile oluşturulan her projede Claude Code otomatik bağlanır.
-- **Zaman yolculuğu** — anlık görüntü al, geri sar, dünyayı çatalla ("şunu denesem ne olur?"), tekrar oynat.
-- **Anlamsal görüş** — ekran görüntüsünün yanında "hangi varlık ekranın neresinde, yüzde kaçı görünüyor" bilgisi.
-- **Dünya denetçisi (linter)** — "varlık dünyadan düştü", "sahnede ışık yok", "kamera hiçbir şey görmüyor" gibi sezgisel uyarılar.
-- **Girdi enjeksiyonu** — ajan oyunu gerçekten oynayabilir; girdiler kaydedilip tekrar oynatılabilir.
-- **Kayıpsız sıcak yeniden yükleme** — oyun durumu Wasm modülünde değil dünyada yaşar; kod değişince oyun kaldığı yerden devam eder.
-- **Dış üretim araçlarına açık varlık hattı** — Blender MCP ya da üretken araçlar `assets/` klasörüne dosya bırakır; motor içe aktarır, doğrular, raporlar.
+- **A built-in MCP server inside the engine** — in every project created with `wen new`, Claude Code connects automatically.
+- **Time travel** — take a snapshot, rewind, fork the world ("what if I tried this?"), replay.
+- **Semantic vision** — next to the screenshot, the information "which entity is where on the screen, and what percentage of it is visible".
+- **World inspector (linter)** — heuristic warnings such as "an entity fell out of the world", "there is no light in the scene", "the camera sees nothing".
+- **Input injection** — the agent can really play the game; inputs can be recorded and replayed.
+- **Lossless hot reload** — game state lives in the world, not in the Wasm module; when code changes, the game continues where it was.
+- **An asset pipeline open to external production tools** — Blender MCP or generative tools drop files into the `assets/` folder; the engine imports, validates and reports them.
 
-## Kapsam: 1.0 hedefi
+## Scope: the 1.0 goal
 
-"Küçük ve orta ölçekli 3D oyunları yapay zekâyla, elle ya da ikisiyle birlikte baştan sona sorunsuz yapabileceğiniz en iyi motor."
+"The best engine for making small and medium-sized 3D games from start to finish, seamlessly, with AI, by hand, or with both together."
 
-- 3D öncelikli (2D, ortografik kamera + sprite ile alt küme olarak)
-- Windows masaüstü (Linux/macOS aynı koddan); web sonraki kilometre taşı
-- PBR render, gölgeler, glTF içe aktarma, iskelet animasyonu
-- Fizik, ses, girdi, oyun içi arayüz
-- Wasm tabanlı oyun mantığı (ilk dil: Rust)
-- MCP + komut satırı + hibrit editör (yapay zekâ kokpiti ve tam elle düzenleme)
-- Oyunu dağıtılabilir pakete dışa aktarma
-- Tek paket kurulum (Steam ve web sitesi), Türkçe ve İngilizce arayüz
+- 3D first (2D as a subset, with an orthographic camera + sprites)
+- Windows desktop (Linux/macOS from the same code); web is a later milestone
+- PBR rendering, shadows, glTF import, skeletal animation
+- Physics, audio, input, in-game UI
+- Wasm-based game logic (first language: Rust)
+- MCP + command line + hybrid editor (AI cockpit and full manual editing)
+- Exporting the game to a distributable package
+- Single-package install (Steam and website), Turkish and English interface
 
-## Kapsam dışı (1.0 için bilinçli olarak)
+## Out of scope (deliberately, for 1.0)
 
-- Unreal düzeyinde AAA render (sanal geometri, ışın izlemeli küresel aydınlatma) → 1.0 sonrası araştırma hattı. Mimari buna kapı açık bırakır, ama söz vermez.
-- Çok oyunculu/ağ → 1.0 sonrası. Determinizm ve anlık görüntü altyapısı bunun temelini hazırlar.
-- Konsol ve mobil platformlar.
-- Görsel (düğüm tabanlı) betikleme.
-- Uzman elle düzenleme araçları: animasyon zaman çizelgesi düzenleyicisi, görsel gölgelendirici grafiği, arazi şekillendirme, motorun içinde tam kod düzenleyici → 1.0 sonrası. O zamana dek dış araç (Blender, VS Code), metin dosyası ya da yapay zekâ kullanılır.
-- Motorun içine gömülü üretken yapay zekâ modelleri (dış araçlarla bütünleşiriz).
+- Unreal-level AAA rendering (virtual geometry, ray-traced global illumination) → a research line after 1.0. The architecture leaves the door open for it, but does not promise it.
+- Multiplayer/networking → after 1.0. The determinism and snapshot infrastructure prepares the ground for it.
+- Console and mobile platforms.
+- Visual (node-based) scripting.
+- Expert manual editing tools: animation timeline editor, visual shader graph, terrain sculpting, a full code editor inside the engine → after 1.0. Until then, an external tool (Blender, VS Code), a text file or AI is used.
+- Generative AI models embedded inside the engine (we integrate with external tools).
 
-Bu sınırlar dürüstlük içindir: "yeni nesil motor" projelerinin başarısız olma nedeni neredeyse her zaman kapsamdır. Önce dar ama kusursuz, sonra geniş.
+These limits are for honesty: the reason "next-generation engine" projects fail is almost always scope. First narrow but flawless, then wide.
 
-## Başarı ölçütleri
+## Success criteria
 
-| Ölçüt | Hedef |
+| Criterion | Target |
 |---|---|
-| Sahne değişikliği → gözlem | < 2 saniye |
-| Oyun kodu değişikliği → çalışan oyun | < 10 saniye |
-| Determinizm | 10.000 tick tekrar oynatmada sıfır hash sapması |
-| Ajan değerlendirme takımı | Sonnet 5.5 · orta efor ile ≥ %90 görev başarısı |
-| Sıfırdan oynanabilir mini oyun | Tek ajan oturumu, insan müdahalesi yok |
-| Yapay zekâsız kullanım | Hiçbir yapay zekâ bağlı değilken sahne kurma, oynatma, test ve dışa aktarma eksiksiz çalışır |
-| Elle/ajan eşliği | Kontrol düzlemindeki her sahne/varlık işleminin arayüzde elle karşılığı vardır (otomatik denetlenir) |
-| İlk çalıştırma | İndirme sonrası: yapay zekâyı bağla → ilk istek → çalışan sahne < 5 dakika |
-| Kurulum | Tek paket; kullanıcı derleyici ya da ek araç kurmaz |
-| Ajan kaynaklı çökme/donma | Sıfır (hatalı oyun kodu yalnızca tanı üretir) |
-| Geri alınabilirlik | Ajanın yaptığı her değişiklik arayüzden tek tıkla geri alınır |
-| Dışa aktarma | Tek komut/tek tıkla çalışan, bağımsız oyun paketi |
+| Scene change → observation | < 2 seconds |
+| Game code change → running game | < 10 seconds |
+| Determinism | Zero hash drift over a 10,000-tick replay |
+| Agent evaluation suite | ≥ 90% task success with Sonnet 5.5 · medium effort |
+| Playable mini game from scratch | A single agent session, no human intervention |
+| Use without AI | With no AI connected, building a scene, playing, testing and exporting all work completely |
+| Manual/agent parity | Every scene/entity operation in the control plane has a manual counterpart in the interface (checked automatically) |
+| First run | After download: connect the AI → first request → a working scene in < 5 minutes |
+| Install | A single package; the user does not install a compiler or any extra tool |
+| Agent-caused crash/freeze | Zero (faulty game code only produces a diagnostic) |
+| Reversibility | Every change the agent makes can be undone from the interface with one click |
+| Export | A standalone game package that works with a single command/click |

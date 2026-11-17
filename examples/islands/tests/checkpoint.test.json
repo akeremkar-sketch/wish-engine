@@ -18,6 +18,6 @@
     { "input": { "move": [1, 0] }, "until": "Game.falls >= 1", "max_frames": 240 },
     { "frames": 30 },
     { "expect": "CharacterState.grounded == true && Transform.translation.x > 2 && Transform.translation.x < 4 && Transform.translation.z < -9.5 && Transform.translation.z > -11.5", "entity": "player", "message": "after falling off the player is back on the checkpoint's island" },
-    { "expect": "UiText.text == \"Kristal: 4/6\"", "entity": "crystal_label", "message": "the label counts the crystals (landing back on the checkpoint picks up the fourth)" }
+    { "expect": "UiText.text == \"Crystals: 4/6\"", "entity": "crystal_label", "message": "the label counts the crystals (landing back on the checkpoint picks up the fourth)" }
   ]
 }

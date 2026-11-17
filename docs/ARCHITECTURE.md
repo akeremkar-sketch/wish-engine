@@ -1,126 +1,126 @@
-# Wish Engine — Mimari
+# Wish Engine — Architecture
 
-Kararların gerekçeleri [DECISIONS.md](DECISIONS.md) içindedir; bu belge parçaların nasıl birleştiğini anlatır.
-Kod örnekleri **hedeflenen kullanım biçimini** gösterir; kesin imzalar ilgili kilometre taşında netleşir.
+The reasons for the decisions are in [DECISIONS.md](DECISIONS.md); this document explains how the parts fit together.
+The code examples show the **intended way of use**; exact signatures become final in the relevant milestone.
 
-## Katmanlar
+## Layers
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│  İSTEMCİLER                                                      │
-│  Claude / diğer ajanlar      İnsan (terminal)      İnsan (editör)│
+│  CLIENTS                                                         │
+│  Claude / other agents       Human (terminal)    Human (editor)  │
 │        │ MCP                      │ CLI                 │ egui   │
 ├────────┼──────────────────────────┼─────────────────────┼────────┤
 │  wish_mcp                      wish_cli               wish_editor   │
 │        └──────────────┬───────────┴─────────────────────┘        │
-│  KONTROL DÜZLEMİ      ▼                                          │
-│  wish_control — komutlar · sorgular · oturumlar · tanılar         │
+│  CONTROL PLANE        ▼                                          │
+│  wish_control — commands · queries · sessions · diagnostics      │
 ├──────────────────────────────────────────────────────────────────┤
-│  BELGE KATMANI                    │  ÇALIŞMA ZAMANI              │
-│  wish_scene — sahne/prefab belgesi │  wish_app — döngü, oturumlar  │
-│  işlem · geri al · kanonik yazım  │  wish_script — Wasm ev sahibi │
-│  wish_asset — içe aktarma, izleme  │  wish_test — senaryo, altın   │
+│  DOCUMENT LAYER                   │  RUNTIME                     │
+│  wish_scene — scene/prefab document│  wish_app — loop, sessions   │
+│  transaction · undo · canonical write│ wish_script — Wasm host     │
+│  wish_asset — import, watching     │  wish_test — scenario, golden │
 ├──────────────────────────────────────────────────────────────────┤
-│  ALT SİSTEMLER                                                   │
+│  SUBSYSTEMS                                                      │
 │  wish_render   wish_physics   wish_audio   wish_input   wish_ui       │
 ├──────────────────────────────────────────────────────────────────┤
-│  ÇEKİRDEK                                                        │
-│  wish_ecs — dünya, arketipler, sorgular, zamanlama, anlık görüntü │
-│  wish_schema — tür şeması, JSON ⇄ ikili, JSON Schema              │
-│  wish_core — kimlikler, hash, tanı türleri, matematik             │
+│  CORE                                                            │
+│  wish_ecs — world, archetypes, queries, scheduling, snapshot     │
+│  wish_schema — type schema, JSON ⇄ binary, JSON Schema           │
+│  wish_core — identifiers, hash, diagnostic types, math           │
 └──────────────────────────────────────────────────────────────────┘
-        Konuk tarafı (Wasm'a derlenir):  wish_sdk + oyunun kendi kodu
+        Guest side (compiled to Wasm):  wish_sdk + the game's own code
 ```
 
-**Bağımlılık kuralı:** oklar yalnızca aşağı iner. Alt sistemler birbirini tanımaz; ECS üzerinden (bileşen ve olaylarla) konuşur. Hiçbir alt sistem kontrol düzlemini bilmez; kontrol düzlemi hepsini şema üzerinden görür.
+**Dependency rule:** arrows only go down. Subsystems do not know each other; they talk through the ECS (with components and events). No subsystem knows the control plane; the control plane sees all of them through the schema.
 
-## Crate'ler
+## Crates
 
-| Crate | Sorumluluk | Kilometre taşı |
+| Crate | Responsibility | Milestone |
 |---|---|---|
-| `wish_core` | Kimlikler, kararlı hash, `Diagnostic`, matematik yeniden dışa aktarımı | M1 |
-| `wish_schema` | `TypeSchema`, `#[component]` türetme makrosu, JSON ⇄ ikili, JSON Schema üretimi | M1 |
-| `wish_ecs` | Dünya, arketip depolama, sorgular, komutlar, kaynaklar, olaylar, zamanlayıcı, anlık görüntü, dünya hash'i | M1 |
-| `wish_app` | Ana döngü, sabit adım, eklenti kaydı, oturum yönetimi | M1 |
-| `wish_cli` | `wen` ikilisi | M1 → sürekli |
-| `wish_scene` | Konumlu katı JSON + kanonik yazıcı, sahne/prefab belgesi ve doğrulaması, işlemler + geri al/yinele + `actor` günlüğü, prefab açma, belge → dünya (`SceneId`) | M2 |
-| `wish_asset` | Varlık dizini, `*.meta.json`, şemaya göre `AssetRef` bulma/denetleme, `wen mv`, tüm proje yükleme (`wen check/fmt`), yoklamalı izleyici + sıcak yükleme. İçe aktarıcılar ve önbellek M3'te | M2 (+M3) |
-| `wish_render` | wgpu, render grafiği, materyaller, başsız yakalama, hata ayıklama görünümleri | M3 |
-| `wish_window`, `wish_input` | Pencere, aygıtlar, eylem haritaları, enjeksiyon/kayıt | M3 / M5 |
-| `wish_control` | Kontrol düzlemi API'si | M4 |
-| `wish_mcp` | MCP sunucusu (stdio + HTTP) | M4 |
-| `wish_script`, `wish_sdk` | Wasm ev sahibi, ABI, sıcak yükleme / konuk SDK'sı | M5 |
-| `wish_test` | Senaryo test koşucusu, altın görüntü, tekrar | M5 |
-| `wish_physics` | Rapier bütünleşmesi (gövdeler, çarpıştırıcılar, olaylar, sorgular, karakter denetleyicisi); durumu ADR-026 uzantısı | M6 |
-| `wish_audio` | Ses bileşenleri, belirlenimci ses olay günlüğü; çıkış cpal + kendi karıştırıcı (ADR-015) | M6 |
-| `wish_anim` | İskelet animasyonu oynatıcısının zamanı (poz render'da) | M6 |
-| `wish_text` | Yazı tipleri (Roboto gömülü), belirlenimci metin yerleşimi, glif rasterleme | M6 |
-| `wish_ui` | Oyun içi arayüz: flexbox yerleşimi (taffy), düğmeler, işaretçi | M6 |
-| `wish_particles` | Durumsuz parçacık formülü, canlı sayısı | M6 |
-| `wish_editor` | Yapay zekâ kokpiti (arayüz) + ajan bağdaştırıcıları | M8 |
-| `wish_export` | Oyun paketleme ve dışa aktarma | M9 |
+| `wish_core` | Identifiers, stable hash, `Diagnostic`, math re-export | M1 |
+| `wish_schema` | `TypeSchema`, the `#[component]` derive macro, JSON ⇄ binary, JSON Schema generation | M1 |
+| `wish_ecs` | World, archetype storage, queries, commands, resources, events, scheduler, snapshot, world hash | M1 |
+| `wish_app` | Main loop, fixed step, plugin registration, session management | M1 |
+| `wish_cli` | The `wen` binary | M1 → ongoing |
+| `wish_scene` | Positioned strict JSON + canonical writer, scene/prefab document and its validation, transactions + undo/redo + `actor` log, prefab expansion, document → world (`SceneId`) | M2 |
+| `wish_asset` | Asset index, `*.meta.json`, finding/checking `AssetRef` by schema, `wen mv`, whole-project loading (`wen check/fmt`), polling watcher + hot reload. Importers and cache in M3 | M2 (+M3) |
+| `wish_render` | wgpu, render graph, materials, headless capture, debug views | M3 |
+| `wish_window`, `wish_input` | Window, devices, action maps, injection/recording | M3 / M5 |
+| `wish_control` | Control plane API | M4 |
+| `wish_mcp` | MCP server (stdio + HTTP) | M4 |
+| `wish_script`, `wish_sdk` | Wasm host, ABI, hot reload / guest SDK | M5 |
+| `wish_test` | Scenario test runner, golden image, replay | M5 |
+| `wish_physics` | Rapier integration (bodies, colliders, events, queries, character controller); its state is an ADR-026 extension | M6 |
+| `wish_audio` | Audio components, deterministic audio event log; output is cpal + our own mixer (ADR-015) | M6 |
+| `wish_anim` | Time of the skeletal animation player (the pose is computed in render) | M6 |
+| `wish_text` | Fonts (Roboto embedded), deterministic text layout, glyph rasterization | M6 |
+| `wish_ui` | In-game UI: flexbox layout (taffy), buttons, pointer | M6 |
+| `wish_particles` | Stateless particle formula, alive count | M6 |
+| `wish_editor` | AI cockpit (interface) + agent adapters | M8 |
+| `wish_export` | Game packaging and export | M9 |
 
-## Şema: her şeyin kaynağı
+## Schema: the source of everything
 
 ```rust
-/// Bir varlığı sabit hızla hareket ettirir.
+/// Moves an entity at a constant speed.
 #[component]
 pub struct Mover {
-    /// Hareket hızı.
+    /// Movement speed.
     #[schema(unit = "m/s", range = 0.0..=50.0, default = 5.0)]
     pub speed: f32,
 }
 ```
 
-Bu tek tanımdan türeyenler:
+What is derived from this single definition:
 
 ```
-                        ┌─► ECS sütun yerleşimi (boyut, hizalama, ofsetler)
-                        ├─► JSON okuma/yazma (sahne dosyaları, MCP yükleri)
-  #[component] ─► TypeSchema ─► JSON Schema (schema_get, editör doğrulaması)
-                        ├─► Wasm ABI yerleşimi (konuk tarafı aynı baytları görür)
-                        ├─► Editör denetçi alanları (aralık → kaydırıcı)
-                        └─► Belgeler (wish://docs/components/Mover)
+                        ┌─► ECS column layout (size, alignment, offsets)
+                        ├─► JSON read/write (scene files, MCP payloads)
+  #[component] ─► TypeSchema ─► JSON Schema (schema_get, editor validation)
+                        ├─► Wasm ABI layout (the guest side sees the same bytes)
+                        ├─► Editor inspector fields (range → slider)
+                        └─► Docs (wish://docs/components/Mover)
 ```
 
-Ajanın `schema_get("Mover")` çağrısında gördüğü: alan adı, türü, birimi, aralığı, varsayılanı ve belge yorumu.
+What the agent sees in a `schema_get("Mover")` call: the field name, its type, unit, range, default and doc comment.
 
-## Dünya ve oturum modeli
+## World and session model
 
 ```
-  DİSK (doğruluk kaynağı)            BELLEK
-  scenes/main.scene.json  ◄────►  Düzenleme belgesi (revizyon N, geri al yığını)
-                                        │ sim_start (kopya + tohum)
+  DISK (source of truth)             MEMORY
+  scenes/main.scene.json  ◄────►  Edit document (revision N, undo stack)
+                                        │ sim_start (copy + seed)
                                         ▼
-                                  Oynatma oturumu s1 ── anlık görüntü ──► çatal s2
-                                  (dünya + fizik + RNG + tick)
+                                  Play session s1 ── snapshot ──► fork s2
+                                  (world + physics + RNG + tick)
 ```
 
-- **Düzenleme belgesi**: sahne dosyasının bellekteki karşılığı. Değişiklikler işlemle yapılır, diske kanonik yazılır.
-- **Oynatma oturumu**: belgeden türetilen canlı dünya. Deterministik ilerler. Diske yazmaz. Birden çok oturum aynı anda yaşayabilir (başsız ya da pencereli).
-- Oturumdaki bir değeri kalıcı kılmak açık bir adımdır (oturumdan belgeye yama).
+- **Edit document**: the in-memory counterpart of the scene file. Changes are made with transactions and written to disk in canonical form.
+- **Play session**: a live world derived from the document. It advances deterministically. It does not write to disk. Several sessions can live at the same time (headless or windowed).
+- Making a value in a session permanent is an explicit step (a patch from the session to the document).
 
-## Kare döngüsü
+## Frame loop
 
 ```
-her kare:
-  girdi topla (aygıt → eylemler)  +  enjekte edilen eylemler
-  birikmiş süre ≥ sabit adım oldukça:
+every frame:
+  collect input (device → actions)  +  injected actions
+  while accumulated time ≥ fixed step:
       ┌ FixedUpdate ─────────────────────────────────────────────┐
-      │ 1. girdi eylemlerini dünyaya yaz                         │
-      │ 2. oyun sistemleri (Wasm + yerel), açık sırada           │
-      │ 3. ertelenmiş komutları uygula (sabit sırada)            │
-      │ 4. fizik adımı                                           │
-      │ 5. hiyerarşi/dönüşüm yayılımı                            │
-      │ 6. olayları günlüğe yaz, dünya denetçisini çalıştır      │
-      │ 7. tick++  (istenirse dünya hash'i)                      │
+      │ 1. write input actions into the world                    │
+      │ 2. game systems (Wasm + native), in explicit order       │
+      │ 3. apply deferred commands (in fixed order)              │
+      │ 4. physics step                                          │
+      │ 5. hierarchy/transform propagation                       │
+      │ 6. write events to the log, run the world inspector      │
+      │ 7. tick++  (world hash if requested)                     │
       └──────────────────────────────────────────────────────────┘
-  render (determinizm sınırının dışı): ara değerleme → render grafiği → sunum/yakalama
+  render (outside the determinism boundary): interpolation → render graph → present/capture
 ```
 
-Başsız kipte "birikmiş süre" yoktur: `sim_step(n)` tam olarak n tick ilerletir, gerçek zamandan bağımsız ve olabildiğince hızlı.
+In headless mode there is no "accumulated time": `sim_step(n)` advances exactly n ticks, independent of real time and as fast as possible.
 
-## Oyun mantığı (Wasm konuk)
+## Game logic (Wasm guest)
 
 ```rust
 use wish_sdk::prelude::*;
@@ -134,36 +134,36 @@ fn move_player(actions: Res<Actions>, time: Res<Time>, mut q: Query<(&Mover, &mu
 }
 ```
 
-Sıcak yeniden yükleme akışı:
+Hot reload flow:
 
 ```
-scripts/src/*.rs değişti
-   → derle (wasm32)  ── hata? → tanılar (dosya, satır, ipucu) → eski modül çalışmaya devam eder
-   → yeni modülü doğrula (ABI sürümü, şema uyumu)
-   → tick sınırında eski modülü bırak, yenisini örnekle
-   → şema değiştiyse: bileşen verisini alan adına göre taşı (yeni alan = varsayılan)
-   → oyun kaldığı tick'ten devam eder
+scripts/src/*.rs changed
+   → compile (wasm32)  ── error? → diagnostics (file, line, hint) → the old module keeps running
+   → validate the new module (ABI version, schema compatibility)
+   → at a tick boundary, drop the old module, instantiate the new one
+   → if the schema changed: migrate component data by field name (new field = default)
+   → the game continues from the tick where it was
 ```
 
-Durum konukta yaşamadığı için kaybedilecek bir şey yoktur. Sistem bir tuzak atarsa ya da yakıt sınırını aşarsa: o sistem devre dışı kalır, tanı üretilir, dünya ilerlemeye devam eder.
+Because state does not live in the guest, there is nothing to lose. If a system throws a trap or exceeds the fuel limit: that system is disabled, a diagnostic is produced, and the world keeps advancing.
 
-## Bir düzenlemenin yolculuğu
+## The journey of an edit
 
 ```
 edit_apply({ base_revision: 41, ops: [ spawn …, set … ] })
-  1. şema doğrulaması (alan adı, tür, aralık, başvuruların varlığı)
-  2. hata varsa: hiçbir şey uygulanmaz → yapılandırılmış hata + ipucu
-  3. belgeye uygula → revizyon 42 → geri al yığınına ekle
-  4. kanonik JSON'u diske yaz
-  5. açık oynatma oturumlarına canlı yansıt (istenirse)
-  6. yanıt: fark (diff) + dünya denetçisi uyarıları + revizyon
+  1. schema validation (field name, type, range, existence of references)
+  2. if there is an error: nothing is applied → structured error + hint
+  3. apply to the document → revision 42 → add to the undo stack
+  4. write the canonical JSON to disk
+  5. mirror live into open play sessions (if requested)
+  6. reply: diff + world inspector warnings + revision
 ```
 
-Doğrudan dosya düzenlemede 1–2. adımlar dosya izleyicide çalışır; hata varsa bellekteki son geçerli belge korunur ve tanı `check` ile görünür.
+When a file is edited directly, steps 1–2 run in the file watcher; if there is an error, the last valid in-memory document is kept and the diagnostic is visible through `check`.
 
-## Tanılar: tek format
+## Diagnostics: one format
 
-Derleyici hatası, sahne doğrulama hatası, çalışma zamanı uyarısı, MCP hatası — hepsi aynı yapıdadır:
+A compiler error, a scene validation error, a run-time warning, an MCP error — all have the same structure:
 
 ```json
 {
@@ -177,51 +177,51 @@ Derleyici hatası, sahne doğrulama hatası, çalışma zamanı uyarısı, MCP h
 }
 ```
 
-Tanı kodları kararlıdır ve belgelenir. İpucu alanı zorunludur: tanı yazan kişi "nasıl düzelir" sorusunu yanıtlamak zorundadır.
+Diagnostic codes are stable and documented. The hint field is required: whoever writes a diagnostic must answer the question "how do I fix it?".
 
-## Dünya denetçisi
+## World inspector
 
-Her oynatma adımından ve düzenlemeden sonra çalışan ucuz sezgisel kurallar. Ajanın ekran görüntüsüne bakıp anlamaya çalışacağı şeyleri sözle söyler:
+Cheap heuristic rules that run after every play step and every edit. They say in words what the agent would otherwise try to work out by looking at a screenshot:
 
-- Varlık dünyadan düştü (sınırların çok dışında)
-- Dönüşümde NaN/sonsuz, sıfır ölçek
-- Sahnede ışık yok / etkin kamera yok / kamera hiçbir şey görmüyor
-- Çarpıştırıcılar doğuşta iç içe
-- Model ölçeği olağandışı (birim uyuşmazlığı olabilir)
-- Eksik varlık dosyası başvurusu
+- An entity fell out of the world (far outside the bounds)
+- NaN/infinity in a transform, zero scale
+- No light in the scene / no active camera / the camera sees nothing
+- Colliders overlapping at spawn
+- Unusual model scale (there may be a unit mismatch)
+- A reference to a missing asset file
 
-## Render hattı
+## Render pipeline
 
 ```
-Sahne çıkarımı (ECS → render dünyası)
-   → ayıklama → ışık kümeleme → gölge geçişleri → opak (PBR) → gökyüzü → saydam
-   → ardıl işlemler (ton eşleme …) → sunum | yakalama (PNG)
-   yan çıktılar (istek üzerine): varlık kimliği · derinlik · normaller · tel kafes · çarpıştırıcılar
+Scene extraction (ECS → render world)
+   → culling → light clustering → shadow passes → opaque (PBR) → sky → transparent
+   → post-processing (tone mapping …) → present | capture (PNG)
+   side outputs (on request): entity ID · depth · normals · wireframe · colliders
 ```
 
-`describe_view` kimlik tamponunu okur: görünen her varlık için ekran kutusu, görünürlük yüzdesi, kameraya uzaklık.
+`describe_view` reads the ID buffer: for every visible entity, its screen box, visibility percentage and distance to the camera.
 
-## Oyun projesi düzeni
+## Game project layout
 
-`wen new my_game` şunu üretir:
+`wen new my_game` produces:
 
 ```
 my_game/
-  wish.json            proje bildirimi (ad, motor sürümü, giriş sahnesi, tick hızı)
+  wish.json            project manifest (name, engine version, entry scene, tick rate)
   scenes/main.scene.json
   prefabs/
   assets/                 glb, png, ogg … + *.meta.json
-  scripts/                oyun mantığı (Rust → Wasm)
+  scripts/                game logic (Rust → Wasm)
     Cargo.toml
     src/lib.rs
-  input.json              eylem haritaları
-  tests/*.test.json       senaryo testleri
-  CLAUDE.md, AGENTS.md    projeye özel ajan kılavuzu (motor sürümüne göre üretilir)
-  .mcp.json               Claude Code'un motor MCP sunucusuna otomatik bağlanması için
-  .wish/                   önbellek, anlık görüntüler, tekrarlar (git dışı)
+  input.json              action maps
+  tests/*.test.json       scenario tests
+  CLAUDE.md, AGENTS.md    project-specific agent guide (generated for the engine version)
+  .mcp.json               so that Claude Code connects to the engine MCP server automatically
+  .wish/                   cache, snapshots, replays (not in git)
 ```
 
-Örnek sahne (biçim 1, M2'de kesinleşti; kanonik dosyada anahtarlar bayt sırasıyla yazılır, `wen fmt` bunu yapar. Kesin kurallar: [design/M2-veri-katmani.md](design/M2-veri-katmani.md) §2–§3 ve §12):
+Example scene (format 1, finalized in M2; in the canonical file the keys are written in byte order, and `wen fmt` does this. Exact rules: [design/M2-data-layer.md](design/M2-data-layer.md) §2–§3 and §12):
 
 ```json
 {
@@ -248,7 +248,7 @@ my_game/
 }
 ```
 
-Örnek senaryo testi:
+Example scenario test:
 
 ```json
 {
@@ -263,61 +263,61 @@ my_game/
 }
 ```
 
-## Hibrit arayüz
+## Hybrid interface
 
-Arayüz hibrittir (ADR-018): elle düzenleme ve yapay zekâ kokpiti aynı pencerede, aynı kontrol düzleminin üstünde yaşar. İkisi de yeni bir yetenek katmanı değil, çekirdeğin zaten sağladığı şeylerin görsel yüzüdür.
+The interface is hybrid (ADR-018): manual editing and the AI cockpit live in the same window, on top of the same control plane. Neither is a new capability layer; both are the visual face of what the core already provides.
 
-**Elle düzenleme araçları:**
+**Manual editing tools:**
 
-| Araç | Dayandığı çekirdek mekanizma |
+| Tool | Core mechanism it relies on |
 |---|---|
-| Denetçi | `TypeSchema` → alanlar otomatik üretilir (aralık → kaydırıcı, enum → liste, birim → etiket); her değişiklik bir `edit_apply` işlemi |
-| Tutamaçlar (taşı/döndür/ölçekle) | Sürükleme boyunca canlı önizleme, bırakınca tek `edit_apply` işlemi |
-| Hiyerarşi, varlık tarayıcı | `scene_get`, `entity_query`, `asset_list` + sürükle-bırak → `edit_apply` |
-| Oynat/duraklat/adım at/geri sar | `sim_start`, `sim_step`, `sim_snapshot`, `sim_restore` |
-| Konsol, performans paneli | `logs_get`, `profile_get` |
+| Inspector | `TypeSchema` → fields are generated automatically (range → slider, enum → list, unit → label); every change is an `edit_apply` transaction |
+| Handles (move/rotate/scale) | Live preview during the drag, a single `edit_apply` transaction on release |
+| Hierarchy, asset browser | `scene_get`, `entity_query`, `asset_list` + drag and drop → `edit_apply` |
+| Play/pause/step/rewind | `sim_start`, `sim_step`, `sim_snapshot`, `sim_restore` |
+| Console, performance panel | `logs_get`, `profile_get` |
 
-**Tek geçmiş.** Her işlem kimin yaptığını (`actor`: `human` ya da ajan adı) taşır. Elle ve ajanla yapılan değişiklikler aynı revizyon zincirinde, aynı geri al yığınında ve aynı etkinlik akışında durur. Ajan, `edit_history` ile insanın elle yaptıklarını görür.
+**One history.** Every transaction carries who made it (`actor`: `human` or the agent's name). Changes made by hand and by the agent sit in the same revision chain, the same undo stack and the same activity feed. The agent sees what the human did by hand with `edit_history`.
 
-**Yapay zekâ kokpiti ögeleri:**
+**AI cockpit elements:**
 
-| Kokpit ögesi | Dayandığı çekirdek mekanizma |
+| Cockpit element | Core mechanism it relies on |
 |---|---|
-| Etkinlik akışı, kart başına geri al | `edit_apply` işlemleri + revizyonlar + geri al yığını |
-| Otomatik denetim noktaları | Belge revizyonu işareti + oturum anlık görüntüsü |
-| "Göster ve söyle" | Varlık kimliği tamponu (tıklanan piksel → varlık) + `describe_view` |
-| Önce/sonra karşılaştırma | Belge farkı + iki revizyondan yakalanan görüntüler |
-| Yetki kipleri | Kontrol düzleminde `dry_run` + onay kapısı |
-| Canlı gözlem | Oturum olay akışı (günlükler, yakalamalar, test sonuçları) |
+| Activity feed, per-card undo | `edit_apply` transactions + revisions + undo stack |
+| Automatic checkpoints | Document revision mark + session snapshot |
+| "Show and tell" | Entity ID buffer (clicked pixel → entity) + `describe_view` |
+| Before/after comparison | Document diff + images captured from two revisions |
+| Permission modes | `dry_run` in the control plane + approval gate |
+| Live observation | Session event stream (logs, captures, test results) |
 
-Kokpit içi ajan, sağlayıcıdan bağımsız bir bağdaştırıcı üzerinden konuşur (ADR-024); dış ajanlar (Claude Code vb.) MCP'den bağlanır. İkisinin etkinliği aynı akışta görünür, çünkü ikisi de aynı kontrol düzlemi işlemlerini üretir.
+The agent inside the cockpit talks through a provider-independent adapter (ADR-024); external agents (Claude Code, etc.) connect through MCP. The activity of both appears in the same feed, because both produce the same control plane operations.
 
-## Dağıtım ve dışa aktarma
+## Distribution and export
 
 ```
-Motor paketi (Steam / web)            Dışa aktarılan oyun (wen export)
-  wen çalıştırılabilir dosyası          oyun çalıştırılabilir dosyası (yalnızca çalışma zamanı)
-  kokpit                                paketlenmiş varlıklar
-  MCP sunucusu                          derlenmiş Wasm modülleri
-  gömülü Wasm derleme araç zinciri      (editör, MCP sunucusu, derleyici yok)
-  örnek projeler + belgeler
+Engine package (Steam / web)          Exported game (wen export)
+  wen executable                        game executable (runtime only)
+  cockpit                               packaged assets
+  MCP server                            compiled Wasm modules
+  embedded Wasm build toolchain         (no editor, MCP server or compiler)
+  example projects + docs
 ```
 
-Kullanıcı ek araç kurmaz (ADR-023). Dışa aktarılan oyun motor kurulumuna ihtiyaç duymaz.
+The user installs no extra tools (ADR-023). The exported game does not need an engine installation.
 
-## İş parçacığı modeli
+## Threading model
 
-- **M1–M5:** simülasyon tek iş parçacıklı (önce doğruluk ve determinizm). Varlık yükleme ve render hazırlığı arka planda olabilir; simülasyon durumuna dokunmazlar.
-- **Sonra:** erişimleri ayrık sistemler paralel; komut tamponları sabit sırada birleşir. Paralel ve tek iş parçacıklı çalıştırma aynı hash'i üretmek zorundadır (test edilir).
-- Tasarım iş parçacığı *gerektirmez* (web hedefi için).
+- **M1–M5:** the simulation is single-threaded (correctness and determinism first). Asset loading and render preparation can run in the background; they do not touch simulation state.
+- **Later:** systems with disjoint access run in parallel; command buffers merge in a fixed order. A parallel run and a single-threaded run must produce the same hash (tested).
+- The design does *not require* threads (for the web target).
 
-## Motor deposu düzeni
+## Engine repository layout
 
 ```
 wish-engine/
-  crates/        yukarıdaki crate'ler
-  examples/      küçük örnek projeler (aynı zamanda test verisi)
-  evals/         ajan değerlendirme görevleri
-  docs/          bu belgeler + kullanıcı kılavuzu
-  CLAUDE.md      motoru geliştiren ajan için çalışma kuralları
+  crates/        the crates above
+  examples/      small example projects (also test data)
+  evals/         agent evaluation tasks
+  docs/          these documents + the user guide
+  CLAUDE.md      working rules for the agent that develops the engine
 ```

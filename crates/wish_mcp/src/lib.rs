@@ -3,7 +3,7 @@
 //! A thin client of the control plane (`wish_control`): every tool is a
 //! catalogue tool, every answer is the same JSON the command line prints.
 //! The transport is stdio: one JSON-RPC 2.0 message per line, stdout for
-//! protocol only (design: `docs/design/M4-kontrol-duzlemi.md` §7).
+//! protocol only (design: `docs/design/M4-control-plane.md` §7).
 //!
 //! Protocol version 2025-06-18 (older versions the client asks for are
 //! accepted and answered with the same behaviour). Requests are handled one

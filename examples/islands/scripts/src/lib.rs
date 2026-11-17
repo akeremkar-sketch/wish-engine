@@ -287,8 +287,8 @@ fn finish(
                 let seconds = game.won_at as f32 * time.delta;
                 for words in texts.iter_mut() {
                     words.text = text(&format!(
-                        "Tebrikler!
-Kristal {}/{} · {:.1} sn",
+                        "Well done!
+Crystals {}/{} · {:.1} s",
                         game.crystals, game.total, seconds
                     ));
                 }
@@ -310,7 +310,7 @@ fn show(
     }
     for (label, words) in labels.iter_mut() {
         if label.shown != game.crystals || text_of(words.text).is_empty() || label.shown == 0 {
-            words.text = text(&format!("Kristal: {}/{}", game.crystals, game.total));
+            words.text = text(&format!("Crystals: {}/{}", game.crystals, game.total));
             label.shown = game.crystals;
         }
     }

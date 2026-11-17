@@ -18,7 +18,7 @@
 //! Importing assets (glTF, textures) is M3; watching files for changes is
 //! part of hot reloading (M2 WP7).
 //!
-//! Design: `docs/design/M2-veri-katmani.md` §5.
+//! Design: `docs/design/M2-data-layer.md` §5.
 
 pub mod hot;
 pub mod index;

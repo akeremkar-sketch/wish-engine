@@ -1,5 +1,5 @@
 //! Regression tests for the M5 closing review's findings (design note §17,
-//! "M5 kapanışı"). Each test is the review's reproduction; the finding's
+//! "M5 closing"). Each test is the review's reproduction; the finding's
 //! number is in the test name (T = tools review, R = runtime review).
 
 #![allow(missing_docs)]

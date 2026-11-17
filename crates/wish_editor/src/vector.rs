@@ -337,7 +337,7 @@ fn star(
 const STAR: f64 = 12.0;
 const ROD: f64 = LENGTH - 6.0;
 
-/// The engine's mark, a wishing wand (dilek çubuğu), on a 100-unit grid:
+/// The engine's mark, a wishing wand, on a 100-unit grid:
 /// a bone-coloured rod with an orange grip and a soft gold five-pointed
 /// star at its tip. `t` runs over its
 /// start-up animation (0 to 1; 1 and after: the still mark): the wand is

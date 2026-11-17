@@ -20,7 +20,7 @@
 //! id and components as JSON, and is turned into a world only when a scene is
 //! played.
 //!
-//! Design: `docs/design/M2-veri-katmani.md`.
+//! Design: `docs/design/M2-data-layer.md`.
 
 pub mod document;
 pub mod edit;

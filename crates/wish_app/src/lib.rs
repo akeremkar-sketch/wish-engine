@@ -44,7 +44,7 @@
 //! # Ok::<(), wish_core::Diagnostic>(())
 //! ```
 //!
-//! Design: `docs/design/M1-cekirdek.md`, section 5.
+//! Design: `docs/design/M1-core.md`, section 5.
 
 mod app;
 mod schedule;

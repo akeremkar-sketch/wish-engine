@@ -26,7 +26,7 @@
 //! assert_eq!(Mover::schema().size, 4);
 //! ```
 //!
-//! See `docs/design/M1-cekirdek.md` for why storage is the type's `repr(C)`
+//! See `docs/design/M1-core.md` for why storage is the type's `repr(C)`
 //! layout and what the [`Plain`] contract guarantees.
 
 // Macro-generated code refers to this crate as `::wish_schema`, including from

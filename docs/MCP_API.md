@@ -1,100 +1,100 @@
-# Wish Engine — MCP API Taslağı (v0)
+# Wish Engine — MCP API Draft (v0)
 
-Bu, araç yüzeyinin taslağıdır. **Durum (M4 tamamlandı, 16 Kasım 2026):** 20 araç uygulandı (`project_info`, `schema_get`, `docs_search`, `check`, `scene_get`, `entity_query`, `entity_get`, `edit_apply`, `edit_history`, `asset_list`, `asset_info`, `asset_move`, `sim_start`, `sim_step`, `sim_snapshot`, `sim_restore`, `sim_stop`, `capture_frame`, `describe_view`, `logs_get`); kesin parametreler kodda (`wish_control` parametre tabloları, `tools/list` ile görülür) ve kesin davranış [design/M4-kontrol-duzlemi.md](design/M4-kontrol-duzlemi.md) §14–§15'te. `script_build`, `test_run`, `replay` M5'te; `profile_get` M6'da; Streamable HTTP M8a'da. Aşağıdaki taslak tarihsel kayıttır; değerlendirmelerin ve kapanış incelemesinin getirdiği değişiklikler tasarım notunun §14 WP7–WP8 bölümlerinde. İlkeler: [DECISIONS.md](DECISIONS.md) ADR-009, ADR-010.
+This is a draft of the tool surface. **Status (M4 completed, 16 November 2026):** 20 tools were implemented (`project_info`, `schema_get`, `docs_search`, `check`, `scene_get`, `entity_query`, `entity_get`, `edit_apply`, `edit_history`, `asset_list`, `asset_info`, `asset_move`, `sim_start`, `sim_step`, `sim_snapshot`, `sim_restore`, `sim_stop`, `capture_frame`, `describe_view`, `logs_get`); the exact parameters are in the code (the `wish_control` parameter tables, visible with `tools/list`) and the exact behavior is in [design/M4-control-plane.md](design/M4-control-plane.md) §14–§15. `script_build`, `test_run`, `replay` come in M5; `profile_get` in M6; Streamable HTTP in M8a. The draft below is a historical record; the changes brought by the evaluations and the closing review are in the design note's §14 WP7–WP8 sections. Principles: [DECISIONS.md](DECISIONS.md) ADR-009, ADR-010.
 
-## Bağlantı
+## Connection
 
-| Taşıma | Kullanım |
+| Transport | Use |
 |---|---|
-| stdio | `wen mcp` — Claude Code / Claude Desktop sunucuyu kendisi başlatır. `wen new` projeye `.mcp.json` yazar, bağlantı otomatiktir. |
-| Streamable HTTP | `wen mcp --http <port ya da adres>` (M8a WP8) — tek uç `/mcp`: `POST` (istek → `200` + JSON, bildirim → `202`), `DELETE` oturumu bitirir, `GET` akışı yok (`405`). `initialize` yanıtı `Mcp-Session-Id` verir, sonraki her ileti onu taşır (yoksa `400`, bilinmiyorsa `404`). Varsayılan yalnızca `127.0.0.1`; her zaman jeton (`Authorization: Bearer`; `WISH_MCP_TOKEN` yoksa rastgele üretilip başlarken gösterilir — ADR-022); başka adres `WISH_MCP_TOKEN` ister; `Host` yerel olmalı. Her oturum kendi istemci adıyla kaydedilir. Başka sitenin sayfası `Origin` ile reddedilir (`WISH_MCP_ORIGINS` ek izin). `notifications/cancelled` başka bağlantıdan da anında işler. Kod: `wish_mcp::http`. |
+| stdio | `wen mcp` — Claude Code / Claude Desktop starts the server itself. `wen new` writes `.mcp.json` into the project, so the connection is automatic. |
+| Streamable HTTP | `wen mcp --http <port or address>` (M8a WP8) — a single endpoint `/mcp`: `POST` (request → `200` + JSON, notification → `202`), `DELETE` ends the session, there is no `GET` stream (`405`). The `initialize` reply gives an `Mcp-Session-Id`, and every later message carries it (`400` if missing, `404` if unknown). By default only `127.0.0.1`; always a token (`Authorization: Bearer`; if `WISH_MCP_TOKEN` is missing, one is generated randomly and shown at start — ADR-022); another address requires `WISH_MCP_TOKEN`; `Host` must be local. Every session is recorded under its own client name. A page from another site is rejected by `Origin` (`WISH_MCP_ORIGINS` adds extra allowances). `notifications/cancelled` takes effect instantly from another connection too. Code: `wish_mcp::http`. |
 
-Her MCP aracının birebir komut satırı karşılığı vardır (`wen entity query …`, `wen sim step …`), `--json` ile aynı çıktıyı verir.
+Every MCP tool has an exact command-line counterpart (`wen entity query …`, `wen sim step …`), and with `--json` it gives the same output.
 
-## Ortak kurallar
+## Common rules
 
-- **Yanıt zarfı:** `{ "ok": true, … }` ya da `{ "ok": false, "error": Diagnostic }`.
-- **Bütçe:** varsayılan yanıt kısa tutulur. `detail: "summary" | "normal" | "full"` ve `cursor` ile sayfalama.
-- **Değiştiren araçlar** `dry_run` kabul eder; fark, tanılar ve yeni `revision` döndürür.
-- **Eşzamanlılık:** `base_revision` verilirse ve belge o arada değiştiyse işlem reddedilir, güncel revizyon bildirilir.
-- **Kim yaptı (`actor`):** her işlem `human` ya da ajan adını taşır. Arayüz hibrit olduğu için (ADR-018) insan aynı sahneyi elle de düzenler; ajan `edit_history` ile insanın elle yaptığı değişiklikleri görür ve değiştiren araçların yanıtında "son çağrınızdan beri başkasının değiştirdiği varlıklar" özetini alır.
-- **Varlık adresleme:** sahne kimliğiyle (`"player"`); oynatma oturumunda çalışma zamanı kimliğiyle de.
-- **İfadeler:** sorgu ve doğrulamalarda küçük bir ifade dili (CEL alt kümesi): `Transform.translation.y < 0 && has(RigidBody)`.
+- **Reply envelope:** `{ "ok": true, … }` or `{ "ok": false, "error": Diagnostic }`.
+- **Budget:** the default reply is kept short. Paging with `detail: "summary" | "normal" | "full"` and `cursor`.
+- **Tools that change things** accept `dry_run`; they return the diff, the diagnostics and the new `revision`.
+- **Concurrency:** if `base_revision` is given and the document changed in the meantime, the operation is rejected and the current revision is reported.
+- **Who did it (`actor`):** every transaction carries `human` or the agent's name. Because the interface is hybrid (ADR-018), the human also edits the same scene by hand; the agent sees the changes made by hand with `edit_history`, and in the replies of tools that change things it gets a summary of "entities someone else changed since your last call".
+- **Entity addressing:** by scene ID (`"player"`); in a play session also by run-time ID.
+- **Expressions:** a small expression language (a CEL subset) in queries and checks: `Transform.translation.y < 0 && has(RigidBody)`.
 
-## Araçlar
+## Tools
 
-### Proje ve bilgi
+### Project and information
 
-| Araç | Amaç | Öne çıkan parametreler |
+| Tool | Purpose | Notable parameters |
 |---|---|---|
-| `project_info` | Proje özeti: sahneler, betik durumu, açık oturumlar, motor sürümü, bekleyen tanılar | — |
-| `schema_get` | Bileşen/kaynak/olay şemaları: alanlar, türler, birimler, aralıklar, belge yorumları | `names`, `search`, `detail` |
-| `docs_search` | Motor kılavuzunda arama (belgeler ayrıca `wish://docs/…` kaynakları olarak da sunulur) | `query` |
-| `check` | Tüm projeyi doğrula: sahneler, başvurular, şemalar, betik derlemesi | `paths` |
+| `project_info` | Project summary: scenes, script status, open sessions, engine version, pending diagnostics | — |
+| `schema_get` | Component/resource/event schemas: fields, types, units, ranges, doc comments | `names`, `search`, `detail` |
+| `docs_search` | Search the engine guide (the docs are also served as `wish://docs/…` resources) | `query` |
+| `check` | Validate the whole project: scenes, references, schemas, script build | `paths` |
 
-### Sahne yazımı (düzenleme belgesi)
+### Scene authoring (edit document)
 
-| Araç | Amaç | Öne çıkan parametreler |
+| Tool | Purpose | Notable parameters |
 |---|---|---|
-| `scene_get` | Sahne ana hattı: hiyerarşi ağacı, varlık adları, bileşen adları | `scene`, `root`, `depth`, `detail` |
-| `entity_query` | Varlık bul: bileşene, ada, ifadeye, uzamsal yakınlığa göre | `with`, `where`, `near`, `limit`, `cursor` |
-| `entity_get` | Varlıkların bileşen değerleri; kaynakların değerleri (M7) | `ids`, `components`, `resources`, `session` |
-| `edit_apply` | **Atomik işlem**: `spawn`, `despawn`, `set` (birleştirme), `replace`, `remove`, `reparent`, `rename`, `set_notes`, `set_resource` / `replace_resource` / `remove_resource`, `instantiate`, `set_override` / `replace_override` / `remove_override` işlemlerinin listesi (M2'de `wish_scene::EditOp` olarak uygulandı) | `ops`, `base_revision`, `dry_run` |
-| `edit_history` | Geri al / yinele / geçmişi listele | `action`, `steps` |
-| `asset_list` | Varlık dosyaları ve içe aktarma durumu | `kind`, `search` |
-| `asset_info` | Tek varlık raporu: üçgen sayısı, sınırlar, materyaller, alt nesneler, ölçek uyarıları | `path` |
-| `asset_move` | Varlık dosyasını/klasörünü taşı, tüm sahne ve prefab başvurularını aynı işlemde güncelle (`wen mv`) | `from`, `to`, `dry_run` |
-| `asset_create` | Yer tutucu varlık üret (M7): birkaç sayıdan `.wav` ses ya da `.png` resim; indirme gerekmez | `path`, `sound`, `picture`, `overwrite`, `dry_run` |
+| `scene_get` | Scene outline: hierarchy tree, entity names, component names | `scene`, `root`, `depth`, `detail` |
+| `entity_query` | Find entities: by component, name, expression, spatial proximity | `with`, `where`, `near`, `limit`, `cursor` |
+| `entity_get` | Component values of entities; values of resources (M7) | `ids`, `components`, `resources`, `session` |
+| `edit_apply` | **Atomic transaction**: a list of `spawn`, `despawn`, `set` (merge), `replace`, `remove`, `reparent`, `rename`, `set_notes`, `set_resource` / `replace_resource` / `remove_resource`, `instantiate`, `set_override` / `replace_override` / `remove_override` operations (implemented in M2 as `wish_scene::EditOp`) | `ops`, `base_revision`, `dry_run` |
+| `edit_history` | Undo / redo / list the history | `action`, `steps` |
+| `asset_list` | Asset files and import status | `kind`, `search` |
+| `asset_info` | A report for one asset: triangle count, bounds, materials, sub-objects, scale warnings | `path` |
+| `asset_move` | Move an asset file/folder and update all scene and prefab references in the same transaction (`wen mv`) | `from`, `to`, `dry_run` |
+| `asset_create` | Produce a placeholder asset (M7): a `.wav` sound or a `.png` picture from a few numbers; no download needed | `path`, `sound`, `picture`, `overwrite`, `dry_run` |
 
-### Simülasyon (oynatma oturumu)
+### Simulation (play session)
 
-| Araç | Amaç | Öne çıkan parametreler |
+| Tool | Purpose | Notable parameters |
 |---|---|---|
-| `sim_start` | Sahneden oturum başlat | `scene`, `seed`, `headless` |
-| `sim_step` | İlerle: N tick ya da koşul sağlanana dek; girdi enjekte et | `session`, `frames`, `until`, `input`, `max_frames` |
-| `sim_snapshot` | Anı kaydet / listele | `session`, `label` |
-| `sim_restore` | Kayıtlı ana dön ya da ondan yeni oturum çatalla | `snapshot`, `fork` |
-| `sim_stop` | Oturumu kapat | `session` |
-| `replay` | Tekrar kaydını sakla / çalıştır / hash sapmasını bul | `action`, `path` |
+| `sim_start` | Start a session from a scene | `scene`, `seed`, `headless` |
+| `sim_step` | Advance: N ticks or until a condition holds; inject input | `session`, `frames`, `until`, `input`, `max_frames` |
+| `sim_snapshot` | Save / list a moment | `session`, `label` |
+| `sim_restore` | Return to a saved moment or fork a new session from it | `snapshot`, `fork` |
+| `sim_stop` | Close the session | `session` |
+| `replay` | Save a replay recording / run it / find the hash drift | `action`, `path` |
 
-Oturum sırasında `entity_query`, `entity_get` ve `edit_apply` `session` parametresiyle canlı dünyaya da uygulanır.
+During a session, `entity_query`, `entity_get` and `edit_apply` also apply to the live world with the `session` parameter.
 
-### Gözlem
+### Observation
 
-| Araç | Amaç | Öne çıkan parametreler |
+| Tool | Purpose | Notable parameters |
 |---|---|---|
-| `capture_frame` | Görüntü al (MCP görsel içeriği olarak döner) | `camera`, `size`, `view`: `lit` \| `ids` \| `depth` \| `normals` \| `wireframe` \| `colliders` \| `lights` |
-| `describe_view` | Anlamsal görüş: görünen varlıklar, ekran kutuları, görünürlük yüzdesi, uzaklık | `camera`, `limit` |
-| `logs_get` | Yapılandırılmış günlükler ve olaylar (ses olayları dahil) | `since`, `severity`, `kinds` |
-| `physics_query` | Fizik dünyasına soru (M6): ışın neye çarpar, bir şekle ne değer, bir varlığa ne dokunur — oturumda ya da sahne dosyasında | `ray`, `overlap`, `touching`, `mask`, `session` |
-| `profile_get` | Kare süresi dökümü, sistem başına süre, çizim çağrıları, bellek | `session`, `frames` |
+| `capture_frame` | Take an image (returned as MCP image content) | `camera`, `size`, `view`: `lit` \| `ids` \| `depth` \| `normals` \| `wireframe` \| `colliders` \| `lights` |
+| `describe_view` | Semantic vision: visible entities, screen boxes, visibility percentage, distance | `camera`, `limit` |
+| `logs_get` | Structured logs and events (including audio events) | `since`, `severity`, `kinds` |
+| `physics_query` | Ask the physics world (M6): what a ray hits, what a shape covers, what touches an entity — in a session or in the scene file | `ray`, `overlap`, `touching`, `mask`, `session` |
+| `profile_get` | Frame time breakdown, time per system, draw calls, memory | `session`, `frames` |
 
-### Doğrulama ve betik
+### Verification and scripting
 
-| Araç | Amaç | Öne çıkan parametreler |
+| Tool | Purpose | Notable parameters |
 |---|---|---|
-| `test_run` | Senaryo testlerini koş; başarısızlıkta ilgili tick, beklenen/bulunan değer, görsel fark | `paths`, `update_golden` |
-| `script_build` | Oyun kodunu derle; yoğunlaştırılmış tanılar; başarılıysa sıcak yükle | `reload` |
+| `test_run` | Run scenario tests; on failure the relevant tick, expected/found value, visual difference | `paths`, `update_golden` |
+| `script_build` | Compile game code; condensed diagnostics; hot reload if successful | `reload` |
 
-### Proje ayarları, kokpit ve oyunun tasarımı (M8a–M9c)
+### Project settings, cockpit and game design (M8a–M9c)
 
-| Araç | Amaç | Öne çıkan parametreler |
+| Tool | Purpose | Notable parameters |
 |---|---|---|
-| `project_settings` | Projenin adı, varsayılan sahnesi, girdi haritası (M8a) | `action`, `name`, `scene`, `input`, `dry_run` |
-| `activity_get` | Etkinlik akışı: kim neyi değiştirdi, kart başına geri alma için (M8b) | `since`, `actor`, `limit` |
-| `checkpoint` | Denetim noktası kaydet / listele / geri yükle / sil (M8b) | `action`, `name`, `note`, `dry_run` |
-| `permissions` | Ajanların kendi başına ne kadar değiştirebileceği; yalnızca kişi değiştirir (M8b) | `action`, `mode`, `dry_run` |
-| `proposals` | Öner kipinde kişinin onayını bekleyen değişiklikler (M8b) | `action`, `id`, `dry_run` |
-| `project_export` | Oyunu motorsuz çalışan bir klasöre dışa aktar (M9) | `name`, `overwrite`, `dry_run` |
-| `game_design` | Oyunun tasarımı `design/game.json`'da (M9c): oyun kartı (ad, tek cümle, tür, amaç, temel döngü, kontroller, görünüm, kitle, olmazsa olmazlar, sonraya kalanlar), her değişiklikte geçerli kararlar, plan adımları, oyun testi notları (tick ve resimle), ajanın kişiye sorduğu seçenekli sorular. Eylemler: `get`, `set_brief`, `decide`, `forget`, `plan_add`, `plan_set`, `plan_remove`, `note`, `note_done`, `ask`, `answer` (`remember` ile karar olur). Kimlikler belirlenimci (`next_id`); bozuk dosyanın üzerine yazılmaz (`design_file_invalid`); `design/` varlık sayılmaz | `action`, `fields`, `text`, `id`, `status`, `options`, `answer`, `remember`, `scene`, `tick`, `picture`, `dry_run` |
+| `project_settings` | The project's name, default scene, input map (M8a) | `action`, `name`, `scene`, `input`, `dry_run` |
+| `activity_get` | Activity feed: who changed what, for per-card undo (M8b) | `since`, `actor`, `limit` |
+| `checkpoint` | Save / list / restore / delete a checkpoint (M8b) | `action`, `name`, `note`, `dry_run` |
+| `permissions` | How much agents may change on their own; only the person changes it (M8b) | `action`, `mode`, `dry_run` |
+| `proposals` | Changes waiting for the person's approval in suggest mode (M8b) | `action`, `id`, `dry_run` |
+| `project_export` | Export the game to a folder that runs without the engine (M9) | `name`, `overwrite`, `dry_run` |
+| `game_design` | The game's design in `design/game.json` (M9c): the game card (name, one sentence, genre, goal, core loop, controls, look, audience, must-haves, left for later), decisions that are valid at every change, plan steps, play-test notes (with tick and picture), multiple-choice questions the agent asks the person. Actions: `get`, `set_brief`, `decide`, `forget`, `plan_add`, `plan_set`, `plan_remove`, `note`, `note_done`, `ask`, `answer` (with `remember` it becomes a decision). IDs are deterministic (`next_id`); a broken file is never overwritten (`design_file_invalid`); `design/` is not counted as an asset | `action`, `fields`, `text`, `id`, `status`, `options`, `answer`, `remember`, `scene`, `tick`, `picture`, `dry_run` |
 
-Editörün yapay zekâ modu bu aracın her eylemini elle de yapar (değişmez 9); ajan her görevde tasarımın özetini alır ve kişiye ait seçimlerde tahmin yürütmek yerine `ask` ile sorup durur.
+The editor's AI mode does every action of this tool by hand too (invariant 9); in every task the agent receives a summary of the design, and for choices that belong to the person it asks with `ask` and stops instead of guessing.
 
-**Toplam: 32 araç** (M8a–M9c'nin yedisi yukarıda). Önceki sayım (uygulamada: M4'ün 20'si, M5'te `script_build`, `replay`, `test_run`, M6'da `physics_query`, M7'de `asset_create` (sürtünme günlüğü F5: araçla ses/resim üretmenin yolu yoktu); `profile_get` henüz yok). (`asset_move` M2'de eklendi: birden çok belgeyi ve diski birlikte değiştirdiği için tek sahneye bağlı `edit_apply`'ın parametresi olamaz.) Yeni araç eklemek için gerekçe aranır; önce mevcut bir aracın parametresi olarak çözülüp çözülemeyeceğine bakılır.
+**Total: 32 tools** (seven of the M8a–M9c ones are above). The earlier count (in the implementation: the 20 of M4, in M5 `script_build`, `replay`, `test_run`, in M6 `physics_query`, in M7 `asset_create` (friction log F5: there was no way to produce a sound/picture with a tool); `profile_get` does not exist yet). (`asset_move` was added in M2: because it changes several documents and the disk together, it could not be a parameter of `edit_apply`, which is tied to a single scene.) A reason is required to add a new tool; first it is checked whether it can be solved as a parameter of an existing tool.
 
-## Örnek yanıtlar
+## Example replies
 
-`sim_step` — yalnızca ilerlemez, o aralıkta olanları özetler:
+`sim_step` — it does not only advance, it summarizes what happened in that span:
 
 ```json
 {
@@ -115,7 +115,7 @@ Editörün yapay zekâ modu bu aracın her eylemini elle de yapar (değişmez 9)
 }
 ```
 
-`edit_apply` — hatalı işlem hiçbir şeyi değiştirmez:
+`edit_apply` — a faulty transaction changes nothing:
 
 ```json
 {
@@ -131,27 +131,27 @@ Editörün yapay zekâ modu bu aracın her eylemini elle de yapar (değişmez 9)
 }
 ```
 
-## Tipik ajan döngüsü
+## Typical agent loop
 
 ```
-1. project_info                       → neredeyim, ne var?
-2. schema_get(search: "light")        → hangi bileşenler, hangi alanlar?
-3. edit_apply([spawn zemin, ışık, kamera, oyuncu])
-4. (scripts/src/lib.rs dosyasını düzenle) → script_build
+1. project_info                       → where am I, what is here?
+2. schema_get(search: "light")        → which components, which fields?
+3. edit_apply([spawn floor, light, camera, player])
+4. (edit the scripts/src/lib.rs file) → script_build
 5. sim_start → sim_step(frames: 120, input: {move:[0,1]})
-6. describe_view + capture_frame      → beklediğim şey ekranda mı?
-7. sorun var → sim_restore → düzelt → 5'e dön
-8. tests/…test.json yaz → test_run    → kanıt
+6. describe_view + capture_frame      → is what I expect on the screen?
+7. a problem → sim_restore → fix → go back to 5
+8. write tests/…test.json → test_run  → proof
 ```
 
-## MCP kaynakları ve istemler
+## MCP resources and prompts
 
-- `wish://docs/guide` — kısa motor kılavuzu (ajanın bağlamına sığacak boyutta)
-- `wish://docs/components/{Name}` — bileşen belgeleri (şemadan üretilir)
-- `wish://docs/diagnostics/{code}` — her tanı kodunun açıklaması ve çözümü
-- `wish://project/status` — canlı proje durumu
-- İstemler: "yeni oyun başlat", "hatayı yeniden üret ve düzelt", "performansı incele"
+- `wish://docs/guide` — a short engine guide (small enough to fit the agent's context)
+- `wish://docs/components/{Name}` — component docs (generated from the schema)
+- `wish://docs/diagnostics/{code}` — the explanation and fix of every diagnostic code
+- `wish://project/status` — live project status
+- Prompts: "start a new game", "reproduce and fix the bug", "inspect performance"
 
-## Tasarımın nasıl sınanacağı
+## How the design is tested
 
-Araç yüzeyi `evals/` altındaki görevlerle ölçülür (ADR-017). Her araç değişikliğinde izlenenler: görev başarı oranı, görev başına araç çağrısı sayısı, görev başına belirteç, ajanın ilk denemede geçersiz çağrı yapma oranı. Sayılar kötüleşiyorsa değişiklik geri alınır.
+The tool surface is measured with the tasks under `evals/` (ADR-017). On every tool change, these are watched: the task success rate, the number of tool calls per task, tokens per task, the rate at which the agent makes an invalid call on the first try. If the numbers get worse, the change is reverted.

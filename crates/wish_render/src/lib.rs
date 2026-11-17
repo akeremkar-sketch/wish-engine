@@ -16,7 +16,7 @@
 //! Rendering is outside the determinism boundary: nothing here reads from or
 //! writes to the simulation.
 //!
-//! Design: `docs/design/M3-ilk-piksel.md`.
+//! Design: `docs/design/M3-first-pixel.md`.
 
 pub mod capture;
 mod cluster;

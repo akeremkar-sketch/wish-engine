@@ -765,7 +765,7 @@
         },
         "UiText": {
           "size": 32,
-          "text": "Puan: 0   Can: 3"
+          "text": "Score: 0   Lives: 3"
         }
       }
     },

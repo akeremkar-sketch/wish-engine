@@ -15,7 +15,7 @@
 //!   Diagnostic }`, with keys in sorted order so that the same call gives
 //!   the same bytes everywhere.
 //!
-//! Design: `docs/design/M4-kontrol-duzlemi.md`.
+//! Design: `docs/design/M4-control-plane.md`.
 
 mod activity;
 mod audio;

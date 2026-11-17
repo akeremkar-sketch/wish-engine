@@ -1,385 +1,385 @@
-# Wish Engine — Mimari Kararlar (ADR)
+# Wish Engine — Architecture Decisions (ADR)
 
-Her karar: **ne**, **neden**, **reddedilen alternatifler**, **risk ve önlem**, **yeniden değerlendirme tetikleyicisi**.
-Durum: **Kabul** (uygulanır) ya da **Geçici** (ilgili kilometre taşının başında doğrulanır).
+Each decision has: **what**, **why**, **rejected alternatives**, **risk and mitigation**, **re-evaluation trigger**.
+Status: **Accepted** (applied) or **Provisional** (verified at the start of the relevant milestone).
 
-Bir kararı değiştirmek serbesttir; sessizce çiğnemek değildir. Değişiklik bu dosyada yeni bir kayıtla yapılır.
+Changing a decision is allowed; silently breaking it is not. A change is made with a new record in this file.
 
-## Özet
+## Summary
 
-| # | Konu | Karar | Durum |
+| # | Topic | Decision | Status |
 |---|---|---|---|
-| 001 | Dil | Rust (stable) | Kabul |
-| 002 | Kütüphane stratejisi | Mimari bizim, olgun kütüphaneler sarmalanarak kullanılır; Bevy/Godot üstüne kurulmaz | Kabul |
-| 003 | Veri modeli | Şema önce: tek şemadan depolama, JSON, MCP şeması, Wasm ABI, editör | Kabul |
-| 004 | ECS | Şema tanımlı depolamalı özel arketip ECS | Kabul |
-| 005 | Zaman ve determinizm | Sabit adım, tohumlu rastgelelik, açık sistem sırası; garanti düzeyi D1 | Kabul |
-| 006 | Anlık görüntü / tekrar | Dünya anlık görüntüsü, geri yükleme, metin tabanlı tekrar kaydı, tick başına hash | Kabul |
-| 007 | Dosya formatları | Katı JSON + kanonik biçimlendirici + kimlik anahtarlı yapı + yol tabanlı başvuru | Kabul |
-| 008 | Doğruluk kaynağı | Dosyalar; iki eşit düzenleme yolu (doğrudan dosya, MCP işlemi) | Kabul |
-| 009 | Kontrol düzlemi | Tek iç API; MCP, komut satırı, editör onun yüzleri | Kabul |
-| 010 | MCP araç tasarımı | Az sayıda yüksek kaldıraçlı araç, toplu işlem, belirteç bütçesi, yapılandırılmış hata | Kabul |
-| 011 | Oyun mantığı | Wasm (wasmtime), durumsuz konuk modüller, ilk SDK Rust | Kabul |
-| 012 | Render | wgpu, render grafiği, önce taban çizgisi, sonra katmanlı gelişmiş özellikler | Kabul |
-| 013 | Gölgelendiriciler | WGSL + WESL modül sistemi | Geçici |
-| 014 | Fizik | Rapier 3D, kendi bileşen API'mizin arkasında | Kabul |
-| 015 | Ses | cpal + kendi karıştırıcımız (Kira bırakıldı, M6) + gözlemlenebilir ses olay günlüğü | Kabul (güncellendi) |
-| 016 | Girdi | Metin tanımlı eylem haritaları, enjeksiyon ve kayıt | Kabul |
-| 017 | Test | Senaryo testleri, altın görüntüler, hash doğrulama, ajan değerlendirmeleri | Kabul |
-| 018 | Arayüz | **Hibrit:** yapay zekâ kokpiti + tam elle düzenleme, ikisi de birinci sınıf; motor yapay zekâsız da eksiksiz çalışır | Kabul (arayüz teknolojisi Geçici) |
-| 019 | Platform | Önce Windows masaüstü; web kısıtlarına baştan uyulur, web hedefi sonra | Kabul |
-| 020 | Kapsam yönü | 3D öncelikli; 2D alt küme | Kabul |
-| 021 | Uzlaşımlar | glTF koordinat sistemi, SI birimleri, İngilizce kod / Türkçe plan belgeleri | Kabul |
-| 022 | Güvenlik | Proje klasörüne sınırlı yazma, yalnızca yerel ağ, Wasm kaynak sınırları | Kabul |
-| 023 | Ürün ve dağıtım | Açık kaynak (MIT + Apache-2.0), ücretsiz, komisyonsuz; Steam + web; sıfır kurulum; oyun dışa aktarma | Kabul |
-| 024 | Yapay zekâ bağlantısı | Kullanıcı kendi yapay zekâsını getirir; sağlayıcıdan bağımsız bağdaştırıcı, ilk sağlayıcı Claude | Kabul (yöntem Geçici) |
-| 025 | Oyun kodunun derlenmesi ve örneklenmesi | cargo'suz tek `rustc` çağrısı + motorla gelen önceden derlenmiş SDK; ev sahibi bağlayıcısı yok; modül başına tick başına taze örnek | Kabul (M5 WP1 ölçümüyle) |
+| 001 | Language | Rust (stable) | Accepted |
+| 002 | Library strategy | The architecture is ours, mature libraries are used by wrapping them; we do not build on Bevy/Godot | Accepted |
+| 003 | Data model | Schema first: storage, JSON, MCP schema, Wasm ABI, editor from a single schema | Accepted |
+| 004 | ECS | Custom archetype ECS with schema-defined storage | Accepted |
+| 005 | Time and determinism | Fixed step, seeded randomness, explicit system order; guarantee level D1 | Accepted |
+| 006 | Snapshot / replay | World snapshot, restore, text-based replay record, hash per tick | Accepted |
+| 007 | File formats | Strict JSON + canonical formatter + id-keyed structure + path-based references | Accepted |
+| 008 | Source of truth | Files; two equal editing paths (direct file, MCP operation) | Accepted |
+| 009 | Control plane | One internal API; MCP, command line and editor are its faces | Accepted |
+| 010 | MCP tool design | A small number of high-leverage tools, batch operations, token budget, structured error | Accepted |
+| 011 | Game logic | Wasm (wasmtime), stateless guest modules, first SDK Rust | Accepted |
+| 012 | Render | wgpu, render graph, baseline first, then layered advanced features | Accepted |
+| 013 | Shaders | WGSL + WESL module system | Provisional |
+| 014 | Physics | Rapier 3D, behind our own component API | Accepted |
+| 015 | Audio | cpal + our own mixer (Kira dropped, M6) + observable audio event log | Accepted (updated) |
+| 016 | Input | Text-defined action maps, injection and recording | Accepted |
+| 017 | Testing | Scenario tests, golden images, hash verification, agent evals | Accepted |
+| 018 | Interface | **Hybrid:** AI cockpit + full manual editing, both first-class; the engine works completely without AI too | Accepted (interface technology Provisional) |
+| 019 | Platform | Windows desktop first; web constraints are respected from the start, web target later | Accepted |
+| 020 | Scope direction | 3D first; 2D subset | Accepted |
+| 021 | Conventions | glTF coordinate system, SI units, everything in the repository in English | Accepted |
+| 022 | Security | Writes limited to the project folder, local network only, Wasm resource limits | Accepted |
+| 023 | Product and distribution | Open source (MIT + Apache-2.0), free, no commission; Steam + web; zero install; game export | Accepted |
+| 024 | AI connection | The user brings their own AI; provider-independent adapter, first provider Claude | Accepted (method Provisional) |
+| 025 | Compiling and instantiating game code | A single `rustc` call without cargo + the prebuilt SDK shipped with the engine; no host linker; a fresh instance per module per tick | Accepted (with the M5 WP1 measurement) |
 
 ---
 
-## ADR-001 — Dil: Rust
+## ADR-001 — Language: Rust
 
-**Karar.** Motorun tamamı Rust (stable kanal, güncel edition). Sürüm `rust-toolchain.toml` ile sabitlenir.
+**Decision.** The whole engine is Rust (stable channel, current edition). The version is pinned with `rust-toolchain.toml`.
 
-**Neden.** Bellek güvenliği ve veri yarışı güvenliği derleme zamanında; derleyici hataları ajan için en kaliteli geri bildirim kaynağı ("derleniyorsa büyük olasılıkla doğru"); wgpu, wasmtime, rapier gibi ihtiyaç duyduğumuz her şeyin birinci sınıf ekosistemi Rust'ta; Claude Rust'ta güçlü.
+**Why.** Memory safety and data race safety at compile time; compiler errors are the best quality feedback source for the agent ("if it compiles, it is most likely right"); first-class ecosystems for everything we need, such as wgpu, wasmtime and rapier, are in Rust; Claude is strong in Rust.
 
-**Alternatifler.** C++ (en geniş oyun ekosistemi, ama bellek hataları ajan döngüsünde sessiz ve pahalı), Zig (ekosistem olgun değil), C#/TypeScript (çöp toplayıcı, performans tavanı, determinizm zorlaşır).
+**Alternatives.** C++ (widest game ecosystem, but memory bugs are silent and expensive in the agent loop), Zig (ecosystem not mature), C#/TypeScript (garbage collector, performance ceiling, determinism gets harder).
 
-**Risk ve önlem.** Derleme süreleri → küçük crate'ler, artımlı derleme, oyun mantığı Wasm'da olduğu için motor nadiren yeniden derlenir. `unsafe` kod → yalnızca `wish_ecs` ve `wish_script` içinde, Miri ile test edilir.
+**Risk and mitigation.** Build times → small crates, incremental builds, game logic is in Wasm so the engine is rarely rebuilt. `unsafe` code → only inside `wish_ecs` and `wish_script`, tested with Miri.
 
-**Tetikleyici.** Yok (temel karar).
+**Trigger.** None (foundational decision).
 
-## ADR-002 — Mimari bizim, tekerlek yeniden icat edilmez
+## ADR-002 — The architecture is ours, we do not reinvent the wheel
 
-**Karar.** Motorun mimarisi ve değişmezleri bize aittir. Olgun, tek işi iyi yapan kütüphaneler kullanılır ve her biri kendi crate'imizin arkasına sarmalanır (değiştirilebilir kalsınlar diye):
-`wgpu` (grafik), `winit` (pencere), `glam` (matematik), `rapier3d` (fizik), `kira` (ses), `wasmtime` (Wasm), `gltf` + `image` (içe aktarma), `rmcp` (MCP), `serde`/`serde_json`, `notify` (dosya izleme), `gilrs` (oyun kolu), `egui` (editör), `taffy` + `cosmic-text` (oyun içi arayüz).
-Kesin sürümler M1 başında en güncel kararlı sürümlere sabitlenir.
+**Decision.** The engine's architecture and invariants belong to us. Mature libraries that do one job well are used, and each is wrapped behind our own crate (so they stay replaceable):
+`wgpu` (graphics), `winit` (window), `glam` (math), `rapier3d` (physics), `kira` (audio), `wasmtime` (Wasm), `gltf` + `image` (import), `rmcp` (MCP), `serde`/`serde_json`, `notify` (file watching), `gilrs` (gamepad), `egui` (editor), `taffy` + `cosmic-text` (in-game UI).
+Exact versions are pinned to the latest stable versions at the start of M1.
 
-**Neden.** Bir grafik API soyutlaması ya da fizik çözücü yazmak yıllar alır ve fark yaratmaz. Farkımız veri modeli, determinizm ve ajan arayüzünde.
+**Why.** Writing a graphics API abstraction or a physics solver takes years and makes no difference. Our difference is in the data model, determinism and the agent interface.
 
-**Alternatif: Bevy ya da Godot üstüne MCP katmanı.** İlk sonuca çok daha hızlı götürür. Reddedilme nedeni: şema önce, determinizm, anlık görüntü ve işlem değişmezleri dünya deposunun kendisinde sağlanmak zorunda; başkasının motoruna sonradan eklemek, kaçınmaya çalıştığımız "yama" sorununu tekrarlar. *Dürüst not: amaç yalnızca "yapay zekâyla hızlıca oyun yapmak" olsaydı doğru seçim Bevy/Godot olurdu. Amaç motorun kendisi olduğu için bu yolu seçiyoruz.*
+**Alternative: an MCP layer on top of Bevy or Godot.** It gets to the first result much faster. Reason for rejection: the schema-first, determinism, snapshot and transaction invariants have to be guaranteed in the world store itself; adding them later to someone else's engine repeats the "patch" problem we are trying to avoid. *Honest note: if the only aim were "making a game quickly with AI", the right choice would be Bevy/Godot. Because the aim is the engine itself, we choose this path.*
 
-**Risk ve önlem.** Kütüphane API değişimleri → sarmalayıcı crate'ler etkiyi tek noktada tutar.
+**Risk and mitigation.** Library API changes → the wrapper crates keep the impact in a single place.
 
-## ADR-003 — Şema önce veri modeli
+## ADR-003 — Schema-first data model
 
-**Karar.** Her bileşen, kaynak ve olay türünün çalışma zamanı şeması (`TypeSchema`) vardır. Tek tanımdan şunlar türetilir:
+**Decision.** Every component, resource and event type has a runtime schema (`TypeSchema`). The following are derived from a single definition:
 
-1. Bellek yerleşimi (ECS sütunları)
-2. JSON okuma/yazma (dosyalar ve MCP)
-3. JSON Schema (MCP `schema_get`, editör doğrulaması)
-4. Wasm ABI yerleşimi (konuk SDK bağlamaları)
-5. Editör denetçi arayüzü
-6. Belgeler
+1. Memory layout (ECS columns)
+2. JSON read/write (files and MCP)
+3. JSON Schema (MCP `schema_get`, editor validation)
+4. Wasm ABI layout (guest SDK bindings)
+5. Editor inspector interface
+6. Documentation
 
-Rust'ta tür bir kez `#[component]` ile tanımlanır; alan belge yorumları (`///`), birim, aralık ve varsayılan değer şemaya taşınır. Ajan `schema_get` ile alanın anlamını, birimini ve geçerli aralığını görür.
+In Rust a type is defined once with `#[component]`; field doc comments (`///`), unit, range and default value are carried into the schema. With `schema_get` the agent sees the meaning, unit and valid range of a field.
 
-**Neden.** Ajanın en sık hatası alan adı/tür/birim tahminidir. Tek kaynak, altı tüketici: eşitlenmesi gereken ikinci bir tanım yoktur.
+**Why.** The agent's most frequent mistake is guessing field names/types/units. One source, six consumers: there is no second definition to keep in sync.
 
-**Alternatifler.** Ayrı bir arayüz tanım dili (iki kaynağı eşitleme yükü), yalnızca derleme zamanı yansıtma (Wasm'dan gelen türleri kapsamaz).
+**Alternatives.** A separate interface definition language (the burden of keeping two sources in sync), compile-time reflection only (does not cover types that come from Wasm).
 
-**Risk ve önlem.** Desteklenen alan türleri kısıtlıdır (skalerler, vektörler, dördeyler, renk, enum, sabit dizi, metin, liste, seçimlik, varlık başvurusu, varlık dosyası başvurusu). Bu kısıt bilinçlidir: anlık görüntü ve hash'i ucuz kılar.
+**Risk and mitigation.** The supported field types are limited (scalars, vectors, quaternions, color, enum, fixed array, text, list, optional, entity reference, asset file reference). This limit is deliberate: it makes the snapshot and hash cheap.
 
-## ADR-004 — Özel arketip ECS
+## ADR-004 — Custom archetype ECS
 
-**Karar.** Kendi arketip tabanlı ECS'imiz (`wish_ecs`): sütunlar şemadan türeyen bayt yerleşimleriyle saklanır. Özellikler: kararlı varlık kimlikleri (indeks + kuşak), deterministik yineleme sırası, ertelenmiş komutlar (sabit sırada uygulanır), kaynaklar, şemalı olaylar, değişiklik izleme, motorun yönettiği hiyerarşi (ebeveyn/çocuk).
+**Decision.** Our own archetype-based ECS (`wish_ecs`): columns are stored with byte layouts derived from the schema. Features: stable entity ids (index + generation), deterministic iteration order, deferred commands (applied in a fixed order), resources, schema-defined events, change tracking, an engine-managed hierarchy (parent/child).
 
-**Neden.** Bileşenler çalışma zamanında (Wasm modülünden) tanımlanabilmeli; dünya tek seferde kopyalanıp hash'lenebilmeli; sıra deterministik olmalı. Bu üçü depolama katmanının özellikleridir.
+**Why.** Components must be definable at run time (from a Wasm module); the world must be copyable and hashable in one go; the order must be deterministic. These three are properties of the storage layer.
 
-**Alternatifler.** `bevy_ecs` (olgun ve hızlı, ama dinamik bileşenler ikinci sınıf, determinizm ve anlık görüntü garanti değil), `flecs` (C, yansıtması güçlü ama Rust bağlaması ve Wasm sınırı ek yük).
+**Alternatives.** `bevy_ecs` (mature and fast, but dynamic components are second-class, determinism and snapshot are not guaranteed), `flecs` (C, strong reflection but the Rust binding and the Wasm boundary add overhead).
 
-**Risk ve önlem.** Performans ve `unsafe` hataları → Miri + özellik tabanlı testler (proptest), erken kıyaslama; önce tek iş parçacıklı doğru sürüm, paralellik sonra.
+**Risk and mitigation.** Performance and `unsafe` bugs → Miri + property-based tests (proptest), early benchmark; first a correct single-threaded version, parallelism later.
 
-**Tetikleyici.** M1 sonunda kıyaslamalar hedefin (100 bin varlık, 60 Hz) çok altındaysa `bevy_ecs` üstüne şema katmanı seçeneği yeniden değerlendirilir.
+**Trigger.** If the benchmarks at the end of M1 are far below the target (100 thousand entities, 60 Hz), the option of a schema layer on top of `bevy_ecs` is re-evaluated.
 
-## ADR-005 — Zaman ve determinizm
+## ADR-005 — Time and determinism
 
-**Karar.**
-- Simülasyon sabit adımla ilerler (varsayılan 60 Hz); render ayrıdır ve ara değerleme yapar.
-- Simülasyonda duvar saati yoktur. Tüm rastgelelik tohumlu `Rng` kaynağından gelir (sistem başına türetilmiş akışlar).
-- Sistem sırası açık ve tamdır (kararlı topolojik sıralama, eşitlikte ada göre). Paralel çalıştırma yalnızca erişimleri ayrık sistemler için; komut tamponları sabit sırada birleştirilir.
-- **Garanti düzeyi D1:** aynı derleme + aynı platform + aynı sahne/tohum/girdi → bit düzeyinde aynı dünya hash'i.
-- **D2 (platformlar arası)** hedeftir, garanti değildir: Rapier `enhanced-determinism`, simülasyonda `libm` tabanlı matematik, Wasm'da NaN kanonikleştirme ile yaklaşılır.
-- Render determinizm sınırının **dışındadır** (GPU sonuçları sürücüler arası bit düzeyinde aynı olmaz).
+**Decision.**
+- The simulation advances with a fixed step (default 60 Hz); render is separate and interpolates.
+- There is no wall clock in the simulation. All randomness comes from the seeded `Rng` resource (derived streams per system).
+- System order is explicit and complete (stable topological sort, ties broken by name). Parallel execution is only for systems with disjoint access; command buffers are merged in a fixed order.
+- **Guarantee level D1:** same build + same platform + same scene/seed/input → bit-identical world hash.
+- **D2 (cross-platform)** is a goal, not a guarantee: approached with Rapier `enhanced-determinism`, `libm`-based math in the simulation, and NaN canonicalization in Wasm.
+- Render is **outside** the determinism boundary (GPU results are not bit-identical across drivers).
 
-**Neden.** Hata yeniden üretimi, otomatik test, geri sarma ve ileride geri almalı ağ kodu — hepsi buna dayanır. Ajan için "aynı adımlar aynı sonucu verir" güveni vazgeçilmezdir.
+**Why.** Bug reproduction, automatic testing, rewind and later rollback netcode — all depend on this. For the agent, the trust that "the same steps give the same result" is essential.
 
-**Risk ve önlem.** Determinizm sızıntıları (hash haritası yineleme sırası, iş parçacığı zamanlaması) → CI'da her değişiklikte "iki kez çalıştır, hash'leri karşılaştır" testi; sıralı olmayan koleksiyonlar simülasyon kodunda yasak (lint).
+**Risk and mitigation.** Determinism leaks (hash map iteration order, thread timing) → a "run twice, compare hashes" test in CI on every change; unordered collections are banned in simulation code (lint).
 
-## ADR-006 — Anlık görüntü, geri yükleme, tekrar
+## ADR-006 — Snapshot, restore, replay
 
-**Karar.** Anlık görüntü = ECS sütunları + kaynaklar + fizik durumu + RNG + tick sayacı. Tekrar kaydı = başlangıç sahnesi + tohum + tick başına girdi akışı (metin, satır başına JSON). Her tick için dünya hash'i hesaplanabilir; tekrar oynatmada sapma ilk saptığı tick'te raporlanır. Bir oturum çatallanabilir (aynı andan iki farklı deneme).
+**Decision.** Snapshot = ECS columns + resources + physics state + RNG + tick counter. Replay record = start scene + seed + input stream per tick (text, JSON per line). A world hash can be computed for every tick; in replay, drift is reported at the first tick where it is detected. A session can be forked (two different attempts from the same moment).
 
-**Neden.** Ajanın "geri al ve başka türlü dene" yapabilmesi; hataların dosya olarak paylaşılabilmesi; testlerin başlangıç durumunu ucuza kurabilmesi.
+**Why.** So the agent can "undo and try differently"; so bugs can be shared as files; so tests can set up their starting state cheaply.
 
-**Risk ve önlem.** Wasm konuk belleği anlık görüntüye girmez → kural: konuk modüller durumsuzdur, tüm durum dünyada yaşar (ADR-011). Motor bunu, modülü istediği an yeniden örnekleyerek zorlar.
+**Risk and mitigation.** Wasm guest memory is not part of the snapshot → rule: guest modules are stateless, all state lives in the world (ADR-011). The engine enforces this by re-instantiating the module whenever it wants.
 
-## ADR-007 — Dosya formatları
+## ADR-007 — File formats
 
-**Karar.**
-- Biçim: **katı JSON**. Diskteki gösterim ile MCP üzerinden giden gösterim aynıdır (tek gösterim).
-- `wen fmt` kanonik biçimlendirici: kararlı anahtar sırası, kararlı sayı yazımı → temiz diff, bayt düzeyinde gidiş-dönüş.
-- Yapılar **kimlik anahtarlıdır**, dizi değildir: bir sahnede varlıklar `"entities": { "player": {...} }` biçiminde. Yamalar indeksle değil kimlikle adreslenir (`/entities/player/components/Transform/translation`).
-- Başvurular **proje köküne göre yoldur** (`"assets/models/crate.glb#Mesh0"`), GUID değildir. `wen mv` taşırken tüm başvuruları günceller.
-- Uzantılar: `*.scene.json`, `*.prefab.json` (örnek = başvuru + geçersiz kılmalar), `*.mat.json`, `input.json`, `*.test.json`, proje bildirimi `wish.json`.
-- İkili kaynak varlıklar standart formatlarda kalır (glTF/GLB, PNG/KTX2, OGG/WAV) ve yanlarında `*.meta.json` içe aktarma ayarı taşır.
-- Her dosyada `"format": N` sürüm alanı; eski sürümler `wen migrate` ile yükseltilir.
-- Büyük sahneler alt sahnelere bölünür.
+**Decision.**
+- Format: **strict JSON**. The representation on disk and the representation sent over MCP are the same (a single representation).
+- `wen fmt` canonical formatter: stable key order, stable number notation → clean diffs, byte-level round trip.
+- Structures are **id-keyed**, not arrays: in a scene entities are in the form `"entities": { "player": {...} }`. Patches are addressed by id, not by index (`/entities/player/components/Transform/translation`).
+- References are **paths relative to the project root** (`"assets/models/crate.glb#Mesh0"`), not GUIDs. `wen mv` updates all references when moving.
+- Extensions: `*.scene.json`, `*.prefab.json` (instance = reference + overrides), `*.mat.json`, `input.json`, `*.test.json`, project manifest `wish.json`.
+- Binary source assets stay in standard formats (glTF/GLB, PNG/KTX2, OGG/WAV) and carry an import setting `*.meta.json` next to them.
+- Every file has a `"format": N` version field; old versions are upgraded with `wen migrate`.
+- Big scenes are split into sub-scenes.
 
-**Neden JSON.** Dil modellerinin en güvenilir ürettiği yapılandırılmış biçim; her dilde araç desteği; JSON Schema ile doğrulama; MCP zaten JSON. RON Rust'a özgü ve modeller daha az görmüş; TOML derin hiyerarşide zayıf; YAML girinti hatalarına açık.
+**Why JSON.** It is the structured format language models produce most reliably; tool support in every language; validation with JSON Schema; MCP is already JSON. RON is Rust-specific and models have seen less of it; TOML is weak with deep hierarchies; YAML is prone to indentation errors.
 
-**Risk ve önlem.** Yorum satırı yok → varlık ve bileşenlerde isteğe bağlı `notes` alanı. Ayrıntı düzeyi → prefab + alt sahne ile dosyalar küçük tutulur; ajan tüm dosyayı değil sorguyla ilgili kısmı okur.
+**Risk and mitigation.** No comment lines → an optional `notes` field on entities and components. Level of detail → files are kept small with prefabs + sub-scenes; the agent reads the part relevant to the query, not the whole file.
 
-## ADR-008 — Dosyalar doğruluk kaynağıdır
+## ADR-008 — Files are the source of truth
 
-**Karar.** Proje durumu diskteki dosyalardır. İki eşit düzenleme yolu vardır:
-1. **Doğrudan dosya düzenleme** → dosya izleyici → doğrulama → sıcak yeniden yükleme. `wen check --json` derleyici gibi yapılandırılmış tanılar verir.
-2. **MCP `edit_apply` işlemi** → bellekteki belge → kanonik dosya yazımı.
+**Decision.** Project state is the files on disk. There are two equal editing paths:
+1. **Direct file editing** → file watcher → validation → hot reload. `wen check --json` gives structured diagnostics like a compiler.
+2. **MCP `edit_apply` operation** → in-memory document → canonical file write.
 
-İkisi aynı kanonik çıktıyı üretir. Oynatma oturumları (simülasyon) sahne dosyalarına **asla** kendiliğinden yazmaz; kalıcı kılmak açık bir işlemdir.
+Both produce the same canonical output. Play sessions (simulation) **never** write to scene files on their own; making something persistent is an explicit operation.
 
-**Neden.** Claude Code metin dosyası düzenlemede çok iyidir; bunu yasaklamak yerine güvenli kılıyoruz. Git ile sürümleme doğal çalışır.
+**Why.** Claude Code is very good at editing text files; instead of forbidding this, we make it safe. Versioning with git works naturally.
 
-**Risk ve önlem.** Eşzamanlı düzenleme (insan editörde, ajan MCP'de) → her belgenin revizyon numarası var; işlemler `base_revision` ile iyimser eşzamanlılık denetiminden geçer.
+**Risk and mitigation.** Concurrent editing (human in the editor, agent over MCP) → every document has a revision number; operations pass an optimistic concurrency check with `base_revision`.
 
-## ADR-009 — Tek kontrol düzlemi
+## ADR-009 — One control plane
 
-**Karar.** `wish_control` taşımadan bağımsız tek API'dir (komutlar, sorgular, oturumlar). `wish_mcp`, `wish_cli` ve `wish_editor` onun ince istemcileridir. Kural: **kontrol düzleminde olmayan yetenek editörde de olamaz.** MCP taşımaları: stdio (Claude Code/Desktop başlatır) ve Streamable HTTP (çalışan editöre/oyuna bağlanma).
+**Decision.** `wish_control` is the single transport-independent API (commands, queries, sessions). `wish_mcp`, `wish_cli` and `wish_editor` are its thin clients. Rule: **a capability that is not in the control plane cannot be in the editor either.** MCP transports: stdio (started by Claude Code/Desktop) and Streamable HTTP (connecting to a running editor/game).
 
-**Neden.** "Editörde var ama ajan yapamıyor" sınıfı sorunları yapısal olarak imkânsız kılar. MCP açık standart olduğu için diğer yapay zekâlar da aynı yüzeyi kullanır.
+**Why.** It makes the class of problems "it exists in the editor but the agent cannot do it" structurally impossible. Because MCP is an open standard, other AIs can use the same surface too.
 
-## ADR-010 — MCP araç tasarım ilkeleri
+## ADR-010 — MCP tool design principles
 
-**Karar.**
-- **Az ve güçlü araç** (~20–25). Çok araç, ajanın seçim doğruluğunu düşürür.
-- **Toplu işlem:** tek çağrıda çok değişiklik, atomik.
-- **Belirteç bütçesi:** varsayılan yanıtlar kısa; `detail` düzeyi ve sayfalama ile derinleşilir. Görseller varsayılan olarak küçültülür.
-- **Yapılandırılmış hata:** `code`, `message`, `path`, `hint`, `candidates`, `docs`. Her hata "ne yanlış" ve "nasıl düzelir" der.
-- **Her değiştiren çağrı** fark (diff), tanılar ve yeni revizyon döndürür; `dry_run` desteklenir.
-- **Belgeler MCP kaynağı** olarak sunulur (`wish://docs/...`); ajan gerektiğinde çeker.
-- **Adlandırma:** `ad_eylem` (`entity_query`, `sim_step`).
-- Tasarım, sezgiyle değil **ajan değerlendirmeleriyle** (ADR-017) doğrulanır.
+**Decision.**
+- **Few and powerful tools** (~20–25). Too many tools lower the agent's selection accuracy.
+- **Batch operations:** many changes in a single call, atomic.
+- **Token budget:** default responses are short; go deeper with the `detail` level and paging. Images are scaled down by default.
+- **Structured error:** `code`, `message`, `path`, `hint`, `candidates`, `docs`. Every error says "what is wrong" and "how to fix it".
+- **Every call that changes something** returns a diff, diagnostics and the new revision; `dry_run` is supported.
+- **Docs are exposed as MCP resources** (`wish://docs/...`); the agent pulls them when needed.
+- **Naming:** `name_action` (`entity_query`, `sim_step`).
+- The design is verified not by intuition but by **agent evals** (ADR-017).
 
-Taslak araç listesi: [MCP_API.md](MCP_API.md).
+Draft tool list: [MCP_API.md](MCP_API.md).
 
-## ADR-011 — Oyun mantığı Wasm'da
+## ADR-011 — Game logic in Wasm
 
-**Karar.**
-- Oyun mantığı WebAssembly modülleri olarak `wasmtime` içinde çalışır. İlk konuk SDK'sı Rust (`wish_sdk`).
-- Çekirdek Wasm modülleri + sürümlenmiş, küçük bir ABI. (Component Model/WIT izlenir; tarayıcılar yerel desteklediğinde geçiş değerlendirilir.)
-- **Konuklar durumsuzdur:** tüm oyun durumu ECS'te yaşar → kod değişince **kayıpsız sıcak yeniden yükleme**, anlık görüntüler eksiksiz.
-- **Korumalı alan:** dosya, ağ, saat erişimi yok; yalnızca motorun sunduğu API. Yakıt/süre sınırı: sonsuz döngü motoru dondurmaz, tanı üretir. Tuzak (trap) → ilgili sistem devre dışı kalır, motor çalışmaya devam eder.
-- Bileşen şemaları modülün içinde taşınır; yüklenince motora kaydolur.
-- Sistemler eriştikleri bileşenleri bildirir; motor veriyi toplu (sütun dilimleri hâlinde) aktarır.
-- Motoru genişleten, performans kritik eklentiler yerel Rust olabilir (sıcak yeniden yüklenmez).
+**Decision.**
+- Game logic runs inside `wasmtime` as WebAssembly modules. The first guest SDK is Rust (`wish_sdk`).
+- Core Wasm modules + a versioned, small ABI. (The Component Model/WIT is followed; a switch is considered when browsers support it natively.)
+- **Guests are stateless:** all game state lives in the ECS → **lossless hot reload** when code changes, complete snapshots.
+- **Sandbox:** no file, network or clock access; only the API the engine provides. Fuel/time limit: an infinite loop does not freeze the engine, it produces a diagnostic. Trap → the system concerned is disabled, the engine keeps running.
+- Component schemas are carried inside the module; they register with the engine when it loads.
+- Systems declare the components they access; the engine transfers data in bulk (as column slices).
+- Performance-critical extensions that extend the engine can be native Rust (not hot reloaded).
 
-**Neden.** Ajanın yazdığı kod güvenilmezdir: çökebilir, sonsuz döngüye girebilir. Wasm bunu izole eder. Motor yeniden derlenmeden saniyeler içinde yenileme sağlar. Wasm özünde deterministiktir. İleride başka diller eklenebilir.
+**Why.** Code written by the agent is untrusted: it can crash, it can enter an infinite loop. Wasm isolates this. It gives refresh within seconds without rebuilding the engine. Wasm is deterministic at its core. Other languages can be added later.
 
-**Alternatifler.** Yerel dinamik kütüphane sıcak yüklemesi (kırılgan, izolasyon yok), gömülü betik dili (Lua vb.: tip güvenliği zayıf, ajan hataları çalışma zamanına kalır).
+**Alternatives.** Native dynamic library hot loading (fragile, no isolation), embedded scripting language (Lua etc.: weak type safety, agent errors are left to run time).
 
-**Risk ve önlem.** Ev sahibi–konuk sınır maliyeti → toplu veri aktarımı; M5'te kıyaslama. Rust konuk kodunun derleme süresi → küçük crate, artımlı derleme, hedef < 10 sn. Rust bilmeyen kullanıcı → kodu ağırlıklı olarak ajan yazar; ikinci konuk dili 1.0 sonrası.
+**Risk and mitigation.** Host–guest boundary cost → bulk data transfer; benchmark in M5. Compile time of Rust guest code → small crate, incremental build, target < 10 s. A user who does not know Rust → the code is mostly written by the agent; a second guest language is after 1.0.
 
-**Tetikleyici.** M5 kıyaslamasında sınır maliyeti kare bütçesinin %20'sini aşarsa paylaşımlı bellek görünümleri tasarlanır.
+**Trigger.** If the boundary cost in the M5 benchmark exceeds 20% of the frame budget, shared memory views are designed.
 
-**Ölçüm (M5 WP7, 16 Kasım 2026, `wen bench --script`):** aynı sistem 10.000 varlıkta yerel 0,014 ms, oyun kodu 1,87 ms → sınır **kare bütçesinin %11,2'si** (tetikleyicinin altında); tick başına sabit maliyet 0,04 ms. Ayrıntı ve iyileştirme notları: `docs/design/M5-oyun-mantigi.md` §17 WP7. **Kapanıştan sonra (M5 WP9):** geri yazma her değeri denetliyor (sonlu float, geçerli bool/enum) ve yalnızca gönderilenden farklı satırları yazıyor; aynı ölçüm ~240 ns/varlık, **%14** (tetikleyicinin altında).
+**Measurement (M5 WP7, 16 November 2026, `wen bench --script`):** the same system with 10,000 entities takes 0.014 ms native and 1.87 ms as game code → the boundary is **11.2% of the frame budget** (below the trigger); fixed cost per tick 0.04 ms. Details and improvement notes: `docs/design/M5-game-logic.md` §17 WP7. **After closing (M5 WP9):** write-back checks every value (finite float, valid bool/enum) and writes only the rows that differ from what was sent; the same measurement is ~240 ns/entity, **14%** (below the trigger).
 
 ## ADR-012 — Render
 
-**Karar.**
-- `wgpu` (Windows'ta DX12/Vulkan; aynı kod Metal ve WebGPU).
-- **Render grafiği** mimarisi: geçişler bağımsız düğümler; yeni teknikler mevcut olanı bozmadan eklenir.
-- **Önce taban çizgisi (1.0):** kümelenmiş forward+, glTF uyumlu PBR, basamaklı gölge haritaları, HDR + ton eşleme, ortam aydınlatması (IBL), MSAA, temel ardıl işlemler.
-- **Gelişmiş katman (1.0 sonrası, yerel platformlar):** GPU güdümlü çizim (dolaylı çizim + hesaplama gölgelendiricisiyle ayıklama), bağsız (bindless) kaynaklar, meshlet/sanal geometri, ışın izlemeli aydınlatma. Hedef donanım (RTX sınıfı) bunu destekler.
-- **İlk günden başsız (headless) render:** penceresiz, dokuya çizim; CI'da yazılım bağdaştırıcısı.
-- **Ajan için hata ayıklama çıktıları birinci sınıf:** varlık kimliği tamponu, derinlik, normaller, tel kafes, çarpıştırıcılar. Kimlik tamponu "anlamsal görüş"ün (hangi varlık nerede, yüzde kaçı görünür) temelidir.
+**Decision.**
+- `wgpu` (DX12/Vulkan on Windows; the same code on Metal and WebGPU).
+- **Render graph** architecture: passes are independent nodes; new techniques are added without breaking the existing ones.
+- **Baseline first (1.0):** clustered forward+, glTF-compatible PBR, cascaded shadow maps, HDR + tone mapping, ambient lighting (IBL), MSAA, basic post-processing.
+- **Advanced layer (after 1.0, native platforms):** GPU-driven drawing (indirect draw + culling with a compute shader), bindless resources, meshlet/virtual geometry, ray-traced lighting. The target hardware (RTX class) supports this.
+- **Headless render from day one:** no window, draw to a texture; software adapter in CI.
+- **Debug outputs are first-class for the agent:** entity id buffer, depth, normals, wireframe, colliders. The id buffer is the basis of "semantic vision" (which entity is where, what percentage is visible).
 
-**Neden.** WebGPU geleceğin taşınabilir grafik standardı. Render grafiği "ileriyi gören" tercihleri sonradan eklemeyi mümkün kılar; taban çizgisi ise projeyi bitirilebilir kılar.
+**Why.** WebGPU is the portable graphics standard of the future. The render graph makes it possible to add "forward-looking" choices later; the baseline keeps the project finishable.
 
-**Risk ve önlem.** Gelişmiş özellikler web'de yok → yetenek katmanları; taban çizgisi her yerde çalışır. Kapsam → gelişmiş katman 1.0'a bağlanmaz.
+**Risk and mitigation.** Advanced features are not on the web → capability layers; the baseline runs everywhere. Scope → the advanced layer is not tied to 1.0.
 
-## ADR-013 — Gölgelendirici dili *(Geçici)*
+## ADR-013 — Shader language *(Provisional)*
 
-**Karar.** WGSL; modül/içe aktarma için WESL. Materyaller veriyle tanımlanır (`*.mat.json`: gölgelendirici + parametreler); özel gölgelendiriciler metin dosyasıdır ve sıcak yüklenir. Derleme hataları ortak tanı formatına çevrilir.
+**Decision.** WGSL; WESL for modules/imports. Materials are defined with data (`*.mat.json`: shader + parameters); custom shaders are text files and are hot loaded. Compile errors are converted to the shared diagnostic format.
 
-**Tetikleyici.** M3 başında WESL araçlarının olgunluğu doğrulanır; yetersizse `naga_oil` ya da kendi basit içe aktarma ön işlemcimiz.
+**Trigger.** At the start of M3 the maturity of the WESL tools is verified; if insufficient, `naga_oil` or our own simple import preprocessor.
 
-**M3 doğrulaması (15 Kasım 2026, M3 WP1).** `wesl` 0.6 ile deneme: içe aktarma çalışıyor ve çıktı `naga` için geçerli WGSL; içe aktarılan modüldeki sözdizimi hatası modül yolu + satır/sütunla geliyor. Ama (1) olmayan bir öğeyi içe aktarma hatası **konumsuz** ("in unknown module"), (2) `naga` doğrulama hataları birleştirilmiş çıktıdaki **dönüştürülmüş adlara** (`package_util_double`) işaret ediyor, (3) sürüm 1.0 öncesi (API değişiyor), (4) ağaç 83 paket. Değişmez 5 (her hata konumlu ve ipuçlu) bugün WESL ile sağlanamıyor.
-**Karar (M3 için):** WGSL, `naga` ile ayrıştırma + doğrulama (konumlu `shader_syntax`/`shader_validation` tanıları, karakter sütunu). Motorun kendi gölgelendiricileri için modül birleştirme, bir `ShaderLibrary` arayüzünün arkasında küçük, kaynak haritalı bir içe aktarma ön işlemcisiyle (WP3); `naga` hatası kaynak haritasıyla özgün dosya/satıra geri çevrilir. WESL bu arayüzün arkasına sonra konabilecek biçimde tutulur. **Yeniden değerlendirme:** WESL 1.0'a ulaştığında ya da en geç kullanıcı gölgelendiricileri (`*.mat.json`, M6) geldiğinde. `naga_oil` denenmedi: Bevy'ye bağlı sürüm döngüsü ve kendi sözdizimi, ileride WESL'e geçişi zorlaştırır.
+**M3 verification (15 November 2026, M3 WP1).** Trial with `wesl` 0.6: imports work and the output is valid WGSL for `naga`; a syntax error in an imported module comes with module path + line/column. But (1) the error of importing a missing item is **without a location** ("in unknown module"), (2) `naga` validation errors point to the **converted names** in the merged output (`package_util_double`), (3) the version is pre-1.0 (the API is changing), (4) the tree is 83 packages. Invariant 5 (every error has a location and a hint) cannot be met with WESL today.
+**Decision (for M3):** WGSL, parsing + validation with `naga` (`shader_syntax`/`shader_validation` diagnostics with a location, character column). For the engine's own shaders, module merging with a small, source-mapped import preprocessor behind a `ShaderLibrary` interface (WP3); a `naga` error is translated back to the original file/line with the source map. WESL is kept so that it can be put behind this interface later. **Re-evaluation:** when WESL reaches 1.0, or at the latest when user shaders (`*.mat.json`, M6) arrive. `naga_oil` was not tried: the version cycle tied to Bevy and its own syntax would make a later move to WESL harder.
 
-## ADR-014 — Fizik: Rapier
+## ADR-014 — Physics: Rapier
 
-**Karar.** `rapier3d`, kendi bileşenlerimizin (`RigidBody`, `Collider`, …) arkasında. Sabit adımda çalışır; durumu serileştirilebilir (anlık görüntüye girer); `enhanced-determinism` açık.
+**Decision.** `rapier3d`, behind our own components (`RigidBody`, `Collider`, …). Runs with a fixed step; its state is serializable (goes into the snapshot); `enhanced-determinism` is on.
 
-**Alternatifler.** Jolt (çok güçlü, ama C++ bağlaması, derleme ve anlık görüntü karmaşıklığı), kendi fizik motorumuz (kapsam dışı).
+**Alternatives.** Jolt (very strong, but C++ binding, build and snapshot complexity), our own physics engine (out of scope).
 
-**Tetikleyici.** Karakter denetleyicisi ya da araç fiziği ihtiyaçları Rapier'i aşarsa Jolt yeniden değerlendirilir; sarmalayıcı sayesinde oyun kodu etkilenmez.
+**Trigger.** If character controller or vehicle physics needs exceed Rapier, Jolt is re-evaluated; thanks to the wrapper, game code is not affected.
 
-## ADR-015 — Ses: cpal + kendi karıştırıcımız
+## ADR-015 — Audio: cpal + our own mixer
 
-**Karar.** Çıkış `cpal` (Apache-2.0) ve `wish_audio`'nun kendi küçük karıştırıcısı; çözücüler `hound` (WAV) ve `lewton` (Ogg Vorbis). **Güncelleme (M6 WP4, 16 Kasım 2026):** ilk karar `kira` idi; Kira'nın bağımlılıkları (`symphonia`, `triple_buffer`) MPL-2.0 olduğu için lisans kuralına (yalnızca MIT/Apache/BSD benzeri) uymadı ve bırakıldı. Ajan sesi duyamayacağı için **ses olay günlüğü** tutulur ("tick 412: `jump.ogg` çalındı, ses düzeyi 0.8, konum …") ve kontrol düzleminden sorgulanır. Ses çıkışı determinizm sınırının dışındadır; ses *olayları* içindedir.
+**Decision.** Output is `cpal` (Apache-2.0) and `wish_audio`'s own small mixer; decoders are `hound` (WAV) and `lewton` (Ogg Vorbis). **Update (M6 WP4, 16 November 2026):** the first decision was `kira`; because Kira's dependencies (`symphonia`, `triple_buffer`) are MPL-2.0, it did not fit the license rule (only MIT/Apache/BSD-like) and was dropped. Because the agent cannot hear sound, an **audio event log** is kept ("tick 412: `jump.ogg` played, volume 0.8, position …") and can be queried from the control plane. Audio output is outside the determinism boundary; audio *events* are inside it.
 
-## ADR-016 — Girdi: eylem haritaları
+## ADR-016 — Input: action maps
 
-**Karar.** Oyun kodu ham aygıtı değil yalnızca **eylemleri** okur (`move`, `jump`). Eşlemeler `input.json` içinde. Kontrol düzlemi eylem enjekte edebilir, kaydedebilir, tekrar oynatabilir.
+**Decision.** Game code reads not the raw device but only **actions** (`move`, `jump`). The mappings are in `input.json`. The control plane can inject, record and replay actions.
 
-**Neden.** Ajanın oyunu gerçekten oynayabilmesi ve testlerin girdiyi betikleyebilmesi için tek temiz nokta.
+**Why.** A single clean point so the agent can actually play the game and tests can script the input.
 
-## ADR-017 — Test ve doğrulama
+## ADR-017 — Testing and verification
 
-**Karar.** Dört katman:
-1. **Birim/özellik testleri** (Rust; ECS için Miri).
-2. **Senaryo testleri** (`*.test.json`): sahne yükle → girdi ver → N tick ilerlet → dünya üzerinde ifade doğrula / görüntü karşılaştır.
-3. **Determinizm testleri:** aynı tekrarı iki kez çalıştır, hash'leri karşılaştır; anlık görüntü → geri yükle → devam et = kesintisiz çalıştırma.
-4. **Ajan değerlendirmeleri** (`evals/`): "zıplayan top yap", "üç platformlu bölüm kur" gibi görevleri bir ajan MCP üzerinden yapar; başarı oranı, araç çağrısı sayısı, belirteç maliyeti ölçülür. Bilinçli olarak **orta sınıf modelle** de koşulur: motor, zayıf modelle bile sorunsuz çalışıyorsa gerçekten ajan-dostudur.
+**Decision.** Four layers:
+1. **Unit/property tests** (Rust; Miri for the ECS).
+2. **Scenario tests** (`*.test.json`): load a scene → give input → advance N ticks → verify an expression on the world / compare an image.
+3. **Determinism tests:** run the same replay twice, compare the hashes; snapshot → restore → continue = uninterrupted run.
+4. **Agent evals** (`evals/`): an agent does tasks such as "make a bouncing ball", "build a level with three platforms" over MCP; success rate, number of tool calls and token cost are measured. It is also deliberately run with a **mid-tier model**: if the engine works smoothly even with a weak model, it is really agent-friendly.
 
-Altın görüntü karşılaştırmaları algısal toleranslıdır ve CI'da sabit yazılım bağdaştırıcısıyla koşar.
+Golden image comparisons are perceptually tolerant and run in CI with a fixed software adapter.
 
-**Kural.** Bir özellik; kontrol düzleminden gözlemlenebilir/denetlenebilir olmadan ve başsız testi yazılmadan **bitmiş sayılmaz**.
+**Rule.** A feature is **not considered finished** until it can be observed/inspected from the control plane and has a headless test.
 
-## ADR-018 — Arayüz: hibrit (yapay zekâ kokpiti + tam elle düzenleme)
+## ADR-018 — Interface: hybrid (AI cockpit + full manual editing)
 
-**Karar — hibrit.** *(Kullanıcı kararı, 11 Kasım 2026.)* İki çalışma biçimi **eşit düzeyde birinci sınıftır** ve kullanıcı aralarında istediği an geçer:
+**Decision — hybrid.** *(User decision, 11 November 2026.)* The two ways of working are **first-class at an equal level** and the user switches between them at any moment:
 
-- **Yapay zekâyla:** kokpit ögeleri (aşağıda).
-- **Elle:** günümüz motorlarındaki gibi klasik editör araçları.
+- **With AI:** cockpit elements (below).
+- **By hand:** classic editor tools as in today's engines.
 
-Hibritin dört kuralı:
+Four rules of the hybrid:
 
-1. **Yapay zekâsız tam kullanılabilirlik.** Hiçbir yapay zekâ bağlı değilken (hesap yok, internet yok, kota bitmiş) motor eksiksiz çalışır: sahne kurma, bileşen düzenleme, varlık içe aktarma, materyal, oynatma, hata ayıklama, test, dışa aktarma.
-2. **Çift yönlü eşlik.** Ajanın yapabildiği her sahne/varlık işlemi elle de yapılabilir; elle yapılan her işlem de ajanın yapabileceği bir kontrol düzlemi işlemidir.
-3. **Tek geçmiş.** Elle ve ajanla yapılan değişiklikler aynı işlem/revizyon/geri al yığınına ve aynı etkinlik akışına girer; her işlem kimin yaptığını (`actor`: insan ya da ajan adı) taşır.
-4. **Elden ele geçiş.** Ajan, insanın elle yaptığı değişiklikleri görür ("az önce taşıdığım nesne" anlaşılır). Ajan çalışırken insan başka bir yeri düzenleyebilir; insanın dokunduğu varlıklar ajana bildirilir.
+1. **Fully usable without AI.** When no AI is connected (no account, no internet, quota used up), the engine works completely: building scenes, editing components, importing assets, materials, playing, debugging, testing, export.
+2. **Two-way parity.** Every scene/entity operation the agent can do can also be done by hand; every operation done by hand is also a control plane operation the agent could do.
+3. **One history.** Changes made by hand and by the agent go into the same operation/revision/undo stack and the same activity feed; every operation carries who did it (`actor`: human or agent name).
+4. **Handover.** The agent sees the changes the human makes by hand ("the object I just moved" is understood). While the agent works, the human can edit another place; the entities the human touched are reported to the agent.
 
-**Elle düzenleme araçları (1.0):** görünüm penceresi ve kamera gezinmesi; hiyerarşi; denetçi (şemadan **otomatik** üretilir: her bileşen, Wasm'da tanımlananlar dahil, ek kod yazmadan düzenlenebilir); taşıma/döndürme/ölçekleme tutamaçları; varlık tarayıcı (sürükle-bırak); materyal düzenleyici; prefab düzenleme; girdi haritası düzenleyici; oynat/duraklat/adım at/geri sar denetimleri ve anlık görüntü zaman çizelgesi; konsol ve tanılar paneli; performans paneli; proje ayarları.
+**Manual editing tools (1.0):** viewport and camera navigation; hierarchy; inspector (generated **automatically** from the schema: every component, including those defined in Wasm, can be edited without writing extra code); move/rotate/scale handles; asset browser (drag and drop); material editor; prefab editing; input map editor; play/pause/step/rewind controls and snapshot timeline; console and diagnostics panel; performance panel; project settings.
 
-**Oyun kodu** elle de yazılabilir: dış kod düzenleyiciyle (ör. VS Code) — motor dosyayı izler ve sıcak yükler. Motorun içine tam bir kod düzenleyici 1.0 kapsamında değildir ("dış düzenleyicide aç" + salt okunur görüntüleyici vardır).
+**Game code** can also be written by hand: with an external code editor (e.g. VS Code) — the engine watches the file and hot loads it. A full code editor inside the engine is not in the 1.0 scope (there is "open in external editor" + a read-only viewer).
 
-**1.0 dışında kalan uzman araçlar:** animasyon zaman çizelgesi düzenleyicisi, görsel gölgelendirici grafiği, arazi şekillendirme, seviye boyama fırçaları. 1.0'a dek bunlar dış araçla (Blender), metin dosyasıyla ya da yapay zekâyla yapılır.
+**Expert tools outside 1.0:** animation timeline editor, visual shader graph, terrain sculpting, level painting brushes. Until 1.0 these are done with an external tool (Blender), a text file or AI.
 
-**Yapay zekâ kokpiti ögeleri.** Arayüz, klasik editöre sohbet penceresi eklenmiş hâli değildir; yapay zekâ ögeleri baştan tasarımın parçasıdır:
+**AI cockpit elements.** The interface is not a classic editor with a chat window added; the AI elements are part of the design from the start:
 
-1. **Görünüm + konuşma** yan yana; istek yazılırken sahne görünür.
-2. **"Göster ve söyle":** sahnede nesne, bölge ya da zaman aralığı seçimi isteğe yapılandırılmış bağlam olarak eklenir (varlık kimliği, ekran kutusu, tick aralığı).
-3. **Etkinlik akışı:** ajanın her işlemi bir kart (fark + gerekçe + sonuç); kart başına geri al.
-4. **Otomatik denetim noktaları:** her ajan görevinden önce anlık görüntü ve belge revizyonu işaretlenir.
-5. **Önce/sonra karşılaştırma** ve kabul/ret.
-6. **Yetki kipleri:** yalnızca öner · uygula-incele · tam özerk.
-7. **Canlı gözlem:** ajanın oturumları, yakaladığı görüntüler, test sonuçları.
+1. **Viewport + conversation** side by side; the scene is visible while a request is typed.
+2. **"Show and tell":** selecting an object, region or time range in the scene is added to the request as structured context (entity id, screen box, tick range).
+3. **Activity feed:** every agent operation is a card (diff + reason + result); undo per card.
+4. **Automatic checkpoints:** before every agent task a snapshot and document revision are marked.
+5. **Before/after comparison** and accept/reject.
+6. **Permission modes:** suggest only · apply-and-review · fully autonomous.
+7. **Live observation:** the agent's sessions, the images it captured, test results.
 
-Tüm değişiklikler (elle ya da ajanla) kontrol düzleminden geçer; arayüzün özel yetkisi yoktur. İnsan ve ajan aynı anda düzenleyebilir (ADR-008 revizyonları). Arayüz dilleri: Türkçe ve İngilizce.
+All changes (by hand or by agent) go through the control plane; the interface has no special authority. Human and agent can edit at the same time (ADR-008 revisions). Interface languages: Turkish and English.
 
-**Neden hibrit.**
-- Küçük ve görsel işler (bir nesneyi biraz kaydırmak, renk seçmek) elle, tarif etmekten daha hızlıdır; büyük ve tekrarlı işler yapay zekâyla daha hızlıdır. İkisi birbirini tamamlar.
-- Bugünkü modeller zevk ve ince görsel ayar gerektiren işlerde insana ihtiyaç duyar. Tek yol yapay zekâ olsaydı, modelin her hatası kullanıcıyı kilitlerdi.
-- Yapay zekâ hesabı olmayan, çevrimdışı çalışan ya da kotası biten kullanıcı da motoru kullanabilmelidir. Denetimin kullanıcıda olması güven sağlar.
-- İnsanın elle yaptığı düzeltme, ajan için en hızlı ve en net geri bildirimdir.
-- Mimari bedeli düşüktür: tek kontrol düzlemi ve şema sayesinde elle araçlar aynı işlemlerin başka bir yüzüdür; denetçi şemadan otomatik üretilir.
+**Why hybrid.**
+- Small and visual jobs (moving an object a little, picking a color) are faster by hand than describing them; big and repetitive jobs are faster with AI. The two complement each other.
+- Today's models need a human for work that requires taste and fine visual tuning. If AI were the only way, every mistake of the model would lock the user out.
+- A user who has no AI account, works offline or has run out of quota must also be able to use the engine. The user having control gives trust.
+- A correction a human makes by hand is the fastest and clearest feedback for the agent.
+- The architectural cost is low: thanks to the single control plane and the schema, the manual tools are another face of the same operations; the inspector is generated from the schema.
 
-**Reddedilen alternatif — tamamen yapay zekâ tabanlı, otomatik motor.** Daha küçük bir arayüz demektir, ama yukarıdaki nedenlerle bugün daha az işlevseldir. Modeller geliştikçe ağırlık kendiliğinden yapay zekâya kayar; hibrit tasarım buna engel değildir.
+**Rejected alternative — a fully AI-based, automatic engine.** It means a smaller interface, but for the reasons above it is less functional today. As models improve, the weight shifts to AI by itself; the hybrid design does not prevent this.
 
-**Neden çekirdek önce.** Hem kokpit ögeleri hem elle araçlar, çekirdeğin zaten sağladığı değişmezlerin (işlem, geri al, anlık görüntü, fark, şema, anlamsal görüş) görsel yüzüdür — ek "sihir" gerekmez.
+**Why the core first.** Both the cockpit elements and the manual tools are the visual face of the invariants the core already provides (operation, undo, snapshot, diff, schema, semantic vision) — no extra "magic" is needed.
 
-**Kapsam etkisi.** Bu karar **1.0 kapsamını büyütür**: tam elle düzenleme, arayüz işini yaklaşık iki katına çıkarır. Önlem: arayüz kilometre taşı ikiye bölündü (M8a editör temeli, M8b yapay zekâ kokpiti); uzman araçlar 1.0 dışında tutuldu; denetçi elle yazılmaz, şemadan üretilir.
+**Scope effect.** This decision **enlarges the 1.0 scope**: full manual editing roughly doubles the interface work. Mitigation: the interface milestone was split in two (M8a editor foundation, M8b AI cockpit); expert tools were kept outside 1.0; the inspector is not written by hand, it is generated from the schema.
 
-**Arayüz teknolojisi — kesinleşti (16 Kasım 2026, M8a WP1).** Süreç içi `egui` 0.37 (`egui` + `epaint`, MIT OR Apache-2.0; varsayılan yazı tipleri kapalı, motorun Roboto'su kullanılır), **kendi belirlenimci CPU rasterleyicimizle** çizilir ve `wish_window`'un "ekran dışına çiz, resmi göster" yolunu izler. `egui-wgpu` seçilmedi: değişmez 6'yı (wgpu yalnızca `wish_render`'da) zorlar ve başsız testi zorlaştırır; `egui_software_backend` 0.0.x olgun değil. Kanıt: tam HD'de (6.524 üçgen, 60 etiket + 8 denetçi paneli) düzen 0,6 ms + çizim 4,3 ms < 6 ms bütçe; çıktı bit düzeyinde belirlenimci, altın görüntüyle test edilir. Web arayüzü seçeneği (HTTP + webview) ve M8b'nin zengin metin ihtiyacı ayrıca değerlendirilecek; çekirdek arayüzden bağımsız olduğu için teknoloji değişse motor etkilenmez. Ayrıntı: [design/M8a-editor-temeli.md](design/M8a-editor-temeli.md) §2 ve WP1.
+**Interface technology — final (16 November 2026, M8a WP1).** In-process `egui` 0.37 (`egui` + `epaint`, MIT OR Apache-2.0; default fonts off, the engine's Roboto is used), drawn with **our own deterministic CPU rasterizer** and following `wish_window`'s "draw off screen, show the picture" path. `egui-wgpu` was not chosen: it strains invariant 6 (wgpu only in `wish_render`) and makes headless testing harder; `egui_software_backend` 0.0.x is not mature. Evidence: at full HD (6,524 triangles, 60 labels + 8 inspector panels) layout 0.6 ms + drawing 4.3 ms < 6 ms budget; the output is bit-for-bit deterministic and tested with a golden image. The web interface option (HTTP + webview) and M8b's rich text need will be evaluated separately; because the core is independent of the interface, the engine is not affected if the technology changes. Details: [design/M8a-editor-foundation.md](design/M8a-editor-foundation.md) §2 and WP1.
 
-**Risk ve önlem.** Kokpit tasarımı kod yazılmadan önce maketlerle sınanır (T1). Çekirdek arayüzden bağımsız olduğu için teknoloji değişse de motor etkilenmez.
+**Risk and mitigation.** The cockpit design is tested with mockups before code is written (T1). Because the core is independent of the interface, the engine is not affected even if the technology changes.
 
 ## ADR-019 — Platform
 
-**Karar.** Birincil hedef Windows masaüstü. Linux/macOS aynı koddan (CI'da derlenir). Web (WebGPU + Wasm) ayrı bir kilometre taşıdır, ama kısıtlarına **baştan** uyulur: taban render yolu WebGPU çekirdeğiyle sınırlı, iş parçacığı varsayımı zorunlu değil, konuk modüller çekirdek Wasm.
+**Decision.** The primary target is Windows desktop. Linux/macOS from the same code (built in CI). Web (WebGPU + Wasm) is a separate milestone, but its constraints are respected **from the start**: the baseline render path is limited to the WebGPU core, thread assumptions are not mandatory, guest modules are core Wasm.
 
-## ADR-020 — 3D öncelikli
+## ADR-020 — 3D first
 
-**Karar.** Çekirdek 3D'dir. 2D, ortografik kamera + sprite (ve gerektiğinde 2D fizik) ile alt küme olarak 1.0'a doğru eklenir.
+**Decision.** The core is 3D. 2D is added toward 1.0 as a subset, with an orthographic camera + sprite (and 2D physics when needed).
 
-## ADR-021 — Uzlaşımlar
+## ADR-021 — Conventions
 
-**Karar.**
-- **Koordinat sistemi:** glTF ile aynı — sağ el, +Y yukarı, kamera −Z'ye bakar. İçe aktarmada dönüşüm gerekmez.
-- **Birimler:** metre, saniye, kilogram. API'de açılar radyan. Dosyalarda belirsizlik olabilecek alanlar birimi adında ya da şemasında taşır (`fov_y_deg`, şemada `unit`).
-- **Renk:** doğrusal iş akışı; renk dokuları sRGB.
-- **Dil:** kod, tanımlayıcılar, API adları, tanı mesajları ve commit iletileri İngilizce. Planlama belgeleri Türkçe (motor yayımlanırsa İngilizceye çevrilir).
-- **Ajan belgeleri:** `CLAUDE.md` asıl kaynaktır; diğer yapay zekâlar için `AGENTS.md` aynı içeriğe yönlendirir.
+**Decision.**
+- **Coordinate system:** the same as glTF — right-handed, +Y up, the camera looks toward −Z. No conversion is needed on import.
+- **Units:** meter, second, kilogram. Angles in the API are radians. Fields that could be ambiguous in files carry the unit in their name or schema (`fov_y_deg`, `unit` in the schema).
+- **Color:** linear workflow; color textures are sRGB.
+- **Language:** code, identifiers, API names, diagnostic messages, commit messages and every document in the repository (design notes, ROADMAP, DECISIONS, README, `CLAUDE.md`) are in English. *(Changed 17 November 2026, user decision: the repository is public, so everything on GitHub is English. Planning documents were Turkish until then and were translated.)* The Turkish user guide (`docs/user/tr/guide.md`) and the editor's `lang/*.json` are localizations, not exceptions.
+- **Agent docs:** `CLAUDE.md` is the main source; for other AIs `AGENTS.md` points to the same content.
 
-## ADR-022 — Güvenlik
+## ADR-022 — Security
 
-**Karar.** MCP sunucusu yalnızca proje klasörüne yazar. HTTP taşıması yalnızca yerel makineye bağlanır ve oturum belirteci ister. *(Uygulama, M8a: `wen mcp --http` her zaman bir taşıyıcı jeton ister — `WISH_MCP_TOKEN` ya da başlarken üretilip gösterilen rastgele bir jeton; döngü dışı adres yalnızca `WISH_MCP_TOKEN` ile; `Origin` ve `Host` denetimi; MCP oturum kimliği ayrıca, her istemci kendi kimliğiyle.)* `--read-only` kipi vardır. Wasm konukları yakıt, bellek ve süre sınırlıdır. Yıkıcı işlemler (dosya silme) geri alınabilir işlem olarak yürür.
+**Decision.** The MCP server writes only to the project folder. The HTTP transport binds only to the local machine and asks for a session token. *(Implementation, M8a: `wen mcp --http` always asks for a bearer token — `WISH_MCP_TOKEN` or a random one generated and shown at start; a non-loopback address only with `WISH_MCP_TOKEN`; `Origin` and `Host` check; the MCP session id is separate, each client with its own id.)* There is a `--read-only` mode. Wasm guests are limited in fuel, memory and time. Destructive operations (file deletion) run as undoable operations.
 
-## ADR-023 — Ürün ve dağıtım
+## ADR-023 — Product and distribution
 
-**Karar.**
-- Motor **açık kaynaktır**: MIT + Apache-2.0 ikili lisans (Rust ekosisteminin standardı). Depo ilk commit'ten itibaren bu lisans dosyalarını taşır. *(Kullanıcı kararı, 10 Kasım 2026.)*
-- Motor **ücretsizdir**; motorla yapılan oyunlardan gelir payı, lisans ücreti ya da abonelik alınmaz. Seçilen lisanslar bunu zaten güvence altına alır: oyun geliştiricisi oyununu istediği lisansla, istediği fiyata satabilir.
-- Dağıtım kanalları: **Steam** ve **kendi web sitemiz**. Güncelleme: Steam'de Steam'in kendi mekanizması; web sürümünde yerleşik güncelleyici.
-- **Sıfır kurulum:** tek paket. Oyun kodunu derlemek için gereken araç zinciri (Wasm hedefli derleyici) motorla birlikte gelir ya da ilk açılışta motor tarafından sessizce kurulur. Kullanıcıdan Rust, Visual Studio ya da başka bir araç kurması **istenmez**.
-- **Oyun dışa aktarma:** `wen export` (ve arayüzde tek tık) → çalışma zamanı + paketlenmiş varlıklar + Wasm modülleri içeren bağımsız oyun klasörü. Dışa aktarılan oyunda editör, MCP sunucusu ve derleyici bulunmaz.
-- **Gizlilik:** varsayılan olarak hiçbir kullanım verisi toplanmaz. Çökme raporu yalnızca kullanıcı açıkça izin verirse gönderilir.
-- **Üçüncü taraf lisansları:** seçilen tüm kütüphaneler (ADR-002) serbest lisanslıdır (MIT/Apache-2.0); ücretsiz dağıtıma ve ticari oyunlara engel yoktur. Atıf dosyası pakete otomatik eklenir; bağımlılık lisansları CI'da denetlenir.
+**Decision.**
+- The engine is **open source**: MIT + Apache-2.0 dual license (the standard of the Rust ecosystem). The repository carries these license files from the first commit. *(User decision, 10 November 2026.)*
+- The engine is **free**; no revenue share, license fee or subscription is taken from games made with the engine. The chosen licenses already guarantee this: a game developer can sell their game under any license and at any price.
+- Distribution channels: **Steam** and **our own website**. Updates: on Steam, Steam's own mechanism; in the web version, a built-in updater.
+- **Zero install:** a single package. The toolchain needed to compile game code (a compiler targeting Wasm) comes with the engine or is silently installed by the engine on first launch. The user is **not asked** to install Rust, Visual Studio or any other tool.
+- **Game export:** `wen export` (and one click in the interface) → a standalone game folder containing the runtime + packaged assets + Wasm modules. The exported game has no editor, MCP server or compiler.
+- **Privacy:** by default no usage data is collected. A crash report is sent only if the user explicitly allows it.
+- **Third-party licenses:** all chosen libraries (ADR-002) have permissive licenses (MIT/Apache-2.0); there is no obstacle to free distribution and commercial games. The attribution file is added to the package automatically; dependency licenses are checked in CI.
 
-**Neden.** Vizyonun doğrudan gereği. Steam'de ücretsiz bir motor yayımlamak mümkündür (başvuru başına tek seferlik bir Steam Direct ücreti vardır; kesin tutar ve koşullar yayım öncesinde Steamworks'ten doğrulanır).
+**Why.** A direct requirement of the vision. Publishing a free engine on Steam is possible (there is a one-time Steam Direct fee per application; the exact amount and terms are verified from Steamworks before release).
 
-**Risk ve önlem.**
-- *En büyük ürün riski: gömülü derleme araç zinciri.* Rust → Wasm derlemesi için kullanıcı makinesinde bir derleyici gerekir; bunu sorunsuz paketlemek (boyut, antivirüs yanlış alarmları, ilk derleme süresi) kanıtlanmalıdır. → M5'te **temiz bir Windows kurulumunda** uçtan uca denenir.
-- İmzasız çalıştırılabilir dosyalar Windows SmartScreen uyarısı verir → web sürümü için kod imzalama sertifikası (ücretli) gerekir; Steam sürümünde bu sorun yoktur.
+**Risk and mitigation.**
+- *The biggest product risk: the embedded compile toolchain.* Compiling Rust → Wasm needs a compiler on the user's machine; packaging it smoothly (size, antivirus false alarms, first compile time) must be proven. → In M5 it is tried end to end on a **clean Windows install**.
+- Unsigned executables get a Windows SmartScreen warning → a code signing certificate (paid) is needed for the web version; the Steam version does not have this problem.
 
-**Tetikleyici.** M5 denemesinde gömülü araç zinciri "sorunsuz" çıtasını tutturamazsa: önceden derlenmiş SDK + daha hafif bir derleme yolu ya da araç zinciri gerektirmeyen ikinci bir konuk dili 1.0 kapsamına alınır.
+**Trigger.** If the embedded toolchain does not reach the "smooth" bar in the M5 trial: a prebuilt SDK + a lighter compile path, or a second guest language that needs no toolchain, is brought into the 1.0 scope.
 
-## ADR-024 — Yapay zekâ bağlantısı: kullanıcı kendi yapay zekâsını getirir
+## ADR-024 — AI connection: the user brings their own AI
 
-**Karar.**
-- Motor bir yapay zekâ modeli içermez ve yapay zekâ hizmeti satmaz. Kullanıcı kendi hesabını/aboneliğini bağlar.
-- Bağlantı **isteğe bağlıdır**: motor yapay zekâ bağlı olmadan da eksiksiz çalışır (ADR-018).
-- İki bağlantı yolu, ikisi de birinci sınıf:
-  1. **Dış ajan:** Claude Code, Claude Desktop ya da MCP konuşan herhangi bir istemci, motorun MCP sunucusuna bağlanır. (M4'te hazır.)
-  2. **Kokpit içi ajan:** arayüzdeki konuşma paneli, sağlayıcıdan bağımsız bir **ajan bağdaştırıcısı** arayüzü üzerinden çalışır. İlk bağdaştırıcı Claude'dur. (M8.)
-- Kimlik bilgileri motorun kendi dosyalarında düz metin olarak saklanmaz; işletim sisteminin kimlik deposu ya da sağlayıcının kendi oturumu kullanılır.
-- Kokpit, hangi yoldan gelirse gelsin tüm ajan etkinliğini aynı etkinlik akışında gösterir (dış ajan da MCP üzerinden aynı işlemleri üretir).
+**Decision.**
+- The engine contains no AI model and does not sell an AI service. The user connects their own account/subscription.
+- The connection is **optional**: the engine works completely without an AI connected (ADR-018).
+- Two connection paths, both first-class:
+  1. **External agent:** Claude Code, Claude Desktop or any client that speaks MCP connects to the engine's MCP server. (Ready in M4.)
+  2. **In-cockpit agent:** the chat panel in the interface works over a provider-independent **agent adapter** interface. The first adapter is Claude. (M8.)
+- Credentials are not stored as plain text in the engine's own files; the operating system's credential store or the provider's own session is used.
+- The cockpit shows all agent activity in the same activity feed, whichever path it comes from (the external agent also produces the same operations over MCP).
 
-**Neden.** "Komisyon yok" ilkesi yapay zekâ kullanımını da kapsar. Sağlayıcıdan bağımsızlık, motorun tek bir şirkete bağımlı kalmamasını sağlar; Claude önceliği, ilk ve en iyi sınanan bağdaştırıcı olmasıyla korunur.
+**Why.** The "no commission" principle covers AI usage too. Provider independence keeps the engine from depending on a single company; the Claude priority is kept by it being the first and best-tested adapter.
 
-**Geçici kısım.** Kokpit içi Claude bağdaştırıcısının kesin yöntemi (Claude Code'u alt süreç olarak sürmek, Claude Agent SDK ya da doğrudan API) M8 başında, o günün güncel belgelerine göre seçilir.
+**Provisional part.** The exact method of the in-cockpit Claude adapter (driving Claude Code as a subprocess, the Claude Agent SDK or the direct API) is chosen at the start of M8, according to that day's current docs.
 
-## ADR-025 — Oyun kodunun derlenmesi ve örneklenmesi
+## ADR-025 — Compiling and instantiating game code
 
-**Karar.**
-- **Derleme yolu C:** oyun kodu (`scripts/`) **cargo olmadan, tek bir `rustc` çağrısıyla** `wasm32-unknown-unknown` için derlenir. `wish_sdk` (wasm32 rlib) ve `wish_sdk_macros` (ev sahibi proc-macro kütüphanesi) motorun kendi derlemesinde üretilir ve motorla birlikte gelir; oyun derlemesi onları `--extern` ile kullanır. Bağlama `rust-lld` ile yapılır (rustc'yle gelir). Kullanıcının makinesinde **ev sahibi bağlayıcısı (MSVC `link.exe`) hiç gerekmez.**
-- **Gömülü araç zinciri** = sabit rustc'nin asgari kopyası: `rustc` + `rustc_driver`, `rust-lld` (+ `gcc-ld/wasm-ld`), `rust-std-wasm32-unknown-unknown`, önceden derlenmiş SDK. Cargo, rustup, Visual Studio gerekmez.
-- **Örnekleme:** modül başına **tick başına bir taze örnek**; o tick'teki sistem çağrıları onu paylaşır, bir çağrı başarısız olursa (tuzak, yakıt, bellek) örnek atılır ve sıradaki çağrı yenisini alır. Durum tick'ten tick'e asla taşınmaz: anlık görüntüler tick sınırında alındığı için eksiksizdir, sıcak yükleme tick sınırında kayıpsızdır.
-- wasmtime havuz ayırıcısıyla (64 yuva) çalışır.
+**Decision.**
+- **Build path C:** game code (`scripts/`) is compiled for `wasm32-unknown-unknown` **without cargo, with a single `rustc` call**. `wish_sdk` (wasm32 rlib) and `wish_sdk_macros` (host proc-macro library) are produced in the engine's own build and ship with the engine; the game build uses them with `--extern`. Linking is done with `rust-lld` (comes with rustc). **No host linker (MSVC `link.exe`) is needed at all** on the user's machine.
+- **Embedded toolchain** = a minimal copy of the pinned rustc: `rustc` + `rustc_driver`, `rust-lld` (+ `gcc-ld/wasm-ld`), `rust-std-wasm32-unknown-unknown`, the prebuilt SDK. Cargo, rustup and Visual Studio are not needed.
+- **Instantiation:** per module, **one fresh instance per tick**; the system calls in that tick share it, and if a call fails (trap, fuel, memory) the instance is thrown away and the next call gets a new one. State is never carried from tick to tick: because snapshots are taken at the tick boundary they are complete, and hot reload at the tick boundary is lossless.
+- wasmtime runs with the pooling allocator (64 slots).
 
-**Neden (M5 WP1 ölçümleri, 16 Kasım 2026, geliştirme makinesi, Windows 10, release; `wish_script/tests/build_paths.rs` ve `rust_guest.rs` ile yeniden üretilir):**
-- *Yol A (cargo + proc-macro):* bağlayıcı ortam değişkeniyle bozulunca derleme **başarısız** — proc-macro ev sahibi için bağlanıyor; temiz Windows'ta çalışmaz.
-- *Yol C:* `env_clear()` ile boş ortamda (yalnızca kopyalanmış araç zinciri `PATH`'te, rustup/VS değişkenleri yok) derlendi ve modül çalıştı; `--print link-args` bağlayıcının `rust-lld` olduğunu gösterdi. Süre: ilk derleme 1,95 sn (yeni kopyalanmış 200 MB'lık `rustc_driver` dll'inin ilk yüklenmesi dahil), **tek satır değişiklikten sonra 0,18 sn**, değişiklik yokken 0,13 sn. Hedef < 10 sn rahatça tutuyor.
-- *Araç zinciri boyutu:* açılmış 437 MiB (`rustc_driver` 201 MiB, `rust-lld` 117 MiB, wasm32 std 100 MiB), gzip ile 141 MiB. Unity/Unreal kurulumlarının yanında küçük; ADR-023 tetikleyicisi tetiklenmedi. (Sıkıştırma `zstd`/`xz` ile daha da küçülür; gereksiz `gcc-ld` sarmalayıcıları atılabilir — WP7.)
-- *Taze örnek maliyeti:* depo 0,4 µs + örnekleme 6,4 µs + dışa aktarma/ayırma 2,3 µs + bırakma 7,2 µs ≈ 16–28 µs (ölçüme göre değişken). Çağrı başına taze örnek, 20 sistemlik bir oyunda tick başına ~0,5 ms ederdi; tick başına örnekle ~20 µs + sistem başına birkaç µs. Havuz ayırıcı istek üzerine ayırmaya göre ~%20 hızlı.
-- *Sınır maliyeti:* konuğa 24 baytlık iki sütun (konum + hız) kopyalayıp geri almak dahil varlık başına ~13–15 ns (yerel döngü ~1,5 ns). 10.000 varlıkta çağrı başına ~135 µs: kare bütçesinin %0,8'i. ADR-011 tetikleyicisi (%20 = 3,3 ms) çok uzakta.
+**Why (M5 WP1 measurements, 16 November 2026, development machine, Windows 10, release; reproduced with `wish_script/tests/build_paths.rs` and `rust_guest.rs`):**
+- *Path A (cargo + proc-macro):* when the linker is broken via an environment variable, the build **fails** — the proc-macro is linked for the host; it does not work on a clean Windows.
+- *Path C:* compiled and the module ran in an empty environment with `env_clear()` (only the copied toolchain on `PATH`, no rustup/VS variables); `--print link-args` showed that the linker is `rust-lld`. Time: first build 1.95 s (including the first load of the freshly copied 200 MB `rustc_driver` dll), **0.18 s after a single-line change**, 0.13 s with no change. It stays comfortably within the < 10 s target.
+- *Toolchain size:* unpacked 437 MiB (`rustc_driver` 201 MiB, `rust-lld` 117 MiB, wasm32 std 100 MiB), 141 MiB with gzip. Small next to Unity/Unreal installs; the ADR-023 trigger was not triggered. (Compression with `zstd`/`xz` makes it smaller still; the unneeded `gcc-ld` wrappers can be dropped — WP7.)
+- *Fresh instance cost:* store 0.4 µs + instantiation 6.4 µs + export/allocation 2.3 µs + drop 7.2 µs ≈ 16–28 µs (varies with the measurement). A fresh instance per call would cost ~0.5 ms per tick in a game with 20 systems; with one instance per tick it is ~20 µs + a few µs per system. The pooling allocator is ~20% faster than on-demand allocation.
+- *Boundary cost:* including copying two 24-byte columns (position + velocity) to the guest and back, ~13–15 ns per entity (native loop ~1.5 ns). At 10,000 entities ~135 µs per call: 0.8% of the frame budget. The ADR-011 trigger (20% = 3.3 ms) is far away.
 
-**Alternatifler.** Yol A (cargo + proc-macro): temiz makinede bağlayıcı yok — elendi. Yol B (proc-macro'suz, `macro_rules!` bildirimleri): çalışır ama Rust'ın gerçek öznitelik sözdizimini ve iyi derleyici hatalarını kaybettirir; C aynı bedeli ödemeden aynı sonucu verir. Çağrı başına taze örnek: en katı durumsuzluk, ama tick başına örneğe göre ~10 kat pahalı ve kazandırdığı bir garanti yok (anlık görüntü zaten tick sınırında).
+**Alternatives.** Path A (cargo + proc-macro): no linker on a clean machine — eliminated. Path B (without proc-macros, `macro_rules!` declarations): works but loses Rust's real attribute syntax and good compiler errors; C gives the same result without paying the same cost. A fresh instance per call: the strictest statelessness, but ~10 times more expensive than one instance per tick and it gains no guarantee (the snapshot is already at the tick boundary).
 
-**Bedel.** İlk sürümde oyun kodu üçüncü taraf crate kullanamaz (yalnızca `wish_sdk`); önceden derlenmiş SDK sabit rustc sürümüne bağlıdır (`rust-toolchain.toml` değişince yeniden üretilir; uyuşmazlık `script_toolchain_mismatch` ile açıklanır). Bir tick içinde iki sistem bir `static` üzerinden konuşabilir: belirlenimcidir ama SDK bunu önermez ve garanti etmez.
+**Cost.** In the first version game code cannot use third-party crates (only `wish_sdk`); the prebuilt SDK is tied to the pinned rustc version (regenerated when `rust-toolchain.toml` changes; a mismatch is explained with `script_toolchain_mismatch`). Within one tick two systems can talk through a `static`: it is deterministic but the SDK does not recommend it and does not guarantee it.
 
-**Tetikleyici.** Değerlendirmelerde ajanların üçüncü taraf crate ihtiyacı tekrar tekrar görülürse yol B'ye benzer bir cargo yan yolu (bağlayıcı gerektirmeyen crate'lerle) eklenir. Tick başına örnek maliyeti kıyaslamada (WP7) bütçenin %5'ini aşarsa örneği tick'ler arasında yeniden kullanıp belleği sıfırlama yolu denenir.
+**Trigger.** If agents are seen needing third-party crates again and again in evals, a cargo side path similar to path B (with crates that need no linker) is added. If the cost of one instance per tick exceeds 5% of the budget in the benchmark (WP7), the way of reusing the instance between ticks and resetting the memory is tried.
 
 ---
 
-## Kullanıcı kararları
+## User decisions
 
-| Konu | Karar | Tarih |
+| Topic | Decision | Date |
 |---|---|---|
-| Açık kaynak mı? | **Evet** — MIT + Apache-2.0 (ADR-023) | 10 Kasım 2026 |
-| İlk vitrin oyunu (M7) | **Küçük bir 3D platform oyunu** — fizik, kamera, girdi, ses ve arayüzü birlikte sınar | 10 Kasım 2026 |
-| Ad | **Wish Engine** — "dile, olsun"; İngilizce, kısa, akılda kalıcı | 10 Kasım 2026 |
+| Open source? | **Yes** — MIT + Apache-2.0 (ADR-023) | 10 November 2026 |
+| First showcase game (M7) | **A small 3D platform game** — tests physics, camera, input, audio and interface together | 10 November 2026 |
+| Name | **Wish Engine** — "dile, olsun" (Turkish, roughly "wish it, and let it be"); English, short, memorable | 10 November 2026 |
 
-**Adlandırma ayrıntıları.**
-- Crate öneki `wish_`, belge adresleri `wish://…`, proje bildirimi `wish.json`.
-- Komut satırı aracı `wen`dir (**W**ish **En**gine), `wish` **değil**: `wish` adı Tcl/Tk'nin kendi komutudur ve macOS ile Git for Windows'ta hazır gelir; aynı adı kullanmak çakışırdı.
-- 10 Kasım 2026'da yapılan hızlı web aramasında bu adı taşıyan bir oyun motoru bulunmadı. Bu kesin bir marka denetimi değildir; Steam'de yayım öncesinde marka ve alan adı uygunluğu ayrıca doğrulanır (M9).
+**Naming details.**
+- Crate prefix `wish_`, doc addresses `wish://…`, project manifest `wish.json`.
+- The command-line tool is `wen` (**W**ish **En**gine), **not** `wish`: the name `wish` is Tcl/Tk's own command and comes preinstalled on macOS and in Git for Windows; using the same name would clash.
+- A quick web search on 10 November 2026 found no game engine with this name. This is not an exact trademark check; the availability of the trademark and domain name is verified separately before release on Steam (M9).
 
-## ADR-026 — ECS dışı simülasyon durumu: uzantılar
+## ADR-026 — Simulation state outside the ECS: extensions
 
-**Karar.** Sütunlara sığmayan çalışma belleği (Rapier'in geniş evre ağacı, temas önbelleği, sıcak başlatma darbeleri) `World` içinde **uzantı** olarak tutulur (`insert_extension`, `extension`, `extension_mut`; `Clone + Send + Sync` bir tür başına bir değer). Kurallar: (1) oyun açısından görünen her değer (konum, dönüş, hız, uyku) her tick ECS bileşenlerine **geri yazılır**; uzantı yalnızca türetilmiş/önbellek durumu taşır. (2) Uzantı dünya hash'ine **girmez** (bileşenler zaten her sapmayı yansıtır). (3) Anlık görüntü uzantıları kopyalar, `restore` geri koyar, `clone` ve çatal kendi kopyasını alır. (4) Geri yükle → devam et, hiç geri dönmemekle bit düzeyinde aynı olmalıdır; her uzantı kullanan alt sistem bunu bir testle kanıtlar.
+**Decision.** Working memory that does not fit into columns (Rapier's broad-phase tree, contact cache, warm-start impulses) is kept in the `World` as an **extension** (`insert_extension`, `extension`, `extension_mut`; one `Clone + Send + Sync` value per type). Rules: (1) every value visible to the game (position, rotation, velocity, sleep) is **written back** to the ECS components every tick; the extension carries only derived/cache state. (2) The extension does **not** go into the world hash (the components already reflect every drift). (3) A snapshot copies the extensions, `restore` puts them back, `clone` and fork take their own copy. (4) Restore → continue must be bit-identical to never having gone back; every subsystem that uses an extension proves this with a test.
 
-**Alternatifler.** Her tick durumu ECS'den sıfırdan kurmak (pahalı, sıcak başlatma kaybolur, yığınlar titrer); durumu dünyada bayt dizisi tutmak (sabit boyutlu `Plain` kuralını bozar, her tick serileştirme).
+**Alternatives.** Building the state from scratch from the ECS every tick (expensive, warm start is lost, stacks jitter); keeping the state in the world as a byte array (breaks the fixed-size `Plain` rule, serialization every tick).
 
-**Kanıt (M6 WP1).** `wish_physics/tests/proof.rs`: Rapier durumu (boru hattı hariç, o ara bellektir) kopyalanır, 150. tickten devam eden kopya 400. ve sonraki 200 tickte düz koşuyla aynı hash'i verir; kayıtlı piramit hash'i Windows ve Linux'ta (CI) aynı, debug ve release aynı.
+**Evidence (M6 WP1).** `wish_physics/tests/proof.rs`: the Rapier state (excluding the pipeline, which is a buffer) is copied; the copy continuing from tick 150 gives the same hash as the straight run at tick 400 and the 200 ticks after it; the recorded pyramid hash is the same on Windows and Linux (CI), the same in debug and release.
