@@ -727,6 +727,44 @@ $results | ConvertTo-Json | Out-File C:\result\result.json
 "`n== done" | Out-File $log -Append
 "#;
 
+/// The engine's icon as a Windows `.ico` (for shortcuts): the mark on its
+/// tile at 16, 24, 32, 48, 64 and 256 pixels, each stored as a PNG.
+pub fn icon_file() -> wish_core::Result<Vec<u8>> {
+    let sizes: [u16; 6] = [16, 24, 32, 48, 64, 256];
+    let mut pictures = Vec::new();
+    for size in sizes {
+        let (pixels, width, height) = wish_editor::window_icon(size);
+        let png = wish_render::RgbaImage {
+            width,
+            height,
+            pixels,
+        }
+        .to_png()?;
+        pictures.push((size, png));
+    }
+    let count = u16::try_from(pictures.len()).unwrap_or(u16::MAX);
+    let mut ico = Vec::new();
+    // The header: reserved, type 1 (icon), how many.
+    ico.extend_from_slice(&0u16.to_le_bytes());
+    ico.extend_from_slice(&1u16.to_le_bytes());
+    ico.extend_from_slice(&count.to_le_bytes());
+    let mut offset = 6 + 16 * pictures.len();
+    for (size, png) in &pictures {
+        // 256 is written as 0.
+        let side = u8::try_from(*size).unwrap_or(0);
+        ico.extend_from_slice(&[side, side, 0, 0]);
+        ico.extend_from_slice(&1u16.to_le_bytes());
+        ico.extend_from_slice(&32u16.to_le_bytes());
+        ico.extend_from_slice(&u32::try_from(png.len()).unwrap_or(u32::MAX).to_le_bytes());
+        ico.extend_from_slice(&u32::try_from(offset).unwrap_or(u32::MAX).to_le_bytes());
+        offset += png.len();
+    }
+    for (_, png) in &pictures {
+        ico.extend_from_slice(png);
+    }
+    Ok(ico)
+}
+
 /// `wen package`: a folder with everything a machine without developer
 /// tools needs to build and run game code (engine development).
 pub fn package(out: Option<&str>, as_json: bool) -> wish_core::Result<String> {
@@ -764,6 +802,9 @@ pub fn package(out: Option<&str>, as_json: bool) -> wish_core::Result<String> {
             "wen",
             "wish_player.exe",
             "wish_player",
+            "wish-engine.exe",
+            "wish-engine",
+            "wish-engine.ico",
             "sdk",
             "toolchain",
             "templates",
@@ -791,6 +832,26 @@ pub fn package(out: Option<&str>, as_json: bool) -> wish_core::Result<String> {
             "Build it first: cargo build --release -p wish_player (with the same flags as wen), then package again.",
         ));
     }
+    // The program a person starts (no console window), and its icon for
+    // shortcuts.
+    let launcher_name = if cfg!(windows) {
+        "wish-engine.exe"
+    } else {
+        "wish-engine"
+    };
+    let launcher = beside.join(launcher_name);
+    if launcher.is_file() {
+        std::fs::copy(&launcher, out.join(launcher_name))
+            .map_err(|e| failed("copy the launcher", e))?;
+    } else {
+        warnings.push(Diagnostic::warning(
+            "package_without_launcher",
+            "The launcher (wish-engine) is not built beside wen, so starting the editor from a shortcut also opens a console window.",
+            "Build it first: cargo build --release -p wish_cli builds both (with the same flags as wen), then package again.",
+        ));
+    }
+    std::fs::write(out.join("wish-engine.ico"), icon_file()?)
+        .map_err(|e| failed("write the icon", e))?;
     // The templates the welcome screen offers: the engine's examples.
     let examples = std::path::Path::new(&manifest)
         .parent()
@@ -835,6 +896,15 @@ pub fn package(out: Option<&str>, as_json: bool) -> wish_core::Result<String> {
             "Build the packaged player with the C runtime linked in: set RUSTFLAGS=-C target-feature=+crt-static, then cargo build -p wish_player --release (into the same --target-dir as wen).",
         ));
     }
+    if launcher.is_file()
+        && wish_control::pe::needs_c_runtime_dll(&std::fs::read(&launcher).unwrap_or_default())
+    {
+        warnings.push(Diagnostic::warning(
+            "package_needs_static_crt",
+            "This wish-engine (the launcher) needs VCRUNTIME140.dll, so it may not start on a clean Windows.",
+            "Build it with the C runtime linked in: set RUSTFLAGS=-C target-feature=+crt-static, then cargo build -p wish_cli --release (into the same --target-dir as wen).",
+        ));
+    }
     if wish_control::pe::needs_c_runtime_dll(&bytes) {
         warnings.push(Diagnostic::warning(
             "package_needs_static_crt",
@@ -864,4 +934,23 @@ pub fn package(out: Option<&str>, as_json: bool) -> wish_core::Result<String> {
         ));
         text
     })
+}
+
+#[cfg(test)]
+mod icon_tests {
+    #[test]
+    fn the_icon_file_holds_six_pngs_of_the_mark() {
+        let ico = super::icon_file().unwrap();
+        assert_eq!(&ico[0..6], &[0, 0, 1, 0, 6, 0]);
+        let mut sides = Vec::new();
+        for entry in 0..6 {
+            let at = 6 + entry * 16;
+            sides.push(ico[at]);
+            let size = u32::from_le_bytes(ico[at + 8..at + 12].try_into().unwrap()) as usize;
+            let offset = u32::from_le_bytes(ico[at + 12..at + 16].try_into().unwrap()) as usize;
+            assert_eq!(&ico[offset + 1..offset + 4], b"PNG");
+            assert!(offset + size <= ico.len());
+        }
+        assert_eq!(sides, [16, 24, 32, 48, 64, 0]);
+    }
 }

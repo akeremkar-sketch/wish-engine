@@ -502,6 +502,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "The wen being packaged needs the Visual C++ runtime DLL, which a clean Windows may not have; build it with the C runtime linked in (RUSTFLAGS=-C target-feature=+crt-static).",
     ),
     (
+        "package_without_launcher",
+        "The launcher (wish-engine) is not built beside wen, so the package has no program that starts the editor without a console window. Build wish_cli (both programs) first.",
+    ),
+    (
         "package_without_player",
         "The player program is not built beside wen, so the package cannot export games. Build wish_player first.",
     ),

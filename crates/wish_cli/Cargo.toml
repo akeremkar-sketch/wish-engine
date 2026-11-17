@@ -11,6 +11,12 @@ publish.workspace = true
 name = "wen"
 path = "src/main.rs"
 
+# What a person starts (the desktop shortcut): `wen edit` without a console
+# window. Only the standard library.
+[[bin]]
+name = "wish-engine"
+path = "src/launcher.rs"
+
 [dependencies]
 serde_json.workspace = true
 wish_app.workspace = true

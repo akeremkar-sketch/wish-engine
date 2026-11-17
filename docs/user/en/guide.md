@@ -19,8 +19,10 @@ This guide follows a game from the first start to an exported game.
 
 ## 1. Install and first start
 
-Unpack the Wish Engine folder anywhere and run `wen edit` (or the shortcut that starts it). Nothing
-else needs to be installed: the compiler for game code ships inside the folder.
+Unpack the Wish Engine folder anywhere and run `wish-engine.exe` (for a shortcut, the icon is
+`wish-engine.ico` in the folder). Nothing else needs to be installed: the compiler for game code
+ships inside the folder. Drop a project folder on `wish-engine.exe` to open the editor on it. On the
+command line the same is `wen edit`.
 
 Without a project, the editor opens on the **welcome screen**:
 

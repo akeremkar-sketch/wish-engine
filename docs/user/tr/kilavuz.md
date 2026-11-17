@@ -19,8 +19,10 @@ Bu kılavuz bir oyunu ilk açılıştan dışa aktarılmış hâline kadar izler
 
 ## 1. Kurulum ve ilk açılış
 
-Wish Engine klasörünü istediğiniz yere açın ve `wen edit`'i (ya da onu başlatan kısayolu)
-çalıştırın. Başka bir şey kurmanız gerekmez: oyun kodunun derleyicisi klasörün içinde gelir.
+Wish Engine klasörünü istediğiniz yere açın ve `wish-engine.exe`'yi çalıştırın (kısayol için
+simge klasördeki `wish-engine.ico`). Başka bir şey kurmanız gerekmez: oyun kodunun derleyicisi
+klasörün içinde gelir. Bir proje klasörünü `wish-engine.exe`'nin üzerine bırakırsanız editör o
+projeyle açılır. Komut satırında aynı şey `wen edit`'tir.
 
 Proje olmadan editör **karşılama ekranıyla** açılır:
 
