@@ -150,9 +150,8 @@ Add --json to any command for a single machine-readable JSON document.";
 
 fn main() -> ExitCode {
     // An unexpected error leaves a report on this computer (never sent).
-    wish_control::crash::install();
-    let folder = wish_control::crash::folder();
-    match wish_control::crash::guard("wen", folder.as_deref(), run_wen) {
+    wish_control::crash::install("wen", wish_control::crash::folder().into_iter().collect());
+    match wish_control::crash::guard(run_wen) {
         Ok(code) => code,
         Err(report) => {
             eprintln!("{}", wish_control::crash::told("wen", report.as_deref()));

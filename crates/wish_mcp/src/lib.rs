@@ -573,28 +573,31 @@ pub fn serve<W: BorrowMut<Workspace>>(
     server.workspace().set_cancel_flag(flag);
     let (lines, received) = mpsc::channel::<String>();
     let busy = Arc::clone(&server.busy);
-    let reader = std::thread::spawn(move || -> std::io::Result<()> {
-        let mut first = true;
-        loop {
-            let mut bytes = Vec::new();
-            if input.read_until(b'\n', &mut bytes)? == 0 {
-                return Ok(());
+    let reader = std::thread::spawn(move || {
+        wish_control::crash::thread(move || -> std::io::Result<()> {
+            let mut first = true;
+            loop {
+                let mut bytes = Vec::new();
+                if input.read_until(b'\n', &mut bytes)? == 0 {
+                    return Ok(());
+                }
+                let mut line = String::from_utf8_lossy(&bytes).into_owned();
+                if first {
+                    line = line.trim_start_matches('\u{feff}').to_owned();
+                    first = false;
+                }
+                if let Ok(message) = serde_json::from_str::<Value>(&line)
+                    && message.get("method").and_then(Value::as_str)
+                        == Some("notifications/cancelled")
+                    && let Some(wanted) = message.get("params").and_then(|p| p.get("requestId"))
+                {
+                    busy.cancel("", wanted);
+                }
+                if lines.send(line).is_err() {
+                    return Ok(());
+                }
             }
-            let mut line = String::from_utf8_lossy(&bytes).into_owned();
-            if first {
-                line = line.trim_start_matches('\u{feff}').to_owned();
-                first = false;
-            }
-            if let Ok(message) = serde_json::from_str::<Value>(&line)
-                && message.get("method").and_then(Value::as_str) == Some("notifications/cancelled")
-                && let Some(wanted) = message.get("params").and_then(|p| p.get("requestId"))
-            {
-                busy.cancel("", wanted);
-            }
-            if lines.send(line).is_err() {
-                return Ok(());
-            }
-        }
+        })
     });
     for line in received {
         server.busy.start("", request_id(&line).as_ref());
@@ -606,5 +609,11 @@ pub fn serve<W: BorrowMut<Workspace>>(
             output.flush()?;
         }
     }
-    reader.join().unwrap_or(Ok(()))
+    // A reader that stopped on an unexpected error is a failure, not a
+    // clean end of input.
+    reader.join().unwrap_or_else(|_| {
+        Err(std::io::Error::other(
+            "the input reader stopped on an unexpected error",
+        ))
+    })
 }

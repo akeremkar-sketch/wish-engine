@@ -28,32 +28,70 @@ fn game_folder(args: &[String]) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("game"))
 }
 
-/// A problem, said where a person can see it: on standard error and in
-/// `player-error.txt` next to the program (a double-clicked game has no
-/// console).
-fn report(problem: &str) {
-    eprintln!("{problem}");
-    if let Some(dir) = std::env::current_exe()
-        .ok()
+/// The folders the player may write a problem or a crash report to, in
+/// order: next to the program, else this person's own folder for the game
+/// (`%LOCALAPPDATA%\<game>`; a game under Program Files cannot write next to
+/// itself), else the temporary folder.
+fn writable_places() -> Vec<PathBuf> {
+    let exe = std::env::current_exe().ok();
+    let mut places: Vec<PathBuf> = exe
+        .as_ref()
         .and_then(|exe| exe.parent().map(PathBuf::from))
+        .into_iter()
+        .collect();
+    let game = exe
+        .as_ref()
+        .and_then(|exe| exe.file_stem())
+        .map_or_else(|| "game".into(), |stem| stem.to_os_string());
+    if let Some(local) = std::env::var_os(if cfg!(windows) {
+        "LOCALAPPDATA"
+    } else {
+        "HOME"
+    })
+    .filter(|value| !value.is_empty())
     {
-        let _ = std::fs::write(dir.join("player-error.txt"), format!("{problem}\n"));
+        places.push(PathBuf::from(local).join(game));
+    }
+    places.push(std::env::temp_dir());
+    places
+}
+
+/// A problem, said where a person can see it: on standard error, in
+/// `player-error.txt` (in the first of [`writable_places`] that takes it)
+/// and, for a double-clicked game (no console), opened in Notepad.
+fn report(problem: &str, shown: bool) {
+    eprintln!("{problem}");
+    let written = writable_places().into_iter().find_map(|place| {
+        std::fs::create_dir_all(&place).ok()?;
+        let path = place.join("player-error.txt");
+        std::fs::write(&path, format!("{problem}\n")).ok()?;
+        Some(path)
+    });
+    if shown && let Some(path) = written {
+        show(&path);
+    }
+}
+
+/// Opens a text file for the person to read (only a windowed release game:
+/// it has no console to print to).
+fn show(path: &std::path::Path) {
+    if cfg!(all(windows, not(debug_assertions))) {
+        let _ = std::process::Command::new("notepad.exe").arg(path).spawn();
     }
 }
 
 fn main() -> ExitCode {
-    // An unexpected error leaves a report next to the game (never sent):
-    // the person playing may not know the engine, but can send the file to
-    // whoever made the game.
-    wish_control::crash::install();
-    let folder = std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf));
-    match wish_control::crash::guard("wish_player", folder.as_deref(), run) {
+    // An unexpected error leaves a report (never sent): the person playing
+    // may not know the engine, but can send the file to whoever made the
+    // game.
+    let places = writable_places();
+    wish_control::crash::install("wish_player", places);
+    let windowed = !std::env::args().any(|arg| arg == "--headless");
+    match wish_control::crash::guard(run) {
         Ok(code) => code,
         Err(saved) => {
             let told = wish_control::crash::told("The game", saved.as_deref());
-            report(&told);
+            report(&told, windowed);
             ExitCode::from(101)
         }
     }
@@ -73,7 +111,7 @@ fn run() -> ExitCode {
                 ExitCode::SUCCESS
             }
             Err(problem) => {
-                report(&format!("{problem}"));
+                report(&format!("{problem}"), false);
                 ExitCode::FAILURE
             }
         };
@@ -96,7 +134,7 @@ fn run() -> ExitCode {
     match play(&options, Box::new(|message| eprintln!("{message}"))) {
         Ok(_) => ExitCode::SUCCESS,
         Err(problem) => {
-            report(&format!("{problem}"));
+            report(&format!("{problem}"), true);
             ExitCode::FAILURE
         }
     }

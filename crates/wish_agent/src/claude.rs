@@ -208,7 +208,7 @@ impl Adapter for ClaudeCode {
         let (events, received) = mpsc::channel();
         std::thread::Builder::new()
             .name("wish-agent-claude".to_owned())
-            .spawn(move || {
+            .spawn(move || wish_control::crash::thread(move || {
                 let mut parser = Parser::default();
                 let mut finished = false;
                 for line in BufReader::new(stdout).lines() {
@@ -235,7 +235,7 @@ impl Adapter for ClaudeCode {
                         None => "Claude Code was stopped.".to_owned(),
                     }));
                 }
-            })
+            }))
             .map_err(|e| format!("could not watch Claude Code: {e}"))?;
         Ok(Run::new(
             received,

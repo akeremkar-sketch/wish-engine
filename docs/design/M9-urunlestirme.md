@@ -248,3 +248,19 @@ Kod okuyan bağımsız bir ajan 12 bulgu verdi; hepsi ele alındı. Regresyon te
   - Yapılandırma klasörü tek yerde: `wish_control::crash::config_folder` (editör tercihleri de onu kullanır).
   - Testler: `wish_control/tests/crash.rs`, `welcome.rs::a_crash_report_is_told_once`.
 - **Taslaklar** (`docs/release/`, yayımlanmadı): son kullanıcı sözleşmesi, Steam metinleri, tek sayfa site.
+
+### WP5 incelemesi (17 Kasım 2026)
+
+Bağımsız inceleme 7 bulgu verdi; hepsi düzeltildi. Testler:
+- `wish_control/tests/crash.rs`,
+- `wish_script/tests/build_game.rs`.
+
+| # | Bulgu | Düzeltme |
+|---|---|---|
+| 1 (orta) | Oynatıcı yazılamayan bir klasördeyse (Program Files) rapor ve hata dosyası sessizce kayboluyordu; pencereli sürümde konsol da yok | Sırayla denenir: programın yanı, `%LOCALAPPDATA%\<oyun>`, geçici klasör. Pencereli sürüm hatayı Not Defteri'nde açar |
+| 2 (orta) | Yan iş parçacıklarındaki paniklerden rapor çıkmıyordu; MCP giriş okuyucusunun paniği temiz çıkış sayılıyordu | `crash::thread` sarmalı (Claude Code okuyucusu, MCP HTTP kabul ve bağlantı iş parçacıkları, stdin okuyucusu). Okuyucu paniği artık hatadır |
+| 3 | Rapor, başka bir iş parçacığının son paniğini taşıyabiliyordu | Notlar iş parçacığı başına tutulur; yalnızca aynı iş parçacığının aynı iletili notu alınır |
+| 4 | Yakalanan her panikte geri iz sembolleştiriliyordu (yavaş; kancada çift panik riski) | Geri iz yakalanır ama yalnızca rapor yazılırken çözülür |
+| 5 | Çökme bildirimi dil ayarlanmadan önce çevriliyordu | Dil (ve `--lang`) ayarlandıktan sonra |
+| 6 | Raporlar dolaşan `%APPDATA%`'ya gidiyordu; aynı saniyede üzerine yazma; sınırsız birikme | `%LOCALAPPDATA%\Wish\crashes`; adda süreç numarası; en yeni 20 rapor tutulur |
+| 7 | Göreli yol testi farklı sürücüde yanlış çalışırdı | Sürücüler farklıysa test atlanır |

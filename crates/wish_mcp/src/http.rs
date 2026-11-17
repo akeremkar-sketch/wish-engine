@@ -695,29 +695,33 @@ impl Endpoint {
         let accept_shared = Arc::clone(&shared);
         let accept_stop = Arc::clone(&stop);
         let acceptor = std::thread::spawn(move || {
-            while !accept_stop.load(Ordering::Relaxed) {
-                match listener.accept() {
-                    Ok((mut stream, _)) => {
-                        if accept_shared.open.load(Ordering::Relaxed) >= MAX_CONNECTIONS {
-                            let _ = stream.set_nonblocking(false);
-                            let _ = write_response(
-                                &mut stream,
-                                &Response::refuse(503, "Too many connections at once."),
-                            );
-                            continue;
+            wish_control::crash::thread(move || {
+                while !accept_stop.load(Ordering::Relaxed) {
+                    match listener.accept() {
+                        Ok((mut stream, _)) => {
+                            if accept_shared.open.load(Ordering::Relaxed) >= MAX_CONNECTIONS {
+                                let _ = stream.set_nonblocking(false);
+                                let _ = write_response(
+                                    &mut stream,
+                                    &Response::refuse(503, "Too many connections at once."),
+                                );
+                                continue;
+                            }
+                            accept_shared.open.fetch_add(1, Ordering::Relaxed);
+                            let slot = Slot(Arc::clone(&accept_shared));
+                            let _ = std::thread::Builder::new()
+                                .name("wish-mcp-http".to_owned())
+                                .spawn(move || {
+                                    wish_control::crash::thread(move || {
+                                        connection(&slot.0, stream);
+                                        drop(slot);
+                                    })
+                                });
                         }
-                        accept_shared.open.fetch_add(1, Ordering::Relaxed);
-                        let slot = Slot(Arc::clone(&accept_shared));
-                        let _ = std::thread::Builder::new()
-                            .name("wish-mcp-http".to_owned())
-                            .spawn(move || {
-                                connection(&slot.0, stream);
-                                drop(slot);
-                            });
+                        Err(_) => std::thread::sleep(Duration::from_millis(10)),
                     }
-                    Err(_) => std::thread::sleep(Duration::from_millis(10)),
                 }
-            }
+            })
         });
         Ok(Self {
             shared,

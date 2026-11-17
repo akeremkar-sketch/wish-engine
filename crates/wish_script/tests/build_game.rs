@@ -173,8 +173,17 @@ fn a_project_without_game_code_or_a_mismatched_sdk_is_explained() {
 fn a_project_given_by_a_relative_path_builds() {
     let toolchain = toolchain();
     let root = project("relative", GAME);
-    // The same folder, written relative to where the test runs.
+    // The same folder, written relative to where the test runs (only when
+    // both are on the same drive: a relative path cannot cross drives).
     let here = std::env::current_dir().unwrap();
+    let prefix = |path: &std::path::Path| {
+        path.components()
+            .next()
+            .map(|c| c.as_os_str().to_ascii_lowercase())
+    };
+    if prefix(&here) != prefix(&root) {
+        return;
+    }
     let ups = here
         .components()
         .filter(|part| matches!(part, std::path::Component::Normal(_)))

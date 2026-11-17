@@ -40,13 +40,13 @@ pub fn edit(args: &EditArgs, as_json: bool) -> Result<String> {
     {
         app.use_preferences(path);
     }
-    if let Some(note) = notice(args) {
-        app.set_status(note);
-    }
     if let Some(code) = &args.lang
         && !app.set_language(code)
     {
         return Err(unknown_language(code));
+    }
+    if let Some(note) = notice(args) {
+        app.set_status(note);
     }
     if let Some(script_path) = &args.headless_frame {
         let script = read_script(args, script_path)?;
@@ -82,15 +82,15 @@ fn welcome(args: &EditArgs, as_json: bool) -> Result<String> {
         // A scripted picture depends only on its arguments.
         options.preferences = None;
     }
-    let crash_note = notice(args);
     let mut launcher = wish_editor::welcome::Launcher::new(options);
-    if let Some(note) = crash_note {
-        launcher.set_status(note);
-    }
     if let Some(code) = &args.lang
         && !launcher.set_language(code)
     {
         return Err(unknown_language(code));
+    }
+    // (After the language is set: the notice is said once, in it.)
+    if let Some(note) = notice(args) {
+        launcher.set_status(note);
     }
     if let Some(script_path) = &args.headless_frame {
         let script = read_script(args, script_path)?;
