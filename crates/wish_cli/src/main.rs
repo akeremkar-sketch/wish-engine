@@ -52,8 +52,9 @@ USAGE:
     wen view --example <name> --scene <file> [--root <folder>] [--size <w>x<h>]
              [--view lit|ids|depth|normals|wireframe] [--software] [--shaders <folder>] [--exit-after <frames>]
     wen shaders [--dir <folder>] [--json]
-    wen new <folder> [--name <name>] [--json]
+    wen new <folder> [--name <name>] [--template <name>] [--json]
     wen build [--root <folder>] [--dry-run] [--json]
+    wen export [--root <folder>] [--name <name>] [--overwrite] [--json]
     wen test [files...] [--root <folder>] [--update-golden] [--json]
     wen replay <name> [--root <folder>] [--json]
     wen edit [--root <folder>] [--size <w>x<h>] [--software] [--exit-after <frames>]
@@ -229,12 +230,16 @@ fn execute_any(args: Args) -> Result<Outcome> {
         Command::Shaders { dir } => capture::shaders(dir.as_deref(), args.json),
         Command::Capture(capture) => Ok(tool_cmds::capture(capture, args.json)),
         Command::Describe(describe) => Ok(tool_cmds::describe(describe, args.json)),
-        Command::New { dir, name } => {
-            tool_cmds::new_project(dir, name.as_deref(), args.json).map(|text| Outcome {
+        Command::New {
+            dir,
+            name,
+            template,
+        } => tool_cmds::new_project(dir, name.as_deref(), template.as_deref(), args.json).map(
+            |text| Outcome {
                 text,
                 success: true,
-            })
-        }
+            },
+        ),
         Command::Build { root, dry_run } => Ok(tool_cmds::shortcut(
             "script_build",
             &serde_json::json!({ "dry_run": dry_run }),
@@ -248,6 +253,29 @@ fn execute_any(args: Args) -> Result<Outcome> {
             args.json,
             tool_cmds::build_text,
         )),
+        Command::Export {
+            root,
+            name,
+            overwrite,
+        } => {
+            let mut call = serde_json::json!({ "overwrite": overwrite });
+            if let Some(name) = name {
+                call["name"] = serde_json::json!(name);
+            }
+            Ok(tool_cmds::shortcut(
+                "project_export",
+                &call,
+                &args::ToolContext {
+                    root: root.clone(),
+                    example: None,
+                    actor: None,
+                    software: false,
+                    http: None,
+                },
+                args.json,
+                tool_cmds::export_text,
+            ))
+        }
         Command::Test {
             paths,
             root,
@@ -345,6 +373,7 @@ fn execute(args: Args) -> Result<String> {
         | Command::Shaders { .. }
         | Command::New { .. }
         | Command::Build { .. }
+        | Command::Export { .. }
         | Command::Replay { .. }
         | Command::Test { .. }
         | Command::Sdk { .. }

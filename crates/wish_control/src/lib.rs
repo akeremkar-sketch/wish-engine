@@ -24,6 +24,7 @@ mod concepts;
 pub mod docs;
 mod documents;
 pub mod expr;
+pub mod licenses;
 mod live;
 pub mod ops;
 pub mod param;

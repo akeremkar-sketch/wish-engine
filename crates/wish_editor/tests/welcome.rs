@@ -1,0 +1,225 @@
+//! The first-run flow (M9 WP3), headless: the welcome screen makes a
+//! project from a template with an assistant, the editor opens on it in
+//! the same window with the Agent panel shown; the project is then a recent
+//! one and opens from the list; a project by hand starts from the empty
+//! one; a folder that is not a project is explained.
+
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+
+use egui::Rect;
+use serde_json::{Value, json};
+use wish_editor::script::run_script;
+use wish_editor::welcome::{Assistant, LaunchOptions, Launcher};
+use wish_script::build::{Toolchain, pack_sdk};
+
+fn toolchain() -> &'static Toolchain {
+    static TOOLCHAIN: OnceLock<Toolchain> = OnceLock::new();
+    TOOLCHAIN.get_or_init(|| {
+        let tmp = PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml");
+        let cargo = PathBuf::from(std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned()));
+        let sdk = tmp.join("sdk-pack-welcome");
+        let _ = std::fs::remove_dir_all(&sdk);
+        pack_sdk(&cargo, &manifest, &tmp.join("sdk-target"), &sdk).unwrap();
+        let out = std::process::Command::new("rustc")
+            .args(["--print", "sysroot"])
+            .output()
+            .unwrap();
+        let sysroot = PathBuf::from(String::from_utf8(out.stdout).unwrap().trim());
+        let rustc = sysroot
+            .join("bin")
+            .join(if cfg!(windows) { "rustc.exe" } else { "rustc" });
+        Toolchain { sdk, rustc }
+    })
+}
+
+fn options(name: &str) -> (LaunchOptions, PathBuf) {
+    let base = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("welcome-{name}"));
+    let _ = std::fs::remove_dir_all(&base);
+    // The tests read the English texts, whatever the machine's language.
+    std::fs::create_dir_all(base.join("prefs")).unwrap();
+    std::fs::write(base.join("prefs/editor.json"), r#"{ "language": "en" }"#).unwrap();
+    let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
+    let options = LaunchOptions {
+        software: true,
+        preferences: Some(base.join("prefs").join("editor.json")),
+        templates: wish_control::scaffold::templates(&examples),
+        projects_folder: base.join("projects"),
+        command: "wen".to_owned(),
+        // Any file stands for Claude Code: nothing is started here.
+        claude: Some(std::env::current_exe().unwrap()),
+        build: true,
+        toolchain: Some(toolchain().clone()),
+    };
+    (options, base)
+}
+
+fn play(launcher: &mut Launcher, steps: Value) {
+    run_script(launcher, &json!({ "size": [1280, 720], "steps": steps })).unwrap();
+}
+
+fn named(launcher: &Launcher, text: &str) -> Rect {
+    launcher
+        .widgets()
+        .iter()
+        .filter(|w| w.role != "TextRun" && w.role != "Label")
+        .filter(|w| w.label.as_deref() == Some(text) || w.value.as_deref() == Some(text))
+        .map(|w| w.rect)
+        .min_by(|a, b| a.min.y.total_cmp(&b.min.y))
+        .unwrap_or_else(|| panic!("nothing called '{text}'"))
+}
+
+fn click(launcher: &mut Launcher, text: &str) {
+    let rect = named(launcher, text);
+    play(
+        launcher,
+        json!([
+            { "events": [{ "pointer": [rect.center().x, rect.center().y] }] },
+            { "events": [{ "click": [rect.center().x, rect.center().y] }] },
+            { "idle": 3 }
+        ]),
+    );
+}
+
+#[test]
+fn a_game_is_made_from_a_template_with_an_assistant_and_opens() {
+    let (options, base) = options("template");
+    let prefs = options.preferences.clone().unwrap();
+    let mut launcher = Launcher::new(options);
+    play(&mut launcher, json!([{ "idle": 2 }]));
+    assert!(launcher.app().is_none());
+    // Who helps: Claude Code was found, so it is chosen; start from Quiz.
+    click(&mut launcher, "Quiz");
+    let dir = launcher.new_project_folder().unwrap();
+    assert_eq!(dir, base.join("projects").join("my-game"));
+    click(&mut launcher, "Create");
+    let app = launcher.app().expect("the editor opened");
+    assert!(app.agent_panel_open(), "the assistant was chosen");
+    // Its game code was built before the editor opened: the scene's types
+    // are known.
+    assert!(
+        app.status().starts_with("Project created. Tell the agent"),
+        "{}",
+        app.status()
+    );
+    assert_eq!(app.call("check", &json!({}))["passed"], true);
+    let info = app.call("project_info", &json!({}));
+    assert_eq!(info["project"]["name"], "My game", "{info}");
+    // The template's own files, not what the engine made in it.
+    for file in [
+        "scenes/main.scene.json",
+        "scripts/src/lib.rs",
+        "input.json",
+        ".mcp.json",
+        "CLAUDE.md",
+    ] {
+        assert!(dir.join(file).is_file(), "{file}");
+    }
+    // Built here, for this project.
+    assert!(dir.join(".wish/build/game.wasm").is_file());
+    let guide = std::fs::read_to_string(dir.join("CLAUDE.md")).unwrap();
+    assert!(guide.starts_with("# My game"), "{guide}");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("scenes/main.scene.json")).unwrap(),
+        std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../examples/quiz/scenes/main.scene.json")
+        )
+        .unwrap()
+    );
+    // The choices are kept, and the project is the first recent one.
+    let saved: Value = serde_json::from_str(&std::fs::read_to_string(&prefs).unwrap()).unwrap();
+    assert_eq!(saved["assistant"], "claude");
+    assert_eq!(
+        saved["recent"][0],
+        std::path::absolute(&dir).unwrap().display().to_string()
+    );
+
+    // A second start lists it; it opens from the list.
+    let mut again_options = launcher_options_like(&prefs, &base);
+    again_options.claude = None;
+    let mut again = Launcher::new(again_options);
+    play(&mut again, json!([{ "idle": 2 }]));
+    click(&mut again, "my-game");
+    let app = again.app().expect("opened from the list");
+    assert!(app.status().starts_with("opened "), "{}", app.status());
+    // Without Claude Code, nobody helps: the panel stays closed.
+    assert!(!app.agent_panel_open());
+}
+
+/// The options of a second start that shares the first one's preferences
+/// and projects folder.
+fn launcher_options_like(prefs: &Path, base: &Path) -> LaunchOptions {
+    let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
+    LaunchOptions {
+        software: true,
+        preferences: Some(prefs.to_path_buf()),
+        templates: wish_control::scaffold::templates(&examples),
+        projects_folder: base.join("projects"),
+        command: "wen".to_owned(),
+        claude: Some(std::env::current_exe().unwrap()),
+        build: true,
+        toolchain: Some(toolchain().clone()),
+    }
+}
+
+#[test]
+fn a_game_by_hand_starts_empty_and_a_wrong_folder_is_explained() {
+    let (options, base) = options("by-hand");
+    // A project of that name is there already: the next name is offered.
+    std::fs::create_dir_all(base.join("projects").join("my-game")).unwrap();
+    std::fs::write(base.join("projects/my-game/notes.txt"), "mine").unwrap();
+    let mut launcher = Launcher::new(options);
+    play(&mut launcher, json!([{ "idle": 2 }]));
+    assert_eq!(
+        launcher.new_project_folder().unwrap(),
+        base.join("projects").join("my-game-2")
+    );
+    // A folder that is not a project.
+    let open = launcher
+        .widgets()
+        .iter()
+        .find(|w| w.role == "TextInput" && w.rect.min.x > 600.0)
+        .map(|w| w.rect)
+        .expect("the folder field");
+    let not_a_project = base.join("projects").join("my-game");
+    play(
+        &mut launcher,
+        json!([
+            { "events": [{ "click": [open.center().x, open.center().y] }] },
+            { "events": [{ "text": not_a_project.display().to_string() }] },
+            { "idle": 1 }
+        ]),
+    );
+    click(&mut launcher, "Open");
+    assert!(launcher.app().is_none());
+    assert!(
+        launcher.status().contains("is not a project"),
+        "{}",
+        launcher.status()
+    );
+    // By hand, from the empty project.
+    launcher.set_assistant(Assistant::Nobody);
+    click(&mut launcher, "Empty project");
+    click(&mut launcher, "Create");
+    let app = launcher.app().expect("the editor opened");
+    assert!(!app.agent_panel_open());
+    assert_eq!(
+        app.call("project_info", &json!({}))["project"]["name"],
+        "My game 2"
+    );
+    assert!(
+        app.status().starts_with("Project created. Press Play"),
+        "{}",
+        app.status()
+    );
+    assert_eq!(app.call("check", &json!({}))["passed"], true);
+    // What was there before is untouched.
+    assert_eq!(
+        std::fs::read_to_string(base.join("projects/my-game/notes.txt")).unwrap(),
+        "mine"
+    );
+}

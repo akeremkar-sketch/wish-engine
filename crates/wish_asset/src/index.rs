@@ -13,8 +13,12 @@ use wish_core::{Diagnostic, Result};
 pub const SCRIPTS_FOLDER: &str = "scripts/";
 
 /// Folders of the project that are not assets: game code, scenario tests
-/// (and their golden images) and replays.
-pub const NON_ASSET_FOLDERS: &[&str] = &[SCRIPTS_FOLDER, "tests/", "replays/"];
+/// (and their golden images), replays and exported games.
+pub const NON_ASSET_FOLDERS: &[&str] = &[SCRIPTS_FOLDER, "tests/", "replays/", EXPORTS_FOLDER];
+
+/// Where exported games go (M9): copies of the project's files, not the
+/// project's own documents or assets.
+pub const EXPORTS_FOLDER: &str = "exports/";
 
 /// Whether a file name is an engine document rather than an asset: a scene,
 /// a prefab or a meta file.
@@ -89,7 +93,7 @@ pub(crate) fn walk_files(root: &Path) -> Result<Vec<(String, PathBuf)>> {
 pub fn documents(root: &Path) -> Result<Vec<(String, PathBuf)>> {
     Ok(walk_files(root)?
         .into_iter()
-        .filter(|(name, _)| is_document(name))
+        .filter(|(name, _)| is_document(name) && !name.starts_with(EXPORTS_FOLDER))
         .collect())
 }
 

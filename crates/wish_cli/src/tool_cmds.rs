@@ -173,7 +173,12 @@ pub fn run_calls(args: &DoArgs) -> Outcome {
 
 /// Runs `wen new`: writes a project folder (the scaffold lives in the
 /// control plane; this only chooses how MCP clients will start `wen`).
-pub fn new_project(dir: &str, name: Option<&str>, as_json: bool) -> Result<String> {
+pub fn new_project(
+    dir: &str,
+    name: Option<&str>,
+    template: Option<&str>,
+    as_json: bool,
+) -> Result<String> {
     let path = std::path::Path::new(dir);
     let name = name.map_or_else(|| wish_control::scaffold::name_for(path), str::to_owned);
     // The full path of this program, so that `.mcp.json` works even when
@@ -182,7 +187,29 @@ pub fn new_project(dir: &str, name: Option<&str>, as_json: bool) -> Result<Strin
         .ok()
         .and_then(|exe| exe.to_str().map(str::to_owned))
         .unwrap_or_else(|| "wen".to_owned());
-    let written = wish_control::scaffold::create_project(path, &name, &command)?;
+    let written = match template {
+        None => wish_control::scaffold::create_project(path, &name, &command)?,
+        Some(template) => {
+            let folder = wish_control::scaffold::templates_folder();
+            let known = folder
+                .as_deref()
+                .map(wish_control::scaffold::templates)
+                .unwrap_or_default();
+            let Some(found) = known.iter().find(|known| known.id == template) else {
+                let ids: Vec<&str> = known.iter().map(|known| known.id.as_str()).collect();
+                return Err(wish_core::Diagnostic::error(
+                    "invalid_template",
+                    format!("The engine has no template '{template}'."),
+                    if ids.is_empty() {
+                        "No templates were found: set WISH_TEMPLATES to a folder of project folders.".to_owned()
+                    } else {
+                        format!("Use one of: {}.", ids.join(", "))
+                    },
+                ));
+            };
+            wish_control::scaffold::create_from_template(path, &name, &command, &found.path)?
+        }
+    };
     Ok(if as_json {
         json!({ "ok": true, "root": dir, "name": name, "files": written, "mcp_command": command })
             .to_string()
@@ -511,6 +538,17 @@ fn serve_mcp_http(server: &mut wish_mcp::Server, address: &str) -> std::process:
     }
 }
 
+/// Text for a `project_export` answer.
+pub fn export_text(answer: &Value) -> String {
+    format!(
+        "Exported to {} ({} files, {} bytes). Run {} to play; zip the folder to share it.",
+        answer["folder"].as_str().unwrap_or("?"),
+        answer["files"],
+        answer["bytes"],
+        answer["program"].as_str().unwrap_or("?"),
+    )
+}
+
 /// Text for a `script_build` answer.
 pub fn build_text(answer: &Value) -> String {
     let mut text = String::new();
@@ -724,8 +762,11 @@ pub fn package(out: Option<&str>, as_json: bool) -> wish_core::Result<String> {
         &[
             "wen.exe",
             "wen",
+            "wish_player.exe",
+            "wish_player",
             "sdk",
             "toolchain",
+            "templates",
             "clean-test.ps1",
             "clean-test.wsb",
         ],
@@ -733,6 +774,35 @@ pub fn package(out: Option<&str>, as_json: bool) -> wish_core::Result<String> {
     std::fs::create_dir_all(&out).map_err(|e| failed("create the package folder", e))?;
     std::fs::copy(&exe, out.join(exe.file_name().unwrap_or_default()))
         .map_err(|e| failed("copy wen", e))?;
+    // The player exported games ship (M9): built beside wen.
+    let player_name = if cfg!(windows) {
+        "wish_player.exe"
+    } else {
+        "wish_player"
+    };
+    let mut warnings = Vec::new();
+    let player = beside.join(player_name);
+    if player.is_file() {
+        std::fs::copy(&player, out.join(player_name)).map_err(|e| failed("copy the player", e))?;
+    } else {
+        warnings.push(Diagnostic::warning(
+            "package_without_player",
+            "The player (wish_player) is not built beside wen, so the package cannot export games.",
+            "Build it first: cargo build --release -p wish_player (with the same flags as wen), then package again.",
+        ));
+    }
+    // The templates the welcome screen offers: the engine's examples.
+    let examples = std::path::Path::new(&manifest)
+        .parent()
+        .map(|root| root.join("examples"))
+        .unwrap_or_default();
+    let templates = wish_control::scaffold::templates(&examples);
+    for template in &templates {
+        wish_control::scaffold::copy_template(
+            &template.path,
+            &out.join("templates").join(&template.id),
+        )?;
+    }
     let cargo = std::env::var_os("CARGO").map_or_else(|| "cargo".into(), std::path::PathBuf::from);
     let sdk = wish_script::build::pack_sdk(
         &cargo,
@@ -755,7 +825,6 @@ pub fn package(out: Option<&str>, as_json: bool) -> wish_core::Result<String> {
         .map_err(|e| failed("write clean-test.wsb", e))?;
     // A program linked against the Visual C++ runtime DLL does not start on a
     // Windows that lacks it; the package needs one linked statically.
-    let mut warnings = Vec::new();
     let bytes = std::fs::read(&exe).unwrap_or_default();
     let imports = imported_dlls(&bytes);
     if imports

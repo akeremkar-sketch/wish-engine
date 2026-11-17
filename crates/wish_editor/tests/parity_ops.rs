@@ -619,3 +619,33 @@ fn an_agents_proposal_is_accepted_and_rejected_by_hand() {
     assert!(wish_editor::ids(app.rows()).contains("sun"));
     assert!(app.waiting_proposals().is_empty());
 }
+
+/// M9 WP1: the game exported from the Project menu.
+#[test]
+fn the_game_is_exported_from_the_menu() {
+    let dir = project("export");
+    std::fs::remove_dir_all(dir.join("scripts")).unwrap();
+    let mut app = open(&dir);
+    // The player program: any file stands for it here (the player's own
+    // tests run the real one).
+    app.workspace()
+        .set_player_path(std::env::current_exe().unwrap());
+    project_menu(&mut app, &["Export game"]);
+    assert!(
+        app.status()
+            .starts_with("game exported: exports/editor_test/"),
+        "{}",
+        app.status()
+    );
+    assert!(
+        dir.join("exports/editor_test/game/scenes/main.scene.json")
+            .is_file()
+    );
+    assert!(dir.join("exports/editor_test/LICENSES.txt").is_file());
+    // The export is not part of the project.
+    assert!(
+        !app.call("asset_list", &json!({}))
+            .to_string()
+            .contains("exports/")
+    );
+}

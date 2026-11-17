@@ -28,10 +28,37 @@ pub struct ClaudeCode {
     pub program: PathBuf,
 }
 
+/// Where Claude Code is installed, if it is: `WISH_CLAUDE`, else `claude`
+/// on the `PATH` (`claude.exe` or npm's `claude.cmd` on Windows), else the
+/// native installer's place (`~/.local/bin`). Only looks; starts nothing.
+pub fn find() -> Option<PathBuf> {
+    if let Some(program) = std::env::var_os("WISH_CLAUDE").filter(|value| !value.is_empty()) {
+        let program = PathBuf::from(program);
+        return program.is_file().then_some(program);
+    }
+    let names: &[&str] = if cfg!(windows) {
+        &["claude.exe", "claude.cmd"]
+    } else {
+        &["claude"]
+    };
+    let mut folders: Vec<PathBuf> = std::env::var_os("PATH")
+        .map(|path| std::env::split_paths(&path).collect())
+        .unwrap_or_default();
+    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" });
+    if let Some(home) = home {
+        folders.push(PathBuf::from(home).join(".local").join("bin"));
+    }
+    folders
+        .iter()
+        .flat_map(|folder| names.iter().map(move |name| folder.join(name)))
+        .find(|candidate| candidate.is_file())
+}
+
 impl Default for ClaudeCode {
     fn default() -> Self {
         let program = std::env::var_os("WISH_CLAUDE")
             .map(PathBuf::from)
+            .or_else(find)
             .unwrap_or_else(|| {
                 PathBuf::from(if cfg!(windows) {
                     "claude.exe"

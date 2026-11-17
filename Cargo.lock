@@ -4519,6 +4519,7 @@ dependencies = [
  "wish_examples",
  "wish_import",
  "wish_mcp",
+ "wish_player",
  "wish_render",
  "wish_scene",
  "wish_schema",
@@ -4666,6 +4667,20 @@ dependencies = [
  "wish_ecs",
  "wish_transform",
  "wish_types",
+]
+
+[[package]]
+name = "wish_player"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wish_audio",
+ "wish_control",
+ "wish_core",
+ "wish_import",
+ "wish_render",
+ "wish_script",
+ "wish_window",
 ]
 
 [[package]]

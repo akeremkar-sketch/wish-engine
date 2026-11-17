@@ -12,9 +12,11 @@ pub mod i18n;
 mod inspector;
 mod panels;
 pub mod parity;
+mod prefs;
 pub mod raster;
 pub mod script;
 mod settings;
+pub mod welcome;
 
 pub use app::{EditorApp, Opener, Row, ids};
 

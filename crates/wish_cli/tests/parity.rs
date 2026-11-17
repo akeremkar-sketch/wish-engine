@@ -138,6 +138,7 @@ fn examples() -> Vec<(&'static str, Value)> {
             json!({ "action": "restore", "name": "cp_1", "dry_run": true }),
         ),
         ("checkpoint", json!({ "action": "restore", "name": "nope" })),
+        ("project_export", json!({ "name": "Bad Name" })),
         ("permissions", json!({})),
         ("permissions", json!({ "action": "set", "mode": "suggest" })),
         ("proposals", json!({})),
@@ -451,6 +452,57 @@ fn wen_new_makes_a_project_the_tools_can_use() {
     let missing = wen().args(["new", "--json"]).output().unwrap();
     assert!(!missing.status.success());
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// M9 WP3: `wen new --template` starts from one of the engine's templates
+/// (the repository's examples in a development build).
+#[test]
+fn wen_new_starts_from_a_template() {
+    let dir = std::env::temp_dir().join(format!("wish-new-template-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let root = dir.to_str().unwrap();
+    let output = wen()
+        .args([
+            "new",
+            root,
+            "--name",
+            "My bricks",
+            "--template",
+            "bricks",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["ok"], true, "{report}");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("scripts/src/lib.rs")).unwrap(),
+        std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../examples/bricks/scripts/src/lib.rs")
+        )
+        .unwrap()
+    );
+    let project: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("wish.json")).unwrap()).unwrap();
+    assert_eq!(project["name"], "My bricks");
+    std::fs::remove_dir_all(&dir).unwrap();
+    // An unknown template is named with the ones there are.
+    let unknown = wen()
+        .args(["new", root, "--template", "nope", "--json"])
+        .output()
+        .unwrap();
+    assert!(!unknown.status.success());
+    let problem: Value = serde_json::from_slice(&unknown.stdout).unwrap();
+    assert_eq!(problem["error"]["code"], "invalid_template");
+    assert!(
+        problem["error"]["hint"]
+            .as_str()
+            .unwrap()
+            .contains("islands"),
+        "{problem}"
+    );
+    assert!(!dir.exists());
 }
 
 /// Talks MCP to a `wen mcp` process: every message, then end of input; the

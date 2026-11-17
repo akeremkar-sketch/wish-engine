@@ -23,6 +23,7 @@ wish_ecs.workspace = true
 wish_editor.workspace = true
 wish_examples.workspace = true
 wish_import.workspace = true
+wish_player.workspace = true
 wish_render.workspace = true
 wish_scene.workspace = true
 wish_schema.workspace = true

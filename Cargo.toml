@@ -24,6 +24,7 @@ wish_transform = { path = "crates/wish_transform" }
 wish_control = { path = "crates/wish_control" }
 wish_mcp = { path = "crates/wish_mcp" }
 wish_agent = { path = "crates/wish_agent" }
+wish_player = { path = "crates/wish_player" }
 wish_window = { path = "crates/wish_window" }
 wish_schema_macros = { path = "crates/wish_schema_macros" }
 wish_types = { path = "crates/wish_types" }

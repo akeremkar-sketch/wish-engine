@@ -10,8 +10,8 @@ use wish_core::{Diagnostic, Result};
 /// The commands `wen` understands.
 pub const COMMANDS: &[&str] = &[
     "run", "bench", "schema", "mv", "check", "fmt", "migrate", "watch", "capture", "describe",
-    "shaders", "view", "edit", "call", "do", "new", "build", "play", "replay", "test", "sdk",
-    "package", "mcp", "examples", "help", "version",
+    "shaders", "view", "edit", "call", "do", "new", "build", "export", "play", "replay", "test",
+    "sdk", "package", "mcp", "examples", "help", "version",
 ];
 
 /// A parsed command line.
@@ -132,6 +132,16 @@ pub enum Command {
         /// Only check that it compiles.
         dry_run: bool,
     },
+    /// Export the game as a folder that runs without the engine (the
+    /// `project_export` tool).
+    Export {
+        /// The project folder.
+        root: Option<String>,
+        /// The folder's and program's name.
+        name: Option<String>,
+        /// Replace an earlier export of that name.
+        overwrite: bool,
+    },
     /// Build a package for machines without developer tools (engine development).
     Package {
         /// Where to put it (default: `package` next to wen).
@@ -148,6 +158,8 @@ pub enum Command {
         dir: String,
         /// The project's name (default: the folder's name).
         name: Option<String>,
+        /// The template to start from (`islands`), else an empty project.
+        template: Option<String>,
     },
     /// Serve the tools over MCP on standard input and output.
     Mcp(ToolContext),
@@ -500,8 +512,14 @@ fn flags_of(command: &str) -> &'static [(&'static str, bool)] {
             ("--json", false),
         ],
         "shaders" => &[("--dir", true), ("--json", false)],
-        "new" => &[("--name", true), ("--json", false)],
+        "new" => &[("--name", true), ("--template", true), ("--json", false)],
         "build" => &[("--root", true), ("--dry-run", false), ("--json", false)],
+        "export" => &[
+            ("--root", true),
+            ("--name", true),
+            ("--overwrite", false),
+            ("--json", false),
+        ],
         "replay" => &[("--root", true), ("--json", false)],
         "test" => &[
             ("--root", true),
@@ -814,6 +832,11 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
             root: value_of("--root").map(str::to_owned),
             dry_run: values.iter().any(|(flag, _)| *flag == "--dry-run"),
         },
+        "export" => Command::Export {
+            root: value_of("--root").map(str::to_owned),
+            name: value_of("--name").map(str::to_owned),
+            overwrite: values.iter().any(|(flag, _)| *flag == "--overwrite"),
+        },
         "package" => Command::Package {
             out: value_of("--out").map(str::to_owned),
         },
@@ -830,6 +853,7 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
             Command::New {
                 dir: positional[0].to_owned(),
                 name: value_of("--name").map(str::to_owned),
+                template: value_of("--template").map(str::to_owned),
             }
         }
         "migrate" => Command::Migrate {

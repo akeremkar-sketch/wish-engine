@@ -209,6 +209,11 @@ pub const PARITY: &[Capability] = &[
         "parity_ops::a_checkpoint_is_saved_compared_and_gone_back_to",
     ),
     op(
+        "project_export",
+        "Project menu: Export game (exports/<name>/)",
+        "parity_ops::the_game_is_exported_from_the_menu",
+    ),
+    op(
         "permissions",
         "Project menu: Permissions (Only suggest, Apply I review, Autonomous)",
         "parity_ops::an_agents_proposal_is_accepted_and_rejected_by_hand",

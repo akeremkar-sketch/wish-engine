@@ -113,6 +113,18 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "An entity in a running session went far out of the world (|y| over 1000 m); it probably fell. Add a floor under it or remove entities that fall too far.",
     ),
     (
+        "export_exists",
+        "An export of that name exists already; pass overwrite to replace it.",
+    ),
+    (
+        "export_has_errors",
+        "The project has errors (check), so it was not exported. Fix them first.",
+    ),
+    (
+        "export_needs_build",
+        "The project's game code is not built, so it was not exported. Build it first (script_build).",
+    ),
+    (
         "expr_syntax",
         "A where or until condition could not be read. The column says where; write paths like Transform.translation.y, comparisons with ==, and join conditions with && or ||.",
     ),
@@ -253,6 +265,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "A runtime entity id is malformed or refers to an entity that no longer exists.",
     ),
     (
+        "invalid_export_name",
+        "An export's name is 1 to 40 of a-z, 0-9, _ and -.",
+    ),
+    (
         "invalid_hash",
         "A hash string is not 32 hexadecimal digits.",
     ),
@@ -303,6 +319,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "invalid_system_name",
         "A system name is empty or contains characters that are not allowed.",
+    ),
+    (
+        "invalid_template",
+        "A template given to wen new or the welcome screen is not a project folder.",
     ),
     (
         "invalid_test_file",
@@ -462,12 +482,20 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "The wen being packaged needs the Visual C++ runtime DLL, which a clean Windows may not have; build it with the C runtime linked in (RUSTFLAGS=-C target-feature=+crt-static).",
     ),
     (
+        "package_without_player",
+        "The player program is not built beside wen, so the package cannot export games. Build wish_player first.",
+    ),
+    (
         "path_case_mismatch",
         "A path differs only in letter case from an existing file. Paths are case-sensitive: write the existing name exactly, or the same file would be opened twice under two names.",
     ),
     (
         "permission_denied",
         "Only a person can do that (change the permission mode, accept or reject a proposal). Ask the person working with you.",
+    ),
+    (
+        "player_missing",
+        "The player program (wish_player) was not found next to the engine. Build it or set WISH_PLAYER.",
     ),
     ("png_decode", "An image could not be decoded as PNG."),
     ("png_encode", "A picture could not be encoded as PNG."),

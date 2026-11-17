@@ -100,6 +100,15 @@ Wish Engine: yapay zekâya tamamen entegre ama yapay zekâsız da eksiksiz kulla
     - Yeni araç = `wish_editor::parity::PARITY` satırı + elle yapan test.
     - Değiştiren aracın her eylemi `dry_run` ister (`tests/catalog.rs`).
     - Salt okuyan list/get eylemleri etkinlik akışına girmez (`activity::worth_noting`).
+- **Süren: M9 (ürünleştirme)**, `m9-product` dalında (`m8b-cockpit` üzerine). Tasarım: [docs/design/M9-urunlestirme.md](docs/design/M9-urunlestirme.md).
+  - WP1–WP2 bitti:
+    - `wish_player` (oynatıcı; `wen play` de onu kullanır),
+    - `project_export` (31. araç), `wen export`, editörde "Oyunu dışa aktar",
+    - `THIRD_PARTY_LICENSES.md` (`python tools/third_party.py`; bağımlılık değişince çalıştır, test denetler).
+  - Dışa aktarılan vitrin oyunu ayrı süreçte projeyle bit bit aynı oynuyor.
+  - WP3 bitti: `wen edit` proje olmadan karşılama ekranını açar (`wish_editor::welcome::Launcher`: yardımcı seç → şablon → ad/klasör, son projeler), aynı pencerede editöre geçer; `scaffold::create_from_template`, `wen new --template`, tercihler `wish_editor::prefs` (her yazan kendi anahtarını değiştirir).
+  - WP4 bitti: `docs/user/en/guide.md`, `docs/user/tr/kilavuz.md`, `CONTRIBUTING.md`, yeni `README.md`. Arayüz metni değişirse kılavuzdaki düğme adlarını da güncelle (Türkçe arayüzde entity = "nesne", asset = "varlık").
+  - Sıradaki: WP5 paketleme ve yayın denetimi (kullanıcı adımlarıyla).
 - **`wen`'i çalıştırmak:** `cargo run -p wish_cli --release -- run --example bounce --frames 10000 --seed 7 --json`. Derlenmiş ikili `C:\wish-build\target\release\wen.exe` altında.
 - **Hash'leri değiştirme konusunda dikkat:** `wish_ecs/tests/snapshot.rs` ve `wish_core` testlerinde kayıtlı hash/rastgelelik değerleri var. Bunlar kırılırsa önce bilinçli bir format değişikliği olup olmadığını düşün; bilinçliyse sürüm etiketini (`wish-world-hash-v1` vb.) artır.
 - **Git:** M1 (`m1-core`) ve M2 (`m2-data`) kendi dallarında geliştirilip `main`'e birleştirildi. Her kilometre taşı kendi dalında (`m2-...`) yürür, bitince `main`'e birleştirilir. Commit kimliği depoya özel proje kimliğidir (kullanıcı kararı); kişisel e-posta kullanma.

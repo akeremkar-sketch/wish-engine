@@ -302,6 +302,8 @@ struct Actions {
     run_tests: bool,
     /// Save a checkpoint now.
     save_checkpoint: bool,
+    /// Export the game.
+    export: bool,
     /// Set the permission mode.
     permission: Option<&'static str>,
     /// Show or hide the agent's panel.
@@ -376,6 +378,7 @@ impl Actions {
             || self.show_problems
             || self.run_tests
             || self.save_checkpoint
+            || self.export
             || self.permission.is_some()
             || self.toggle_cockpit
             || self.connect.is_some()
@@ -1436,10 +1439,10 @@ impl EditorApp {
     /// change. Without a file, the language comes from `WISH_LANG` or the
     /// system's; else English.
     pub fn use_preferences(&mut self, path: std::path::PathBuf) {
-        let saved = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-            .and_then(|prefs| prefs["language"].as_str().map(str::to_owned));
+        let saved = crate::prefs::read(&path)
+            .get("language")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
         let chosen = saved
             .as_deref()
             .and_then(crate::i18n::find)
@@ -1447,7 +1450,29 @@ impl EditorApp {
         if let Some(language) = chosen {
             self.set_language(language.code);
         }
+        // This project becomes the first of the recent ones (the welcome
+        // screen lists them); a failure to write costs only that.
+        let root = self.workspace.root().to_path_buf();
+        let _ = crate::prefs::update(&path, |prefs| crate::prefs::remember(prefs, &root));
         self.preferences = Some(path);
+    }
+
+    /// Shows the Agent panel (the welcome screen opens it when the person
+    /// chose to work with an assistant).
+    pub fn open_agent_panel(&mut self) {
+        self.cockpit.open = true;
+        self.picture_stale = true;
+    }
+
+    /// Whether the Agent panel is shown.
+    pub fn agent_panel_open(&self) -> bool {
+        self.cockpit.open
+    }
+
+    /// Sets the status line (what the welcome screen did before the editor
+    /// opened, such as building the game code).
+    pub fn set_status(&mut self, status: String) {
+        self.status = status;
     }
 
     /// Writes the preferences, if the editor keeps them (a failure only
@@ -1456,11 +1481,10 @@ impl EditorApp {
         let Some(path) = self.preferences.clone() else {
             return;
         };
-        let text = format!("{:#}\n", json!({ "language": self.language }));
-        let written = path
-            .parent()
-            .map_or(Ok(()), std::fs::create_dir_all)
-            .and_then(|()| std::fs::write(&path, text));
+        let language = self.language;
+        let written = crate::prefs::update(&path, |prefs| {
+            prefs.insert("language".to_owned(), json!(language));
+        });
         if let Err(error) = written {
             self.status = tf(
                 "the language could not be saved: {error}",
@@ -2523,6 +2547,24 @@ impl EditorApp {
             self.run_tests(false);
         }
         self.checkpoint_act(&actions);
+        if actions.export {
+            let exported = self.call("project_export", &json!({ "overwrite": true }));
+            self.status = if exported["ok"] == true {
+                tf(
+                    "game exported: {program} (zip its folder to share it)",
+                    &[("program", &exported["program"].as_str().unwrap_or("?"))],
+                )
+            } else {
+                let message = exported["error"]["message"]
+                    .as_str()
+                    .unwrap_or(t("it did not work"));
+                let hint = exported["error"]["hint"].as_str().unwrap_or("");
+                tf(
+                    "not exported: {message} {hint}",
+                    &[("message", &message), ("hint", &hint)],
+                )
+            };
+        }
         if actions.toggle_cockpit {
             self.cockpit.open = !self.cockpit.open;
         }
@@ -3512,6 +3554,16 @@ impl EditorApp {
                         }
                     });
                     if ui
+                        .button(t("Export game"))
+                        .on_hover_text(t(
+                            "A folder under exports/ that runs on a machine without the engine (no editor, no compiler)",
+                        ))
+                        .clicked()
+                    {
+                        actions.export = true;
+                        ui.close();
+                    }
+                    if ui
                         .button(t("Connect an outside agent..."))
                         .on_hover_text(t("Let Claude Code (or any MCP client) work in this editor"))
                         .clicked()
@@ -4109,7 +4161,7 @@ fn egui_modifiers(modifiers: Modifiers) -> egui::Modifiers {
 }
 
 /// The window's plain events as egui's.
-fn convert(events: &[ShellEvent], pointer: Option<(f32, f32)>) -> Vec<egui::Event> {
+pub(crate) fn convert(events: &[ShellEvent], pointer: Option<(f32, f32)>) -> Vec<egui::Event> {
     let mut out = Vec::new();
     let mut at = pointer.map_or(pos2(0.0, 0.0), |(x, y)| pos2(x, y));
     for event in events {

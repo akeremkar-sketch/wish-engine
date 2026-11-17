@@ -50,6 +50,9 @@ pub struct Workspace {
     pub(crate) activity: crate::activity::Activity,
     /// How much agents may change by themselves, and what waits (M8b).
     pub(crate) policy: crate::policy::Policy,
+    /// The player program `project_export` copies, if not the one next to
+    /// the running program (M9).
+    pub(crate) player_path: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for Workspace {
@@ -108,6 +111,7 @@ impl Workspace {
             scripts: crate::script::Scripts::default(),
             activity: crate::activity::Activity::default(),
             policy: crate::policy::Policy::default(),
+            player_path: None,
         };
         workspace.load_built_module();
         Ok(workspace)
@@ -262,6 +266,23 @@ impl Workspace {
             self.activity.record(tool, args, actor, &answer);
         }
         answer
+    }
+
+    /// Runs a tool inside another one (not noted as activity, not held).
+    pub(crate) fn run_tool(
+        &mut self,
+        name: &str,
+        args: &Value,
+        actor: &Actor,
+    ) -> Result<Map<String, Value>> {
+        self.run(name, args, actor)
+    }
+
+    /// The player program exported games use (tests point at their own
+    /// build; otherwise `WISH_PLAYER` or the one next to the running
+    /// program).
+    pub fn set_player_path(&mut self, path: PathBuf) {
+        self.player_path = Some(path);
     }
 
     fn run(&mut self, name: &str, args: &Value, actor: &Actor) -> Result<Map<String, Value>> {
