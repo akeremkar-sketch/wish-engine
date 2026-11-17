@@ -677,7 +677,7 @@ const SPLASH_SECONDS: f64 = 2.0;
 /// The mark's own animation, within it.
 const MARK_SECONDS: f64 = 1.4;
 
-/// A frame of the opening animation: the wishbone comes together in the
+/// A frame of the opening animation: the wand is waved in the
 /// middle, the name fades in under it.
 fn splash_frame(welcome: &mut Welcome, size: (u32, u32), played: f64, seconds: f64) -> bool {
     if (welcome.canvas.width, welcome.canvas.height) != size {

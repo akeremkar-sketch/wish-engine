@@ -81,7 +81,7 @@ pub struct Editor {
 
 /// A widget on screen, as the accessibility tree describes it: what a
 /// screen reader would say, and where it is. Tests find buttons and fields
-/// The engine's icon for windows and the taskbar: the wishbone on a dark
+/// The engine's icon for windows and the taskbar: the wishing wand on a dark
 /// tile, `size` pixels square, as straight RGBA pixels with its size.
 pub fn window_icon(size: u16) -> (Vec<u8>, u32, u32) {
     let side = u32::from(size.clamp(16, 512));

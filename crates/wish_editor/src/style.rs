@@ -171,7 +171,7 @@ pub enum Icon {
     Dot,
     Screen,
     Chat,
-    /// The engine's wishbone (the AI mode).
+    /// The engine's wishing wand (the AI mode).
     Wish,
 }
 

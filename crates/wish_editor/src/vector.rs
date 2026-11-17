@@ -1,4 +1,4 @@
-//! Vector icons and the engine's mark (M9; the wishbone, M9c): each icon is SVG path data on a
+//! Vector icons and the engine's mark (M9; the wishing wand, M9c): each icon is SVG path data on a
 //! 24-unit grid, drawn by `vello_cpu` (the rasterizer egui draws its text
 //! with) with anti-aliased curves, round caps and joins, into a texture at
 //! the exact pixel size it is shown at. Textures are made once per icon and
@@ -8,9 +8,7 @@ use std::collections::BTreeMap;
 
 use egui::{Color32, ColorImage, Context, Id, TextureHandle, TextureOptions};
 use vello_cpu::color::{AlphaColor, Srgb};
-use vello_cpu::kurbo::{
-    Affine, BezPath, Cap, Circle, CubicBez, Join, ParamCurve, Point, Shape as _, Stroke,
-};
+use vello_cpu::kurbo::{Affine, BezPath, Cap, Circle, Join, Point, Shape as _, Stroke};
 use vello_cpu::peniko::{Brush, Gradient};
 use vello_cpu::{Pixmap, RenderContext, Resources};
 
@@ -155,9 +153,12 @@ fn parts(icon: Icon) -> &'static [Part] {
         ],
         Icon::Dot => &[Disc(12.0, 12.0, 3.5)],
         Icon::Wish => &[
-            Line("M12 17 C11 13.5 5.4 12 6.6 4.8 L4.6 3.6"),
-            Line("M12 17 C13 13.5 18.6 12 17.4 4.8 L19.4 3.6"),
-            Disc(12.0, 18.2, 3.3),
+            Line("M4.5 19.5 L13.2 10.8"),
+            Soft(
+                "M16.6 3.2 L17.9 6.1 L21 6.4 L18.7 8.5 L19.4 11.6 L16.6 10 L13.9 11.6 L14.5 8.5 L12.2 6.4 L15.3 6.1 Z",
+            ),
+            Disc(8.6, 6.6, 1.1),
+            Disc(5.6, 9.4, 0.8),
         ],
         Icon::Chat => &[
             Line(
@@ -249,105 +250,188 @@ fn rgba(color: (u8, u8, u8), alpha: f64) -> AlphaColor<Srgb> {
     )
 }
 
-/// The mark's bone colour (on the editor's dark grounds).
+/// The wand's colour (on the editor's dark grounds).
 const BONE: (u8, u8, u8) = (237, 230, 216);
-/// The winning arm's colour (the interface's accent).
+/// The grip and the trail (the interface's accent).
 const WIN: (u8, u8, u8) = (255, 107, 44);
+/// The star and the motes.
+const GOLD: (u8, u8, u8) = (255, 186, 92);
 
-/// One arm of the wishbone, from the joint up to its tip, `grown` of the
-/// way, its tip pushed `spread` units outward (`side`: -1 left, 1 right).
-fn wishbone_arm(
+/// Smooth in and out.
+fn ease_in_out(x: f64) -> f64 {
+    let x = unit(x);
+    x * x * (3.0 - 2.0 * x)
+}
+
+/// A straight piece with round ends.
+fn piece(context: &mut RenderContext, from: Point, to: Point, width: f64) {
+    context.set_stroke(
+        Stroke::new(width)
+            .with_caps(Cap::Round)
+            .with_join(Join::Round),
+    );
+    let mut line = BezPath::new();
+    line.move_to(from);
+    line.line_to(to);
+    context.stroke_path(&line);
+}
+
+/// Where the wand turns (its handle's end), how long it is, its slant at
+/// rest and where its wave starts (radians; y grows downward).
+const HANDLE: Point = Point::new(22.0, 88.0);
+const LENGTH: f64 = 70.0;
+const REST: f64 = -0.86;
+const FROM: f64 = -1.75;
+/// The motes the trail leaves behind the tip: how far back along the
+/// swing, their size and strength.
+const MOTES: [(f64, f64, f64); 4] = [
+    (0.3, 3.0, 0.9),
+    (0.52, 2.4, 0.65),
+    (0.76, 1.8, 0.42),
+    (1.0, 1.3, 0.25),
+];
+
+/// A point on the circle the tip sweeps, `r` from the handle.
+fn on_swing(r: f64, angle: f64) -> Point {
+    Point::new(HANDLE.x + r * angle.cos(), HANDLE.y + r * angle.sin())
+}
+
+/// A five-pointed star at `centre`, `radius` to its points, turned by
+/// `turn` radians, its corners rounded by a stroke `round` wide.
+fn star(
     context: &mut RenderContext,
-    side: f64,
-    grown: f64,
-    spread: f64,
+    centre: Point,
+    radius: f64,
+    turn: f64,
+    round: f64,
     color: AlphaColor<Srgb>,
 ) {
-    if grown <= 0.0 {
-        return;
+    let mut outline = BezPath::new();
+    for i in 0..10u8 {
+        let reach = if i % 2 == 0 { radius } else { radius * 0.5 };
+        let angle = turn - std::f64::consts::FRAC_PI_2 + f64::from(i) * std::f64::consts::PI / 5.0;
+        let corner = Point::new(
+            centre.x + reach * angle.cos(),
+            centre.y + reach * angle.sin(),
+        );
+        if i == 0 {
+            outline.move_to(corner);
+        } else {
+            outline.line_to(corner);
+        }
     }
-    let tip = Point::new(50.0 + side * (24.0 + spread), 15.0);
-    let curve = CubicBez::new(
-        Point::new(50.0, 72.0),
-        Point::new(50.0 + side * 6.0, 58.0),
-        Point::new(50.0 + side * (34.0 + spread * 0.8), 44.0),
-        tip,
-    );
-    // Thick at the joint and thinner toward the tip, as a bone is: short
-    // round pieces of shrinking width.
-    let pieces = 48;
-    let last = ((grown * f64::from(pieces)).ceil() as u32).min(pieces);
-    let mut previous = curve.eval(0.0);
+    outline.close_path();
     context.set_paint(color);
-    for i in 1..=last {
-        let u = (f64::from(i) / f64::from(pieces)).min(grown);
-        let point = curve.eval(u);
+    context.fill_path(&outline);
+    if round > 0.0 {
         context.set_stroke(
-            Stroke::new(13.0 - 6.0 * u)
+            Stroke::new(round)
                 .with_caps(Cap::Round)
                 .with_join(Join::Round),
         );
-        let mut piece = BezPath::new();
-        piece.move_to(previous);
-        piece.line_to(point);
-        context.stroke_path(&piece);
-        previous = point;
-    }
-    // The tip flares outward, as a wishbone's does.
-    if grown >= 1.0 {
-        let end = Point::new(50.0 + side * (33.0 + spread), 10.0);
-        context.set_stroke(
-            Stroke::new(7.0)
-                .with_caps(Cap::Round)
-                .with_join(Join::Round),
-        );
-        let mut flare = BezPath::new();
-        flare.move_to(tip);
-        flare.quad_to(Point::new(tip.x + side * 2.0, end.y - 1.0), end);
-        context.stroke_path(&flare);
+        context.stroke_path(&outline);
     }
 }
 
-/// The engine's mark, a wishbone (lades kemiği): a bone-coloured bone whose
-/// winning arm is orange, on a 100-unit grid. `t` runs over its start-up
-/// animation (0 to 1; 1 and after: the still mark): the keel pops, the arms
-/// grow, the two pull, and the orange one wins with a few sparks.
-fn draw_wishbone(context: &mut RenderContext, t: f64) {
-    let keel = back_out(span(t, 0.0, 0.22));
-    let grow = ease_out(span(t, 0.12, 0.5));
-    // The pull: out and back, smaller each time.
-    let pull = span(t, 0.52, 0.86);
-    let spread = (pull * std::f64::consts::TAU).sin() * 4.5 * (1.0 - pull);
-    let win = span(t, 0.66, 1.0);
-    if win > 0.0 && win < 1.0 {
-        let glow = (win * std::f64::consts::PI).sin();
-        context.set_paint(Brush::Gradient(
-            Gradient::new_radial((80.0, 11.0), 26.0)
-                .with_stops([rgba(WIN, 0.45 * glow), rgba(WIN, 0.0)]),
-        ));
-        context.fill_path(&Circle::new((80.0, 11.0), 26.0).to_path(0.05));
-        for k in 0..6u8 {
-            let angle = -std::f64::consts::PI * (0.05 + 0.16 * f64::from(k));
-            let reach = 6.0 + 20.0 * ease_out(win) * (0.7 + 0.1 * f64::from(k % 3));
-            let at = Point::new(80.0 + angle.cos() * reach, 11.0 + angle.sin() * reach);
-            context.set_paint(rgba((255, 190, 120), 1.0 - win));
-            context.fill_path(&Circle::new(at, 1.8 * (1.0 - win * 0.6)).to_path(0.05));
+/// The star's size, and the rod's length up to it.
+const STAR: f64 = 12.0;
+const ROD: f64 = LENGTH - 6.0;
+
+/// The engine's mark, a wishing wand (dilek çubuğu), on a 100-unit grid:
+/// a bone-coloured rod with an orange grip and a soft gold five-pointed
+/// star at its tip. `t` runs over its
+/// start-up animation (0 to 1; 1 and after: the still mark): the wand is
+/// raised and swept up, its tip drawing an arc; as it stops (with a little
+/// flick) the star turns into place and lights up, and the arc falls apart
+/// into motes that fade.
+fn draw_wand(context: &mut RenderContext, t: f64) {
+    let shown = ease_out(span(t, 0.0, 0.12));
+    let swing = ease_in_out(span(t, 0.05, 0.5));
+    let settle = back_out(span(t, 0.45, 0.7));
+    let over = 0.16;
+    let angle = if t < 0.5 {
+        FROM + (REST - over - FROM) * swing
+    } else {
+        (REST - over) + over * settle
+    };
+    let tip = on_swing(ROD, angle);
+    let r = ROD + 4.0;
+    // The arc while sweeping, fading as the motes come.
+    let apart = ease_in_out(span(t, 0.5, 0.75));
+    let end = angle - 0.14;
+    let start = FROM.max(end - 1.2);
+    if end > start + 0.02 && shown > 0.0 && apart < 1.0 {
+        let mut previous = on_swing(r, start);
+        for i in 1..=50 {
+            let k = f64::from(i) / 50.0;
+            let next = on_swing(r, start + (end - start) * k);
+            context.set_paint(rgba(WIN, 0.85 * k * shown * (1.0 - apart)));
+            piece(context, previous, next, 0.6 + 3.9 * k);
+            previous = next;
         }
     }
-    wishbone_arm(context, 1.0, grow, spread, rgba(WIN, 1.0));
-    wishbone_arm(context, -1.0, grow, spread, rgba(BONE, 1.0));
-    if keel > 0.0 {
-        context.set_paint(rgba(BONE, 1.0));
-        context.fill_path(&Circle::new((50.0, 79.0), 8.5 * keel).to_path(0.05));
+    // The motes: only in the animation; they fade before it ends, so the
+    // still mark is the wand and its star alone.
+    let gone = span(t, 0.8, 1.0);
+    for (i, (back, size, strength)) in MOTES.iter().enumerate() {
+        let delay = 0.05 * f64::from(u8::try_from(i).unwrap_or(0));
+        let come = back_out(span(t, 0.5 + delay, 0.72 + delay));
+        if come > 0.0 && gone < 1.0 {
+            context.set_paint(rgba(GOLD, strength * unit(come) * (1.0 - gone)));
+            context.fill_path(&Circle::new(on_swing(r, REST - back), size * come).to_path(0.05));
+        }
     }
+    // The rod and its grip.
+    let along = |k: f64| HANDLE.lerp(tip, k);
+    context.set_paint(rgba(BONE, shown));
+    let mut previous = HANDLE;
+    for i in 1..=30 {
+        let k = f64::from(i) / 30.0;
+        let next = along(k);
+        piece(context, previous, next, 9.0 - 3.5 * k);
+        previous = next;
+    }
+    let direction = (tip - HANDLE).normalize();
+    let across = vello_cpu::kurbo::Vec2::new(-direction.y, direction.x) * 5.0;
+    context.set_paint(rgba(WIN, shown));
+    for k in [0.2, 0.28] {
+        piece(context, along(k) - across, along(k) + across, 2.4);
+    }
+    // The star: small while the wand is waved, then it turns into place,
+    // grows and glows.
+    let centre = tip + direction * (STAR * 0.55);
+    let glow = span(t, 0.5, 0.95);
+    if glow > 0.0 && glow < 1.0 {
+        let strength = (glow * std::f64::consts::PI).sin();
+        let reach = STAR * 2.2;
+        context.set_paint(Brush::Gradient(
+            Gradient::new_radial(centre, reach as f32)
+                .with_stops([rgba(GOLD, 0.55 * strength), rgba(GOLD, 0.0)]),
+        ));
+        context.fill_path(&Circle::new(centre, reach).to_path(0.05));
+    }
+    let grown = if t < 0.45 {
+        0.45
+    } else {
+        back_out(span(t, 0.45, 0.68)).max(0.45)
+    };
+    let turning = (1.0 - span(t, 0.45, 0.7)) * std::f64::consts::TAU / 5.0;
+    star(
+        context,
+        centre,
+        STAR * grown,
+        0.22 + turning,
+        5.0 * grown,
+        rgba(GOLD, shown),
+    );
 }
 
 /// The mark at `size` pixels, at moment `t` of its animation.
 fn rasterize_logo(size: u16, t: f64) -> ColorImage {
     let mut context = RenderContext::new(size, size);
-    // The bone spans 8..92 across and 4..88 down: centred in the square.
-    context.set_transform(Affine::scale(f64::from(size) / 100.0) * Affine::translate((0.0, 4.0)));
-    draw_wishbone(&mut context, t);
+    // The still mark spans about 17..83 across and 20..93 down: centred.
+    context.set_transform(Affine::scale(f64::from(size) / 100.0) * Affine::translate((0.0, -6.5)));
+    draw_wand(&mut context, t);
     to_image(&context, size)
 }
 
@@ -416,8 +500,8 @@ pub(crate) fn app_icon(size: u16) -> Vec<u8> {
     context.set_paint(rgba((29, 28, 25), 1.0));
     context
         .fill_path(&vello_cpu::kurbo::RoundedRect::new(0.0, 0.0, 128.0, 128.0, 28.0).to_path(0.05));
-    context.set_transform(Affine::scale(unit) * Affine::translate((14.0, 18.0)));
-    draw_wishbone(&mut context, 1.0);
+    context.set_transform(Affine::scale(unit) * Affine::translate((14.0, 7.5)));
+    draw_wand(&mut context, 1.0);
     let mut pixmap = Pixmap::new(size, size);
     let mut resources = Resources::new();
     context.render(&mut pixmap, &mut resources);

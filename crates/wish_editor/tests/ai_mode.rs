@@ -378,13 +378,24 @@ fn the_window_icon_is_the_mark_on_a_dark_tile() {
     // The corner is outside the rounded tile; the middle of the tile is dark.
     assert_eq!(at(0, 0)[3], 0);
     assert_eq!(at(4, 32), &[29, 28, 25, 255]);
-    // The bone's keel, bone-coloured, and the winning arm, orange.
-    let orange = (0..64)
-        .flat_map(|y| (0..64).map(move |x| (x, y)))
+    // The wand's gold star (upper right) and its bone-coloured rod.
+    let count = |test: &dyn Fn(&[u8]) -> bool| {
+        (0..64)
+            .flat_map(|y| (0..64).map(move |x| (x, y)))
+            .filter(|&(x, y)| test(at(x, y)))
+            .count()
+    };
+    let gold = count(&|p| p[0] > 240 && (160..215).contains(&p[1]) && p[2] < 130);
+    let bone = count(&|p| p[0] > 220 && p[1] > 215 && p[2] > 195);
+    assert!(gold > 30, "{gold}");
+    assert!(bone > 30, "{bone}");
+    // The star is in the upper right quarter.
+    let star = (0..32)
+        .flat_map(|y| (32..64).map(move |x| (x, y)))
         .filter(|&(x, y)| {
             let p = at(x, y);
-            p[0] > 230 && p[1] < 140 && p[2] < 90
+            p[0] > 240 && (160..215).contains(&p[1]) && p[2] < 130
         })
         .count();
-    assert!(orange > 20, "{orange}");
+    assert!(star * 10 > gold * 8, "{star} of {gold}");
 }
