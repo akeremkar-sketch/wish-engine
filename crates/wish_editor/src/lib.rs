@@ -8,6 +8,7 @@ mod ai_mode;
 mod app;
 mod browser;
 mod cockpit;
+mod commands;
 mod gizmo;
 pub mod i18n;
 mod inspector;

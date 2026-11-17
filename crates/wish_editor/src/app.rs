@@ -196,6 +196,10 @@ pub struct EditorApp {
     restyle: bool,
     /// The workspaces there are, in the interface's language (M10a).
     workspaces: Vec<crate::workspaces::WorkspaceEntry>,
+    /// The person's own shortcuts, by command id (M10a).
+    keys: BTreeMap<String, String>,
+    /// The command palette: open, what is typed, which line is chosen.
+    palette: RefCell<Palette>,
     /// An earlier export of this name is there: the person is asked before
     /// it is replaced (its folder).
     export_confirm: Option<String>,
@@ -304,6 +308,17 @@ pub struct EditorApp {
     exit: bool,
 }
 
+/// The command palette's state (M10a).
+#[derive(Default)]
+struct Palette {
+    open: bool,
+    filter: String,
+    /// The line Enter runs.
+    chosen: usize,
+    /// The text box takes the keyboard on the next layout.
+    focus: bool,
+}
+
 /// A handle being dragged: the drag, and what it has made so far.
 struct ActiveDrag {
     drag: Drag,
@@ -360,6 +375,8 @@ struct Actions {
     open_packages: bool,
     /// Use this theme.
     theme: Option<String>,
+    /// Run this command (a shortcut or the palette).
+    command: Option<&'static str>,
     /// What the Packages window asked for.
     packages: crate::packages_window::PackagesActions,
     /// Go back to this checkpoint.
@@ -439,6 +456,7 @@ impl Actions {
             || self.switch_mode.is_some()
             || self.open_packages
             || self.theme.is_some()
+            || self.command.is_some()
             || self.packages.any()
             || self.ai.any()
             || self.restore_checkpoint.is_some()
@@ -565,6 +583,8 @@ impl EditorApp {
             themes: Vec::new(),
             restyle: false,
             workspaces: Vec::new(),
+            keys: BTreeMap::new(),
+            palette: RefCell::new(Palette::default()),
             export_confirm: None,
             cockpit: crate::cockpit::Cockpit::new(Box::new(
                 wish_agent::claude::ClaudeCode::default(),
@@ -1522,6 +1542,12 @@ impl EditorApp {
         if let Some(shown) = prefs.get("game_view").and_then(Value::as_bool) {
             self.game_view = shown;
         }
+        if let Some(keys) = prefs.get("keys").and_then(Value::as_object) {
+            self.keys = keys
+                .iter()
+                .filter_map(|(id, keys)| Some((id.clone(), keys.as_str()?.to_owned())))
+                .collect();
+        }
         if let Some(key) = prefs.get("theme").and_then(Value::as_str) {
             self.set_theme(key);
         }
@@ -1904,6 +1930,123 @@ impl EditorApp {
         }
         if self.design_call(note) {
             self.status = t("note taken").to_owned();
+        }
+    }
+
+    /// What command `id` does: the actions it stands for (the same as its
+    /// button or menu entry).
+    fn command_actions(&self, id: &str, actions: &mut Actions) {
+        match id {
+            "app.palette" => {
+                let mut palette = self.palette.borrow_mut();
+                palette.open = !palette.open;
+                palette.filter.clear();
+                palette.chosen = 0;
+                palette.focus = palette.open;
+            }
+            "game.play" => {
+                if self.play.is_some() {
+                    actions.play_stop = true;
+                } else if !self.scene.ends_with(".prefab.json") {
+                    actions.play_start = true;
+                }
+            }
+            "editor.undo" => actions.undo |= self.can_undo && self.play.is_none(),
+            "editor.redo" => actions.redo |= self.can_redo && self.play.is_none(),
+            "mode.switch" => actions.switch_mode = Some(!self.ai_mode),
+            "mode.manual" => actions.switch_mode = Some(false),
+            "mode.ai" => actions.switch_mode = Some(true),
+            "ai.next_step" => actions.ai.next_step = true,
+            "ai.settings" => actions.ai.settings = Some(true),
+            "agent.panel" => actions.toggle_cockpit = true,
+            "view.game_view" => actions.toggle_game_view = true,
+            "view.reset_camera" => actions.reset_camera = true,
+            "project.check" => actions.show_problems = true,
+            "project.build_code" => actions.build_code = true,
+            "project.run_tests" => actions.run_tests = true,
+            "project.save_checkpoint" => actions.save_checkpoint = true,
+            "project.save_picture" => actions.save_picture = true,
+            "project.export" => actions.export = true,
+            "project.settings" => actions.open_settings = true,
+            "project.packages" => actions.open_packages = true,
+            "project.connect_agent" => actions.connect = Some(true),
+            "app.quit" => actions.quit = true,
+            _ => {}
+        }
+    }
+
+    /// The command palette: type, choose with the arrows, Enter runs.
+    fn palette_window(&self, ui: &mut Ui, actions: &mut Actions) {
+        if !self.palette.borrow().open {
+            return;
+        }
+        let mut palette = self.palette.borrow_mut();
+        let found = crate::commands::matching(&palette.filter);
+        let (down, up, enter, escape) = ui.input_mut(|input| {
+            (
+                input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown),
+                input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
+                input.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
+                input.consume_key(egui::Modifiers::NONE, egui::Key::Escape),
+            )
+        });
+        if down {
+            palette.chosen = (palette.chosen + 1).min(found.len().saturating_sub(1));
+        }
+        if up {
+            palette.chosen = palette.chosen.saturating_sub(1);
+        }
+        palette.chosen = palette.chosen.min(found.len().saturating_sub(1));
+        let bound = crate::commands::bindings(&self.keys);
+        let mut run = None;
+        egui::Window::new(t("Command palette"))
+            .title_bar(false)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_TOP, [0.0, 64.0])
+            .fixed_size([460.0, 0.0])
+            .show(ui.ctx(), |ui| {
+                let field = ui.add(
+                    egui::TextEdit::singleline(&mut palette.filter)
+                        .desired_width(f32::INFINITY)
+                        .hint_text(t("Type a command")),
+                );
+                if std::mem::take(&mut palette.focus) {
+                    field.request_focus();
+                }
+                if field.changed() {
+                    palette.chosen = 0;
+                }
+                ui.separator();
+                if found.is_empty() {
+                    ui.weak(t("No command matches."));
+                }
+                for (index, command) in found.iter().enumerate().take(14) {
+                    let keys: Vec<String> = bound
+                        .iter()
+                        .filter(|(id, _)| *id == command.id)
+                        .map(|(_, shortcut)| crate::commands::shortcut_text(shortcut))
+                        .collect();
+                    ui.horizontal(|ui| {
+                        let line = ui.selectable_label(index == palette.chosen, (command.name)());
+                        if line.clicked() {
+                            run = Some(command.id);
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.weak(keys.join("  "));
+                        });
+                    });
+                }
+            });
+        if enter {
+            run = found.get(palette.chosen).map(|command| command.id);
+        }
+        if run.is_some() || escape {
+            palette.open = false;
+        }
+        if let Some(id) = run {
+            drop(palette);
+            self.command_actions(id, actions);
         }
     }
 
@@ -3123,6 +3266,9 @@ impl EditorApp {
         // The history tab's buttons are the menu bar's.
         actions.undo |= actions.panels.undo;
         actions.redo |= actions.panels.redo;
+        if let Some(id) = actions.command.take() {
+            self.command_actions(id, &mut actions);
+        }
         // The AI mode's conversation, task cards and health are the
         // cockpit's, the checkpoints' and the project menu's.
         actions.cockpit.send |= actions.ai.cockpit.send;
@@ -4155,28 +4301,16 @@ impl EditorApp {
     fn layout(&self, ui: &mut Ui, viewport: &mut Rect, game_area: &mut Rect) -> Actions {
         let mut actions = Actions::default();
         egui::Panel::top("menu").show(ui, |ui| {
-            // Shortcuts, unless the person is typing (a text box has its
-            // own undo).
-            if !ui.ctx().egui_wants_keyboard_input() {
-                let pressed = |ui: &Ui, modifiers: egui::Modifiers, key: egui::Key| {
-                    ui.input_mut(|input| {
-                        input.consume_shortcut(&egui::KeyboardShortcut::new(modifiers, key))
-                    })
-                };
-                let command = egui::Modifiers::COMMAND;
-                if pressed(ui, command | egui::Modifiers::SHIFT, egui::Key::Z)
-                    || pressed(ui, command, egui::Key::Y)
-                {
-                    actions.redo |= self.can_redo && self.play.is_none();
-                } else if pressed(ui, command, egui::Key::Z) {
-                    actions.undo |= self.can_undo && self.play.is_none();
+            // Shortcuts, from the command table (M10a), unless the person is
+            // typing (a text box has its own undo); the palette's opens
+            // even then.
+            let typing = ui.ctx().egui_wants_keyboard_input();
+            for (id, shortcut) in crate::commands::bindings(&self.keys) {
+                if (typing && id != "app.palette") || actions.command.is_some() {
+                    continue;
                 }
-                if pressed(ui, command, egui::Key::P) {
-                    if self.play.is_some() {
-                        actions.play_stop = true;
-                    } else if !self.scene.ends_with(".prefab.json") {
-                        actions.play_start = true;
-                    }
+                if ui.input_mut(|input| input.consume_shortcut(&shortcut)) {
+                    actions.command = Some(id);
                 }
             }
             // A narrow window puts the rest of the bar on a second line.
@@ -4669,6 +4803,7 @@ impl EditorApp {
         self.compare_window(ui, &mut actions);
         self.connect_window(ui, &mut actions);
         crate::packages_window::window(ui, &self.packages, &mut actions.packages);
+        self.palette_window(ui, &mut actions);
         self.export_window(ui, &mut actions);
         // The middle is not painted: the scene's picture shows through.
         egui::CentralPanel::default()
@@ -4757,6 +4892,7 @@ impl EditorApp {
         self.compare_window(ui, actions);
         self.connect_window(ui, actions);
         crate::packages_window::window(ui, &self.packages, &mut actions.packages);
+        self.palette_window(ui, actions);
         self.export_window(ui, actions);
         let scene_view = self.ai.borrow().scene_view;
         egui::CentralPanel::default()
