@@ -423,7 +423,8 @@ pub(crate) const DOCS_SEARCH: Tool = Tool {
 fn docs_search(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<String, Value>> {
     let query = args.str("query").unwrap_or_default();
     let limit = usize::try_from(args.int("limit").unwrap_or(5)).unwrap_or(5);
-    let hits = crate::docs::search(workspace.registry(), query, limit);
+    let recipes = crate::docs::package_recipes(workspace.root());
+    let hits = crate::docs::search_with(workspace.registry(), query, limit, &recipes);
     let mut out = Map::new();
     if hits.is_empty() {
         out.insert(

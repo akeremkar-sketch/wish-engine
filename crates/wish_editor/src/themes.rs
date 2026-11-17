@@ -84,3 +84,67 @@ pub(crate) fn load(available: &[ThemeEntry], key: &str) -> Result<Theme, String>
         .map(|(_, theme)| theme)
         .map_err(|(message, hint)| format!("{message}. {hint}"))
 }
+
+/// Adds the languages packages bring (the project's, the person's and the
+/// engine's) to the interface's languages; a language file is `{ "format":
+/// 1, "code": "sv", "name": "Svenska", "texts": { "English text": "..." } }`.
+/// Returns how many were added.
+pub(crate) fn load_languages(project: Option<&Path>) -> usize {
+    let mut folders: Vec<PathBuf> = Vec::new();
+    if let Some(root) = project {
+        folders.extend(
+            packages::installed(Scope::Project, root)
+                .into_iter()
+                .map(|package| package.folder),
+        );
+    }
+    folders.extend(
+        packages::installed(Scope::User, project.unwrap_or(Path::new(".")))
+            .into_iter()
+            .map(|package| package.folder),
+    );
+    if let Some(engine) = packages::engine_packages_folder() {
+        let mut engine_folders: Vec<PathBuf> = std::fs::read_dir(&engine)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.is_dir())
+            .collect();
+        engine_folders.sort();
+        folders.extend(engine_folders);
+    }
+    let mut added = 0;
+    for folder in folders {
+        let Ok(manifest) = packages::read_manifest(&folder) else {
+            continue;
+        };
+        for file in manifest.contents.get("languages").into_iter().flatten() {
+            let Ok(text) = std::fs::read_to_string(folder.join(file)) else {
+                continue;
+            };
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+                continue;
+            };
+            if value["format"] != 1 {
+                continue;
+            }
+            let texts = value["texts"]
+                .as_object()
+                .into_iter()
+                .flatten()
+                .filter_map(|(english, translated)| {
+                    Some((english.clone(), translated.as_str()?.to_owned()))
+                })
+                .collect();
+            if crate::i18n::register(
+                value["code"].as_str().unwrap_or(""),
+                value["name"].as_str().unwrap_or(""),
+                texts,
+            ) {
+                added += 1;
+            }
+        }
+    }
+    added
+}

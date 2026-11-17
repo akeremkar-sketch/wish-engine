@@ -56,9 +56,7 @@ impl LaunchOptions {
     /// `Documents/Wish Projects`, this program for `.mcp.json`, Claude Code
     /// if found.
     pub fn from_environment(software: bool) -> Self {
-        let templates = wish_control::scaffold::templates_folder()
-            .map(|folder| wish_control::scaffold::templates(&folder))
-            .unwrap_or_default();
+        let templates = wish_control::scaffold::all_templates();
         let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("."));
@@ -166,6 +164,8 @@ impl Launcher {
             .as_deref()
             .map(crate::prefs::read)
             .unwrap_or_default();
+        // The languages packages bring, before the person's choice is read.
+        crate::themes::load_languages(None);
         let language = prefs
             .get("language")
             .and_then(Value::as_str)
@@ -752,7 +752,7 @@ fn header(ui: &mut Ui, welcome: &Welcome, asked: &mut Asked) {
             egui::ComboBox::from_id_salt("welcome_language")
                 .selected_text(crate::i18n::find(welcome.language).map_or("English", |l| l.name))
                 .show_ui(ui, |ui| {
-                    for language in crate::i18n::LANGUAGES {
+                    for language in crate::i18n::all_languages() {
                         if ui
                             .selectable_label(welcome.language == language.code, language.name)
                             .clicked()

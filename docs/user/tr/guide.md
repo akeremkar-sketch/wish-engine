@@ -222,7 +222,20 @@ Tasarım projede `design/game.json` dosyasındadır (git'e girer, varlık sayıl
 
 Motor hiçbir yapay zekâ olmadan eksiksizdir. Yardımcı, aynı işleri yapmanın daha hızlı bir yoludur.
 
-## 7. Oyunu dışa aktarma
+## 7. Paketler, temalar, çalışma alanları ve komut paleti
+
+**Paketler** tema, çalışma alanı, dil, tarif ve şablon getirir. Paket, içinde `wish-package.json` olan bir klasördür.
+- *Proje menüsü → Paketler...* kurulu olanları listeler ve klasöründen paket kurar: *Projeye yükle* (projeyle birlikte taşınır; `packages/` ve `wish.lock` hangi dosyaların olduğunu tam olarak kaydeder) ya da *Benim için yükle* (bu bilgisayarda açtığınız her proje için).
+- *Kaldır* paketi çöp kutusuna taşır; hiçbir şey silinmez.
+- Projenin kilidi denetlenir: bir paketin dosyaları değişirse pencere bunu söyler; değişiklik sizinse *Kilidi yeniden yaz*.
+
+**Temalar:** *Proje menüsü → Tema* editörün görünümünü hemen değiştirir: Atelier (varsayılan), Midnight, High contrast ve paketlerin getirdiği her tema.
+
+**Çalışma alanları:** yapay zekâ modunda oyun kartının üstündeki *Çalışma alanı* kutusu kartın ne için olduğunu seçer. *Hikâye oyunu* mekânı, karakterleri, tonu, seçimleri ve sonları sorar ve kendi hazır isteklerini getirir; *Varsayılan* motorun her oyun için kartıdır. Geçiş yaptığınızda yazdığınız hiçbir şey kaybolmaz.
+
+**Komut paleti:** Ctrl+K ile açılır. Ne istediğinizin birkaç harfini yazın (*dışa aktar*, *yapay zekâ*, *test*), ok tuşlarıyla seçin, Enter çalıştırır. Kısayollar: Ctrl+P oynat/durdur, Ctrl+Z/Ctrl+Y geri al/yinele, Ctrl+M elle/yapay zekâ modu, Ctrl+B kodu derle. Birini değiştirmek için tercih dosyanıza ekleyin: `"keys": { "mode.switch": "Ctrl+J" }`.
+
+## 8. Oyunu dışa aktarma
 
 Proje menüsü, *Oyunu dışa aktar* (ya da `wen export`):
 - Önce proje denetlenir.
@@ -235,7 +248,7 @@ Proje menüsü, *Oyunu dışa aktar* (ya da `wen export`):
 Oyunu paylaşmak için bu klasörü sıkıştırın. Motoru, editörü ya da derleyicisi olmayan bir
 makinede çalışır ve editörde oynadığı gibi oynar.
 
-## 8. Komut satırı
+## 9. Komut satırı
 
 `wen` editörün yaptığı her şeyi yapar. Birkaç kullanışlı komut:
 
@@ -267,7 +280,7 @@ wen export --root oyunum
 istemcisinin aldığı biçimde yazar. Örneğin `wen call project_info --root oyunum`. Bilinmeyen bir
 araç adı hepsini listeler. `wen help` bütün komutları listeler.
 
-## 9. Bir şey ters gidince
+## 10. Bir şey ters gidince
 
 Motorun bildirdiği her sorunda şunlar vardır:
 - bir **kod** (`unknown_component` gibi);
@@ -294,7 +307,7 @@ açıklar.
 Motorun tanı iletileri İngilizcedir (ajanlar ve belgeler için tek dil); editörün arayüzü sizin
 dilinizdedir.
 
-## 10. Proje klasöründe neler var
+## 11. Proje klasöründe neler var
 
 ```text
 wish.json             proje: ad, varsayılan sahne

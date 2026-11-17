@@ -110,10 +110,61 @@ fn tables() -> &'static [BTreeMap<String, String>] {
     })
 }
 
+/// Languages packages brought (M10a WP5), after the built-in ones: added
+/// once, never taken away, so a thread's index into them stays right.
+type Extra = (&'static Language, &'static BTreeMap<String, String>);
+
+fn extras() -> &'static std::sync::Mutex<Vec<Extra>> {
+    static EXTRAS: OnceLock<std::sync::Mutex<Vec<Extra>>> = OnceLock::new();
+    EXTRAS.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+}
+
+fn extra(index: usize) -> Option<Extra> {
+    let index = index.checked_sub(LANGUAGES.len())?;
+    extras().lock().ok()?.get(index).copied()
+}
+
+/// Every language: the built-in ones, then the ones packages brought.
+pub fn all_languages() -> Vec<&'static Language> {
+    let mut all: Vec<&'static Language> = LANGUAGES.iter().collect();
+    if let Ok(extras) = extras().lock() {
+        all.extend(extras.iter().map(|(language, _)| *language));
+    }
+    all
+}
+
+/// Adds a language a package brings: its code (2 or 3 lowercase letters),
+/// its name in itself and its translations. A code the editor has already
+/// (built in or added before) keeps its first language; returns whether it
+/// was added.
+pub fn register(code: &str, name: &str, texts: BTreeMap<String, String>) -> bool {
+    let code_ok = (2..=3).contains(&code.len()) && code.bytes().all(|b| b.is_ascii_lowercase());
+    let name = name.trim();
+    if !code_ok || name.is_empty() || name.chars().count() > 40 || find(code).is_some() {
+        return false;
+    }
+    let Ok(mut extras) = extras().lock() else {
+        return false;
+    };
+    let language: &'static Language = Box::leak(Box::new(Language {
+        code: Box::leak(code.to_owned().into_boxed_str()),
+        name: Box::leak(name.to_owned().into_boxed_str()),
+        source: "",
+    }));
+    extras.push((language, Box::leak(Box::new(texts))));
+    true
+}
+
 /// The translations of the language `code`, as its file holds them.
 pub fn translations(code: &str) -> Option<&'static BTreeMap<String, String>> {
-    let index = LANGUAGES.iter().position(|l| l.code == code)?;
-    tables().get(index)
+    if let Some(index) = LANGUAGES.iter().position(|l| l.code == code) {
+        return tables().get(index);
+    }
+    let extras = extras().lock().ok()?;
+    extras
+        .iter()
+        .find(|(language, _)| language.code == code)
+        .map(|(_, table)| *table)
 }
 
 /// The language of a code as people and systems write it: `tr`, `TR`,
@@ -125,13 +176,22 @@ pub fn find(code: &str) -> Option<&'static Language> {
         .unwrap_or("")
         .trim()
         .to_ascii_lowercase();
-    LANGUAGES.iter().find(|language| language.code == base)
+    LANGUAGES
+        .iter()
+        .find(|language| language.code == base)
+        .or_else(|| {
+            let extras = extras().lock().ok()?;
+            extras
+                .iter()
+                .find(|(language, _)| language.code == base)
+                .map(|(language, _)| *language)
+        })
 }
 
 /// Shows the interface of this thread in `code`'s language. Returns whether
 /// there is such a language (if not, nothing changes).
 pub fn set_language(code: &str) -> bool {
-    match find(code).and_then(|l| LANGUAGES.iter().position(|x| x.code == l.code)) {
+    match find(code).and_then(|l| all_languages().iter().position(|x| x.code == l.code)) {
         Some(index) => {
             CURRENT.set(index);
             true
@@ -142,7 +202,11 @@ pub fn set_language(code: &str) -> bool {
 
 /// The language this thread's interface is shown in.
 pub fn language() -> &'static Language {
-    LANGUAGES.get(CURRENT.get()).unwrap_or(&LANGUAGES[0])
+    let index = CURRENT.get();
+    LANGUAGES
+        .get(index)
+        .or_else(|| extra(index).map(|(language, _)| language))
+        .unwrap_or(&LANGUAGES[0])
 }
 
 /// The language the person asked for outside the editor: `WISH_LANG`, then
@@ -162,8 +226,12 @@ pub fn t(english: &'static str) -> &'static str {
     if index == 0 {
         return english;
     }
-    tables()
-        .get(index)
+    let table = if index < LANGUAGES.len() {
+        tables().get(index)
+    } else {
+        extra(index).map(|(_, table)| table)
+    };
+    table
         .and_then(|table| table.get(english))
         .map(String::as_str)
         .unwrap_or(english)

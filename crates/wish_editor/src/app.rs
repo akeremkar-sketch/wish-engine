@@ -603,6 +603,7 @@ impl EditorApp {
         app.refresh_project();
         app.load_schemas();
         app.themes = crate::themes::available(Some(app.workspace.root()));
+        crate::themes::load_languages(Some(app.workspace.root()));
         app.read_workspaces();
         app
     }
@@ -1515,6 +1516,10 @@ impl EditorApp {
     /// Returns whether the editor has that language (if not, nothing
     /// changes).
     pub fn set_language(&mut self, code: &str) -> bool {
+        // A package may have brought it since the languages were read.
+        if crate::i18n::find(code).is_none() {
+            crate::themes::load_languages(Some(self.workspace.root()));
+        }
         match crate::i18n::find(code) {
             Some(language) => {
                 self.language = language.code;
@@ -2107,6 +2112,7 @@ impl EditorApp {
         }
         self.read_packages();
         self.themes = crate::themes::available(Some(self.workspace.root()));
+        crate::themes::load_languages(Some(self.workspace.root()));
         self.read_workspaces();
     }
 
@@ -4470,7 +4476,7 @@ impl EditorApp {
                     });
                     ui.separator();
                     ui.menu_button(t("Language"), |ui| {
-                        for language in crate::i18n::LANGUAGES {
+                        for language in crate::i18n::all_languages() {
                             if ui
                                 .selectable_label(self.language == language.code, language.name)
                                 .clicked()

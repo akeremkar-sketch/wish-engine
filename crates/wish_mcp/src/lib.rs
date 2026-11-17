@@ -494,6 +494,16 @@ impl<W: BorrowMut<Workspace>> Server<W> {
             json!({ "uri": "wish://docs/recipes", "name": "recipes", "title": "Game recipes", "description": "Working pieces of games (character, camera, pickups, checkpoints, moving platforms, interface, 2D, tests): code and scene operations that are tested to work.", "mimeType": "text/markdown" }),
             json!({ "uri": "wish://project/status", "name": "status", "title": "Project status", "description": "The project's current overview (the project_info answer).", "mimeType": "application/json" }),
         ];
+        // Recipes the project's and the person's packages bring (M10a).
+        let root = self.workspace.borrow().root().to_path_buf();
+        for recipe in docs::package_recipes(&root) {
+            resources.push(json!({
+                "uri": recipe.uri,
+                "name": recipe.title,
+                "title": format!("Recipe from {}: {}", recipe.package, recipe.title),
+                "mimeType": "text/markdown"
+            }));
+        }
         for name in self.type_names() {
             resources.push(json!({
                 "uri": format!("wish://docs/components/{name}"),
@@ -514,6 +524,22 @@ impl<W: BorrowMut<Workspace>> Server<W> {
         }
         if uri == "wish://docs/recipes" {
             return Ok(("text/markdown", docs::recipes_page().to_owned()));
+        }
+        if uri.starts_with("wish://docs/packages/") {
+            let root = self.workspace.borrow().root().to_path_buf();
+            let recipes = docs::package_recipes(&root);
+            return recipes
+                .iter()
+                .find(|recipe| recipe.uri == uri)
+                .map(|recipe| ("text/markdown", recipe.text.clone()))
+                .ok_or_else(|| {
+                    let known: Vec<&str> = recipes.iter().map(|r| r.uri.as_str()).collect();
+                    Diagnostic::error(
+                        "unknown_resource",
+                        format!("No package brings the page {uri}."),
+                        wish_core::suggest::unknown_name_hint(uri, &known),
+                    )
+                });
         }
         if uri == "wish://project/status" {
             let answer =

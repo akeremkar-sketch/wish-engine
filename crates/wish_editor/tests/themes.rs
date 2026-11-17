@@ -129,3 +129,59 @@ fn a_theme_is_chosen_drawn_and_kept() {
     );
     assert_eq!(app.theme_key(), "com.example.ember/ember.json");
 }
+
+#[test]
+fn a_language_package_adds_a_language() {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("editor-language-package");
+    let _ = std::fs::remove_dir_all(&dir);
+    let root = dir.join("game");
+    create_project(&root, "Language Test", "wen").unwrap();
+    let package = dir.join("svenska");
+    std::fs::create_dir_all(&package).unwrap();
+    std::fs::write(
+        package.join("wish-package.json"),
+        json!({ "format": 1, "id": "com.example.svenska", "name": "Svenska", "version": "1.0.0",
+            "engine": ">=0.1", "license": "MIT", "contents": { "languages": ["sv.json"] } })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        package.join("sv.json"),
+        json!({ "format": 1, "code": "sv", "name": "Svenska", "texts": { "Undo": "Ångra", "Redo": "Gör om" } })
+            .to_string(),
+    )
+    .unwrap();
+    let mut workspace = Workspace::open(WorkspaceOptions {
+        root: root.clone(),
+        example: None,
+    })
+    .unwrap();
+    workspace.set_software(true);
+    let mut app = EditorApp::new(workspace);
+    assert!(!app.set_language("sv"), "no Swedish before the package");
+    let installed = app.call(
+        "packages",
+        &json!({ "action": "install", "path": package.display().to_string() }),
+    );
+    assert_eq!(installed["ok"], true, "{installed}");
+    assert!(app.set_language("sv"), "the package brings it");
+    play(&mut app, json!([{ "idle": 3 }]));
+    assert!(
+        app.widgets()
+            .iter()
+            .any(|w| w.label.as_deref() == Some("Ångra")),
+        "the toolbar speaks Swedish"
+    );
+    // What the package does not translate stays English.
+    assert!(
+        app.widgets()
+            .iter()
+            .any(|w| w.label.as_deref() == Some("Play"))
+    );
+    // A package cannot take a built-in language's code.
+    assert!(!wish_editor::i18n::register(
+        "tr",
+        "Fake",
+        Default::default()
+    ));
+}

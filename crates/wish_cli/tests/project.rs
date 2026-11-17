@@ -680,3 +680,62 @@ fn without_a_usable_graphics_adapter_capture_explains_instead_of_crashing() {
     );
     assert!(!out.exists());
 }
+
+/// A template a package brings is offered by `wen new --template`, as
+/// `<package id>/<folder>`, picture and all (M10a WP5).
+#[test]
+fn a_package_template_makes_a_new_project() {
+    let base = std::env::temp_dir().join(format!("wen-package-template-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    // An engine packages folder with one template package.
+    let package = base.join("engine/com.example.kit");
+    std::fs::create_dir_all(package.join("tiny/scenes")).unwrap();
+    std::fs::create_dir_all(package.join("tiny/.template")).unwrap();
+    std::fs::write(
+        package.join("wish-package.json"),
+        r#"{ "format": 1, "id": "com.example.kit", "name": "Kit", "version": "1.0.0", "engine": ">=0.1",
+            "license": "MIT", "contents": { "templates": ["tiny"] } }"#,
+    )
+    .unwrap();
+    std::fs::write(
+        package.join("tiny/wish.json"),
+        r#"{ "format": 1, "name": "Tiny", "scene": "scenes/main.scene.json" }"#,
+    )
+    .unwrap();
+    std::fs::write(
+        package.join("tiny/scenes/main.scene.json"),
+        r#"{ "format": 1, "entities": {} }"#,
+    )
+    .unwrap();
+    std::fs::write(package.join("tiny/.template/thumbnail.png"), "png").unwrap();
+    let out = base.join("game");
+    let output = Command::new(env!("CARGO_BIN_EXE_wen"))
+        .args([
+            "new",
+            out.to_str().unwrap(),
+            "--template",
+            "com.example.kit/tiny",
+            "--json",
+        ])
+        .env("WISH_ENGINE_PACKAGES", base.join("engine"))
+        .output()
+        .unwrap();
+    let answer: Value = serde_json::from_slice(&output.stdout).unwrap_or(Value::Null);
+    assert_eq!(
+        answer["ok"],
+        true,
+        "{answer} {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(out.join("scenes/main.scene.json").is_file());
+    let config: Value =
+        serde_json::from_str(&std::fs::read_to_string(out.join("wish.json")).unwrap()).unwrap();
+    assert_eq!(config["name"], "game");
+    // The template's picture is part of the package (not of the project).
+    let files = wish_control::packages::package_files(&package).unwrap();
+    assert!(
+        files.contains(&"tiny/.template/thumbnail.png".to_owned()),
+        "{files:?}"
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}

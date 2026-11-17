@@ -367,6 +367,55 @@ pub fn templates(folder: &Path) -> Vec<Template> {
     found
 }
 
+/// The templates packages bring (M10a WP5): the person's packages and the
+/// engine's own, by `<package id>/<folder>`.
+pub fn package_templates() -> Vec<Template> {
+    let mut folders: Vec<PathBuf> =
+        crate::packages::installed(crate::packages::Scope::User, Path::new("."))
+            .into_iter()
+            .map(|package| package.folder)
+            .collect();
+    if let Some(engine) = crate::packages::engine_packages_folder() {
+        let mut engine_folders: Vec<PathBuf> = std::fs::read_dir(&engine)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.is_dir())
+            .collect();
+        engine_folders.sort();
+        folders.extend(engine_folders);
+    }
+    let mut found: Vec<Template> = Vec::new();
+    for folder in folders {
+        let Ok(manifest) = crate::packages::read_manifest(&folder) else {
+            continue;
+        };
+        for item in manifest.contents.get("templates").into_iter().flatten() {
+            let id = format!("{}/{item}", manifest.id);
+            let path = folder.join(item);
+            if found.iter().any(|known| known.id == id) {
+                continue;
+            }
+            if let Ok(Some(config)) = crate::project::read_project(&path) {
+                found.push(Template {
+                    id,
+                    name: config.name,
+                    path,
+                });
+            }
+        }
+    }
+    found
+}
+
+/// Every template: the engine's (`templates_folder`), then the packages'.
+pub fn all_templates() -> Vec<Template> {
+    let mut found = templates_folder().map_or_else(Vec::new, |folder| templates(&folder));
+    found.extend(package_templates());
+    found
+}
+
 /// Creates a project in `dir` from a template: its scenes, assets, game
 /// code, tests and input map are copied; `wish.json` takes the new name;
 /// the agent files are the new project's own. What the engine made in the

@@ -222,7 +222,20 @@ A **checkpoint is saved before every task**, so you can always go back.
 
 The engine is complete without any AI. An assistant is a faster way to do the same things.
 
-## 7. Exporting a game
+## 7. Packages, themes, workspaces and the command palette
+
+**Packages** bring themes, workspaces, languages, recipes and templates. A package is a folder with a `wish-package.json`.
+- *Project menu → Packages...* lists what is installed and installs a package from its folder: *Install into the project* (it travels with the project: `packages/` and `wish.lock` record exactly which files), or *Install for me* (for every project you open on this computer).
+- *Remove* moves a package to the trash; nothing is deleted.
+- The project's lock is checked: if a package's files change, the window says so; *Write the lock again* if the change is yours.
+
+**Themes:** *Project menu → Theme* switches the editor's look at once: Atelier (the default), Midnight, High contrast, and any theme a package brings.
+
+**Workspaces:** in the AI mode, the *Workspace* box above the game card picks what the card is for. *Story game* asks for the setting, characters, tone, choices and endings, and brings its own ready requests; *Default* is the engine's card for any game. Nothing you wrote is lost when you switch.
+
+**Command palette:** Ctrl+K opens it. Type a few letters of what you want (*export*, *ai mode*, *tests*), choose with the arrow keys, Enter runs it. Shortcuts: Ctrl+P play/stop, Ctrl+Z/Ctrl+Y undo/redo, Ctrl+M manual/AI mode, Ctrl+B build code. To change one, add it to your preferences file: `"keys": { "mode.switch": "Ctrl+J" }`.
+
+## 8. Exporting a game
 
 Project menu, *Export game* (or `wen export`):
 - The project is checked first.
@@ -235,7 +248,7 @@ Project menu, *Export game* (or `wen export`):
 To share the game, zip that folder. It runs on a machine without the engine, the editor or a
 compiler. It plays exactly as it did in the editor.
 
-## 8. The command line
+## 9. The command line
 
 `wen` does everything the editor does. A few useful commands:
 
@@ -267,7 +280,7 @@ wen export --root my_game
 receives it. For example, `wen call project_info --root my_game`. An unknown tool name lists them
 all. `wen help` lists every command.
 
-## 9. When something goes wrong
+## 10. When something goes wrong
 
 Every problem the engine reports has:
 - a **code** (such as `unknown_component`);
@@ -291,7 +304,7 @@ explains a code.
 | *not exported: ... errors* | Fix what *Problems* lists, then export again |
 | The view is black | Look in *Problems*: the scene may have no camera |
 
-## 10. What is in a project folder
+## 11. What is in a project folder
 
 ```text
 wish.json             the project: name, default scene

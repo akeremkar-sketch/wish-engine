@@ -485,7 +485,8 @@ pub fn package_files(folder: &Path) -> Result<Vec<String>> {
         entries.sort_by_key(std::fs::DirEntry::file_name);
         for entry in entries {
             let name = entry.file_name().to_string_lossy().into_owned();
-            if name.starts_with('.') {
+            // Hidden files stay out, but a template's picture (.template/) is part of it.
+            if name.starts_with('.') && name != ".template" {
                 continue;
             }
             let path = entry.path();

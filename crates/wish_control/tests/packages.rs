@@ -349,3 +349,50 @@ fn what_needs_care_is_refused_or_warned() {
         "{read:?}"
     );
 }
+
+#[test]
+fn recipes_from_packages_are_searched() {
+    let dir = folder("recipes");
+    let mut ws = project(&dir);
+    let package = dir.join("dialogue");
+    std::fs::create_dir_all(&package).unwrap();
+    std::fs::write(
+        package.join("wish-package.json"),
+        json!({ "format": 1, "id": "com.example.dialogue", "name": "Dialogue kit", "version": "1.0.0",
+            "engine": ">=0.1", "license": "MIT", "contents": { "recipes": ["branching.md"] } })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        package.join("branching.md"),
+        "# Branching dialogue\n\nA conversation tree with choices: keep each line in a resource and show it with UiText.\n",
+    )
+    .unwrap();
+    let before = ws.call(
+        "docs_search",
+        &json!({ "query": "conversation tree" }),
+        &parse_actor("agent:a"),
+    );
+    assert_eq!(before["results"], json!([]), "{before}");
+    let installed = call(
+        &mut ws,
+        "human",
+        json!({ "action": "install", "path": package.display().to_string() }),
+    );
+    assert_eq!(installed["ok"], true, "{installed}");
+    let found = ws.call(
+        "docs_search",
+        &json!({ "query": "conversation tree" }),
+        &parse_actor("agent:a"),
+    );
+    assert_eq!(
+        found["results"][0]["uri"], "wish://docs/packages/com.example.dialogue/branching.md",
+        "{found}"
+    );
+    assert!(
+        found["results"][0]["title"]
+            .as_str()
+            .unwrap()
+            .contains("Branching dialogue")
+    );
+}

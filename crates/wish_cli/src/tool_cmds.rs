@@ -190,11 +190,7 @@ pub fn new_project(
     let written = match template {
         None => wish_control::scaffold::create_project(path, &name, &command)?,
         Some(template) => {
-            let folder = wish_control::scaffold::templates_folder();
-            let known = folder
-                .as_deref()
-                .map(wish_control::scaffold::templates)
-                .unwrap_or_default();
+            let known = wish_control::scaffold::all_templates();
             let Some(found) = known.iter().find(|known| known.id == template) else {
                 let ids: Vec<&str> = known.iter().map(|known| known.id.as_str()).collect();
                 return Err(wish_core::Diagnostic::error(

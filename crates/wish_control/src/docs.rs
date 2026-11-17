@@ -1261,7 +1261,68 @@ struct Hit {
 }
 
 /// Searches the guide, the type pages and the diagnostic pages.
+/// A recipe page a package brings (M10a WP5).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PackageRecipe {
+    /// Its address: `wish://docs/packages/<id>/<file>`.
+    pub uri: String,
+    /// Its title (its first `# ` line, else its file name).
+    pub title: String,
+    /// The package's name.
+    pub package: String,
+    /// Its text.
+    pub text: String,
+}
+
+/// The recipes of the project's and the person's packages, in that order
+/// (a package in both: the project's).
+pub fn package_recipes(project: &std::path::Path) -> Vec<PackageRecipe> {
+    let mut found: Vec<PackageRecipe> = Vec::new();
+    for scope in [
+        crate::packages::Scope::Project,
+        crate::packages::Scope::User,
+    ] {
+        for package in crate::packages::installed(scope, project) {
+            let Some(manifest) = package.manifest else {
+                continue;
+            };
+            for file in manifest.contents.get("recipes").into_iter().flatten() {
+                let uri = format!("wish://docs/packages/{}/{file}", manifest.id);
+                if found.iter().any(|recipe| recipe.uri == uri) {
+                    continue;
+                }
+                let Ok(text) = std::fs::read_to_string(package.folder.join(file)) else {
+                    continue;
+                };
+                let title = text
+                    .lines()
+                    .find_map(|line| line.strip_prefix("# "))
+                    .map_or_else(|| file.clone(), str::to_owned);
+                found.push(PackageRecipe {
+                    uri,
+                    title,
+                    package: manifest.name.clone(),
+                    text,
+                });
+            }
+        }
+    }
+    found
+}
+
+/// Searches the documentation: the guide, the SDK, the recipes (the
+/// engine's and `extra`, the packages'), the types and the diagnostics.
 pub fn search(registry: &Registry, query: &str, limit: usize) -> Vec<Value> {
+    search_with(registry, query, limit, &[])
+}
+
+/// [`search`] with the recipes packages bring.
+pub fn search_with(
+    registry: &Registry,
+    query: &str,
+    limit: usize,
+    extra: &[PackageRecipe],
+) -> Vec<Value> {
     let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
     if words.is_empty() {
         return Vec::new();
@@ -1302,6 +1363,13 @@ pub fn search(registry: &Registry, query: &str, limit: usize) -> Vec<Value> {
             "wish://docs/recipes".to_owned(),
             format!("Recipe: {title}"),
             section.to_owned(),
+        ));
+    }
+    for recipe in extra {
+        pages.push((
+            recipe.uri.clone(),
+            format!("Recipe ({}): {}", recipe.package, recipe.title),
+            recipe.text.clone(),
         ));
     }
     let names: Vec<String> = registry
