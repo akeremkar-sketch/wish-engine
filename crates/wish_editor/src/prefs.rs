@@ -23,12 +23,21 @@ pub(crate) fn update(
     path: &Path,
     change: impl FnOnce(&mut Map<String, Value>),
 ) -> std::io::Result<()> {
+    // A file that is there but cannot be read is kept aside, not lost.
+    if let Ok(text) = std::fs::read_to_string(path)
+        && serde_json::from_str::<Value>(&text).map_or(true, |value| !value.is_object())
+    {
+        std::fs::copy(path, path.with_extension("json.broken"))?;
+    }
     let mut prefs = read(path);
     change(&mut prefs);
     if let Some(folder) = path.parent() {
         std::fs::create_dir_all(folder)?;
     }
-    std::fs::write(path, format!("{:#}\n", Value::Object(prefs)))
+    // Written beside and moved over: a crash never leaves half a file.
+    let writing = path.with_extension("json.writing");
+    std::fs::write(&writing, format!("{:#}\n", Value::Object(prefs)))?;
+    std::fs::rename(&writing, path)
 }
 
 /// The recent projects, newest first.

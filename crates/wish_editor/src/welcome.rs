@@ -59,8 +59,9 @@ impl LaunchOptions {
         let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("."));
-        let documents = home.join("Documents");
-        let base = if documents.is_dir() { documents } else { home };
+        let base = documents_folder()
+            .or_else(|| Some(home.join("Documents")).filter(|dir| dir.is_dir()))
+            .unwrap_or(home);
         Self {
             software,
             preferences: crate::preferences_path(),
@@ -274,15 +275,17 @@ impl Launcher {
         };
         if after_create && self.options.build && root.join("scripts/src/lib.rs").is_file() {
             let built = app.call("script_build", &json!({}));
-            if built["ok"] != true {
+            if built["passed"] != true {
+                // The tool's own failure, or the compiler's first error.
+                let first = built["diagnostics"]
+                    .as_array()
+                    .and_then(|all| all.iter().find(|d| d["severity"] == "error"))
+                    .unwrap_or(&built["error"]);
                 status = tf(
                     "the game code was not built: {message} {hint}",
                     &[
-                        (
-                            "message",
-                            &built["error"]["message"].as_str().unwrap_or("?"),
-                        ),
-                        ("hint", &built["error"]["hint"].as_str().unwrap_or("")),
+                        ("message", &first["message"].as_str().unwrap_or("?")),
+                        ("hint", &first["hint"].as_str().unwrap_or("")),
                     ],
                 );
             }
@@ -319,16 +322,36 @@ impl Launcher {
                 &[("folder", &dir.display())],
             ));
         }
+        // Made beside its place and moved there only when complete: a
+        // failure halfway leaves nothing behind.
+        let making = dir.with_file_name(format!(
+            ".{}.creating",
+            dir.file_name()
+                .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
+        ));
+        let _ = std::fs::remove_dir_all(&making);
         let made = match welcome.template.and_then(|i| self.options.templates.get(i)) {
             Some(template) => wish_control::scaffold::create_from_template(
-                &dir,
+                &making,
                 &name,
                 &self.options.command,
                 &template.path,
             ),
-            None => wish_control::scaffold::create_project(&dir, &name, &self.options.command),
+            None => wish_control::scaffold::create_project(&making, &name, &self.options.command),
         };
-        made.map_err(|error| format!("{} {}", error.message, error.hint))?;
+        let placed = made
+            .map_err(|error| format!("{} {}", error.message, error.hint))
+            .and_then(|_| {
+                // An empty folder of that name gives way.
+                if dir.exists() {
+                    std::fs::remove_dir(&dir).map_err(|error| error.to_string())?;
+                }
+                std::fs::rename(&making, &dir).map_err(|error| error.to_string())
+            });
+        if let Err(message) = placed {
+            let _ = std::fs::remove_dir_all(&making);
+            return Err(message);
+        }
         self.open(&dir, true)
     }
 
@@ -366,6 +389,10 @@ impl Launcher {
                 Err(message) => {
                     if let Some(welcome) = &mut self.welcome {
                         welcome.status = message;
+                        if welcome.name == welcome.offered {
+                            welcome.offered = first_free_name(Path::new(welcome.folder.trim()));
+                            welcome.name = welcome.offered.clone();
+                        }
                     }
                 }
             }
@@ -657,9 +684,71 @@ fn slug(name: &str) -> String {
     let out = out.trim_end_matches('-').to_owned();
     if out.is_empty() {
         "my-game".to_owned()
+    } else if wish_control::scaffold::reserved_on_windows(&out) {
+        format!("{out}-game")
     } else {
         out
     }
+}
+
+/// The person's documents folder as the system says it is (on Windows it
+/// can be moved, such as into OneDrive): the shell folder in the registry,
+/// with its variables expanded.
+fn documents_folder() -> Option<PathBuf> {
+    if !cfg!(windows) {
+        return None;
+    }
+    let out = std::process::Command::new("reg")
+        .args([
+            "query",
+            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders",
+            "/v",
+            "Personal",
+        ])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let line = text
+        .lines()
+        .find(|line| line.trim_start().starts_with("Personal"))?;
+    let value = line
+        .split("REG_")
+        .nth(1)?
+        .split_once(char::is_whitespace)?
+        .1
+        .trim();
+    let folder = PathBuf::from(expand_variables(value));
+    folder.is_dir().then_some(folder)
+}
+
+/// `%NAME%` replaced by the variable's value.
+fn expand_variables(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(start) = rest.find('%') {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 1..];
+        match after.find('%') {
+            Some(end) => {
+                let name = &after[..end];
+                match std::env::var(name) {
+                    Ok(value) => out.push_str(&value),
+                    Err(_) => {
+                        out.push('%');
+                        out.push_str(name);
+                        out.push('%');
+                    }
+                }
+                rest = &after[end + 1..];
+            }
+            None => {
+                out.push_str(&rest[start..]);
+                rest = "";
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// "My game", or "My game 2"... whichever has no folder yet.

@@ -71,6 +71,11 @@ pub(crate) fn walk_files(root: &Path) -> Result<Vec<(String, PathBuf)>> {
             if name.starts_with('.') || kind.is_symlink() || is_temporary(name) {
                 continue;
             }
+            // Exported games are copies, not part of the project: check,
+            // fmt, moves and the watcher leave them alone.
+            if folder == root && kind.is_dir() && format!("{name}/") == EXPORTS_FOLDER {
+                continue;
+            }
             if kind.is_dir() {
                 folders.push(path);
             } else if let Ok(relative) = path.strip_prefix(root) {

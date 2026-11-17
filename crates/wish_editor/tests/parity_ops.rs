@@ -648,4 +648,36 @@ fn the_game_is_exported_from_the_menu() {
             .to_string()
             .contains("exports/")
     );
+    // The exported copies are not checked as the project's own files.
+    std::fs::write(
+        dir.join("exports/editor_test/game/scenes/main.scene.json"),
+        "not json",
+    )
+    .unwrap();
+    assert_eq!(app.call("check", &json!({}))["passed"], true);
+    // Exporting again asks before the earlier export is replaced.
+    std::fs::write(dir.join("exports/editor_test/mine.txt"), "mine").unwrap();
+    project_menu(&mut app, &["Export game"]);
+    assert!(
+        app.status().starts_with("an earlier export"),
+        "{}",
+        app.status()
+    );
+    let cancel = named(&app, "Cancel");
+    click(&mut app, cancel);
+    assert!(dir.join("exports/editor_test/mine.txt").is_file());
+    project_menu(&mut app, &["Export game"]);
+    let replace = named(&app, "Replace");
+    click(&mut app, replace);
+    assert!(
+        app.status().starts_with("game exported: "),
+        "{}",
+        app.status()
+    );
+    assert!(!dir.join("exports/editor_test/mine.txt").exists());
+    assert!(
+        std::fs::read_to_string(dir.join("exports/editor_test/game/scenes/main.scene.json"))
+            .unwrap()
+            .contains("\"format\"")
+    );
 }

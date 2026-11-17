@@ -87,13 +87,10 @@ impl ScriptModule {
         let pre = linker
             .instantiate_pre(&module)
             .map_err(|error| load_failed(name, &error))?;
-        let mut hasher = StableHasher::new();
-        hasher.write_str("wish-script-module-v1");
-        hasher.write_bytes(bytes);
         let loaded = Self {
             engine: engine.clone(),
             name: name.to_owned(),
-            fingerprint: hasher.finish(),
+            fingerprint: fingerprint_of(bytes),
             pre,
         };
         let version = loaded.abi_version()?;
@@ -331,6 +328,15 @@ impl Live {
         })();
         result.map_err(|error| call_failed(&self.name, "wish_manifest", &error, self.store.data()))
     }
+}
+
+/// The fingerprint a module with these bytes has ([`ScriptModule::fingerprint`]),
+/// without compiling it.
+pub fn fingerprint_of(bytes: &[u8]) -> Hash128 {
+    let mut hasher = StableHasher::new();
+    hasher.write_str("wish-script-module-v1");
+    hasher.write_bytes(bytes);
+    hasher.finish()
 }
 
 #[cfg(test)]

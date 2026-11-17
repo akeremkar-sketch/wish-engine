@@ -160,3 +160,63 @@ Bu not, bunları beklemeden yapılabilenleri kapsar.
   - `docs_search`.
 
   Kılavuz bunlara yönlendirir, tekrar etmez.
+
+### Bağımsız inceleme (WP1–WP4; 17 Kasım 2026)
+
+Kod okuyan bağımsız bir ajan 12 bulgu verdi; hepsi ele alındı. Regresyon testleri:
+- `wish_control/tests/review_m9.rs`,
+- `wish_editor/tests/parity_ops.rs::the_game_is_exported_from_the_menu`,
+- `wish_editor/tests/welcome.rs`,
+- `wish_player/tests/export.rs`.
+
+| # | Bulgu | Düzeltme |
+|---|---|---|
+| 1 (yüksek) | `exports/` içindeki kopyalar `check`, `fmt`, `asset_move` ve izleyicide projenin dosyası sayılıyordu: eski kopya yeniden dışa aktarmayı engelliyor, `wen mv` dışa aktarılan sahneleri yeniden yazıyordu | `wish_asset::index::walk_files` kökteki `exports/`'u hiç görmez |
+| 2 | Dışa aktarma eskisini önce siliyordu (yarıda kalan hata eskiyi de götürür); editör her zaman üzerine yazıyordu | Yan klasörde (`exports/.<ad>.exporting`) kurulur, tamamlanınca yer değiştirir. Editör önce sorar: *Önceki dışa aktarma değiştirilsin mi?* (Değiştir / Vazgeç) |
+| 3 | `exports` bir bağlantıysa proje dışına yazılıp silinebiliyordu | Bağlantı (Windows'ta bağlantı noktası da) reddedilir, kanonik yol proje içinde olmalı: `export_outside_project` |
+| 4 | Oynatıcının C çalışma zamanı DLL'i denetlenmiyordu | `wish_control::pe::needs_c_runtime_dll`. `project_export` uyarır (`export_needs_c_runtime`), `wen package` oynatıcıyı da denetler |
+| 5 | `create_from_template` ve `create_project` var olan dosyaların üzerine yazıyordu | Yazılacak dosyalardan biri varsa hiçbir şey yazılmaz: `project_files_exist` |
+| 6 | Karşılama ekranı derlenemeyen kodu başarı sayıyordu (`ok`'a bakıyordu) | `passed`'a bakar, derleyicinin ilk hatasını gösterir |
+| 7 | Dışa aktarılan kod, projenin çalıştırdığı kod olmayabiliyordu | Diskteki `game.wasm`'ın parmak izi yüklü modülünkiyle aynı olmalı ve kaynaklar ondan yeni olmamalı; yoksa `export_needs_build`. Paket, doğrulanan baytları yazar |
+| 8 | Yarıda kalan oluşturma yarım klasör bırakıyordu | Yan klasörde (`.<ad>.creating`) kurulur, tamamlanınca taşınır; hata olursa silinir ve önerilen ad ilerler |
+| 9 | Windows'un aygıt adları (`con`, `nul`, `com1`...) kabul ediliyordu | `scaffold::reserved_on_windows`: dışa aktarma adı reddedilir, otomatik adlara `_game` / `-game` eklenir |
+| 10 | Okunamayan `editor.json` boş sayılıp üzerine yazılıyordu | Kenara `.json.broken` olarak kopyalanır; yazma yan dosya + yeniden adlandırma |
+| 11 | Şablonun gizli klasörleri (`.git`, `.claude`...) yeni projeye geçiyordu | Gizli girdiler kopyalanmaz |
+| 12 | Belgeler klasörü OneDrive'a taşınmışsa yanlış yer öneriliyordu | Windows'ta kabuk klasörü kayıt defterinden okunur (`User Shell Folders\Personal`, değişkenler açılır). Bu makinede `OneDrive\Belgeler` |
+
+## 5. Yayın denetimi (WP5, 17 Kasım 2026)
+
+[VISION.md](../VISION.md) başarı ölçütleri ve M9 çıkış ölçütleri. Her biri için kanıt ve durum. Simgeler:
+- ✔ kanıtlandı,
+- ◐ kodu hazır, kullanıcı adımı bekliyor,
+- ✗ yapılmadı.
+
+| Ölçüt | Kanıt | Durum |
+|---|---|---|
+| Sahne değişikliği → gözlem < 2 sn | Dosya değişince dünya < 1 sn (`wen watch` 100 ms yoklar, M2). Editör sahneyi 0,4 sn'de, projeyi 2 sn'de bir yoklar | ✔ |
+| Oyun kodu değişikliği → çalışan oyun < 10 sn | `wen build` düzenleme sonrası 0,4 sn; sıcak yükleme durumu korur (M5 §18) | ✔ |
+| 10.000 tick tekrarda sıfır hash sapması | `script_tools.rs::a_ten_thousand_tick_replay_…` (M5); fizikli tekrar (M6) | ✔ |
+| Ajan değerlendirme takımı ≥ %90 (Sonnet 5.5 · medium) | 41/41 (%100), `evals/results/m7-sonnet-5-5-medium.json` | ✔ |
+| Sıfırdan oynanabilir mini oyun, tek ajan oturumu | Değerlendirme görevleri 11–12 ve 26–41 (oyun kodu yazan, gizli senaryo testiyle denetlenen); vitrin oyunu yalnızca araçlarla kuruldu (M7) | ✔ |
+| Yapay zekâsız kullanım eksiksiz | Editör: sahne kurma, oynatma, test, dışa aktarma. Hepsi `wish_editor/tests` altında elle yapılıyor; karşılama ekranı "Kimse" seçeneği | ✔ |
+| Elle/ajan eşliği (otomatik denetlenir) | `wish_editor::parity::PARITY` + `tests/parity.rs`: her araç ve her `edit_apply` işlemi elle yapan bir teste bağlı | ✔ |
+| İlk çalıştırma: indir → yapay zekâyı bağla → ilk istek → çalışan sahne < 5 dk | Karşılama ekranı → şablon → derleme → editör ~10 sn (`welcome.rs` testi, şablon derlemesiyle). Gerçek Claude Code ile ilk istek kullanıcı onayı ister (kota) | ◐ |
+| Kurulum: tek paket, derleyici kurulmaz | `wen package`: `wen` + oynatıcı + SDK + paketlenmiş derleyici + şablonlar; boş ortamda derleme (M5). Temiz Windows Sandbox denemesi kullanıcıda | ◐ |
+| Ajan kaynaklı çökme/donma sıfır | Düşmanca oyun modülleri (`wish_script/tests/hostile_game.rs`), bulanıklaştırma (`wish_control/tests/fuzz.rs`), yakıt sınırı; M4–M9 kapanış incelemeleri | ✔ |
+| Geri alınabilirlik: her ajan değişikliği tek tıkla | Etkinlik kartı başına geri al; seçmeli geri al (`edit_history revert`); denetim noktaları (M8b) | ✔ |
+| Dışa aktarma: tek komut/tık, bağımsız paket | `project_export` / `wen export` / editör menüsü. Dışa aktarılan vitrin oyunu ayrı süreçte projeyle bit bit aynı (`wish_player/tests/export.rs`) | ✔ |
+| Dışa aktarılan oyun motorsuz makinede çalışır | Paket motor dosyası içermez (test). Temiz makine denemesi kullanıcıda | ◐ |
+| Temiz Windows 10 ve 11'de < 5 dk, ek kurulum yok | Kullanıcı adımı (Windows Sandbox: `clean-test.wsb`) | ◐ |
+| Bilinen çökme sıfır, açık yüksek öncelikli hata sıfır | Her kilometre taşı kapanış incelemesinin bulguları kapatıldı (M9: 12/12). Açık hata kaydı yok | ✔ |
+| Depo herkese açık, katkı kılavuzu yazılmış | `CONTRIBUTING.md` yazıldı. Depoyu açmak kullanıcı kararı | ◐ |
+| Ad, marka ve alan adı uygunluğu | Kullanıcı (hukuki/para) | ✗ |
+| Güncelleyici (web), isteğe bağlı çökme raporu, son kullanıcı sözleşmesi, Steam sayfası, web sitesi | Barındırma, alan adı, Steamworks hesabı ve sözleşme metni kullanıcıya ait. Kod tarafı bunlar netleşince yapılır | ✗ |
+
+**Kullanıcıya ait adımlar (1.0 öncesi), önerilen sırayla:**
+1. **Paketi yeniden üret.** Statik C çalışma zamanıyla `wen` ve `wish_player`, sonra `wen package`. Ben yapabilirim (~15 dk, birkaç GB geçici derleme).
+2. **Temiz makine denemesi.** Windows Sandbox'ta `clean-test.wsb`. Ayrıca bir dışa aktarılan oyunu motorsuz açmak.
+3. **Gerçek Claude Code ile kokpit koşumu ve ilk çalıştırma süresi.** Kota harcar.
+4. **3 kişiyle kullanıcı testi** (M8b ölçüt 1) ve T1 maketleri.
+5. **Ses çıkışını kulakla dinlemek** (`wen play`).
+6. **CI faturalandırma.** GitHub işleri başlatmıyor.
+7. **Ad/marka/alan adı, son kullanıcı sözleşmesi, depoyu herkese açmak, Steam, web sitesi, kod imzalama.**

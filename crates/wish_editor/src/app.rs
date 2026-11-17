@@ -176,6 +176,9 @@ pub struct EditorApp {
     cockpit: crate::cockpit::Cockpit,
     /// The "connect an outside agent" window is open.
     connect_open: bool,
+    /// An earlier export of this name is there: the person is asked before
+    /// it is replaced (its folder).
+    export_confirm: Option<String>,
     /// A before/after comparison being shown: the checkpoint, its picture
     /// and now's, and their textures once made.
     compare: Option<Compare>,
@@ -304,6 +307,10 @@ struct Actions {
     save_checkpoint: bool,
     /// Export the game.
     export: bool,
+    /// Replace the earlier export (asked).
+    export_replace: bool,
+    /// Keep the earlier export.
+    export_cancel: bool,
     /// Set the permission mode.
     permission: Option<&'static str>,
     /// Show or hide the agent's panel.
@@ -379,6 +386,8 @@ impl Actions {
             || self.run_tests
             || self.save_checkpoint
             || self.export
+            || self.export_replace
+            || self.export_cancel
             || self.permission.is_some()
             || self.toggle_cockpit
             || self.connect.is_some()
@@ -497,6 +506,7 @@ impl EditorApp {
             permission_mode: "apply".to_owned(),
             proposals: Vec::new(),
             connect_open: false,
+            export_confirm: None,
             cockpit: crate::cockpit::Cockpit::new(Box::new(
                 wish_agent::claude::ClaudeCode::default(),
             )),
@@ -1696,6 +1706,31 @@ impl EditorApp {
     }
 
     /// The window that tells how an outside agent connects to this editor.
+    /// Asks before an earlier export is replaced.
+    fn export_window(&self, ui: &mut Ui, actions: &mut Actions) {
+        let Some(folder) = &self.export_confirm else {
+            return;
+        };
+        egui::Window::new(t("Replace the earlier export?"))
+            .collapsible(false)
+            .resizable(false)
+            .default_pos([420.0, 200.0])
+            .show(ui.ctx(), |ui| {
+                ui.label(tf(
+                    "{folder} is there already. Replace it with the game as it is now? Files you added to that folder are replaced too.",
+                    &[("folder", folder)],
+                ));
+                ui.horizontal(|ui| {
+                    if ui.button(t("Replace")).clicked() {
+                        actions.export_replace = true;
+                    }
+                    if ui.button(t("Cancel")).clicked() {
+                        actions.export_cancel = true;
+                    }
+                });
+            });
+    }
+
     fn connect_window(&self, ui: &mut Ui, actions: &mut Actions) {
         if !self.connect_open {
             return;
@@ -2547,13 +2582,34 @@ impl EditorApp {
             self.run_tests(false);
         }
         self.checkpoint_act(&actions);
-        if actions.export {
-            let exported = self.call("project_export", &json!({ "overwrite": true }));
+        if actions.export_cancel {
+            self.export_confirm = None;
+            self.status = t("the earlier export was kept").to_owned();
+        }
+        if actions.export || actions.export_replace {
+            let replace = actions.export_replace && self.export_confirm.take().is_some();
+            let exported = self.call("project_export", &json!({ "overwrite": replace }));
             self.status = if exported["ok"] == true {
-                tf(
+                let mut status = tf(
                     "game exported: {program} (zip its folder to share it)",
                     &[("program", &exported["program"].as_str().unwrap_or("?"))],
-                )
+                );
+                // A warning (such as the C runtime the player needs) is
+                // said with it.
+                for warning in exported["diagnostics"].as_array().into_iter().flatten() {
+                    status.push(' ');
+                    status.push_str(warning["message"].as_str().unwrap_or_default());
+                }
+                status
+            } else if exported["error"]["code"] == "export_exists" {
+                self.export_confirm = Some(
+                    exported["error"]["message"]
+                        .as_str()
+                        .and_then(|message| message.split('\'').nth(1))
+                        .unwrap_or("exports/")
+                        .to_owned(),
+                );
+                t("an earlier export is there: replace it?").to_owned()
             } else {
                 let message = exported["error"]["message"]
                     .as_str()
@@ -3888,6 +3944,7 @@ impl EditorApp {
         crate::settings::window(ui, &self.settings, &self.scenes, &mut actions.settings);
         self.compare_window(ui, &mut actions);
         self.connect_window(ui, &mut actions);
+        self.export_window(ui, &mut actions);
         // The middle is not painted: the scene's picture shows through.
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)

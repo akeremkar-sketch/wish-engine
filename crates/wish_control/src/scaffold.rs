@@ -179,6 +179,19 @@ Built in, set up with components (`schema_get` and `docs_search` say how; `wish:
 /// (`wen`, or its full path). Returns the files written, project-relative.
 pub fn create_project(dir: &Path, name: &str, command: &str) -> Result<Vec<String>> {
     let name = check_new(dir, name)?;
+    refuse_existing(
+        dir,
+        [
+            PROJECT_FILE,
+            "scenes/main.scene.json",
+            "assets/.gitkeep",
+            "scripts/src/lib.rs",
+            "tests/boots.test.json",
+            wish_input::INPUT_FILE,
+        ]
+        .into_iter()
+        .chain(AGENT_FILES.iter().copied()),
+    )?;
     let mut written = Vec::new();
     write(
         dir,
@@ -203,6 +216,32 @@ pub fn create_project(dir: &Path, name: &str, command: &str) -> Result<Vec<Strin
     )?;
     write_agent_files(dir, name, command, &mut written)?;
     Ok(written)
+}
+
+/// The files [`write_agent_files`] writes.
+const AGENT_FILES: &[&str] = &[".mcp.json", "CLAUDE.md", ".gitignore"];
+
+/// Refuses to make a project over files that are already there (a folder
+/// with other files is fine, as long as none would be replaced).
+fn refuse_existing<'a>(dir: &Path, files: impl IntoIterator<Item = &'a str>) -> Result<()> {
+    let mut there: Vec<&str> = files
+        .into_iter()
+        .filter(|file| dir.join(file).exists())
+        .collect();
+    if there.is_empty() {
+        return Ok(());
+    }
+    there.sort_unstable();
+    there.truncate(5);
+    Err(Diagnostic::error(
+        "project_files_exist",
+        format!(
+            "'{}' already has files a new project would replace ({}).",
+            dir.display(),
+            there.join(", ")
+        ),
+        "Choose a new or empty folder; nothing was written.",
+    ))
 }
 
 /// The files every project has whatever it starts from: how agents
@@ -261,6 +300,21 @@ const NOT_FROM_TEMPLATE: &[&str] = &[
     "CLAUDE.md",
     ".gitignore",
 ];
+
+/// Whether `name` is one Windows keeps for devices (`con`, `nul`, `com1`...,
+/// with or without an extension): a file or folder cannot have it.
+pub fn reserved_on_windows(name: &str) -> bool {
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or(name)
+        .trim_end()
+        .to_ascii_lowercase();
+    matches!(stem.as_str(), "con" | "prn" | "aux" | "nul")
+        || ((stem.starts_with("com") || stem.starts_with("lpt"))
+            && stem.len() == 4
+            && stem.as_bytes()[3].is_ascii_digit())
+}
 
 /// A project to start from: a folder with a `wish.json` (the engine's
 /// examples are the templates it ships with).
@@ -336,6 +390,14 @@ pub fn create_from_template(
         return Err(not_a_template());
     };
     let files = template_entries(template).map_err(|_| not_a_template())?;
+    refuse_existing(
+        dir,
+        files
+            .iter()
+            .map(String::as_str)
+            .chain([PROJECT_FILE])
+            .chain(AGENT_FILES.iter().copied()),
+    )?;
     let mut written = Vec::new();
     for relative in files {
         let target = dir.join(&relative);
@@ -394,7 +456,11 @@ fn template_entries(template: &Path) -> std::io::Result<Vec<String>> {
             let Some(file) = entry.file_name().to_str().map(str::to_owned) else {
                 continue;
             };
-            if prefix.is_empty() && NOT_FROM_TEMPLATE.contains(&file.as_str()) {
+            // Hidden entries (.git, .vscode, .claude...) are the template's
+            // own business, not the new project's.
+            if file.starts_with('.')
+                || (prefix.is_empty() && NOT_FROM_TEMPLATE.contains(&file.as_str()))
+            {
                 continue;
             }
             // Links are not followed: a template copies only what is in it.

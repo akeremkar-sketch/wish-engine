@@ -223,3 +223,34 @@ fn a_game_by_hand_starts_empty_and_a_wrong_folder_is_explained() {
         "mine"
     );
 }
+
+/// M9 closing review: game code that does not compile is said, not
+/// reported as a project ready to play.
+#[test]
+fn a_template_whose_code_does_not_build_says_so() {
+    let (mut options, base) = options("broken-code");
+    let template = base.join("broken-template");
+    wish_control::scaffold::create_project(&template, "Broken", "wen").unwrap();
+    std::fs::write(template.join("scripts/src/lib.rs"), "fn main( {").unwrap();
+    options.templates = wish_control::scaffold::templates(&base)
+        .into_iter()
+        .filter(|t| t.id == "broken-template")
+        .collect();
+    let mut launcher = Launcher::new(options);
+    launcher.set_assistant(Assistant::Nobody);
+    play(&mut launcher, json!([{ "idle": 2 }]));
+    click(&mut launcher, "Broken");
+    click(&mut launcher, "Create");
+    let app = launcher.app().expect("the editor opened");
+    assert!(
+        app.status().starts_with("the game code was not built: "),
+        "{}",
+        app.status()
+    );
+    // Nothing of the work is left beside the new project.
+    let left: Vec<String> = std::fs::read_dir(base.join("projects"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(left, ["my-game"]);
+}

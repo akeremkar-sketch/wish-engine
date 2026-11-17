@@ -60,6 +60,8 @@ fn slug(name: &str) -> String {
         .collect::<String>();
     if out.is_empty() {
         "game".to_owned()
+    } else if crate::scaffold::reserved_on_windows(&out) {
+        format!("{out}_game")
     } else {
         out
     }
@@ -67,6 +69,7 @@ fn slug(name: &str) -> String {
 
 fn valid(name: &str) -> bool {
     !name.is_empty()
+        && !crate::scaffold::reserved_on_windows(name)
         && name.len() <= 40
         && name
             .bytes()
@@ -129,12 +132,29 @@ fn project_export(
     let root = workspace.root().to_path_buf();
     let has_code = root.join(wish_script::build::SCRIPTS_ENTRY).is_file();
     let wasm = root.join(wish_script::build::GAME_WASM);
-    if has_code && (workspace.game_module().is_none() || !wasm.is_file()) {
-        return Err(Diagnostic::error(
+    let needs_build = |message: &str| {
+        Diagnostic::error(
             "export_needs_build",
-            "The project has game code that is not built, so it was not exported.",
+            format!("{message}, so it was not exported."),
             "Build it first (script_build, or Build code in the editor), then export again.",
-        ));
+        )
+    };
+    // The code shipped is the code the project runs: built, loaded, and
+    // not older than its sources.
+    let mut code = None;
+    if has_code {
+        let (Some(module), Ok(bytes)) = (workspace.game_module(), std::fs::read(&wasm)) else {
+            return Err(needs_build("The project has game code that is not built"));
+        };
+        if wish_script::fingerprint_of(&bytes) != module.fingerprint() {
+            return Err(needs_build(
+                "The built game code on disk is not the code the project runs (another program built it)",
+            ));
+        }
+        if sources_newer_than(&root.join("scripts"), &wasm) {
+            return Err(needs_build("The game code changed since it was last built"));
+        }
+        code = Some(bytes);
     }
     // Only a project that is right goes out.
     let checked = workspace.run_tool("check", &json!({}), actor)?;
@@ -160,6 +180,21 @@ fn project_export(
     };
     let folder = format!("{}{name}", wish_asset::index::EXPORTS_FOLDER);
     let out = root.join(&folder);
+    let exports = root.join(wish_asset::index::EXPORTS_FOLDER.trim_end_matches('/'));
+    // Never through a link: the export is written and replaced only inside
+    // the project.
+    for path in [&exports, &out] {
+        if std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink()) {
+            return Err(Diagnostic::error(
+                "export_outside_project",
+                format!(
+                    "'{}' is a link, so nothing was exported through it.",
+                    path.display()
+                ),
+                "Remove the link (exports/ must be a real folder inside the project), then export again.",
+            ));
+        }
+    }
     if out.exists() && !args.flag("overwrite") {
         return Err(Diagnostic::error(
             "export_exists",
@@ -183,9 +218,6 @@ fn project_export(
             files.push(path.to_owned());
         }
     }
-    if has_code {
-        files.push(wish_script::build::GAME_WASM.to_owned());
-    }
     files.sort();
     files.dedup();
     let program = if cfg!(windows) {
@@ -197,17 +229,127 @@ fn project_export(
     out_map.insert("folder".to_owned(), json!(folder));
     out_map.insert("program".to_owned(), json!(format!("{folder}/{program}")));
     out_map.insert("files".to_owned(), json!(files.len()));
+    let player_bytes = std::fs::read(&player).map_err(|error| {
+        Diagnostic::error(
+            "player_missing",
+            format!(
+                "The player program '{}' could not be read: {error}.",
+                player.display()
+            ),
+            "Build it (cargo build --release -p wish_player) or set WISH_PLAYER to its path.",
+        )
+    })?;
+    let mut warnings = Vec::new();
+    if crate::pe::needs_c_runtime_dll(&player_bytes) {
+        warnings.push(Diagnostic::warning(
+            "export_needs_c_runtime",
+            "The player was built with the C runtime as a DLL, so the game may not start on a Windows without the Visual C++ runtime.",
+            "Use the player of an installed engine, or build it with RUSTFLAGS=-C target-feature=+crt-static.",
+        ));
+    }
+    if !warnings.is_empty() {
+        out_map.insert("diagnostics".to_owned(), json!(warnings));
+    }
     if args.flag("dry_run") {
-        out_map.insert("would_copy".to_owned(), json!(files));
+        let mut would = files.clone();
+        if code.is_some() {
+            would.push(wish_script::build::GAME_WASM.to_owned());
+        }
+        out_map.insert("would_copy".to_owned(), json!(would));
         out_map.insert("dry_run".to_owned(), json!(true));
         return Ok(out_map);
     }
-    if out.exists() {
-        std::fs::remove_dir_all(&out).map_err(|error| unwritable(&out, &error))?;
+    std::fs::create_dir_all(&exports).map_err(|error| unwritable(&exports, &error))?;
+    let inside = std::fs::canonicalize(&exports)
+        .ok()
+        .zip(std::fs::canonicalize(&root).ok())
+        .is_some_and(|(exports, root)| exports.starts_with(root));
+    if !inside {
+        return Err(Diagnostic::error(
+            "export_outside_project",
+            format!("'{}' is not inside the project.", exports.display()),
+            "exports/ must be a real folder inside the project; remove what is there, then export again.",
+        ));
     }
-    let mut bytes = copy_file(&player, &out.join(&program))?;
-    for path in &files {
+    // Made beside the old one and swapped in only when complete: a failure
+    // halfway leaves the earlier export as it was.
+    let building = exports.join(format!(".{name}.exporting"));
+    let _ = std::fs::remove_dir_all(&building);
+    let made = write_export(
+        &building,
+        &program,
+        &player_bytes,
+        &root,
+        &files,
+        code.as_deref(),
+        &project_name,
+    );
+    let bytes = match made {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            let _ = std::fs::remove_dir_all(&building);
+            return Err(error);
+        }
+    };
+    if out.exists() {
+        let old = exports.join(format!(".{name}.replaced"));
+        let _ = std::fs::remove_dir_all(&old);
+        if let Err(error) = std::fs::rename(&out, &old) {
+            let _ = std::fs::remove_dir_all(&building);
+            return Err(unwritable(&out, &error));
+        }
+        let _ = std::fs::remove_dir_all(&old);
+    }
+    std::fs::rename(&building, &out).map_err(|error| unwritable(&out, &error))?;
+    out_map.insert("bytes".to_owned(), json!(bytes));
+    Ok(out_map)
+}
+
+/// Whether any file under `folder` changed after `built` was written.
+fn sources_newer_than(folder: &Path, built: &Path) -> bool {
+    let Ok(built) = std::fs::metadata(built).and_then(|meta| meta.modified()) else {
+        return true;
+    };
+    let mut folders = vec![folder.to_path_buf()];
+    while let Some(folder) = folders.pop() {
+        for entry in std::fs::read_dir(&folder).into_iter().flatten().flatten() {
+            let Ok(meta) = entry.metadata() else {
+                continue;
+            };
+            if meta.is_dir() {
+                folders.push(entry.path());
+            } else if meta.modified().is_ok_and(|changed| changed > built) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Writes the whole export into `out`; returns the bytes written.
+fn write_export(
+    out: &Path,
+    program: &str,
+    player: &[u8],
+    root: &Path,
+    files: &[String],
+    code: Option<&[u8]>,
+    project_name: &str,
+) -> Result<u64> {
+    std::fs::create_dir_all(out).map_err(|error| unwritable(out, &error))?;
+    std::fs::write(out.join(program), player)
+        .map_err(|error| unwritable(&out.join(program), &error))?;
+    let mut bytes = player.len() as u64;
+    for path in files {
         bytes += copy_file(&root.join(path), &out.join("game").join(path))?;
+    }
+    if let Some(code) = code {
+        let to = out.join("game").join(wish_script::build::GAME_WASM);
+        if let Some(folder) = to.parent() {
+            std::fs::create_dir_all(folder).map_err(|error| unwritable(&to, &error))?;
+        }
+        std::fs::write(&to, code).map_err(|error| unwritable(&to, &error))?;
+        bytes += code.len() as u64;
     }
     let licenses = format!(
         "{project_name} was made with Wish Engine, which is free and open source under the MIT license or the Apache License 2.0, at your option. Both texts follow, then the licenses of the libraries the engine uses.\n\n==== MIT ====\n\n{LICENSE_MIT}\n\n==== Apache License 2.0 ====\n\n{LICENSE_APACHE}\n\n==== Third-party libraries ====\n\n{}",
@@ -215,9 +357,7 @@ fn project_export(
     );
     std::fs::write(out.join("LICENSES.txt"), &licenses)
         .map_err(|error| unwritable(&out.join("LICENSES.txt"), &error))?;
-    bytes += licenses.len() as u64;
-    out_map.insert("bytes".to_owned(), json!(bytes));
-    Ok(out_map)
+    Ok(bytes + licenses.len() as u64)
 }
 
 #[cfg(test)]
@@ -230,5 +370,8 @@ mod tests {
         assert_eq!(slug("  Ada Atlama!  "), "ada_atlama");
         assert_eq!(slug("ÜÇ"), "game");
         assert!(valid("island_hopper") && !valid("Island") && !valid(""));
+        // Names Windows keeps for devices.
+        assert_eq!(slug("Con"), "con_game");
+        assert!(!valid("nul") && !valid("com1") && valid("console"));
     }
 }

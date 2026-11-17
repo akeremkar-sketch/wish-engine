@@ -125,6 +125,14 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "The project's game code is not built, so it was not exported. Build it first (script_build).",
     ),
     (
+        "export_needs_c_runtime",
+        "The player needs the Visual C++ runtime DLL, which a clean Windows may lack.",
+    ),
+    (
+        "export_outside_project",
+        "The exports folder is a link or lies outside the project.",
+    ),
+    (
         "expr_syntax",
         "A where or until condition could not be read. The column says where; write paths like Transform.translation.y, comparisons with ==, and join conditions with && or ||.",
     ),
@@ -538,6 +546,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "project_exists",
         "The folder already has a wish.json. wen new never overwrites a project.",
+    ),
+    (
+        "project_files_exist",
+        "A new project would replace files already in its folder.",
     ),
     ("project_not_found", "The project folder does not exist."),
     (
