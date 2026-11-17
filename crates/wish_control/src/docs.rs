@@ -518,6 +518,18 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "`wen package` could not build the package (engine development only): the message says which step.",
     ),
     (
+        "package_hash_mismatch",
+        "A package from the index does not have the files the index names (its content hash differs). Nothing was installed.",
+    ),
+    (
+        "package_index_invalid",
+        "The package index's index.json is not valid, or names a folder that holds another package or version. The pointer says where.",
+    ),
+    (
+        "package_index_missing",
+        "There is no package index: name a folder of packages with the index parameter or WISH_PACKAGE_INDEX.",
+    ),
+    (
         "package_install_failed",
         "A package could not be copied into place. Nothing was half-installed: it is copied beside its place and moved in only when complete.",
     ),
@@ -552,6 +564,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "package_unreadable",
         "A package's folder or files could not be read.",
+    ),
+    (
+        "package_version_not_found",
+        "No version of the package in the index fits this engine (and the version asked for). The hint lists the versions there are.",
     ),
     (
         "package_without_launcher",

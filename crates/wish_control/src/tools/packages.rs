@@ -1,11 +1,14 @@
 //! `packages` (M10a; design note M10 §12): what a project and a person
-//! have installed, and installing, removing and locking packages.
+//! have installed, and installing, removing and locking packages; finding,
+//! adding and updating them from the package index (M10b; design note M10
+//! §14).
 
 use serde_json::{Map, Value, json};
 use wish_core::{Diagnostic, Result};
 use wish_scene::Actor;
 
-use crate::packages::{self, Scope};
+use crate::package_index;
+use crate::packages::{self, Scope, Version, VersionReq};
 use crate::param::{Args, Kind, Param};
 use crate::tool::Tool;
 use crate::workspace::Workspace;
@@ -13,11 +16,13 @@ use crate::workspace::Workspace;
 pub(crate) const PACKAGES: Tool = Tool {
     name: "packages",
     title: "Packages: themes, workspaces, languages, recipes, templates",
-    description: "Packages bring themes, workspaces (the AI mode's layout, game card and ready requests), languages, recipes and templates. A package is a folder with a wish-package.json. list shows what is installed in the project (packages/, locked by wish.lock) and for the person, and warns when files no longer match the lock. check reads a package folder without installing it. install copies one in (scope project by default: it travels with the project; scope user, a person only: for every project), remove moves one to the trash, lock writes wish.lock again.",
+    description: "Packages bring themes, workspaces (the AI mode's layout, game card and ready requests), languages, recipes and templates. A package is a folder with a wish-package.json. list shows what is installed in the project (packages/, locked by wish.lock) and for the person, and warns when files no longer match the lock. check reads a package folder without installing it. install copies one in from a folder (scope project by default: it travels with the project; scope user, a person only: for every project), remove moves one to the trash, lock writes wish.lock again. search finds packages in the package index (a folder of packages, given by index or WISH_PACKAGE_INDEX), add installs the newest version of one that fits this engine, update brings installed ones to their newest compatible version.",
     params: &[
         Param::optional(
             "action",
-            Kind::Choice(&["list", "check", "install", "remove", "lock"]),
+            Kind::Choice(&[
+                "list", "check", "install", "remove", "lock", "search", "add", "update",
+            ]),
             "What to do (default list).",
         )
         .or("\"list\""),
@@ -26,17 +31,36 @@ pub(crate) const PACKAGES: Tool = Tool {
             Kind::String,
             "For check and install: the package's folder (absolute, or relative to the project).",
         ),
-        Param::optional("id", Kind::String, "For remove: the package's id."),
+        Param::optional(
+            "id",
+            Kind::String,
+            "For remove and add: the package's id; for update: only this package (default: every installed one).",
+        ),
+        Param::optional(
+            "query",
+            Kind::String,
+            "For search: words to find in ids, names, descriptions and kinds (empty: everything).",
+        ),
+        Param::optional(
+            "version",
+            Kind::String,
+            "For add and update: a version requirement, such as \"^1.2\" or \"=1.0.0\" (default: the newest that fits this engine; update stays compatible with what is installed).",
+        ),
+        Param::optional(
+            "index",
+            Kind::String,
+            "For search, add and update: the package index's folder (default: WISH_PACKAGE_INDEX, else the person's cached index).",
+        ),
         Param::optional(
             "scope",
             Kind::Choice(&["project", "user"]),
-            "For install and remove: the project's packages (default) or the person's own (a person only).",
+            "For install, remove, add and update: the project's packages (default) or the person's own (a person only).",
         )
         .or("\"project\""),
         Param::optional(
             "replace",
             Kind::Boolean,
-            "For install: replace the installed version of the same package (it goes to the trash).",
+            "For install and add: replace the installed version of the same package (it goes to the trash).",
         ),
         Param::optional(
             "dry_run",
@@ -111,6 +135,44 @@ fn relock(workspace: &mut Workspace) -> Result<()> {
     workspace.write_packages(requirements)
 }
 
+fn index_of(workspace: &Workspace, args: &Args) -> Result<package_index::Index> {
+    let given = args
+        .str("index")
+        .map(str::trim)
+        .filter(|index| !index.is_empty())
+        .map(|index| {
+            let path = std::path::Path::new(index);
+            if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                workspace.root().join(path)
+            }
+        });
+    package_index::read_index(&package_index::index_folder(given)?)
+}
+
+fn wanted(args: &Args) -> Result<Option<VersionReq>> {
+    args.str("version")
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(|text| VersionReq::parse(text).map_err(|problem| problem.at_path("/version")))
+        .transpose()
+}
+
+fn id_arg<'a>(args: &'a Args, action: &str) -> Result<&'a str> {
+    args.str("id")
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| {
+            Diagnostic::error(
+                "missing_parameter",
+                format!("{action} needs \"id\": which package."),
+                "packages with action search shows the index's packages, and list the installed ones, with their ids.",
+            )
+            .at_path("/id")
+        })
+}
+
 fn run(workspace: &mut Workspace, args: &Args, actor: &Actor) -> Result<Map<String, Value>> {
     let action = args.str("action").unwrap_or("list");
     let root = workspace.root().to_path_buf();
@@ -168,6 +230,122 @@ fn run(workspace: &mut Workspace, args: &Args, actor: &Actor) -> Result<Map<Stri
             out.insert("id".to_owned(), json!(id));
             out.insert("removed".to_owned(), json!(true));
             out.insert("trash".to_owned(), json!(trash.display().to_string()));
+        }
+        "search" => {
+            let index = index_of(workspace, args)?;
+            let query = args.str("query").unwrap_or("");
+            let found = package_index::search(&index, query, Some(&root));
+            out.insert("count".to_owned(), json!(found.len()));
+            out.insert("packages".to_owned(), json!(found));
+        }
+        "add" => {
+            let scope = scope_of(args);
+            person_only(actor, scope)?;
+            let id = id_arg(args, action)?;
+            let index = index_of(workspace, args)?;
+            let (plan, folder) = package_index::plan_add(
+                &index,
+                id,
+                wanted(args)?.as_ref(),
+                scope,
+                &root,
+                args.flag("replace"),
+            )?;
+            out.insert("package".to_owned(), plan.manifest.to_value());
+            out.insert("scope".to_owned(), json!(scope.name()));
+            out.insert("replaces".to_owned(), json!(plan.replaces));
+            out.insert("diagnostics".to_owned(), diagnostics(&plan.warnings));
+            if dry_run {
+                out.insert("dry_run".to_owned(), json!(true));
+                return Ok(out);
+            }
+            packages::install(&folder, &plan, scope, &root)?;
+            if scope == Scope::Project {
+                relock(workspace)?;
+            }
+            out.insert("installed".to_owned(), json!(true));
+        }
+        "update" => {
+            let scope = scope_of(args);
+            person_only(actor, scope)?;
+            let only = args.str("id").map(str::trim).filter(|id| !id.is_empty());
+            let given = wanted(args)?;
+            if given.is_some() && only.is_none() {
+                return Err(Diagnostic::error(
+                    "missing_parameter",
+                    "update with \"version\" needs \"id\": which package that version is for.",
+                    "Pass \"id\" too, or leave \"version\" out to bring every package to its newest compatible version.",
+                )
+                .at_path("/id"));
+            }
+            let index = index_of(workspace, args)?;
+            let all = packages::installed(scope, &root);
+            if let Some(only) = only
+                && !all.iter().any(|package| package.id == only)
+            {
+                let known: Vec<&str> = all.iter().map(|package| package.id.as_str()).collect();
+                return Err(Diagnostic::error(
+                    "package_not_found",
+                    format!(
+                        "No package '{only}' is installed in the {} scope.",
+                        scope.name()
+                    ),
+                    wish_core::suggest::unknown_name_hint(only, &known),
+                )
+                .at_path("/id"));
+            }
+            let mut plans = Vec::new();
+            let mut current = Vec::new();
+            let mut missing = Vec::new();
+            for package in &all {
+                let Some(manifest) = &package.manifest else {
+                    continue;
+                };
+                if only.is_some_and(|only| only != manifest.id) {
+                    continue;
+                }
+                let had: Version = manifest.version;
+                let Some(entry) = index.get(&manifest.id) else {
+                    missing.push(manifest.id.clone());
+                    continue;
+                };
+                let chosen = match &given {
+                    Some(given) => entry
+                        .choose(Some(given))
+                        .filter(|chosen| chosen.version != had),
+                    None => package_index::update_for(entry, had),
+                };
+                let Some(chosen) = chosen else {
+                    current.push(manifest.id.clone());
+                    continue;
+                };
+                let plan = package_index::plan_from_index(entry, chosen, scope, &root, true)?;
+                plans.push((had.to_string(), chosen.folder.clone(), plan));
+            }
+            let updated: Vec<Value> = plans
+                .iter()
+                .map(|(had, _, plan)| {
+                    json!({
+                        "id": plan.manifest.id,
+                        "from": had,
+                        "to": plan.manifest.version.to_string(),
+                    })
+                })
+                .collect();
+            out.insert("scope".to_owned(), json!(scope.name()));
+            out.insert("updated".to_owned(), json!(updated));
+            out.insert("current".to_owned(), json!(current));
+            out.insert("not_in_index".to_owned(), json!(missing));
+            if dry_run {
+                out.insert("dry_run".to_owned(), json!(true));
+                return Ok(out);
+            }
+            for (_, folder, plan) in &plans {
+                packages::install(folder, plan, scope, &root)?;
+            }
+            if scope == Scope::Project && !plans.is_empty() {
+                relock(workspace)?;
+            }
         }
         "lock" => {
             let text = packages::lock_text(&root)?;

@@ -247,4 +247,35 @@ Not a separate program, but the evolution of the welcome screen (the screen that
 - **WP3 (workspaces):** the card's fields moved into the design file when a workspace is chosen (`game_design set_workspace`), so the control plane and the agent know them and the project carries them; ready requests and the agent's extra words come from the workspace package. The default workspace stays in code because its texts are translated with the interface; package texts are plain or per language. First engine workspace: Story game (setting, characters, tone, choices, endings).
 - **WP4 (commands):** every editor action has an id, a name and default shortcuts in one table; the hard-coded shortcuts became bindings from it; the person's `keys` preference replaces them; Ctrl+K opens the palette (it opens even while typing in a text box). Packages and agents naming commands comes with code extensions (M10c).
 - **WP5 (templates, languages, recipes):** recipes are searched and served to agents from the project's and the person's packages; templates from the person's and the engine's packages appear in `wen new --template` and on the welcome screen, picture included (`.template/` is the one hidden folder a package keeps); languages from packages join the menu at run time (a built-in code cannot be taken).
+- **M10b WP1 (the Hub):** the welcome screen gained tabs (Projects, Packages, Look, AI, Learn, Settings); every page writes only the person's preferences and packages; the Projects page is the old welcome screen unchanged.
+- **M10b WP2 (the package index, offline):** `wish_control::package_index` (a folder of packages or an `index.json`; §14), `packages` `search`/`add`/`update`, `wen pkg`, the index section in the Packages window and on the Hub. The index's folder is the `package_index` preference. A version's content hash is checked in the side folder, before the package moves into place. Search marks an update only when `update` would do it (the newest *compatible* version), so the two never disagree.
 - **M10a exit:** the default theme and a workspace are engine packages; a theme, a workspace, a recipe, a template and a language made outside the engine install from a folder, change the editor without a rebuild and come off again cleanly; `wish.lock` pins a project's packages. The Hub's Packages tab (M10b) puts a face on the package index.
+
+## 14. M10b in detail: the package index, offline first
+
+**User decision (18 November 2026):** the index works offline first; downloading over the internet (an HTTP/TLS library, the index repository's name and owner) comes after the user decides on them.
+
+**Problem.** A person or an agent should find packages by name or kind, install the newest one that fits this engine, and update installed ones, without knowing where each package folder is.
+
+**Options.** (a) Wait for the online index and build everything at once; (b) make the index a folder now (a local index), with the same format the online one will use, so that downloading later only adds "fetch the index and the package into a cache folder". (b) was chosen: everything above the fetch (search, choosing a version, checking, installing, updating, locking, the Hub's face) is the same either way.
+
+**Index format.** An index is a folder. Either it has an `index.json`:
+
+```json
+{ "format": 1, "name": "My index", "packages": [
+  { "id": "com.example.dusk", "name": "Dusk", "description": "...", "license": "MIT", "kinds": ["themes"],
+    "versions": [ { "version": "1.1.0", "engine": ">=0.1", "hash": "<content hash>", "path": "dusk/1.1.0" } ] } ] }
+```
+
+where `path` is a folder inside the index (forward slashes, no `..`) and `hash` (optional) is the package's content hash, checked after the copy and before the package is moved into place; or it has no `index.json`, and then every package folder in it (`<folder>/wish-package.json`, or one level deeper: `<id>/<version>/wish-package.json`) is an entry, read from its manifest. A folder of packages is therefore already an index. The online index will add a download address and an archive digest to each version; the fields above stay.
+
+**Where the index is.** The `index` parameter (a folder), else `WISH_PACKAGE_INDEX`, else `<config>/index/` (where the online index will be cached). No index gives `package_index_missing` with a hint naming all three.
+
+**Actions** (on the `packages` tool; `wen pkg` and the Hub call them):
+- `search` (`query`, may be empty): matches id, name, description and kinds without regard to case; each result names its newest version that fits this engine, the installed versions (project, person) and whether an update is waiting. Read-only: it does not enter the activity feed and is never held in suggest mode.
+- `add` (`id`, optional `version` requirement, `scope`, `replace`): installs the newest fitting version through the same checked install as a folder install; the project's `wish.lock` is written again.
+- `update` (optional `id`, `scope`): for every installed package the index knows, installs the newest version that fits the engine and stays compatible (`^installed`) unless `version` says otherwise; answers `updated`, `current`, `not_in_index`.
+
+**Hostile index.** `index.json` over 16 MiB, more than 10,000 packages or 1,000 versions of one, a `path` leaving the index, an invalid id or version are `package_index_invalid` (with the JSON pointer); a version whose files do not hash to the index's hash is refused (`package_hash_mismatch`) and nothing is installed.
+
+**Test plan.** Control plane: search/add/update/remove against a scanned index and an `index.json` index, version choice (engine mismatch, requirement), hash mismatch leaves no trace, hostile `index.json` cases, a person-only user scope. `wen pkg` parses into the same calls. Editor: the Packages window and the Hub search the index and install by hand (parity).

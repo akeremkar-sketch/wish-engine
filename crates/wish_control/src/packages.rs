@@ -302,7 +302,7 @@ fn manifest_problem(pointer: &str, message: String, hint: &str) -> Diagnostic {
 
 /// Whether `path` is a package-relative path that stays inside it: forward
 /// slashes, no `..`, no hidden parts, no drive or root.
-fn inside_path(path: &str) -> bool {
+pub(crate) fn inside_path(path: &str) -> bool {
     !path.is_empty()
         && !path.starts_with('/')
         && !path.contains('\\')
@@ -775,6 +775,8 @@ pub struct Plan {
     pub replaces: Option<String>,
     /// Warnings (an unknown license).
     pub warnings: Vec<Diagnostic>,
+    /// The content hash the copy must have (a package from an index).
+    pub expect_hash: Option<String>,
 }
 
 /// Checks the package in `from` for installing into `scope`: its manifest,
@@ -845,6 +847,7 @@ pub fn plan_install(from: &Path, scope: Scope, project: &Path, replace: bool) ->
         folder,
         replaces,
         warnings,
+        expect_hash: None,
     })
 }
 
@@ -866,14 +869,23 @@ pub fn install(from: &Path, plan: &Plan, scope: Scope, project: &Path) -> Result
     }
     let copied = copy_package(from, &side).and_then(|()| {
         let manifest = read_manifest(&side)?;
-        if manifest == plan.manifest {
-            Ok(())
-        } else {
-            Err(Diagnostic::error(
+        if manifest != plan.manifest {
+            return Err(Diagnostic::error(
                 "package_install_failed",
                 "The package changed while it was being copied.",
                 "Install it again.",
-            ))
+            ));
+        }
+        match &plan.expect_hash {
+            Some(expected) if content_hash(&side)? != *expected => Err(Diagnostic::error(
+                "package_hash_mismatch",
+                format!(
+                    "The files of '{}' {} are not the ones the package index names.",
+                    plan.manifest.id, plan.manifest.version
+                ),
+                "Nothing was installed. The package's folder changed after the index was written: ask its publisher, or write the index's hash again if the change is yours.",
+            )),
+            _ => Ok(()),
         }
     });
     if let Err(problem) = copied {

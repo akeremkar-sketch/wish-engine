@@ -103,3 +103,107 @@ fn packages_are_installed_and_removed_by_hand() {
         .count();
     assert_eq!(mine, 2, "{feed}");
 }
+
+fn type_into(app: &mut EditorApp, field: &str, text: &str) {
+    let rect = named(app, field);
+    play(
+        app,
+        json!([
+            { "events": [{ "click": [rect.center().x, rect.center().y] }] },
+            { "idle": 1 },
+            { "events": [{ "text": text }] },
+            { "idle": 2 }
+        ]),
+    );
+}
+
+#[test]
+fn packages_are_found_in_the_index_added_and_updated_by_hand() {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("editor-package-index");
+    let _ = std::fs::remove_dir_all(&dir);
+    let root = dir.join("game");
+    create_project(&root, "Index Test", "wen").unwrap();
+    // An index: a folder with two versions of one theme package.
+    for version in ["1.0.0", "1.1.0"] {
+        let package = dir.join("index").join(format!("dusk-{version}"));
+        std::fs::create_dir_all(&package).unwrap();
+        std::fs::write(
+            package.join("wish-package.json"),
+            json!({ "format": 1, "id": "com.example.dusk", "name": "Dusk", "version": version,
+                "engine": ">=0.1", "license": "MIT", "description": "Evening colours.",
+                "contents": { "themes": ["dusk.json"] } })
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::write(package.join("dusk.json"), r#"{ "format": 1 }"#).unwrap();
+    }
+    let mut workspace = Workspace::open(WorkspaceOptions {
+        root: root.clone(),
+        example: None,
+    })
+    .unwrap();
+    workspace.set_software(true);
+    let mut app = EditorApp::new(workspace);
+    play(&mut app, json!([{ "idle": 2 }]));
+    click(&mut app, "Index Test");
+    click(&mut app, "Packages...");
+    type_into(
+        &mut app,
+        "The index folder (a folder of packages; empty: WISH_PACKAGE_INDEX)",
+        &dir.join("index").display().to_string(),
+    );
+    type_into(
+        &mut app,
+        "Words to search for (empty: everything)",
+        "evening",
+    );
+    click(&mut app, "Search");
+    assert!(
+        app.widgets()
+            .iter()
+            .any(|w| w.label.as_deref() == Some("Dusk") || w.value.as_deref() == Some("Dusk")),
+        "the index's package is listed"
+    );
+    click(&mut app, "Add to the project");
+    let version = |root: &std::path::Path| -> String {
+        let text =
+            std::fs::read_to_string(root.join("packages/com.example.dusk/wish-package.json"))
+                .unwrap_or_default();
+        serde_json::from_str::<Value>(&text).unwrap_or(Value::Null)["version"]
+            .as_str()
+            .unwrap_or("")
+            .to_owned()
+    };
+    assert_eq!(version(&root), "1.1.0", "the newest: {}", app.status());
+    assert!(root.join("wish.lock").is_file());
+    // An older one installed by hand; the index offers the update.
+    let older = dir.join("index/dusk-1.0.0").display().to_string();
+    let answer = app.call(
+        "packages",
+        &json!({ "action": "install", "path": older, "replace": true }),
+    );
+    assert_eq!(answer["ok"], true, "{answer}");
+    click(&mut app, "Search");
+    click(&mut app, "Update");
+    assert_eq!(version(&root), "1.1.0", "{}", app.status());
+    // The searches are not in the activity feed; the add and update are, as the person's.
+    let feed = app.call("activity_get", &json!({}));
+    let actions: Vec<String> = feed["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["tool"] == "packages")
+        .map(|e| e["summary"].as_str().unwrap_or("").to_owned())
+        .collect();
+    assert!(!feed.to_string().contains("\"search"), "{actions:?}");
+    assert!(
+        feed["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|e| e["tool"] == "packages")
+            .all(|e| e["actor"] == "human"),
+        "{feed}"
+    );
+    assert!(actions.len() >= 3, "add, install, update: {actions:?}");
+}

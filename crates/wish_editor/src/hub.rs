@@ -72,6 +72,8 @@ pub(crate) struct HubAsked {
     pub open: Option<String>,
     /// Start from this template (its id) on the Projects tab.
     pub template: Option<String>,
+    /// What the package index section asked for.
+    pub index: Option<crate::packages_window::IndexAsk>,
 }
 
 /// What the Hub pages show.
@@ -86,6 +88,8 @@ pub(crate) struct HubView<'a> {
     pub claude: Option<&'a std::path::Path>,
     pub templates: &'a [wish_control::scaffold::Template],
     pub projects_folder: &'a str,
+    /// The package index form.
+    pub index: &'a crate::packages_window::IndexForm,
 }
 
 /// The tabs, down the left side.
@@ -168,6 +172,9 @@ pub(crate) fn packages(ui: &mut Ui, view: &HubView, path: &mut String, asked: &m
         {
             asked.install = Some(given);
         }
+    });
+    card(ui, |ui| {
+        crate::packages_window::index_section(ui, view.index, &["user"], &mut asked.index);
     });
     card(ui, |ui| {
         crate::style::panel_title(ui, t("Built in"));

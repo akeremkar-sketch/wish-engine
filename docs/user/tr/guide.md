@@ -228,6 +228,8 @@ Motor hiçbir yapay zekâ olmadan eksiksizdir. Yardımcı, aynı işleri yapman�
 - *Proje menüsü → Paketler...* kurulu olanları listeler ve klasöründen paket kurar: *Projeye yükle* (projeyle birlikte taşınır; `packages/` ve `wish.lock` hangi dosyaların olduğunu tam olarak kaydeder) ya da *Benim için yükle* (bu bilgisayarda açtığınız her proje için).
 - *Kaldır* paketi çöp kutusuna taşır; hiçbir şey silinmez.
 - Projenin kilidi denetlenir: bir paketin dosyaları değişirse pencere bunu söyler; değişiklik sizinse *Kilidi yeniden yaz*.
+- **Paket dizini:** *Paket dizininden* bölümünde dizin klasörünü yazın (paketlerden oluşan bir klasör; hatırlanır), birkaç sözcük yazıp *Ara*'ya basın. Her paket, bu motorla çalışan en yeni sürümünü gösterir: *Projeye ekle*, *Benim için ekle* ya da daha yeni uyumlu bir sürüm varsa *Güncelle*. Hub'ın *Paketler* sekmesinde kendi paketleriniz için aynı arama vardır.
+- Komut satırında: `wen pkg search dark theme --index <klasör>`, `wen pkg add <id>`, `wen pkg update`, `wen pkg remove <id>`, `wen pkg lock` (kendi paketleriniz için `--user`; `WISH_PACKAGE_INDEX` her seferinde `--index` yazmaktan kurtarır).
 
 **Temalar:** *Proje menüsü → Tema* editörün görünümünü hemen değiştirir: Atelier (varsayılan), Midnight, High contrast ve paketlerin getirdiği her tema.
 

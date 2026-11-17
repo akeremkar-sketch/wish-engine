@@ -60,6 +60,9 @@ USAGE:
     wen edit [--root <folder>] [--size <w>x<h>] [--software] [--exit-after <frames>]
              [--headless-frame <script.json> --out <picture.png>] [--lang <code>]
     wen play [--root <folder>] [--scene <file>] [--size <w>x<h>] [--software] [--exit-after <frames>]
+    wen pkg [list | search [words...] | add <id> | remove <id> | update [id] | lock | check <folder>
+            | install <folder>] [--index <folder>] [--version <requirement>] [--user] [--replace]
+            [--dry-run] [--root <folder>] [--json]
     wen sdk [--out <folder>] [--json]
     wen package [--out <folder>] [--json]
     wen mcp [--root <folder>] [--software] [--http <port or address>]
@@ -124,6 +127,14 @@ COMMANDS:
     replay     Play a recorded replay (replays/<name>.replay.jsonl) back in a new session and compare
                the world after every tick with the recording: passes when the game plays out exactly
                as it did, otherwise says the first tick that differs. Exits with failure if it differs.
+    pkg        Packages bring themes, workspaces, languages, recipes and templates. list shows what
+               the project (packages/, wish.lock) and you have installed; search finds packages in
+               the package index (--index <folder>, or WISH_PACKAGE_INDEX: a folder of packages);
+               add installs the newest version that fits this engine (--version narrows it);
+               update brings installed packages to their newest compatible version; remove moves
+               one to the trash; lock writes wish.lock again; check and install take a package
+               folder. --user works on your own packages instead of the project's. Same as the
+               packages tool.
     sdk        Engine development: build the game SDK pack from the engine's sources (needs cargo).
                Packaged engines ship it; game builds look for it next to wen or in WISH_SDK.
     package    Engine development: a folder with wen, the game SDK and the packed compiler (no cargo,
@@ -265,6 +276,65 @@ fn execute_any(args: Args) -> Result<Outcome> {
             args.json,
             tool_cmds::build_text,
         )),
+        Command::Pkg {
+            action,
+            rest,
+            root,
+            index,
+            version,
+            user,
+            replace,
+            dry_run,
+        } => {
+            // Folders on the command line are relative to where wen runs.
+            let here = |path: &str| {
+                std::env::current_dir()
+                    .map(|dir| dir.join(path))
+                    .unwrap_or_else(|_| std::path::PathBuf::from(path))
+                    .display()
+                    .to_string()
+            };
+            let mut call = serde_json::json!({ "action": action });
+            match action.as_str() {
+                "search" => call["query"] = serde_json::json!(rest.join(" ")),
+                "check" | "install" => {
+                    call["path"] = serde_json::json!(rest.first().map(|path| here(path)));
+                }
+                _ => {
+                    if let Some(id) = rest.first() {
+                        call["id"] = serde_json::json!(id);
+                    }
+                }
+            }
+            if let Some(index) = index {
+                call["index"] = serde_json::json!(here(index));
+            }
+            if let Some(version) = version {
+                call["version"] = serde_json::json!(version);
+            }
+            if *user {
+                call["scope"] = serde_json::json!("user");
+            }
+            if *replace {
+                call["replace"] = serde_json::json!(true);
+            }
+            if *dry_run {
+                call["dry_run"] = serde_json::json!(true);
+            }
+            Ok(tool_cmds::shortcut(
+                "packages",
+                &call,
+                &args::ToolContext {
+                    root: root.clone(),
+                    example: None,
+                    actor: None,
+                    software: false,
+                    http: None,
+                },
+                args.json,
+                tool_cmds::pkg_text,
+            ))
+        }
         Command::Export {
             root,
             name,
@@ -386,6 +456,7 @@ fn execute(args: Args) -> Result<String> {
         | Command::New { .. }
         | Command::Build { .. }
         | Command::Export { .. }
+        | Command::Pkg { .. }
         | Command::Replay { .. }
         | Command::Test { .. }
         | Command::Sdk { .. }

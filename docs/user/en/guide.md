@@ -228,6 +228,8 @@ The engine is complete without any AI. An assistant is a faster way to do the sa
 - *Project menu → Packages...* lists what is installed and installs a package from its folder: *Install into the project* (it travels with the project: `packages/` and `wish.lock` record exactly which files), or *Install for me* (for every project you open on this computer).
 - *Remove* moves a package to the trash; nothing is deleted.
 - The project's lock is checked: if a package's files change, the window says so; *Write the lock again* if the change is yours.
+- **The package index:** under *From the package index*, name the index folder (a folder of packages; it is remembered), type a few words and press *Search*. Each package shows its newest version that works with this engine: *Add to the project*, *Add for me*, or *Update* when a newer compatible version is there. The Hub's *Packages* tab has the same search for your own packages.
+- On the command line: `wen pkg search dark theme --index <folder>`, `wen pkg add <id>`, `wen pkg update`, `wen pkg remove <id>`, `wen pkg lock` (`--user` for your own packages; `WISH_PACKAGE_INDEX` saves typing `--index`).
 
 **Themes:** *Project menu → Theme* switches the editor's look at once: Atelier (the default), Midnight, High contrast, and any theme a package brings.
 

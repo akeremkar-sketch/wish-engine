@@ -148,6 +148,8 @@ struct Welcome {
     agent: serde_json::Map<String, Value>,
     /// The folder typed on the Packages tab.
     package_path: String,
+    /// The package index form (Packages tab).
+    index: crate::packages_window::IndexForm,
     /// A theme was chosen: the interface takes it before its next layout.
     restyle: bool,
 }
@@ -266,6 +268,7 @@ impl Launcher {
                 .cloned()
                 .unwrap_or_default(),
             package_path: String::new(),
+            index: crate::packages_window::IndexForm::from_prefs(&prefs),
             restyle: false,
             splash: options.splash.then_some(0.0),
         };
@@ -721,6 +724,7 @@ fn layout(
                                     claude,
                                     templates,
                                     projects_folder: &config_folder,
+                                    index: &welcome.index,
                                 };
                                 match welcome.tab {
                                     crate::hub::Tab::Packages => {
@@ -800,6 +804,83 @@ fn layout(
     asked
 }
 
+/// Searches the package index, or adds or updates one of its packages
+/// for the person (the Hub works without a project, so it calls the
+/// control plane's index directly).
+fn index_act(
+    welcome: &mut Welcome,
+    ask: crate::packages_window::IndexAsk,
+    preferences: Option<&Path>,
+) {
+    use crate::packages_window::IndexAsk;
+    use wish_control::{package_index, packages};
+    let given = welcome.index.index_arg();
+    if let (Some(folder), Some(path)) = (&given, preferences) {
+        let _ = crate::prefs::update(path, |prefs| {
+            prefs.insert("package_index".to_owned(), json!(folder));
+        });
+    }
+    let index = package_index::index_folder(given.map(PathBuf::from))
+        .and_then(|folder| package_index::read_index(&folder));
+    let index = match index {
+        Ok(index) => index,
+        Err(problem) => {
+            welcome.index.results = None;
+            welcome.index.problem = Some(format!("{} {}", problem.message, problem.hint));
+            return;
+        }
+    };
+    let here = Path::new("");
+    let user = packages::Scope::User;
+    let done = match &ask {
+        IndexAsk::Search => None,
+        IndexAsk::Add(id, _) => Some(
+            package_index::plan_add(&index, id, None, user, here, false).and_then(
+                |(plan, folder)| {
+                    packages::install(&folder, &plan, user, here)?;
+                    Ok(tf(
+                        "installed {name} {version}",
+                        &[
+                            ("name", &plan.manifest.name),
+                            ("version", &plan.manifest.version),
+                        ],
+                    ))
+                },
+            ),
+        ),
+        IndexAsk::Update(id, _) => Some(index.require(id).and_then(|entry| {
+            let had = package_index::installed_version(id, user, here);
+            let chosen = had
+                .and_then(|had| package_index::update_for(entry, had))
+                .ok_or_else(|| {
+                    wish_core::Diagnostic::error(
+                        "package_version_not_found",
+                        format!("'{id}' has no newer compatible version in the index."),
+                        "It is up to date.",
+                    )
+                })?;
+            let plan = package_index::plan_from_index(entry, chosen, user, here, true)?;
+            packages::install(&chosen.folder, &plan, user, here)?;
+            Ok(tf(
+                "{id} updated to {version}",
+                &[("id", id), ("version", &plan.manifest.version)],
+            ))
+        })),
+    };
+    match done {
+        Some(Ok(message)) => welcome.status = message,
+        Some(Err(problem)) => welcome.status = format!("{} {}", problem.message, problem.hint),
+        None => {}
+    }
+    if !matches!(ask, IndexAsk::Search) {
+        welcome.read_packages();
+        crate::themes::load_languages(None);
+    }
+    let query = welcome.index.query.borrow().trim().to_owned();
+    welcome.index.results = Some(package_index::search(&index, &query, None));
+    welcome.index.problem = None;
+}
+
 /// Does what a Hub tab asked for; whether anything changed.
 fn hub_act(
     welcome: &mut Welcome,
@@ -873,6 +954,10 @@ fn hub_act(
         };
         welcome.read_packages();
         crate::themes::load_languages(None);
+        acted = true;
+    }
+    if let Some(ask) = hub.index {
+        index_act(welcome, ask, preferences);
         acted = true;
     }
     if let Some(id) = hub.remove {

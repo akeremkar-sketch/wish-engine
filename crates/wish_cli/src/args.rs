@@ -11,7 +11,7 @@ use wish_core::{Diagnostic, Result};
 pub const COMMANDS: &[&str] = &[
     "run", "bench", "schema", "mv", "check", "fmt", "migrate", "watch", "capture", "describe",
     "shaders", "view", "edit", "call", "do", "new", "build", "export", "play", "replay", "test",
-    "sdk", "package", "mcp", "examples", "help", "version",
+    "pkg", "sdk", "package", "mcp", "examples", "help", "version",
 ];
 
 /// A parsed command line.
@@ -141,6 +141,25 @@ pub enum Command {
         name: Option<String>,
         /// Replace an earlier export of that name.
         overwrite: bool,
+    },
+    /// Find, add, update and remove packages (the `packages` tool).
+    Pkg {
+        /// list, search, add, remove, update, lock, check or install.
+        action: String,
+        /// The words, id or folder after the action.
+        rest: Vec<String>,
+        /// The project folder.
+        root: Option<String>,
+        /// The package index's folder.
+        index: Option<String>,
+        /// A version requirement.
+        version: Option<String>,
+        /// The person's own packages instead of the project's.
+        user: bool,
+        /// Replace the installed version.
+        replace: bool,
+        /// Say what would happen without doing it.
+        dry_run: bool,
     },
     /// Build a package for machines without developer tools (engine development).
     Package {
@@ -545,6 +564,15 @@ fn flags_of(command: &str) -> &'static [(&'static str, bool)] {
             ("--json", false),
         ],
         "sdk" => &[("--out", true), ("--json", false)],
+        "pkg" => &[
+            ("--root", true),
+            ("--index", true),
+            ("--version", true),
+            ("--user", false),
+            ("--replace", false),
+            ("--dry-run", false),
+            ("--json", false),
+        ],
         "package" => &[("--out", true), ("--json", false)],
         "view" => &[
             ("--example", true),
@@ -625,7 +653,7 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
         index += 1;
         if matches!(
             command,
-            "mv" | "check" | "fmt" | "migrate" | "new" | "test" | "replay"
+            "mv" | "check" | "fmt" | "migrate" | "new" | "test" | "replay" | "pkg"
         ) && !argument.starts_with('-')
         {
             positional.push(argument);
@@ -843,6 +871,55 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
         "sdk" => Command::Sdk {
             out: value_of("--out").map(str::to_owned),
         },
+        "pkg" => {
+            const ACTIONS: &[&str] = &[
+                "list", "search", "add", "remove", "update", "lock", "check", "install",
+            ];
+            let action = positional.first().copied().unwrap_or("list");
+            if !ACTIONS.contains(&action) {
+                return Err(usage_error(
+                    format!("'{action}' is not a wen pkg action."),
+                    unknown_name_hint(action, ACTIONS),
+                )
+                .with_candidates(ACTIONS.iter().copied()));
+            }
+            let rest: Vec<String> = positional.iter().skip(1).map(|w| (*w).to_owned()).collect();
+            let needs = match action {
+                "add" | "remove" => Some("the package's id"),
+                "check" | "install" => Some("the package's folder"),
+                _ => None,
+            };
+            if let Some(what) = needs
+                && rest.len() != 1
+            {
+                return Err(usage_error(
+                    format!("'wen pkg {action}' needs {what}."),
+                    format!("Write it like: wen pkg {action} <{}>.", if action == "add" || action == "remove" { "id" } else { "folder" }),
+                ));
+            }
+            if matches!(action, "list" | "lock") && !rest.is_empty() {
+                return Err(usage_error(
+                    format!("'wen pkg {action}' takes no more words."),
+                    format!("Write just: wen pkg {action}."),
+                ));
+            }
+            if action == "update" && rest.len() > 1 {
+                return Err(usage_error(
+                    "'wen pkg update' takes at most one package id.".to_owned(),
+                    "Write: wen pkg update (every package) or wen pkg update <id>.".to_owned(),
+                ));
+            }
+            Command::Pkg {
+                action: action.to_owned(),
+                rest,
+                root: value_of("--root").map(str::to_owned),
+                index: value_of("--index").map(str::to_owned),
+                version: value_of("--version").map(str::to_owned),
+                user: values.iter().any(|(flag, _)| *flag == "--user"),
+                replace: values.iter().any(|(flag, _)| *flag == "--replace"),
+                dry_run: values.iter().any(|(flag, _)| *flag == "--dry-run"),
+            }
+        }
         "new" => {
             if positional.len() != 1 {
                 return Err(usage_error(
@@ -947,6 +1024,41 @@ mod tests {
 
     fn args(line: &str) -> Vec<String> {
         line.split_whitespace().map(str::to_owned).collect()
+    }
+
+    #[test]
+    fn parses_pkg_actions() {
+        assert_eq!(
+            parse(&args(
+                "pkg add com.example.dusk --version ^1 --user --dry-run"
+            ))
+            .unwrap()
+            .command,
+            Command::Pkg {
+                action: "add".to_owned(),
+                rest: vec!["com.example.dusk".to_owned()],
+                root: None,
+                index: None,
+                version: Some("^1".to_owned()),
+                user: true,
+                replace: false,
+                dry_run: true,
+            }
+        );
+        let Command::Pkg { action, rest, .. } =
+            parse(&args("pkg search dark theme")).unwrap().command
+        else {
+            panic!("pkg");
+        };
+        assert_eq!((action.as_str(), rest.len()), ("search", 2));
+        let Command::Pkg { action, .. } = parse(&args("pkg")).unwrap().command else {
+            panic!("pkg");
+        };
+        assert_eq!(action, "list");
+        let wrong = parse(&args("pkg instal x")).unwrap_err();
+        assert!(wrong.hint.contains("install"), "{wrong:?}");
+        assert!(parse(&args("pkg add")).is_err());
+        assert!(parse(&args("pkg lock now")).is_err());
     }
 
     #[test]

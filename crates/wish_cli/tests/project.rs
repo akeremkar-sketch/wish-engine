@@ -739,3 +739,64 @@ fn a_package_template_makes_a_new_project() {
     );
     let _ = std::fs::remove_dir_all(&base);
 }
+
+#[test]
+fn pkg_searches_adds_updates_and_removes_from_a_folder_index() {
+    let base = std::env::temp_dir().join(format!("wen-pkg-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let theme = |folder: &str, version: &str| {
+        let package = base.join("index").join(folder);
+        std::fs::create_dir_all(package.join("themes")).unwrap();
+        std::fs::write(
+            package.join("wish-package.json"),
+            format!(
+                r#"{{ "format": 1, "id": "com.example.dusk", "name": "Dusk", "version": "{version}", "engine": ">=0.1",
+                    "license": "MIT", "description": "Evening colours.", "contents": {{ "themes": ["themes/dusk.json"] }} }}"#
+            ),
+        )
+        .unwrap();
+        std::fs::write(package.join("themes/dusk.json"), r#"{ "format": 1 }"#).unwrap();
+    };
+    theme("dusk-1", "1.0.0");
+    theme("dusk-2", "1.2.0");
+    let game = base.join("game");
+    wish_control::scaffold::create_project(&game, "Pkg", "wen").unwrap();
+    let pkg = |words: &[&str]| -> (bool, Value) {
+        let mut arguments = vec!["pkg"];
+        arguments.extend_from_slice(words);
+        arguments.extend_from_slice(&["--index", "../index", "--json"]);
+        let output = Command::new(env!("CARGO_BIN_EXE_wen"))
+            .args(&arguments)
+            .current_dir(&game)
+            .output()
+            .unwrap();
+        (
+            output.status.success(),
+            serde_json::from_slice(&output.stdout).unwrap_or(Value::Null),
+        )
+    };
+    let (ok, found) = pkg(&["search", "evening"]);
+    assert!(ok, "{found}");
+    assert_eq!(found["packages"][0]["latest"], "1.2.0", "{found}");
+    let (ok, added) = pkg(&["add", "com.example.dusk", "--version", "=1.0.0"]);
+    assert!(ok, "{added}");
+    let (ok, updated) = pkg(&["update"]);
+    assert!(ok, "{updated}");
+    assert_eq!(updated["updated"][0]["to"], "1.2.0", "{updated}");
+    assert!(game.join("wish.lock").is_file());
+    let (ok, removed) = pkg(&["remove", "com.example.dusk"]);
+    assert!(ok, "{removed}");
+    assert!(!game.join("packages/com.example.dusk").exists());
+    assert!(!game.join("wish.lock").exists(), "no packages, no lock");
+    // People read text.
+    let output = Command::new(env!("CARGO_BIN_EXE_wen"))
+        .args(["pkg", "search", "--index", "../index"])
+        .current_dir(&game)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("com.example.dusk 1.2.0"), "{text}");
+    let (ok, wrong) = wen(&["pkg", "fetch"]);
+    assert!(!ok, "{wrong}");
+    let _ = std::fs::remove_dir_all(&base);
+}

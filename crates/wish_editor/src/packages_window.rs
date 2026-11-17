@@ -1,7 +1,8 @@
 //! The Packages window (M10a): the project's and the person's packages,
 //! installing one from a folder, removing one, writing the lock again. Every
 //! button is a `packages` call (the same as an agent's), so the history and
-//! the activity feed show who did what.
+//! the activity feed show who did what. The package index (M10b) is
+//! searched here and on the Hub's Packages tab with the same section.
 
 use std::cell::{Cell, RefCell};
 
@@ -10,10 +11,153 @@ use serde_json::Value;
 
 use crate::i18n::{t, tf};
 
+/// The package index as a form: its folder, the words searched and the
+/// last answer.
+#[derive(Default)]
+pub(crate) struct IndexForm {
+    /// The index's folder (empty: `WISH_PACKAGE_INDEX`).
+    pub folder: RefCell<String>,
+    /// The words to search for.
+    pub query: RefCell<String>,
+    /// The last `search` answer's packages (`None`: not searched yet).
+    pub results: Option<Vec<Value>>,
+    /// Why the last search did not work.
+    pub problem: Option<String>,
+}
+
+impl IndexForm {
+    /// A form whose folder is the `package_index` preference, else empty.
+    pub fn from_prefs(prefs: &serde_json::Map<String, Value>) -> Self {
+        Self {
+            folder: RefCell::new(
+                prefs
+                    .get("package_index")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned(),
+            ),
+            ..Self::default()
+        }
+    }
+
+    /// The `index` argument of a `packages` call (absent when empty).
+    pub fn index_arg(&self) -> Option<String> {
+        Some(self.folder.borrow().trim().to_owned()).filter(|folder| !folder.is_empty())
+    }
+}
+
+/// What the index section asked for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum IndexAsk {
+    Search,
+    /// Add this package to this scope.
+    Add(String, &'static str),
+    /// Update this package in this scope.
+    Update(String, &'static str),
+}
+
+/// Searching the package index and adding from it, for `scopes` (the
+/// project's and the person's in the editor, the person's on the Hub).
+pub(crate) fn index_section(
+    ui: &mut Ui,
+    form: &IndexForm,
+    scopes: &[&'static str],
+    asked: &mut Option<IndexAsk>,
+) {
+    crate::style::panel_title(ui, t("From the package index"));
+    ui.add(
+        egui::TextEdit::singleline(&mut *form.folder.borrow_mut())
+            .desired_width(f32::INFINITY)
+            .hint_text(t(
+                "The index folder (a folder of packages; empty: WISH_PACKAGE_INDEX)",
+            )),
+    );
+    ui.horizontal(|ui| {
+        let response = ui.add(
+            egui::TextEdit::singleline(&mut *form.query.borrow_mut())
+                .desired_width((ui.available_width() - 90.0).max(120.0))
+                .hint_text(t("Words to search for (empty: everything)")),
+        );
+        let entered = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        if ui.button(t("Search")).clicked() || entered {
+            *asked = Some(IndexAsk::Search);
+        }
+    });
+    if let Some(problem) = &form.problem {
+        ui.label(RichText::new(problem).color(crate::style::pal().amber));
+    }
+    let Some(results) = &form.results else {
+        return;
+    };
+    if results.is_empty() {
+        ui.weak(t("No package in the index matches."));
+    }
+    for package in results {
+        let id = package["id"].as_str().unwrap_or("?");
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(package["name"].as_str().unwrap_or(id)).strong());
+            ui.weak(format!(
+                "{} · {} · {}",
+                package["latest"].as_str().unwrap_or("-"),
+                package["license"].as_str().unwrap_or("?"),
+                id
+            ));
+        });
+        if let Some(text) = package["description"].as_str().filter(|d| !d.is_empty()) {
+            ui.add(egui::Label::new(RichText::new(text).color(crate::style::pal().weak)).wrap());
+        }
+        ui.horizontal(|ui| {
+            let fits = package["latest"].is_string();
+            if !fits {
+                ui.label(
+                    RichText::new(t("No version works with this engine"))
+                        .color(crate::style::pal().amber),
+                );
+            }
+            for &scope in scopes {
+                let had = package["installed"][scope].as_str();
+                match had {
+                    None => {
+                        let label = if scope == "project" {
+                            t("Add to the project")
+                        } else {
+                            t("Add for me")
+                        };
+                        if ui.add_enabled(fits, egui::Button::new(label)).clicked() {
+                            *asked = Some(IndexAsk::Add(id.to_owned(), scope));
+                        }
+                    }
+                    Some(version) => {
+                        let place = if scope == "project" {
+                            t("in the project")
+                        } else {
+                            t("yours")
+                        };
+                        ui.weak(format!("{version} {place}"));
+                        if package["update"] == true
+                            && ui
+                                .button(t("Update"))
+                                .on_hover_text(t(
+                                    "To its newest compatible version; the old one goes to the trash",
+                                ))
+                                .clicked()
+                        {
+                            *asked = Some(IndexAsk::Update(id.to_owned(), scope));
+                        }
+                    }
+                }
+            }
+        });
+        ui.add_space(4.0);
+    }
+}
+
 /// What the window shows and what is being written in it.
 #[derive(Default)]
 pub(crate) struct PackagesState {
     pub open: bool,
+    /// The package index.
+    pub index: IndexForm,
     /// The last `packages list` answer.
     pub listing: Value,
     /// The folder to install from.
@@ -31,11 +175,17 @@ pub(crate) struct PackagesActions {
     /// Remove this package from this scope.
     pub remove: Option<(String, &'static str)>,
     pub lock: bool,
+    /// What the index section asked for.
+    pub index: Option<IndexAsk>,
 }
 
 impl PackagesActions {
     pub fn any(&self) -> bool {
-        self.close || self.install.is_some() || self.remove.is_some() || self.lock
+        self.close
+            || self.install.is_some()
+            || self.remove.is_some()
+            || self.lock
+            || self.index.is_some()
     }
 }
 
@@ -151,6 +301,8 @@ pub(crate) fn window(ui: &mut Ui, state: &PackagesState, actions: &mut PackagesA
                     actions.install = Some((given.clone(), "user"));
                 }
             });
+            ui.separator();
+            index_section(ui, &state.index, &["project", "user"], &mut actions.index);
             let count = project.len() + user.len();
             ui.weak(tf("{count} package(s) installed", &[("count", &count)]));
         });

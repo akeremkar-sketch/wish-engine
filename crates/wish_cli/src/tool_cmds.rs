@@ -545,6 +545,113 @@ pub fn export_text(answer: &Value) -> String {
     )
 }
 
+/// Text for a `packages` answer (`wen pkg`).
+pub fn pkg_text(answer: &Value) -> String {
+    let mut text = String::new();
+    let line = |package: &Value| {
+        format!(
+            "  {} {}  {}",
+            package["id"].as_str().unwrap_or("?"),
+            package["version"]
+                .as_str()
+                .or(package["latest"].as_str())
+                .unwrap_or("-"),
+            package["name"].as_str().unwrap_or(""),
+        )
+    };
+    let dry = answer["dry_run"] == true;
+    if let Some(found) = answer["packages"].as_array() {
+        if found.is_empty() {
+            text.push_str("No package in the index matches.\n");
+        }
+        for package in found {
+            let mut row = line(package);
+            let installed = &package["installed"];
+            for scope in ["project", "user"] {
+                if let Some(version) = installed[scope].as_str() {
+                    row.push_str(&format!("  [{scope} {version}]"));
+                }
+            }
+            if package["update"] == true {
+                row.push_str("  (update waiting)");
+            }
+            text.push_str(&row);
+            text.push('\n');
+        }
+    } else if let Some(updated) = answer["updated"].as_array() {
+        for change in updated {
+            text.push_str(&format!(
+                "{} {} {} -> {}\n",
+                if dry { "Would update" } else { "Updated" },
+                change["id"].as_str().unwrap_or("?"),
+                change["from"].as_str().unwrap_or("?"),
+                change["to"].as_str().unwrap_or("?"),
+            ));
+        }
+        let current = answer["current"].as_array().map_or(0, Vec::len);
+        let missing = answer["not_in_index"].as_array().map_or(0, Vec::len);
+        text.push_str(&format!(
+            "{} updated, {current} already current, {missing} not in the index.\n",
+            updated.len()
+        ));
+    } else if answer["project"].is_array() || answer["user"].is_array() {
+        for scope in ["project", "user"] {
+            let list = answer[scope].as_array().cloned().unwrap_or_default();
+            text.push_str(&format!(
+                "{} packages: {}\n",
+                if scope == "project" {
+                    "Project"
+                } else {
+                    "Your"
+                },
+                list.len()
+            ));
+            for package in &list {
+                text.push_str(&line(package));
+                text.push('\n');
+            }
+        }
+    } else if answer["package"].is_object() {
+        let package = &answer["package"];
+        let what = if dry {
+            "Would install"
+        } else if answer["installed"] == true {
+            "Installed"
+        } else {
+            "Package"
+        };
+        text.push_str(&format!(
+            "{what} {} {} ({}).\n",
+            package["id"].as_str().unwrap_or("?"),
+            package["version"].as_str().unwrap_or("?"),
+            package["license"].as_str().unwrap_or("?"),
+        ));
+        if let Some(replaced) = answer["replaces"].as_str() {
+            text.push_str(&format!(
+                "It replaces {replaced} (the old one goes to the trash).\n"
+            ));
+        }
+    } else if answer["removed"] == true {
+        text.push_str(&format!(
+            "Removed {}; it is in {}.\n",
+            answer["id"].as_str().unwrap_or("?"),
+            answer["trash"].as_str().unwrap_or("the trash"),
+        ));
+    } else if answer["lock"].is_object() {
+        text.push_str(if dry {
+            "The lock would be written.\n"
+        } else {
+            "wish.lock written.\n"
+        });
+    }
+    for entry in answer["diagnostics"].as_array().into_iter().flatten() {
+        if let Ok(problem) = serde_json::from_value::<Diagnostic>(entry.clone()) {
+            text.push_str(&format!("{problem}\n"));
+        }
+    }
+    text.trim_end().to_owned()
+}
+
 /// Text for a `script_build` answer.
 pub fn build_text(answer: &Value) -> String {
     let mut text = String::new();

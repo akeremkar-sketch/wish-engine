@@ -1556,6 +1556,7 @@ impl EditorApp {
         if let Some(key) = prefs.get("theme").and_then(Value::as_str) {
             self.set_theme(key);
         }
+        self.packages.index = crate::packages_window::IndexForm::from_prefs(&prefs);
         if let Some(on) = prefs.get("ai_mode").and_then(Value::as_bool) {
             self.ai_mode = on;
         }
@@ -2098,6 +2099,52 @@ impl EditorApp {
                 self.status = tf("{id} moved to the trash", &[("id", &id)]);
             }
         }
+        let mut search = false;
+        if let Some(ask) = asked.index {
+            let index = self.packages.index.index_arg();
+            if let (Some(path), Some(folder)) = (self.preferences.clone(), index.clone()) {
+                let _ = crate::prefs::update(&path, |prefs| {
+                    prefs.insert("package_index".to_owned(), json!(folder));
+                });
+            }
+            let mut call = |action: &str, id: &str, scope: &str| {
+                let mut args = json!({ "action": action, "id": id, "scope": scope });
+                if let Some(index) = &index {
+                    args["index"] = json!(index);
+                }
+                self.call("packages", &args)
+            };
+            match ask {
+                crate::packages_window::IndexAsk::Search => search = true,
+                crate::packages_window::IndexAsk::Add(id, scope) => {
+                    answer = call("add", &id, scope);
+                    search = true;
+                }
+                crate::packages_window::IndexAsk::Update(id, scope) => {
+                    answer = call("update", &id, scope);
+                    search = true;
+                }
+            }
+            if answer["ok"] == true {
+                let package = &answer["package"];
+                self.status = match answer["updated"].as_array().and_then(|u| u.first()) {
+                    Some(change) => tf(
+                        "{id} updated to {version}",
+                        &[
+                            ("id", &change["id"].as_str().unwrap_or("?")),
+                            ("version", &change["to"].as_str().unwrap_or("?")),
+                        ],
+                    ),
+                    None => tf(
+                        "installed {name} {version}",
+                        &[
+                            ("name", &package["name"].as_str().unwrap_or("?")),
+                            ("version", &package["version"].as_str().unwrap_or("?")),
+                        ],
+                    ),
+                };
+            }
+        }
         if asked.lock {
             answer = self.call("packages", &json!({ "action": "lock" }));
             if answer["ok"] == true {
@@ -2111,9 +2158,37 @@ impl EditorApp {
                 .to_owned();
         }
         self.read_packages();
+        if search {
+            self.search_index();
+        }
         self.themes = crate::themes::available(Some(self.workspace.root()));
         crate::themes::load_languages(Some(self.workspace.root()));
         self.read_workspaces();
+    }
+
+    /// Searches the package index with the window's words (a `packages`
+    /// call; a person looking does not enter the activity feed).
+    fn search_index(&mut self) {
+        let mut args = json!({
+            "action": "search",
+            "query": self.packages.index.query.borrow().trim(),
+        });
+        if let Some(index) = self.packages.index.index_arg() {
+            args["index"] = json!(index);
+        }
+        let got = self.call("packages", &args);
+        let form = &mut self.packages.index;
+        if got["ok"] == true {
+            form.results = got["packages"].as_array().cloned();
+            form.problem = None;
+        } else {
+            form.results = None;
+            form.problem = Some(format!(
+                "{} {}",
+                got["error"]["message"].as_str().unwrap_or(""),
+                got["error"]["hint"].as_str().unwrap_or("")
+            ));
+        }
     }
 
     /// Reads the workspaces packages bring (in the interface's language).

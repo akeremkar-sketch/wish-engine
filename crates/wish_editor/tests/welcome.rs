@@ -415,3 +415,50 @@ fn the_hub_tabs_change_the_look_and_the_assistant() {
     click(&mut launcher, "Projects");
     named(&launcher, "Create");
 }
+
+#[test]
+fn the_hub_searches_the_package_index() {
+    let (options, base) = options("hub-index");
+    let package = base.join("index/dusk");
+    std::fs::create_dir_all(&package).unwrap();
+    std::fs::write(
+        package.join("wish-package.json"),
+        json!({ "format": 1, "id": "com.example.dusk", "name": "Dusk", "version": "1.0.0",
+            "engine": ">=0.1", "license": "MIT", "description": "Evening colours.",
+            "contents": { "themes": ["dusk.json"] } })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(package.join("dusk.json"), r#"{ "format": 1 }"#).unwrap();
+    // The index folder is remembered in the preferences.
+    std::fs::write(
+        base.join("prefs/editor.json"),
+        json!({ "language": "en", "package_index": base.join("index").display().to_string() })
+            .to_string(),
+    )
+    .unwrap();
+    let mut launcher = Launcher::new(options);
+    play(&mut launcher, json!([{ "idle": 2 }]));
+    click(&mut launcher, "Packages");
+    click(&mut launcher, "Search");
+    assert!(
+        launcher
+            .widgets()
+            .iter()
+            .any(|w| w.label.as_deref() == Some("Dusk") || w.value.as_deref() == Some("Dusk")),
+        "the index's package is listed"
+    );
+    named(&launcher, "Add for me");
+    // A folder that is not there is explained, not a crash.
+    std::fs::remove_dir_all(base.join("index")).unwrap();
+    click(&mut launcher, "Search");
+    assert!(
+        launcher.widgets().iter().any(|w| w
+            .label
+            .as_deref()
+            .unwrap_or("")
+            .contains("does not exist")
+            || w.value.as_deref().unwrap_or("").contains("does not exist")),
+        "the problem is shown"
+    );
+}
