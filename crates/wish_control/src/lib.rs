@@ -49,5 +49,7 @@ pub use project::{PROJECT_FILE, PROJECT_FORMAT, ProjectConfig, parse_project, re
 pub use render::{base64, base64_decode};
 pub use script::PointerAt;
 pub use tool::{Tool, catalog};
-pub use tools::{IdPicture, Picture, PictureSource};
+pub use tools::{
+    BRIEF_FIELDS, DESIGN_FILE, IdPicture, Picture, PictureSource, design_summary, read_design,
+};
 pub use workspace::{Workspace, WorkspaceOptions, envelope, find_tool, parse_actor};

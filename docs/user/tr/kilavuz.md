@@ -169,6 +169,28 @@ Oyun mantığı `scripts/src/lib.rs` içinde Rust ile yazılır; motor onu WebAs
 
 ## 6. Yapay zekâ yardımcısıyla çalışma
 
+### Yapay zekâ modu
+
+Üst çubuktaki anahtar editörün iki yüzü arasında geçiş yapar: **Elle | Yapay zekâyla**. Aynı proje, aynı geçmiş, aynı dosyalar; yalnızca ekran değişir. Seçiminiz hatırlanır.
+
+*Yapay zekâyla* modunda elle düzenleme panelleri çekilir, yerine şunlar gelir:
+
+| Yer | Ne işe yarar |
+|---|---|
+| **Oyun** (sol) — *Oyun kartı* | Oyunun kimliği: ad, tek cümle, tür, oyuncunun hedefi, ana döngü, kontroller, görünüm ve his, kimin için, olmazsa olmazlar, sonraya kalanlar. Ajan her görevden önce okur. *Ajan taslağı yazsın* kartı oyunun şimdiki halinden çıkarır. |
+| **Oyun** (sol) — *Kararlar* | Her değişiklikte geçerli kurallar ("zıplama 2,5 m", "pastel renkler"). Ajan bunlara uyar. |
+| **Canlı oyun** (orta) | Oyuncunun gördüğü. *Sahne*'ye geçip bir şeye tıklarsanız o şey sonraki isteğe eklenir. |
+| *Plan* (orta alt) | Küçük adımlar. *Sıradaki adımı yap* ilk bitmemiş adımı ajana verir. |
+| *Oyun testi notları* (orta alt) | Oynarken *Not al*: o anın tick'i ve resmi saklanır. *Notları ajana gönder* hepsini tek görev yapar. |
+| *Sağlık* (orta alt) | Sorunlar, kodun derlenip derlenmediği, testler. *Ajan düzeltsin* hepsini tek görev olarak verir. |
+| **Sohbet** (sağ) | Her görev bir kart: ne istendi, ajan ne dedi ve hangi araçları çağırdı; *Bu görevi geri al* ve *Önce / sonra*. Altta hazır istekler (*Bölüm ekle*, *Oyun hissi*, *Hata bul*...) kutuyu doldurur. |
+| *Ajan soruyor* | Zorluk, görünüm, sayı gibi size ait seçimlerde ajan tahmin etmez, seçenekli soru sorar. Bir seçeneğe tıklayın ya da kendi yanıtınızı yazın; *Yanıtı karar olarak sakla* açıksa karar olur ve ajan kaldığı yerden devam eder. |
+| *Yapay zekâ ayarları* | Asistan, model (Opus / Sonnet / Haiku), görevler arasında sohbeti hatırlama, her görevden önce denetim noktası, ajanın oyun kodunu kendisi değiştirip değiştiremeyeceği, bu oturumun harcaması. |
+
+Tasarım projede `design/game.json` dosyasındadır (git'e girer, varlık sayılmaz). Ajan aynı şeyi `game_design` aracıyla yapar.
+
+### Ajan paneli (elle modda)
+
 **Ajan paneli** (üst çubukta *Ajan*):
 1. *Ajan ne yapsın?* kutusuna ne istediğinizi yazın ve *Gönder*'e basın.
 2. *Görünümde işaret et*, sonra nesnelere tıklayın: ajana neyi kastettiğinizi gösterir.

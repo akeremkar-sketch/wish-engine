@@ -64,6 +64,7 @@ pub fn edit(args: &EditArgs, as_json: bool) -> Result<String> {
         ShellOptions {
             size: args.size,
             exit_after_frames: args.exit_after,
+            icon: Some(wish_editor::window_icon(64)),
         },
         &mut app,
     )?;
@@ -112,6 +113,7 @@ fn welcome(args: &EditArgs, as_json: bool) -> Result<String> {
         ShellOptions {
             size: args.size,
             exit_after_frames: args.exit_after,
+            icon: Some(wish_editor::window_icon(64)),
         },
         &mut launcher,
     )?;

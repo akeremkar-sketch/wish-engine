@@ -13,8 +13,15 @@ use wish_core::{Diagnostic, Result};
 pub const SCRIPTS_FOLDER: &str = "scripts/";
 
 /// Folders of the project that are not assets: game code, scenario tests
-/// (and their golden images), replays and exported games.
-pub const NON_ASSET_FOLDERS: &[&str] = &[SCRIPTS_FOLDER, "tests/", "replays/", EXPORTS_FOLDER];
+/// (and their golden images), replays, exported games and the game's design
+/// (`design/game.json` and the pictures of play-test notes, M9c).
+pub const NON_ASSET_FOLDERS: &[&str] = &[
+    SCRIPTS_FOLDER,
+    "tests/",
+    "replays/",
+    EXPORTS_FOLDER,
+    "design/",
+];
 
 /// Where exported games go (M9): copies of the project's files, not the
 /// project's own documents or assets.

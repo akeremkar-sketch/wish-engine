@@ -139,6 +139,24 @@ fn examples() -> Vec<(&'static str, Value)> {
         ),
         ("checkpoint", json!({ "action": "restore", "name": "nope" })),
         ("project_export", json!({ "name": "Bad Name" })),
+        (
+            "game_design",
+            json!({ "action": "set_brief", "fields": { "pitch": "Hop the islands", "must": ["double jump"] } }),
+        ),
+        (
+            "game_design",
+            json!({ "action": "decide", "text": "Jump height 2.5 m" }),
+        ),
+        (
+            "game_design",
+            json!({ "action": "ask", "text": "How many enemies?", "options": ["3", "5", "10"] }),
+        ),
+        (
+            "game_design",
+            json!({ "action": "answer", "id": 2, "answer": "5", "remember": true }),
+        ),
+        ("game_design", json!({ "action": "forget", "id": 99 })),
+        ("game_design", json!({})),
         ("permissions", json!({})),
         ("permissions", json!({ "action": "set", "mode": "suggest" })),
         ("proposals", json!({})),

@@ -38,6 +38,43 @@ pub struct Task {
     pub project: PathBuf,
     /// The scene the person is looking at.
     pub scene: String,
+    /// The game's design (M9c): the game card, the decisions, the open
+    /// plan and notes, the answered questions, as `wish_control::design_summary`
+    /// writes it. The agent holds to it.
+    pub design: Option<String>,
+    /// The model to use, if the person chose one (the adapter's own names,
+    /// such as `sonnet` or `opus` for Claude Code).
+    pub model: Option<String>,
+    /// The conversation to continue (an id an earlier task reported with
+    /// [`Event::Session`]); `None` starts a new one.
+    pub resume: Option<String>,
+    /// The agent may read and change the project's files itself (game
+    /// code), besides working through the editor's tools.
+    pub files: bool,
+}
+
+impl Task {
+    /// A task with only the request and where to work; the rest empty.
+    pub fn new(
+        request: impl Into<String>,
+        endpoint: impl Into<String>,
+        token: impl Into<String>,
+        project: PathBuf,
+        scene: impl Into<String>,
+    ) -> Self {
+        Self {
+            request: request.into(),
+            context: Vec::new(),
+            endpoint: endpoint.into(),
+            token: token.into(),
+            project,
+            scene: scene.into(),
+            design: None,
+            model: None,
+            resume: None,
+            files: true,
+        }
+    }
 }
 
 /// What happens while an agent works.
@@ -68,6 +105,12 @@ pub enum Event {
     },
     /// The agent could not run (not installed, not signed in, crashed).
     Failed(String),
+    /// The conversation's id: a later task given it as [`Task::resume`]
+    /// continues the same conversation (the agent remembers it).
+    Session(String),
+    /// What the task cost, in US dollars, as the agent reports it (for
+    /// Claude Code on a subscription: what it would have cost).
+    Cost(f64),
 }
 
 /// A task running on its own thread.
@@ -138,12 +181,26 @@ pub trait Adapter: Send {
     fn start(&self, task: &Task) -> Result<Run, String>;
 }
 
+/// How an agent keeps to the game's design (M9c), told with every task.
+pub const DESIGN_RULES: &str = "The game's design is in the game_design tool: the game card (what the game is), decisions that hold for every change, the plan, notes from playing it, and questions to the person. Hold to the decisions. When a choice is the person's (difficulty, look, feel, names, how many of something), do not guess: ask with game_design ask (two to six short options), then stop and wait; the answer comes with the next request. Record lasting rules you agree on with game_design decide. For bigger work, write the steps with plan_add and mark them (plan_set doing, done) as you go. When you have fixed what a play-test note says, mark it with note_done.\n";
+
 /// What the agent is told besides the person's words: where it works, how
 /// to be seen working, what the person pointed at.
 pub fn instructions(task: &Task) -> String {
     let mut text = String::from(
         "You are working inside the Wish Engine editor, through its MCP tools (wish). The person watches the scene change live while you work, and every change you make appears as a card in their activity feed, where they can take it back. Give every edit_apply a short \"reason\" (one sentence, the person reads it on the card). Prefer small, separate edits over one huge one. Check your work with describe_view or capture_frame. If the project's permission mode is \"suggest\", your changes wait for the person: say what you proposed.\n",
     );
+    text.push_str(DESIGN_RULES);
+    match &task.design {
+        Some(design) => {
+            text.push_str("\nThe game's design so far (design/game.json):\n");
+            text.push_str(design);
+        }
+        None => text.push_str(
+            "\nThe game has no design yet: if the request is about making a game, first write the game card (game_design set_brief) from what the person said, and ask about what they did not say.\n",
+        ),
+    }
+    text.push('\n');
     text.push_str(&format!(
         "The person is looking at the scene {}.\n",
         task.scene

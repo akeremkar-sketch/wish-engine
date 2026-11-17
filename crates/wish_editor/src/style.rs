@@ -9,38 +9,45 @@ use egui::{
     Vec2, WidgetInfo, pos2, vec2,
 };
 
-/// The canvas behind everything (the editor's backdrop).
-pub const BACKDROP: [u8; 4] = [17, 18, 24, 255];
+/// The canvas behind everything (the editor's backdrop): warm near-black,
+/// like a workbench in the dark.
+pub const BACKDROP: [u8; 4] = [21, 20, 18, 255];
 /// Panels.
-pub const PANEL: Color32 = Color32::from_rgb(26, 28, 36);
+pub const PANEL: Color32 = Color32::from_rgb(29, 28, 25);
 /// Raised areas inside panels: cards, groups of tools.
-pub const RAISED: Color32 = Color32::from_rgb(34, 37, 48);
+pub const RAISED: Color32 = Color32::from_rgb(37, 35, 32);
 /// Widgets at rest.
-pub const WIDGET: Color32 = Color32::from_rgb(42, 46, 60);
+pub const WIDGET: Color32 = Color32::from_rgb(46, 44, 40);
 /// Widgets under the pointer.
-pub const HOVER: Color32 = Color32::from_rgb(54, 59, 77);
+pub const HOVER: Color32 = Color32::from_rgb(58, 55, 50);
 /// Widgets being pressed.
-pub const PRESSED: Color32 = Color32::from_rgb(64, 70, 92);
+pub const PRESSED: Color32 = Color32::from_rgb(70, 66, 60);
 /// Thin lines between areas.
-pub const LINE: Color32 = Color32::from_rgb(46, 50, 64);
-/// Text.
-pub const TEXT: Color32 = Color32::from_rgb(229, 231, 239);
+pub const LINE: Color32 = Color32::from_rgb(52, 49, 44);
+/// Text: paper white.
+pub const TEXT: Color32 = Color32::from_rgb(237, 230, 216);
 /// Quieter text: hints, paths, numbers that are not the point.
-pub const WEAK: Color32 = Color32::from_rgb(146, 152, 172);
-/// The engine's own colour: what is chosen, what to do next.
-pub const ACCENT: Color32 = Color32::from_rgb(139, 108, 255);
-/// The accent, quieter (a chosen row's background).
-pub const ACCENT_SOFT: Color32 = Color32::from_rgb(58, 50, 104);
+pub const WEAK: Color32 = Color32::from_rgb(158, 150, 136);
+/// The engine's own colour, signal orange: what to do next (Create, the
+/// agent), never decoration.
+pub const ACCENT: Color32 = Color32::from_rgb(255, 107, 44);
+/// What is chosen: teal (a selected row, a held tool, a chosen card).
+pub const SELECT: Color32 = Color32::from_rgb(72, 196, 180);
+/// The chosen thing's background, quiet.
+pub const ACCENT_SOFT: Color32 = Color32::from_rgb(30, 64, 60);
 /// Running: play.
-pub const GO: Color32 = Color32::from_rgb(62, 196, 130);
+pub const GO: Color32 = Color32::from_rgb(110, 200, 120);
 /// Recording, deleting, errors.
-pub const RED: Color32 = Color32::from_rgb(238, 92, 96);
+pub const RED: Color32 = Color32::from_rgb(236, 88, 80);
 /// Warnings.
 pub const AMBER: Color32 = Color32::from_rgb(232, 172, 64);
 /// Lights and the sun.
 pub const SUN: Color32 = Color32::from_rgb(250, 204, 92);
 /// Cameras.
-pub const SKY: Color32 = Color32::from_rgb(108, 182, 255);
+pub const SKY: Color32 = Color32::from_rgb(120, 186, 240);
+
+/// Corners: crisp, not pillowy.
+const ROUND: u8 = 3;
 
 /// Puts the engine's look on a context: colours, rounded corners, room
 /// around widgets, text sizes.
@@ -80,8 +87,8 @@ pub fn apply(context: &Context) {
         visuals.panel_fill = PANEL;
         visuals.window_fill = RAISED;
         visuals.window_stroke = Stroke::new(1.0, LINE);
-        visuals.window_corner_radius = CornerRadius::same(10);
-        visuals.menu_corner_radius = CornerRadius::same(8);
+        visuals.window_corner_radius = CornerRadius::same(5);
+        visuals.menu_corner_radius = CornerRadius::same(4);
         visuals.window_shadow = Shadow {
             offset: [0, 6],
             blur: 18,
@@ -101,13 +108,13 @@ pub fn apply(context: &Context) {
         visuals.warn_fg_color = AMBER;
         visuals.error_fg_color = RED;
         visuals.selection.bg_fill = ACCENT_SOFT;
-        visuals.selection.stroke = Stroke::new(1.0, ACCENT);
+        visuals.selection.stroke = Stroke::new(1.0, SELECT);
         visuals.weak_text_color = Some(WEAK);
         visuals.indent_has_left_vline = true;
         visuals.collapsing_header_frame = true;
         visuals.slider_trailing_fill = true;
 
-        let round = CornerRadius::same(6);
+        let round = CornerRadius::same(ROUND);
         let widgets = &mut visuals.widgets;
         widgets.noninteractive.bg_fill = PANEL;
         widgets.noninteractive.weak_bg_fill = PANEL;
@@ -127,8 +134,8 @@ pub fn apply(context: &Context) {
             state.fg_stroke = Stroke::new(1.0, TEXT);
             state.expansion = 0.0;
         }
-        widgets.hovered.bg_stroke = Stroke::new(1.0, Color32::from_rgb(80, 86, 110));
-        widgets.active.bg_stroke = Stroke::new(1.0, ACCENT);
+        widgets.hovered.bg_stroke = Stroke::new(1.0, Color32::from_rgb(92, 87, 78));
+        widgets.active.bg_stroke = Stroke::new(1.0, SELECT);
     });
 }
 
@@ -163,6 +170,9 @@ pub enum Icon {
     Target,
     Dot,
     Screen,
+    Chat,
+    /// The engine's wishbone (the AI mode).
+    Wish,
 }
 
 /// Draws `icon` in `rect` (it is square; the smaller side counts) in
@@ -185,7 +195,7 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
 pub fn entity_icon(components: &[String], prefab: bool) -> (Icon, Color32) {
     let has = |name: &str| components.iter().any(|c| c == name);
     if prefab {
-        return (Icon::Prefab, ACCENT);
+        return (Icon::Prefab, SELECT);
     }
     if has("Camera") {
         (Icon::Camera, SKY)
@@ -249,12 +259,12 @@ pub fn tool_button(
         } else {
             Color32::TRANSPARENT
         };
-        painter.rect_filled(rect, 6.0, fill);
+        painter.rect_filled(rect, f32::from(ROUND), fill);
         if selected {
             painter.rect_stroke(
                 rect,
-                6.0,
-                Stroke::new(1.0, ACCENT),
+                f32::from(ROUND),
+                Stroke::new(1.0, SELECT),
                 egui::StrokeKind::Inside,
             );
         }
@@ -303,7 +313,7 @@ pub fn tool_group<R>(ui: &mut Ui, width: f32, add: impl FnOnce(&mut Ui) -> R) ->
     }
     egui::Frame::new()
         .fill(RAISED)
-        .corner_radius(CornerRadius::same(8))
+        .corner_radius(CornerRadius::same(4))
         .inner_margin(Margin::same(2))
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
@@ -312,9 +322,24 @@ pub fn tool_group<R>(ui: &mut Ui, width: f32, add: impl FnOnce(&mut Ui) -> R) ->
         .inner
 }
 
-/// A panel's title: quiet capitals-free text with room under it.
+/// A panel's title: small, letter-spaced capitals in the quiet colour,
+/// like a label on a drawer.
 pub fn panel_title(ui: &mut Ui, text: &str) {
-    ui.label(egui::RichText::new(text).size(14.5).color(TEXT));
+    ui.label(
+        egui::RichText::new(caps(text))
+            .size(11.5)
+            .extra_letter_spacing(1.2)
+            .color(WEAK),
+    );
+}
+
+/// Capitals in the interface's language (Turkish dotted i becomes İ).
+pub fn caps(text: &str) -> String {
+    if crate::i18n::language().code == "tr" {
+        text.replace('i', "İ").to_uppercase()
+    } else {
+        text.to_uppercase()
+    }
 }
 
 /// The engine's mark, in its own colours, in `rect` (square).

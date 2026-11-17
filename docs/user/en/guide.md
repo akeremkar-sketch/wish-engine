@@ -169,6 +169,28 @@ Game logic is Rust in `scripts/src/lib.rs`, built to WebAssembly by the engine.
 
 ## 6. Working with an AI assistant
 
+### The AI mode
+
+The switch in the top bar changes the editor's face: **Manual | With AI**. Same project, same history, same files; only the screen changes. Your choice is remembered.
+
+*With AI* puts the manual panels aside and shows:
+
+| Where | What it is for |
+|---|---|
+| **The game** (left), *Game card* | What the game is: name, one sentence, genre, the player's goal, core loop, controls, look and feel, for whom, must have, later. The agent reads it before every task. *Let the agent draft it* writes it from the game as it is. |
+| **The game** (left), *Decisions* | Rules that hold for every change ("jump height 2.5 m", "pastel colours"). The agent keeps to them. |
+| **The live game** (middle) | What the player sees. Switch to *Scene* and click something: it goes with the next request. |
+| *Plan* (below) | Small steps. *Do the next step* gives the first one not done to the agent. |
+| *Play-test notes* (below) | While playing, *Take a note*: the moment's tick and picture are kept. *Send the notes to the agent* makes them one task. |
+| *Health* (below) | Problems, whether the code is built, tests. *Let the agent fix it* sends them as one task. |
+| **Conversation** (right) | Each task is a card: what was asked, what the agent said and which tools it called; *Undo this task* and *Before / after*. Ready requests (*Add a level*, *Game feel*, *Find bugs*...) fill the box. |
+| *The agent asks* | For choices that are yours (difficulty, look, how many), the agent does not guess: it asks with choices. Click one or write your own; with *Keep the answer as a decision* it becomes a decision, and the agent goes on. |
+| *AI settings* | The assistant, the model (Opus / Sonnet / Haiku), remembering the conversation between tasks, a checkpoint before every task, whether the agent may change the game code itself, what this session cost. |
+
+The design is the project's `design/game.json` (in git, not an asset). Agents do the same with the `game_design` tool.
+
+### The Agent panel (in the manual mode)
+
 **The Agent panel** (*Agent* in the top bar):
 1. Write what you want in *What should the agent do?* and press *Send*.
 2. *Point in the view*, then click entities, to show the agent what you mean.

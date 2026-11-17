@@ -174,14 +174,14 @@ pub(crate) fn worth_noting(tool: &str, args: &Value, mutates: bool, actor: &Acto
     // A tool that changes things can also just look (listing checkpoints
     // or proposals, reading the permission mode).
     // (Tools whose default action only looks: edit_history, proposals list;
-    // project_settings, permissions get.)
+    // project_settings, permissions, game_design get.)
     let action = args["action"].as_str().unwrap_or("");
     let looks = action == "list"
         || action == "get"
         || (action.is_empty()
             && matches!(
                 tool,
-                "edit_history" | "proposals" | "project_settings" | "permissions"
+                "edit_history" | "proposals" | "project_settings" | "permissions" | "game_design"
             ));
     tool != "activity_get" && ((mutates && !looks) || !matches!(actor, Actor::Human))
 }

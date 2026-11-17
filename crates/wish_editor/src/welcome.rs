@@ -47,6 +47,8 @@ pub struct LaunchOptions {
     pub build: bool,
     /// The compiler and SDK for game code (else the workspace finds them).
     pub toolchain: Option<wish_script::build::Toolchain>,
+    /// Open with the mark's short animation (a click or a key skips it).
+    pub splash: bool,
 }
 
 impl LaunchOptions {
@@ -87,6 +89,7 @@ impl LaunchOptions {
             claude: wish_agent::claude::find(),
             build: true,
             toolchain: None,
+            splash: true,
         }
     }
 }
@@ -134,6 +137,8 @@ struct Welcome {
     empty_picture: Option<egui::TextureHandle>,
     /// The pictures were read (once).
     pictures_loaded: bool,
+    /// How long the opening animation has played (`None`: it is over).
+    splash: Option<f64>,
 }
 
 /// What a frame of the welcome screen asked for.
@@ -203,6 +208,7 @@ impl Launcher {
             pictures: Vec::new(),
             empty_picture: None,
             pictures_loaded: false,
+            splash: options.splash.then_some(0.0),
         };
         Self {
             options,
@@ -432,6 +438,23 @@ impl Launcher {
             return false;
         };
         crate::i18n::set_language(welcome.language);
+        if let Some(played) = welcome.splash.as_mut() {
+            *played += seconds;
+            let skipped = events.iter().any(|event| {
+                matches!(
+                    event,
+                    ShellEvent::Button { pressed: true, .. }
+                        | ShellEvent::Key { pressed: true, .. }
+                )
+            });
+            if skipped || *played >= SPLASH_SECONDS {
+                welcome.splash = None;
+                welcome.frames = 0;
+            } else {
+                let played = *played;
+                return splash_frame(welcome, size, played, seconds);
+            }
+        }
         let changed = !events.is_empty()
             || welcome.frames < 3
             || (welcome.canvas.width, welcome.canvas.height) != size
@@ -510,6 +533,11 @@ impl Launcher {
             welcome.frames = welcome.frames.min(2);
         }
         true
+    }
+
+    /// Whether the opening animation is playing.
+    pub fn splash_playing(&self) -> bool {
+        self.welcome.as_ref().is_some_and(|w| w.splash.is_some())
     }
 
     fn frame_app(&mut self, size: (u32, u32), seconds: f64, events: Vec<ShellEvent>) -> bool {
@@ -594,6 +622,19 @@ fn layout(
             BACKDROP[2],
         )))
         .show(ui, |ui| {
+            // A faint dot grid, like drafting paper on the bench.
+            let page = ui.max_rect();
+            let dot = egui::Color32::from_rgb(44, 42, 38);
+            let step = 22.0;
+            let mut y = page.top() + step * 0.5;
+            while y < page.bottom() {
+                let mut x = page.left() + step * 0.5;
+                while x < page.right() {
+                    ui.painter().circle_filled(egui::pos2(x, y), 1.1, dot);
+                    x += step;
+                }
+                y += step;
+            }
             egui::ScrollArea::vertical()
                 .id_salt("welcome_page")
                 .show(ui, |ui| {
@@ -628,6 +669,59 @@ fn layout(
                 });
         });
     asked
+}
+
+/// How long the opening animation lasts: the mark's animation, then a
+/// moment still.
+const SPLASH_SECONDS: f64 = 2.0;
+/// The mark's own animation, within it.
+const MARK_SECONDS: f64 = 1.4;
+
+/// A frame of the opening animation: the wishbone comes together in the
+/// middle, the name fades in under it.
+fn splash_frame(welcome: &mut Welcome, size: (u32, u32), played: f64, seconds: f64) -> bool {
+    if (welcome.canvas.width, welcome.canvas.height) != size {
+        welcome.canvas = Canvas::new(size.0, size.1, BACKDROP);
+    }
+    let mut editor = std::mem::take(&mut welcome.editor);
+    let t = played / MARK_SECONDS;
+    let frame = editor.layout(size, seconds, Vec::new(), |ui| {
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show(ui, |ui| {
+                let area = ui.max_rect();
+                let side = (area.height() * 0.28).clamp(96.0, 220.0);
+                let mark = egui::Rect::from_center_size(
+                    area.center() - egui::vec2(0.0, side * 0.25),
+                    egui::vec2(side, side),
+                );
+                let texture = crate::vector::logo_moment(ui.ctx(), side.round() as u16, t);
+                ui.painter().image(
+                    texture.id(),
+                    mark,
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    egui::Color32::WHITE,
+                );
+                // The name comes in as the bone settles.
+                let shown = ((t - 0.55) / 0.35).clamp(0.0, 1.0) as f32;
+                if shown > 0.0 {
+                    let color = crate::style::TEXT.gamma_multiply(shown);
+                    ui.painter().text(
+                        egui::pos2(area.center().x, mark.bottom() + 18.0 + 8.0 * (1.0 - shown)),
+                        egui::Align2::CENTER_TOP,
+                        "Wish Engine",
+                        egui::FontId::proportional((side * 0.2).clamp(22.0, 40.0)),
+                        color,
+                    );
+                }
+            });
+    });
+    for pixel in welcome.canvas.pixels.as_chunks_mut::<4>().0 {
+        *pixel = BACKDROP;
+    }
+    editor.paint(&frame, &mut welcome.canvas);
+    welcome.editor = editor;
+    true
 }
 
 /// The engine's mark, its name, what it is, and the language.
@@ -668,7 +762,7 @@ fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
     egui::Frame::new()
         .fill(crate::style::RAISED)
         .stroke(egui::Stroke::new(1.0, crate::style::LINE))
-        .corner_radius(egui::CornerRadius::same(12))
+        .corner_radius(egui::CornerRadius::same(5))
         .inner_margin(egui::Margin::same(16))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -682,7 +776,7 @@ fn step_title(ui: &mut Ui, number: u8, text: &str) {
     use crate::style::{ACCENT, TEXT};
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::hover());
-        ui.painter().circle_filled(rect.center(), 11.0, ACCENT);
+        ui.painter().rect_filled(rect, 3.0, ACCENT);
         ui.painter().text(
             rect.center(),
             egui::Align2::CENTER_CENTER,
@@ -706,7 +800,7 @@ fn choice(
     name: &str,
     paint: impl FnOnce(&egui::Painter, egui::Rect, bool),
 ) -> egui::Response {
-    use crate::style::{ACCENT, HOVER, LINE, RAISED, WIDGET};
+    use crate::style::{HOVER, LINE, RAISED, SELECT, WIDGET};
     let sense = if enabled {
         egui::Sense::click()
     } else {
@@ -724,13 +818,13 @@ fn choice(
         } else {
             RAISED
         };
-        painter.rect_filled(rect, 10.0, fill);
+        painter.rect_filled(rect, 4.0, fill);
         let stroke = if chosen {
-            egui::Stroke::new(2.0, ACCENT)
+            egui::Stroke::new(2.0, SELECT)
         } else {
             egui::Stroke::new(1.0, LINE)
         };
-        painter.rect_stroke(rect, 10.0, stroke, egui::StrokeKind::Inside);
+        painter.rect_stroke(rect, 4.0, stroke, egui::StrokeKind::Inside);
         paint(painter, rect.shrink(12.0), enabled);
     }
     response
@@ -767,7 +861,7 @@ fn new_game(ui: &mut Ui, welcome: &mut Welcome, templates: &[Template], claude: 
                 claude.is_some(),
                 t("Claude Code"),
                 |painter, rect, enabled| {
-                    option_face(painter, rect, Icon::Spark, t("Claude Code"), &claude_text, enabled);
+                    option_face(painter, rect, Icon::Chat, t("Claude Code"), &claude_text, enabled);
                 },
             );
             let response = match claude {
@@ -847,8 +941,8 @@ fn new_game(ui: &mut Ui, welcome: &mut Welcome, templates: &[Template], claude: 
                                         egui::epaint::RectShape::filled(
                                             picture_rect,
                                             egui::CornerRadius {
-                                                nw: 9,
-                                                ne: 9,
+                                                nw: 3,
+                                                ne: 3,
                                                 sw: 0,
                                                 se: 0,
                                             },
@@ -864,7 +958,7 @@ fn new_game(ui: &mut Ui, welcome: &mut Welcome, templates: &[Template], claude: 
                                     );
                                 }
                                 None => {
-                                    painter.rect_filled(picture_rect, 9.0, crate::style::WIDGET);
+                                    painter.rect_filled(picture_rect, 3.0, crate::style::WIDGET);
                                 }
                             }
                             let text_top = picture_rect.bottom() + 8.0;
@@ -932,7 +1026,7 @@ fn action_bar(ui: &mut Ui, welcome: &mut Welcome, asked: &mut Asked) {
                             .color(egui::Color32::WHITE),
                     )
                     .fill(ACCENT)
-                    .corner_radius(egui::CornerRadius::same(8))
+                    .corner_radius(egui::CornerRadius::same(3))
                     .min_size(egui::vec2(140.0, 34.0));
                     if ui.add_enabled(!busy, create).clicked() {
                         asked.create = true;
@@ -1012,7 +1106,7 @@ fn open_game(ui: &mut Ui, welcome: &mut Welcome, asked: &mut Asked) {
                 if ui.is_rect_visible(rect) {
                     let painter = ui.painter();
                     if response.hovered() {
-                        painter.rect_filled(rect, 8.0, HOVER);
+                        painter.rect_filled(rect, 3.0, HOVER);
                     }
                     let icon = egui::Rect::from_center_size(
                         egui::pos2(rect.left() + 20.0, rect.center().y),
@@ -1072,7 +1166,7 @@ fn open_game(ui: &mut Ui, welcome: &mut Welcome, asked: &mut Asked) {
                 t("Ctrl+P plays the game in the view; Stop brings the scene back."),
             ),
             (
-                Icon::Spark,
+                Icon::Chat,
                 crate::style::ACCENT,
                 t("The Agent panel: point at things in the scene and say what to change."),
             ),

@@ -174,6 +174,17 @@ pub struct EditorApp {
     proposals: Vec<Value>,
     /// The agent's panel, its task and the editor's MCP endpoint (M8b).
     cockpit: crate::cockpit::Cockpit,
+    /// The AI mode is on (M9c): the game card, decisions, plan, notes and
+    /// the conversation instead of the manual panels.
+    ai_mode: bool,
+    /// What the AI mode's panels are writing.
+    ai: RefCell<crate::ai_mode::AiState>,
+    /// The game's design (`game_design get`).
+    design: Value,
+    /// The last test run: passed, failed.
+    tests: Option<(usize, usize)>,
+    /// Where Claude Code is (looked for when the AI settings open).
+    assistant: Option<String>,
     /// The "connect an outside agent" window is open.
     connect_open: bool,
     /// An earlier export of this name is there: the person is asked before
@@ -332,6 +343,10 @@ struct Actions {
     connect: Option<bool>,
     /// What the agent's panel asked for.
     cockpit: crate::cockpit::CockpitActions,
+    /// Switch to the AI mode (true) or the manual one.
+    switch_mode: Option<bool>,
+    /// What the AI mode's panels asked for.
+    ai: crate::ai_mode::AiActions,
     /// Go back to this checkpoint.
     restore_checkpoint: Option<String>,
     /// Compare this checkpoint with now.
@@ -406,6 +421,8 @@ impl Actions {
             || self.toggle_cockpit
             || self.connect.is_some()
             || self.cockpit.any()
+            || self.switch_mode.is_some()
+            || self.ai.any()
             || self.restore_checkpoint.is_some()
             || self.compare_checkpoint.is_some()
             || self.delete_checkpoint.is_some()
@@ -528,6 +545,11 @@ impl EditorApp {
             cockpit: crate::cockpit::Cockpit::new(Box::new(
                 wish_agent::claude::ClaudeCode::default(),
             )),
+            ai_mode: false,
+            ai: RefCell::new(crate::ai_mode::AiState::default()),
+            design: Value::Null,
+            tests: None,
+            assistant: None,
             compare: None,
             record: false,
             unbuilt: false,
@@ -1257,6 +1279,7 @@ impl EditorApp {
         // An agent may save checkpoints too: the menu follows.
         self.read_checkpoints();
         self.read_proposals();
+        self.read_design();
         let info = self.call("project_info", &json!({}));
         if info["ok"] != true {
             self.status = info["error"]["message"]
@@ -1471,6 +1494,25 @@ impl EditorApp {
         if let Some(shown) = prefs.get("game_view").and_then(Value::as_bool) {
             self.game_view = shown;
         }
+        if let Some(on) = prefs.get("ai_mode").and_then(Value::as_bool) {
+            self.ai_mode = on;
+        }
+        if let Some(agent) = prefs.get("agent").and_then(Value::as_object) {
+            let settings = &mut self.cockpit.settings;
+            settings.model = agent
+                .get("model")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            for (key, slot) in [
+                ("memory", &mut settings.memory),
+                ("checkpoint_first", &mut settings.checkpoint_first),
+                ("files", &mut settings.files),
+            ] {
+                if let Some(on) = agent.get(key).and_then(Value::as_bool) {
+                    *slot = on;
+                }
+            }
+        }
         let saved = prefs
             .get("language")
             .and_then(Value::as_str)
@@ -1493,7 +1535,46 @@ impl EditorApp {
     /// chose to work with an assistant).
     pub fn open_agent_panel(&mut self) {
         self.cockpit.open = true;
+        self.ai_mode = true;
         self.picture_stale = true;
+    }
+
+    /// Whether the AI mode is on.
+    pub fn ai_mode(&self) -> bool {
+        self.ai_mode
+    }
+
+    /// Turns the AI mode on or off (the menu bar's switch does the same).
+    pub fn set_ai_mode(&mut self, on: bool) {
+        if self.ai_mode != on {
+            self.ai_mode = on;
+            self.picture_stale = true;
+            self.game_drawn = None;
+            self.save_preferences();
+        }
+    }
+
+    /// The game's design as the editor last read it.
+    pub fn design(&self) -> &Value {
+        &self.design
+    }
+
+    /// The last task given to the agent.
+    pub fn last_task(&self) -> Option<&wish_agent::Task> {
+        self.cockpit.last_task.as_ref()
+    }
+
+    /// Reads the game's design (the AI mode's panels show it).
+    fn read_design(&mut self) -> bool {
+        let got = self.call("game_design", &json!({}));
+        let design = if got["ok"] == true {
+            got["design"].clone()
+        } else {
+            Value::Null
+        };
+        let changed = design != self.design;
+        self.design = design;
+        changed
     }
 
     /// Whether the Agent panel is shown.
@@ -1515,9 +1596,19 @@ impl EditorApp {
         };
         let language = self.language;
         let game_view = self.game_view;
+        let ai_mode = self.ai_mode;
+        let settings = &self.cockpit.settings;
+        let agent = json!({
+            "model": settings.model,
+            "memory": settings.memory,
+            "checkpoint_first": settings.checkpoint_first,
+            "files": settings.files,
+        });
         let written = crate::prefs::update(&path, |prefs| {
             prefs.insert("language".to_owned(), json!(language));
             prefs.insert("game_view".to_owned(), json!(game_view));
+            prefs.insert("ai_mode".to_owned(), json!(ai_mode));
+            prefs.insert("agent".to_owned(), agent);
         });
         if let Err(error) = written {
             self.status = tf(
@@ -1627,6 +1718,9 @@ impl EditorApp {
             );
         }
         let (reported, changed) = self.cockpit.take_events();
+        if ran > 0 {
+            self.read_design();
+        }
         if ran > 0 || changed {
             // The agent changed things: show them now, not at the next poll.
             self.revision = u64::MAX;
@@ -1690,6 +1784,226 @@ impl EditorApp {
         }
         if asked.send && self.cockpit.run.is_none() {
             self.send_task();
+        }
+    }
+
+    /// One `game_design` call as the person; the design is read again.
+    /// Returns whether it worked (if not, the status bar says why).
+    fn design_call(&mut self, args: Value) -> bool {
+        let got = self.call("game_design", &args);
+        if got["ok"] != true {
+            self.status = got["error"]["message"]
+                .as_str()
+                .unwrap_or(t("it did not work"))
+                .to_owned();
+            return false;
+        }
+        self.read_design();
+        true
+    }
+
+    /// A play-test note: the moment (the game's tick while it plays), the
+    /// scene and its picture, kept under `design/notes/`.
+    fn take_note(&mut self, text: String) {
+        let first = self.design["next_id"].as_u64().unwrap_or(1);
+        let picture = (first..first + 10_000)
+            .map(|n| format!("design/notes/{n}.png"))
+            .find(|path| !self.workspace.root().join(path).exists())
+            .unwrap_or_else(|| format!("design/notes/{first}.png"));
+        let (args, tick) = match &self.play {
+            Some(play) => (
+                json!({ "session": play.session.clone(), "out": picture.clone() }),
+                Some(play.tick),
+            ),
+            None => (
+                json!({ "scene": self.scene.clone(), "out": picture.clone() }),
+                None,
+            ),
+        };
+        let saved = self.call("capture_frame", &args);
+        let mut note = json!({ "action": "note", "text": text, "scene": self.scene.clone() });
+        if let Some(tick) = tick {
+            note["tick"] = json!(tick);
+        }
+        if saved["ok"] == true {
+            note["picture"] = json!(picture);
+        }
+        if self.design_call(note) {
+            self.status = t("note taken").to_owned();
+        }
+    }
+
+    /// The AI mode's actions.
+    fn ai_act(&mut self, ai: crate::ai_mode::AiActions) {
+        if let Some(fields) = ai.save_card
+            && self.design_call(json!({ "action": "set_brief", "fields": fields }))
+        {
+            self.ai.borrow_mut().card_from = None;
+            self.status = t("the game card was saved").to_owned();
+        }
+        if let Some(text) = ai.decide {
+            self.design_call(json!({ "action": "decide", "text": text }));
+        }
+        if let Some(id) = ai.forget {
+            self.design_call(json!({ "action": "forget", "id": id }));
+        }
+        if let Some(text) = ai.plan_add {
+            self.design_call(json!({ "action": "plan_add", "text": text }));
+        }
+        if let Some((id, status)) = ai.plan_status {
+            self.design_call(json!({ "action": "plan_set", "id": id, "status": status }));
+        }
+        if let Some(id) = ai.plan_remove {
+            self.design_call(json!({ "action": "plan_remove", "id": id }));
+        }
+        if let Some(text) = ai.note {
+            self.take_note(text);
+        }
+        if let Some(id) = ai.note_done {
+            self.design_call(json!({ "action": "note_done", "id": id }));
+        }
+        if let Some((id, answer, keep)) = ai.answer {
+            let question = self.design["questions"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|q| q["id"].as_u64() == Some(id))
+                .and_then(|q| q["text"].as_str())
+                .unwrap_or("")
+                .to_owned();
+            if self.design_call(
+                json!({ "action": "answer", "id": id, "answer": answer, "remember": keep }),
+            ) {
+                self.ai.borrow_mut().own.remove(&id);
+                // The agent stopped to ask: it goes on with the answer.
+                self.start_task(tf(
+                    "My answer to \"{question}\": {answer}. Go on.",
+                    &[("question", &question), ("answer", &answer)],
+                ));
+            }
+        }
+        if let Some(request) = ai.ready {
+            *self.cockpit.request.borrow_mut() = request;
+        }
+        if ai.draft_card {
+            self.start_task(
+                t("Write the game card from the game as it is now (game_design set_brief). Ask me about what you cannot tell.")
+                    .to_owned(),
+            );
+        }
+        if ai.next_step {
+            let next = self.design["plan"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|step| step["status"] != "done")
+                .map(|step| {
+                    (
+                        step["id"].as_u64().unwrap_or(0),
+                        step["text"].as_str().unwrap_or("").to_owned(),
+                    )
+                });
+            if let Some((id, text)) = next {
+                self.start_task(tf(
+                    "Do the next step of the plan: [{id}] {text}. Mark it doing when you start and done when it works (game_design plan_set).",
+                    &[("id", &id), ("text", &text)],
+                ));
+            }
+        }
+        if ai.send_notes {
+            let notes: Vec<String> = self.design["notes"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|note| note["status"] == "open")
+                .map(|note| {
+                    let mut line = format!(
+                        "- [{}] {}",
+                        note["id"].as_u64().unwrap_or(0),
+                        note["text"].as_str().unwrap_or("")
+                    );
+                    if let Some(tick) = note["tick"].as_u64() {
+                        line.push_str(&format!(" (tick {tick})"));
+                    }
+                    if let Some(picture) = note["picture"].as_str() {
+                        line.push_str(&format!(" (picture: {picture})"));
+                    }
+                    line
+                })
+                .collect();
+            if !notes.is_empty() {
+                self.start_task(tf(
+                    "Fix what these notes from playing the game say, then close each one (game_design note_done): {notes}",
+                    &[("notes", &format!("\n{}", notes.join("\n")))],
+                ));
+            }
+        }
+        if ai.fix {
+            let mut problems: Vec<String> = self
+                .found
+                .iter()
+                .take(20)
+                .map(|problem| {
+                    format!(
+                        "- {} ({})",
+                        problem["message"].as_str().unwrap_or(""),
+                        problem["code"].as_str().unwrap_or("")
+                    )
+                })
+                .collect();
+            if self.unbuilt {
+                problems.push(t("- the game code is not built (script_build)").to_owned());
+            }
+            if problems.is_empty() {
+                problems.push(t("- run check and test_run, and fix what fails").to_owned());
+            }
+            self.start_task(tf(
+                "Fix these problems, then check again (check, test_run): {problems}",
+                &[("problems", &format!("\n{}", problems.join("\n")))],
+            ));
+        }
+        if let Some(open) = ai.settings {
+            if open {
+                self.assistant = wish_agent::claude::find().map(|path| path.display().to_string());
+            }
+            self.ai.borrow_mut().settings = open;
+        }
+        let before = self.cockpit.settings.clone();
+        if let Some(model) = ai.model {
+            self.cockpit.settings.model = model;
+        }
+        if let Some(memory) = ai.memory {
+            self.cockpit.settings.memory = memory;
+            if !memory {
+                self.cockpit.session = None;
+            }
+        }
+        if let Some(first) = ai.checkpoint_first {
+            self.cockpit.settings.checkpoint_first = first;
+        }
+        if let Some(files) = ai.files {
+            self.cockpit.settings.files = files;
+        }
+        if self.cockpit.settings != before {
+            self.save_preferences();
+        }
+        if ai.new_conversation {
+            self.cockpit.session = None;
+            self.cockpit.transcript.push(crate::cockpit::Line {
+                who: crate::cockpit::Who::Note,
+                text: t("A new conversation: the agent starts afresh (the game card and the decisions stay).")
+                    .to_owned(),
+                ok: Some(true),
+            });
+        }
+        if let Some(scene) = ai.scene_view {
+            self.ai.borrow_mut().scene_view = scene;
+            self.picture_stale = true;
+            self.game_drawn = None;
+        }
+        if ai.show_activity {
+            self.set_ai_mode(false);
+            self.tab = Tab::Activity;
         }
     }
 
@@ -1795,39 +2109,76 @@ impl EditorApp {
         if request.is_empty() {
             return;
         }
+        if self.start_task(request) {
+            self.cockpit.request.borrow_mut().clear();
+        }
+    }
+
+    /// Starts the agent on `request`, with what was pointed at, the game's
+    /// design and the person's AI settings; a checkpoint is saved first
+    /// (unless the person turned that off). Returns whether it started.
+    fn start_task(&mut self, request: String) -> bool {
+        if self.cockpit.run.is_some() {
+            return false;
+        }
         // Before every task: a way back.
-        let short: String = request.chars().take(40).collect();
-        self.call(
-            "checkpoint",
-            &json!({ "action": "save", "note": tf("before: {request}", &[("request", &short)]) }),
-        );
-        self.read_checkpoints();
+        let mut before = None;
+        if self.cockpit.settings.checkpoint_first {
+            let short: String = request.chars().take(40).collect();
+            let saved = self.call(
+                "checkpoint",
+                &json!({ "action": "save", "note": tf("before: {request}", &[("request", &short)]) }),
+            );
+            before = saved["checkpoint"]["name"].as_str().map(str::to_owned);
+            self.read_checkpoints();
+        }
         if self.ensure_endpoint().is_err() {
-            return;
+            return false;
         }
         let Some((endpoint, token)) = &self.cockpit.mcp else {
-            return;
+            return false;
         };
+        let endpoint = format!("http://{}/mcp", endpoint.address());
+        let token = token.clone();
+        self.read_design();
+        let settings = self.cockpit.settings.clone();
         let task = wish_agent::Task {
-            request: request.clone(),
             context: self.cockpit.context.clone(),
-            endpoint: format!("http://{}/mcp", endpoint.address()),
-            token: token.clone(),
-            project: self.workspace.root().to_path_buf(),
-            scene: self.scene.clone(),
+            design: wish_control::design_summary(&self.design),
+            model: settings.model.clone(),
+            resume: if settings.memory {
+                self.cockpit.session.clone()
+            } else {
+                None
+            },
+            files: settings.files,
+            ..wish_agent::Task::new(
+                request.clone(),
+                endpoint,
+                token,
+                self.workspace.root().to_path_buf(),
+                self.scene.clone(),
+            )
         };
         self.cockpit.last_instructions = Some(wish_agent::instructions(&task));
+        if let Some(name) = before {
+            self.cockpit
+                .before
+                .insert(self.cockpit.transcript.len(), name);
+        }
         self.cockpit.transcript.push(crate::cockpit::Line {
             who: crate::cockpit::Who::Person,
             text: request,
             ok: None,
         });
-        match self.cockpit.agent.start(&task) {
+        let started = self.cockpit.agent.start(&task);
+        self.cockpit.last_task = Some(task);
+        match started {
             Ok(run) => {
                 self.cockpit.run = Some(run);
-                self.cockpit.request.borrow_mut().clear();
                 self.cockpit.context.clear();
                 self.status = t("the agent is working").to_owned();
+                true
             }
             Err(problem) => {
                 self.cockpit.transcript.push(crate::cockpit::Line {
@@ -1835,6 +2186,7 @@ impl EditorApp {
                     text: problem,
                     ok: Some(false),
                 });
+                false
             }
         }
     }
@@ -2214,6 +2566,7 @@ impl EditorApp {
                 })
             })
             .collect();
+        self.tests = Some((results.len() - failed.len(), failed.len()));
         self.status = tf(
             "tests: {passed} passed, {failed} failed",
             &[
@@ -2588,6 +2941,21 @@ impl EditorApp {
         // The history tab's buttons are the menu bar's.
         actions.undo |= actions.panels.undo;
         actions.redo |= actions.panels.redo;
+        // The AI mode's conversation, task cards and health are the
+        // cockpit's, the checkpoints' and the project menu's.
+        actions.cockpit.send |= actions.ai.cockpit.send;
+        actions.cockpit.stop |= actions.ai.cockpit.stop;
+        if actions.cockpit.remove_context.is_none() {
+            actions.cockpit.remove_context = actions.ai.cockpit.remove_context.take();
+        }
+        if let Some(name) = actions.ai.undo_task.take() {
+            actions.restore_checkpoint = Some(name);
+        }
+        if let Some(name) = actions.ai.compare_task.take() {
+            actions.compare_checkpoint = Some(name);
+        }
+        actions.run_tests |= std::mem::take(&mut actions.ai.run_tests);
+        actions.build_code |= std::mem::take(&mut actions.ai.build);
         // Undo, redo and another scene are about the files: not while a
         // game runs (its changes are live and go with it).
         if self.play.is_some() {
@@ -2664,6 +3032,13 @@ impl EditorApp {
             None => {}
         }
         self.cockpit_act(&actions.cockpit);
+        if let Some(on) = actions.switch_mode {
+            self.set_ai_mode(on);
+        }
+        let ai = std::mem::take(&mut actions.ai);
+        if ai.any() {
+            self.ai_act(ai);
+        }
         if let Some(mode) = actions.permission {
             let set = self.call("permissions", &json!({ "action": "set", "mode": mode }));
             if set["ok"] == true {
@@ -3391,7 +3766,7 @@ impl EditorApp {
                     (y - origin.y).max(0.0) as u32,
                 )
                 .and_then(|entity| ids.names.get(&entity).cloned());
-            if self.cockpit.pointing {
+            if self.cockpit.pointing || self.ai_mode {
                 // Show and tell: what was clicked goes with the request.
                 self.cockpit.pointing = false;
                 if let Some(name) = hit {
@@ -3774,6 +4149,9 @@ impl EditorApp {
                         ui.close();
                     }
                 });
+                if let Some(on) = crate::ai_mode::switch(ui, self.ai_mode) {
+                    actions.switch_mode = Some(on);
+                }
                 egui::ComboBox::from_id_salt("scene")
                     .selected_text(&self.scene)
                     .show_ui(ui, |ui| {
@@ -3808,6 +4186,7 @@ impl EditorApp {
                         actions.redo = true;
                     }
                 });
+                if !self.ai_mode {
                 egui::ComboBox::from_id_salt("view")
                     .selected_text(view_label(self.view.name()))
                     .show_ui(ui, |ui| {
@@ -3825,6 +4204,7 @@ impl EditorApp {
                             }
                         }
                     });
+                }
                 tool_group(ui, 220.0, |ui| match &self.play {
                     None => {
                         if tool_button(
@@ -3898,6 +4278,9 @@ impl EditorApp {
                         }
                     }
                 });
+                if self.ai_mode {
+                    return;
+                }
                 tool_group(ui, 250.0, |ui| {
                     for (mode, icon, name) in [
                         (Mode::Translate, Icon::Move, t("Move")),
@@ -3945,10 +4328,10 @@ impl EditorApp {
                         actions.toggle_game_view = true;
                     }
                 });
-                tool_group(ui, 90.0, |ui| {
+                tool_group(ui, 150.0, |ui| {
                     if tool_button(
                         ui,
-                        Icon::Spark,
+                        Icon::Chat,
                         t("Agent"),
                         true,
                         self.cockpit.open,
@@ -3986,6 +4369,10 @@ impl EditorApp {
                     .on_hover_text(&self.status);
             });
         });
+        if self.ai_mode {
+            self.ai_layout(ui, viewport, game_area, &mut actions);
+            return actions;
+        }
         egui::Panel::bottom("assets")
             .resizable(true)
             .default_size(170.0)
@@ -4101,6 +4488,71 @@ impl EditorApp {
                 }
             });
         actions
+    }
+
+    /// The AI mode's panels: the game on the left, the conversation on the
+    /// right, the live game with the plan, notes and health in the middle.
+    fn ai_layout(
+        &self,
+        ui: &mut Ui,
+        viewport: &mut Rect,
+        game_area: &mut Rect,
+        actions: &mut Actions,
+    ) {
+        let waiting = self
+            .proposals
+            .iter()
+            .filter(|p| p["status"] == "waiting")
+            .count();
+        let view = crate::ai_mode::AiView {
+            design: &self.design,
+            cockpit: &self.cockpit,
+            state: &self.ai,
+            problems: self.problems,
+            found: &self.found,
+            unbuilt: self.unbuilt,
+            tests: self.tests,
+            tick: self.play.as_ref().map(|play| play.tick),
+            permission: &self.permission_mode,
+            waiting,
+            assistant: self.assistant.as_deref(),
+        };
+        egui::Panel::left("ai-game")
+            .default_size(290.0)
+            .show(ui, |ui| {
+                crate::ai_mode::game_panel(ui, &view, &mut actions.ai)
+            });
+        egui::Panel::right("ai-conversation")
+            .default_size(370.0)
+            .show(ui, |ui| {
+                crate::ai_mode::conversation(ui, &view, &mut actions.ai)
+            });
+        egui::Panel::bottom("ai-board")
+            .resizable(true)
+            .default_size(230.0)
+            .size_range(140.0..=480.0)
+            .show(ui, |ui| crate::ai_mode::board(ui, &view, &mut actions.ai));
+        crate::ai_mode::settings(ui, &view, &mut actions.ai);
+        crate::settings::window(ui, &self.settings, &self.scenes, &mut actions.settings);
+        self.compare_window(ui, actions);
+        self.connect_window(ui, actions);
+        self.export_window(ui, actions);
+        let scene_view = self.ai.borrow().scene_view;
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show(ui, |ui| {
+                let area = ui.max_rect();
+                if scene_view {
+                    *viewport = area;
+                } else {
+                    *viewport = Rect::NOTHING;
+                    *game_area = area;
+                }
+                crate::ai_mode::view_switch(ui, area, scene_view, &mut actions.ai);
+                if let Some((message, hint)) = &self.scene_error {
+                    self.scene_problem(ui, area, message, hint, actions);
+                }
+            });
     }
 
     /// A card in the middle of the view: why the scene cannot be shown, and
@@ -4489,7 +4941,7 @@ impl Shell for EditorApp {
 }
 
 /// What a permission mode is called in the interface.
-fn mode_label(mode: &str) -> &'static str {
+pub(crate) fn mode_label(mode: &str) -> &'static str {
     match mode {
         "suggest" => t("Only suggest"),
         "autonomous" => t("Autonomous"),

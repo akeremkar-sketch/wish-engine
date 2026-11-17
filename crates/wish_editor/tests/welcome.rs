@@ -53,6 +53,7 @@ fn options(name: &str) -> (LaunchOptions, PathBuf) {
         claude: Some(std::env::current_exe().unwrap()),
         build: true,
         toolchain: Some(toolchain().clone()),
+        splash: false,
     };
     (options, base)
 }
@@ -185,6 +186,7 @@ fn launcher_options_like(prefs: &Path, base: &Path) -> LaunchOptions {
         claude: Some(std::env::current_exe().unwrap()),
         build: true,
         toolchain: Some(toolchain().clone()),
+        splash: false,
     }
 }
 
@@ -338,4 +340,36 @@ fn text_is_pasted_and_copied() {
     );
     assert_eq!(launcher.take_clipboard().as_deref(), Some("Pasted Game"));
     assert_eq!(launcher.take_clipboard(), None, "taken once");
+}
+
+#[test]
+fn the_mark_plays_when_the_engine_opens_and_a_click_skips_it() {
+    let (mut options, _base) = options("splash");
+    options.splash = true;
+    let mut launcher = Launcher::new(options.clone());
+    play(&mut launcher, json!([{ "idle": 3 }]));
+    assert!(launcher.splash_playing());
+    assert!(
+        launcher
+            .widgets()
+            .iter()
+            .all(|w| w.label.as_deref() != Some("Create"))
+    );
+    // It ends by itself.
+    play(
+        &mut launcher,
+        json!([{ "seconds": 1.0 }, { "seconds": 1.2 }, { "idle": 2 }]),
+    );
+    assert!(!launcher.splash_playing());
+    named(&launcher, "Create");
+    // A click skips it.
+    let mut again = Launcher::new(options);
+    play(&mut again, json!([{ "idle": 2 }]));
+    assert!(again.splash_playing());
+    play(
+        &mut again,
+        json!([{ "events": [{ "click": [640.0, 360.0] }] }, { "idle": 2 }]),
+    );
+    assert!(!again.splash_playing());
+    named(&again, "Create");
 }

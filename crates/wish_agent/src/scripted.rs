@@ -42,6 +42,13 @@ impl Adapter for Scripted {
                         return;
                     }
                 };
+                // Like Claude Code, it names its conversation first: a task
+                // that resumes it is told so (tests of the conversation's
+                // memory see the id come back).
+                let _ = events.send(Event::Session(match &task.resume {
+                    Some(earlier) => earlier.clone(),
+                    None => format!("{}-conversation", script.name),
+                }));
                 let _ = events.send(Event::Said(script.says.clone()));
                 let mut all_ok = true;
                 for (tool, args) in &script.calls {

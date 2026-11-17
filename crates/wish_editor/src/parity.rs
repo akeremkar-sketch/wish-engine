@@ -214,6 +214,11 @@ pub const PARITY: &[Capability] = &[
         "parity_ops::the_game_is_exported_from_the_menu",
     ),
     op(
+        "game_design",
+        "AI mode: the game card, Decisions (add, remove), Plan (add, mark, remove), play-test notes (Take a note, Done), questions (choose an answer, Remember)",
+        "ai_mode::the_design_is_made_by_hand",
+    ),
+    op(
         "permissions",
         "Project menu: Permissions (Only suggest, Apply I review, Autonomous)",
         "parity_ops::an_agents_proposal_is_accepted_and_rejected_by_hand",

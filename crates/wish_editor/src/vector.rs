@@ -1,4 +1,4 @@
-//! Vector icons and the engine's mark (M9): each icon is SVG path data on a
+//! Vector icons and the engine's mark (M9; the wishbone, M9c): each icon is SVG path data on a
 //! 24-unit grid, drawn by `vello_cpu` (the rasterizer egui draws its text
 //! with) with anti-aliased curves, round caps and joins, into a texture at
 //! the exact pixel size it is shown at. Textures are made once per icon and
@@ -8,7 +8,9 @@ use std::collections::BTreeMap;
 
 use egui::{Color32, ColorImage, Context, Id, TextureHandle, TextureOptions};
 use vello_cpu::color::{AlphaColor, Srgb};
-use vello_cpu::kurbo::{Affine, BezPath, Cap, Circle, Join, Shape as _, Stroke};
+use vello_cpu::kurbo::{
+    Affine, BezPath, Cap, Circle, CubicBez, Join, ParamCurve, Point, Shape as _, Stroke,
+};
 use vello_cpu::peniko::{Brush, Gradient};
 use vello_cpu::{Pixmap, RenderContext, Resources};
 
@@ -152,6 +154,19 @@ fn parts(icon: Icon) -> &'static [Part] {
             Line("M12 1.5 L12 4.5 M12 19.5 L12 22.5 M1.5 12 L4.5 12 M19.5 12 L22.5 12"),
         ],
         Icon::Dot => &[Disc(12.0, 12.0, 3.5)],
+        Icon::Wish => &[
+            Line("M12 17 C11 13.5 5.4 12 6.6 4.8 L4.6 3.6"),
+            Line("M12 17 C13 13.5 18.6 12 17.4 4.8 L19.4 3.6"),
+            Disc(12.0, 18.2, 3.3),
+        ],
+        Icon::Chat => &[
+            Line(
+                "M5 4.5 L19 4.5 C20.4 4.5 21.5 5.6 21.5 7 L21.5 14.5 C21.5 15.9 20.4 17 19 17 L11 17 L6.5 20.5 L6.5 17 L5 17 C3.6 17 2.5 15.9 2.5 14.5 L2.5 7 C2.5 5.6 3.6 4.5 5 4.5 Z",
+            ),
+            Disc(8.0, 10.8, 1.3),
+            Disc(12.0, 10.8, 1.3),
+            Disc(16.0, 10.8, 1.3),
+        ],
         Icon::Screen => &[
             Line(
                 "M4 3.5 L20 3.5 C21.1 3.5 22 4.4 22 5.5 L22 15.5 C22 16.6 21.1 17.5 20 17.5 L4 17.5 C2.9 17.5 2 16.6 2 15.5 L2 5.5 C2 4.4 2.9 3.5 4 3.5 Z",
@@ -204,40 +219,135 @@ fn rasterize(icon: Icon, size: u16) -> ColorImage {
     to_image(&context, size)
 }
 
-/// The engine's mark: a four-pointed spark with curved sides in a violet
-/// gradient, a softer glow behind it, and a small spark beside it.
-fn rasterize_logo(size: u16) -> ColorImage {
+/// Clamps to 0..1.
+fn unit(x: f64) -> f64 {
+    x.clamp(0.0, 1.0)
+}
+
+/// Where `t` is between `a` and `b`, as 0..1.
+fn span(t: f64, a: f64, b: f64) -> f64 {
+    unit((t - a) / (b - a))
+}
+
+/// Fast, then gentle.
+fn ease_out(x: f64) -> f64 {
+    1.0 - (1.0 - unit(x)).powi(3)
+}
+
+/// Goes a little past and settles (for what pops into place).
+fn back_out(x: f64) -> f64 {
+    let x = unit(x);
+    1.0 + 2.9 * (x - 1.0).powi(3) + 1.9 * (x - 1.0).powi(2)
+}
+
+fn rgba(color: (u8, u8, u8), alpha: f64) -> AlphaColor<Srgb> {
+    AlphaColor::from_rgba8(
+        color.0,
+        color.1,
+        color.2,
+        (unit(alpha) * 255.0).round() as u8,
+    )
+}
+
+/// The mark's bone colour (on the editor's dark grounds).
+const BONE: (u8, u8, u8) = (237, 230, 216);
+/// The winning arm's colour (the interface's accent).
+const WIN: (u8, u8, u8) = (255, 107, 44);
+
+/// One arm of the wishbone, from the joint up to its tip, `grown` of the
+/// way, its tip pushed `spread` units outward (`side`: -1 left, 1 right).
+fn wishbone_arm(
+    context: &mut RenderContext,
+    side: f64,
+    grown: f64,
+    spread: f64,
+    color: AlphaColor<Srgb>,
+) {
+    if grown <= 0.0 {
+        return;
+    }
+    let tip = Point::new(50.0 + side * (24.0 + spread), 15.0);
+    let curve = CubicBez::new(
+        Point::new(50.0, 72.0),
+        Point::new(50.0 + side * 6.0, 58.0),
+        Point::new(50.0 + side * (34.0 + spread * 0.8), 44.0),
+        tip,
+    );
+    // Thick at the joint and thinner toward the tip, as a bone is: short
+    // round pieces of shrinking width.
+    let pieces = 48;
+    let last = ((grown * f64::from(pieces)).ceil() as u32).min(pieces);
+    let mut previous = curve.eval(0.0);
+    context.set_paint(color);
+    for i in 1..=last {
+        let u = (f64::from(i) / f64::from(pieces)).min(grown);
+        let point = curve.eval(u);
+        context.set_stroke(
+            Stroke::new(13.0 - 6.0 * u)
+                .with_caps(Cap::Round)
+                .with_join(Join::Round),
+        );
+        let mut piece = BezPath::new();
+        piece.move_to(previous);
+        piece.line_to(point);
+        context.stroke_path(&piece);
+        previous = point;
+    }
+    // The tip flares outward, as a wishbone's does.
+    if grown >= 1.0 {
+        let end = Point::new(50.0 + side * (33.0 + spread), 10.0);
+        context.set_stroke(
+            Stroke::new(7.0)
+                .with_caps(Cap::Round)
+                .with_join(Join::Round),
+        );
+        let mut flare = BezPath::new();
+        flare.move_to(tip);
+        flare.quad_to(Point::new(tip.x + side * 2.0, end.y - 1.0), end);
+        context.stroke_path(&flare);
+    }
+}
+
+/// The engine's mark, a wishbone (lades kemiği): a bone-coloured bone whose
+/// winning arm is orange, on a 100-unit grid. `t` runs over its start-up
+/// animation (0 to 1; 1 and after: the still mark): the keel pops, the arms
+/// grow, the two pull, and the orange one wins with a few sparks.
+fn draw_wishbone(context: &mut RenderContext, t: f64) {
+    let keel = back_out(span(t, 0.0, 0.22));
+    let grow = ease_out(span(t, 0.12, 0.5));
+    // The pull: out and back, smaller each time.
+    let pull = span(t, 0.52, 0.86);
+    let spread = (pull * std::f64::consts::TAU).sin() * 4.5 * (1.0 - pull);
+    let win = span(t, 0.66, 1.0);
+    if win > 0.0 && win < 1.0 {
+        let glow = (win * std::f64::consts::PI).sin();
+        context.set_paint(Brush::Gradient(
+            Gradient::new_radial((80.0, 11.0), 26.0)
+                .with_stops([rgba(WIN, 0.45 * glow), rgba(WIN, 0.0)]),
+        ));
+        context.fill_path(&Circle::new((80.0, 11.0), 26.0).to_path(0.05));
+        for k in 0..6u8 {
+            let angle = -std::f64::consts::PI * (0.05 + 0.16 * f64::from(k));
+            let reach = 6.0 + 20.0 * ease_out(win) * (0.7 + 0.1 * f64::from(k % 3));
+            let at = Point::new(80.0 + angle.cos() * reach, 11.0 + angle.sin() * reach);
+            context.set_paint(rgba((255, 190, 120), 1.0 - win));
+            context.fill_path(&Circle::new(at, 1.8 * (1.0 - win * 0.6)).to_path(0.05));
+        }
+    }
+    wishbone_arm(context, 1.0, grow, spread, rgba(WIN, 1.0));
+    wishbone_arm(context, -1.0, grow, spread, rgba(BONE, 1.0));
+    if keel > 0.0 {
+        context.set_paint(rgba(BONE, 1.0));
+        context.fill_path(&Circle::new((50.0, 79.0), 8.5 * keel).to_path(0.05));
+    }
+}
+
+/// The mark at `size` pixels, at moment `t` of its animation.
+fn rasterize_logo(size: u16, t: f64) -> ColorImage {
     let mut context = RenderContext::new(size, size);
-    context.set_transform(Affine::scale(f64::from(size) / 100.0));
-    // The glow.
-    context.set_paint(Brush::Gradient(
-        Gradient::new_radial((46.0, 54.0), 46.0).with_stops([
-            AlphaColor::<Srgb>::from_rgba8(139, 108, 255, 70),
-            AlphaColor::<Srgb>::from_rgba8(139, 108, 255, 0),
-        ]),
-    ));
-    context.fill_path(&Circle::new((46.0, 54.0), 46.0).to_path(0.05));
-    // The spark.
-    context.set_paint(Brush::Gradient(
-        Gradient::new_linear((20.0, 12.0), (72.0, 96.0)).with_stops([
-            AlphaColor::<Srgb>::from_rgba8(206, 190, 255, 255),
-            AlphaColor::<Srgb>::from_rgba8(139, 108, 255, 255),
-            AlphaColor::<Srgb>::from_rgba8(98, 64, 230, 255),
-        ]),
-    ));
-    context.fill_path(&path(
-        "M46 10 C49 36 63 50 86 54 C63 58 49 72 46 98 C43 72 29 58 6 54 C29 50 43 36 46 10 Z",
-    ));
-    // A small one, up and to the right.
-    context.set_paint(Brush::Gradient(
-        Gradient::new_linear((74.0, 4.0), (92.0, 30.0)).with_stops([
-            AlphaColor::<Srgb>::from_rgba8(240, 234, 255, 255),
-            AlphaColor::<Srgb>::from_rgba8(178, 160, 255, 255),
-        ]),
-    ));
-    context.fill_path(&path(
-        "M82 4 C83 12 87 16 95 17 C87 18 83 22 82 30 C81 22 77 18 69 17 C77 16 81 12 82 4 Z",
-    ));
+    // The bone spans 8..92 across and 4..88 down: centred in the square.
+    context.set_transform(Affine::scale(f64::from(size) / 100.0) * Affine::translate((0.0, 4.0)));
+    draw_wishbone(&mut context, t);
     to_image(&context, size)
 }
 
@@ -293,5 +403,59 @@ pub(crate) fn icon(context: &Context, icon: Icon, size: u16) -> TextureHandle {
 /// The engine's mark at `size` pixels, in its own colours.
 pub(crate) fn logo(context: &Context, size: u16) -> TextureHandle {
     let size = size.clamp(16, 512);
-    texture(context, (None, size), || rasterize_logo(size))
+    texture(context, (None, size), || rasterize_logo(size, 1.0))
+}
+
+/// The application's icon, `size` pixels square: the mark on a dark tile
+/// with rounded corners. Straight (not premultiplied) RGBA.
+pub(crate) fn app_icon(size: u16) -> Vec<u8> {
+    let size = size.clamp(16, 512);
+    let mut context = RenderContext::new(size, size);
+    let unit = f64::from(size) / 128.0;
+    context.set_transform(Affine::scale(unit));
+    context.set_paint(rgba((29, 28, 25), 1.0));
+    context
+        .fill_path(&vello_cpu::kurbo::RoundedRect::new(0.0, 0.0, 128.0, 128.0, 28.0).to_path(0.05));
+    context.set_transform(Affine::scale(unit) * Affine::translate((14.0, 18.0)));
+    draw_wishbone(&mut context, 1.0);
+    let mut pixmap = Pixmap::new(size, size);
+    let mut resources = Resources::new();
+    context.render(&mut pixmap, &mut resources);
+    pixmap
+        .data_as_u8_slice()
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .flat_map(|px| {
+            let alpha = px[3];
+            let straight = |c: u8| {
+                if alpha == 0 {
+                    0
+                } else {
+                    ((u16::from(c) * 255 + u16::from(alpha) / 2) / u16::from(alpha)).min(255) as u8
+                }
+            };
+            [straight(px[0]), straight(px[1]), straight(px[2]), alpha]
+        })
+        .collect()
+}
+
+/// The mark at moment `t` of its start-up animation, in one texture that is
+/// drawn again each time (the animation's frames are not kept).
+pub(crate) fn logo_moment(context: &Context, size: u16, t: f64) -> TextureHandle {
+    let size = size.clamp(16, 512);
+    let image = rasterize_logo(size, t);
+    let id = Id::unique("wish-logo-moment");
+    let kept: Option<TextureHandle> = context.data(|data| data.get_temp(id));
+    match kept {
+        Some(mut handle) => {
+            handle.set(image, TextureOptions::LINEAR);
+            handle
+        }
+        None => {
+            let handle = context.load_texture("logo-moment", image, TextureOptions::LINEAR);
+            context.data_mut(|data| data.insert_temp(id, handle.clone()));
+            handle
+        }
+    }
 }

@@ -240,14 +240,13 @@ fn an_outside_agent_and_the_cockpit_agent_work_together() {
         ],
     };
     let mut outside_run = outside
-        .start(&wish_agent::Task {
-            request: String::new(),
-            context: Vec::new(),
-            endpoint: url,
+        .start(&wish_agent::Task::new(
+            "",
+            url,
             token,
-            project: std::env::temp_dir(),
-            scene: "scenes/main.scene.json".to_owned(),
-        })
+            std::env::temp_dir(),
+            "scenes/main.scene.json",
+        ))
         .unwrap();
     app.set_agent(Box::new(Scripted {
         name: "cockpit".to_owned(),

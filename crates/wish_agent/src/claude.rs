@@ -135,18 +135,24 @@ impl Parser {
             .unwrap_or_default();
         match message["type"].as_str() {
             Some("system") if message["subtype"] == "init" => {
+                let mut events = Vec::new();
+                if let Some(session) = message["session_id"].as_str() {
+                    events.push(Event::Session(session.to_owned()));
+                }
                 let wish = message["mcp_servers"]
                     .as_array()
                     .into_iter()
                     .flatten()
                     .find(|server| server["name"] == "wish");
-                match wish {
-                    Some(server) if server["status"] != "connected" => vec![Event::Said(format!(
+                if let Some(server) = wish
+                    && server["status"] != "connected"
+                {
+                    events.push(Event::Said(format!(
                         "(Claude Code could not connect to the editor: {})",
                         server["status"].as_str().unwrap_or("unknown")
-                    ))],
-                    _ => Vec::new(),
+                    )));
                 }
+                events
             }
             Some("assistant") => content
                 .iter()
@@ -182,13 +188,60 @@ impl Parser {
                     Event::Answered { tool, ok }
                 })
                 .collect(),
-            Some("result") => vec![Event::Finished {
-                ok: message["is_error"] != true && message["subtype"] == "success",
-                text: message["result"].as_str().unwrap_or_default().to_owned(),
-            }],
+            Some("result") => {
+                let mut events = Vec::new();
+                if let Some(cost) = message["total_cost_usd"].as_f64() {
+                    events.push(Event::Cost(cost));
+                }
+                events.push(Event::Finished {
+                    ok: message["is_error"] != true && message["subtype"] == "success",
+                    text: message["result"].as_str().unwrap_or_default().to_owned(),
+                });
+                events
+            }
             _ => Vec::new(),
         }
     }
+}
+
+/// Claude Code's command line for `task`, with its MCP settings at
+/// `config`: print mode with the stream of events, the editor as its only
+/// MCP server, the allowed tools, and the chosen model and conversation.
+pub fn arguments(task: &Task, config: &Path) -> Vec<std::ffi::OsString> {
+    let mut args: Vec<std::ffi::OsString> = ["-p", "--output-format", "stream-json", "--verbose"]
+        .iter()
+        .map(Into::into)
+        .collect();
+    args.push("--mcp-config".into());
+    args.push(config.into());
+    args.push("--strict-mcp-config".into());
+    args.push("--allowedTools".into());
+    let allowed: &[&str] = if task.files {
+        ALLOWED_TOOLS
+    } else {
+        &ALLOWED_TOOLS[..1]
+    };
+    args.extend(allowed.iter().map(Into::into));
+    if let Some(model) = task.model.as_deref().filter(|model| valid_word(model)) {
+        args.push("--model".into());
+        args.push(model.into());
+    }
+    if let Some(session) = task.resume.as_deref().filter(|session| valid_word(session)) {
+        args.push("--resume".into());
+        args.push(session.into());
+    }
+    args
+}
+
+/// A model name or session id: letters, digits, `-`, `_`, `.`, `[`, `]`
+/// (nothing that could be read as another option).
+fn valid_word(word: &str) -> bool {
+    !word.is_empty()
+        && !word.starts_with('-')
+        && word.len() <= 100
+        && word
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '[' | ']'))
 }
 
 fn write_config(project: &Path, config: &Value) -> Result<PathBuf, String> {
@@ -210,13 +263,7 @@ impl Adapter for ClaudeCode {
         let config = write_config(&task.project, &mcp_config(task))?;
         let mut child = Command::new(&self.program)
             .current_dir(&task.project)
-            .arg("-p")
-            .args(["--output-format", "stream-json", "--verbose"])
-            .arg("--mcp-config")
-            .arg(&config)
-            .arg("--strict-mcp-config")
-            .arg("--allowedTools")
-            .args(ALLOWED_TOOLS)
+            .args(arguments(task, &config))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -321,18 +368,64 @@ mod tests {
             [Event::Finished { ok: true, text: "Done: a crate.".to_owned() }]
         );
         assert!(parser.line("not json").is_empty());
+        // The conversation's id and the cost.
+        assert_eq!(
+            parser.line(
+                r#"{"type":"system","subtype":"init","session_id":"abc-123","mcp_servers":[]}"#
+            ),
+            [Event::Session("abc-123".to_owned())]
+        );
+        assert_eq!(
+            parser.line(r#"{"type":"result","subtype":"success","is_error":false,"result":"ok","total_cost_usd":0.25}"#),
+            [Event::Cost(0.25), Event::Finished { ok: true, text: "ok".to_owned() }]
+        );
+    }
+
+    fn words(task: &Task) -> Vec<String> {
+        arguments(task, Path::new("mcp.json"))
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn the_model_and_the_conversation_go_on_the_command_line() {
+        let mut task = Task::new("", "http://x/mcp", "t", PathBuf::from("."), "s");
+        let plain = words(&task);
+        assert!(!plain.contains(&"--model".to_owned()));
+        assert!(!plain.contains(&"--resume".to_owned()));
+        task.model = Some("opus".to_owned());
+        task.resume = Some("abc-123".to_owned());
+        let args = words(&task);
+        let at = |flag: &str| args.iter().position(|a| a == flag).unwrap();
+        assert_eq!(args[at("--model") + 1], "opus");
+        assert_eq!(args[at("--resume") + 1], "abc-123");
+        // Nothing that reads as another option gets through.
+        task.model = Some("--dangerously-skip-permissions".to_owned());
+        task.resume = Some("a b".to_owned());
+        let args = words(&task);
+        assert!(
+            !args
+                .iter()
+                .any(|a| a.contains("dangerously") || a == "--resume")
+        );
+        // Without the project's files, only the editor's tools.
+        assert!(words(&task).contains(&"Edit".to_owned()));
+        task.files = false;
+        let args = words(&task);
+        assert!(args.contains(&"mcp__wish".to_owned()));
+        assert!(!args.contains(&"Edit".to_owned()));
     }
 
     #[test]
     fn the_config_points_at_the_editor_with_its_token() {
-        let task = Task {
-            request: String::new(),
-            context: Vec::new(),
-            endpoint: "http://127.0.0.1:5000/mcp".to_owned(),
-            token: "abc".to_owned(),
-            project: PathBuf::from("."),
-            scene: "scenes/main.scene.json".to_owned(),
-        };
+        let task = Task::new(
+            "",
+            "http://127.0.0.1:5000/mcp",
+            "abc",
+            PathBuf::from("."),
+            "scenes/main.scene.json",
+        );
         let config = mcp_config(&task);
         assert_eq!(config["mcpServers"]["wish"]["type"], "http");
         assert_eq!(

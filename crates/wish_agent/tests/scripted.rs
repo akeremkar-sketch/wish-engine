@@ -47,14 +47,13 @@ fn a_scripted_agent_changes_the_scene_through_the_endpoint() {
             ("describe_view".to_owned(), json!({})),
         ],
     };
-    let task = Task {
-        request: "a crate".to_owned(),
-        context: Vec::new(),
-        endpoint: format!("http://{}/mcp", endpoint.address()),
-        token: "secret".to_owned(),
-        project: dir.clone(),
-        scene: "scenes/main.scene.json".to_owned(),
-    };
+    let task = Task::new(
+        "a crate".to_owned(),
+        format!("http://{}/mcp", endpoint.address()),
+        "secret".to_owned(),
+        dir.clone(),
+        "scenes/main.scene.json".to_owned(),
+    );
     let mut run = agent.start(&task).unwrap();
     let mut events = Vec::new();
     let started = Instant::now();
@@ -63,7 +62,7 @@ fn a_scripted_agent_changes_the_scene_through_the_endpoint() {
         endpoint.serve_pending(&mut Server::new(&mut workspace), Duration::from_millis(10));
         events.extend(run.poll());
         // A person's edit in between is kept too.
-        if events.len() == 2
+        if !events.is_empty()
             && workspace.call(
                 "entity_get",
                 &json!({ "ids": ["lamp"] }),
@@ -79,7 +78,11 @@ fn a_scripted_agent_changes_the_scene_through_the_endpoint() {
         }
         assert!(started.elapsed() < Duration::from_secs(60), "{events:?}");
     }
-    assert_eq!(events[0], Event::Said("Adding a crate.".to_owned()));
+    assert_eq!(
+        events[0],
+        Event::Session("scripted-conversation".to_owned())
+    );
+    assert_eq!(events[1], Event::Said("Adding a crate.".to_owned()));
     assert!(
         events.contains(&Event::Answered {
             tool: "edit_apply".to_owned(),
@@ -109,14 +112,13 @@ fn a_scripted_agent_changes_the_scene_through_the_endpoint() {
 
 #[test]
 fn an_agent_that_cannot_reach_the_editor_says_so() {
-    let task = Task {
-        request: String::new(),
-        context: Vec::new(),
-        endpoint: "http://127.0.0.1:1/mcp".to_owned(),
-        token: "x".to_owned(),
-        project: PathBuf::from("."),
-        scene: String::new(),
-    };
+    let task = Task::new(
+        String::new(),
+        "http://127.0.0.1:1/mcp".to_owned(),
+        "x".to_owned(),
+        PathBuf::from("."),
+        String::new(),
+    );
     let agent = Scripted {
         name: "scripted".to_owned(),
         says: String::new(),
@@ -138,16 +140,29 @@ fn an_agent_that_cannot_reach_the_editor_says_so() {
 #[test]
 fn the_instructions_carry_the_request_and_what_was_pointed_at() {
     let task = Task {
-        request: "make it bigger".to_owned(),
         context: vec!["the entity `crate`".to_owned()],
-        endpoint: String::new(),
-        token: String::new(),
-        project: PathBuf::from("."),
-        scene: "scenes/main.scene.json".to_owned(),
+        ..Task::new(
+            "make it bigger".to_owned(),
+            String::new(),
+            String::new(),
+            PathBuf::from("."),
+            "scenes/main.scene.json".to_owned(),
+        )
     };
     let text = wish_agent::instructions(&task);
     assert!(text.ends_with("make it bigger"));
     assert!(text.contains("- the entity `crate`"));
     assert!(text.contains("reason"));
     assert!(text.contains("scenes/main.scene.json"));
+    // Without a design the agent is told to start one; with one, it gets it.
+    assert!(text.contains("no design yet"));
+    assert!(text.contains("game_design ask"));
+    let designed = Task {
+        design: Some("The game card:\n- pitch: Hop the islands\n".to_owned()),
+        ..task
+    };
+    let text = wish_agent::instructions(&designed);
+    assert!(text.contains("- pitch: Hop the islands"));
+    assert!(!text.contains("no design yet"));
+    assert!(text.ends_with("make it bigger"));
 }

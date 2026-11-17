@@ -181,7 +181,11 @@ fn notes_are_written_and_cleared() {
     let heading = app
         .widgets()
         .iter()
-        .find(|w| w.value.as_deref() == Some("Inspector"))
+        .find(|w| {
+            w.value
+                .as_deref()
+                .is_some_and(|v| v.eq_ignore_ascii_case("Inspector"))
+        })
         .map(|w| w.rect)
         .unwrap();
     play(

@@ -117,7 +117,7 @@ fn every_catalogue_tool_is_listed_with_its_schema() {
     assert_eq!(tools.len(), catalog().len());
     assert_eq!(
         tools.len(),
-        31,
+        32,
         "20 tools of M4 (design note §5), script_build, replay and test_run (M5), physics_query (M6), asset_create (M7), project_settings (M8a)"
     );
     for (listed, tool) in tools.iter().zip(catalog()) {

@@ -76,7 +76,21 @@ Oturum sırasında `entity_query`, `entity_get` ve `edit_apply` `session` parame
 | `test_run` | Senaryo testlerini koş; başarısızlıkta ilgili tick, beklenen/bulunan değer, görsel fark | `paths`, `update_golden` |
 | `script_build` | Oyun kodunu derle; yoğunlaştırılmış tanılar; başarılıysa sıcak yükle | `reload` |
 
-**Toplam: 25 araç** (uygulamada: M4'ün 20'si, M5'te `script_build`, `replay`, `test_run`, M6'da `physics_query`, M7'de `asset_create` (sürtünme günlüğü F5: araçla ses/resim üretmenin yolu yoktu); `profile_get` henüz yok). (`asset_move` M2'de eklendi: birden çok belgeyi ve diski birlikte değiştirdiği için tek sahneye bağlı `edit_apply`'ın parametresi olamaz.) Yeni araç eklemek için gerekçe aranır; önce mevcut bir aracın parametresi olarak çözülüp çözülemeyeceğine bakılır.
+### Proje ayarları, kokpit ve oyunun tasarımı (M8a–M9c)
+
+| Araç | Amaç | Öne çıkan parametreler |
+|---|---|---|
+| `project_settings` | Projenin adı, varsayılan sahnesi, girdi haritası (M8a) | `action`, `name`, `scene`, `input`, `dry_run` |
+| `activity_get` | Etkinlik akışı: kim neyi değiştirdi, kart başına geri alma için (M8b) | `since`, `actor`, `limit` |
+| `checkpoint` | Denetim noktası kaydet / listele / geri yükle / sil (M8b) | `action`, `name`, `note`, `dry_run` |
+| `permissions` | Ajanların kendi başına ne kadar değiştirebileceği; yalnızca kişi değiştirir (M8b) | `action`, `mode`, `dry_run` |
+| `proposals` | Öner kipinde kişinin onayını bekleyen değişiklikler (M8b) | `action`, `id`, `dry_run` |
+| `project_export` | Oyunu motorsuz çalışan bir klasöre dışa aktar (M9) | `name`, `overwrite`, `dry_run` |
+| `game_design` | Oyunun tasarımı `design/game.json`'da (M9c): oyun kartı (ad, tek cümle, tür, amaç, temel döngü, kontroller, görünüm, kitle, olmazsa olmazlar, sonraya kalanlar), her değişiklikte geçerli kararlar, plan adımları, oyun testi notları (tick ve resimle), ajanın kişiye sorduğu seçenekli sorular. Eylemler: `get`, `set_brief`, `decide`, `forget`, `plan_add`, `plan_set`, `plan_remove`, `note`, `note_done`, `ask`, `answer` (`remember` ile karar olur). Kimlikler belirlenimci (`next_id`); bozuk dosyanın üzerine yazılmaz (`design_file_invalid`); `design/` varlık sayılmaz | `action`, `fields`, `text`, `id`, `status`, `options`, `answer`, `remember`, `scene`, `tick`, `picture`, `dry_run` |
+
+Editörün yapay zekâ modu bu aracın her eylemini elle de yapar (değişmez 9); ajan her görevde tasarımın özetini alır ve kişiye ait seçimlerde tahmin yürütmek yerine `ask` ile sorup durur.
+
+**Toplam: 32 araç** (M8a–M9c'nin yedisi yukarıda). Önceki sayım (uygulamada: M4'ün 20'si, M5'te `script_build`, `replay`, `test_run`, M6'da `physics_query`, M7'de `asset_create` (sürtünme günlüğü F5: araçla ses/resim üretmenin yolu yoktu); `profile_get` henüz yok). (`asset_move` M2'de eklendi: birden çok belgeyi ve diski birlikte değiştirdiği için tek sahneye bağlı `edit_apply`'ın parametresi olamaz.) Yeni araç eklemek için gerekçe aranır; önce mevcut bir aracın parametresi olarak çözülüp çözülemeyeceğine bakılır.
 
 ## Örnek yanıtlar
 

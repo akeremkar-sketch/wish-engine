@@ -93,6 +93,14 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "An entity was not drawn because its scale is zero or not a finite number. Give its Transform (and its parents') a non-zero, finite scale.",
     ),
     (
+        "design_file_invalid",
+        "design/game.json, the game's design (card, decisions, plan, notes, questions), is not valid JSON of format 1. It is never overwritten while broken: fix it, or delete it to start the design again.",
+    ),
+    (
+        "design_item_not_found",
+        "game_design was given the id of a decision, plan step, note or question that does not exist. game_design get lists them with their ids.",
+    ),
+    (
         "duplicate_system",
         "Two systems have the same name. System names must be unique within an app.",
     ),
@@ -263,6 +271,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "invalid_cursor",
         "A paging cursor does not belong to the query. Pass the previous answer's next_cursor unchanged, with the same other parameters.",
+    ),
+    (
+        "invalid_design",
+        "A game_design call would put something the design file does not hold: an unknown card field, a list where text belongs, text that is too long, a question with fewer than two or more than six choices. The message says which.",
     ),
     (
         "invalid_editor_script",

@@ -4,6 +4,7 @@
 //! given input and [`raster`] draws the result into a [`raster::Canvas`] with
 //! no GPU, the same on every machine (see the M8a design note, §2).
 
+mod ai_mode;
 mod app;
 mod browser;
 mod cockpit;
@@ -80,6 +81,13 @@ pub struct Editor {
 
 /// A widget on screen, as the accessibility tree describes it: what a
 /// screen reader would say, and where it is. Tests find buttons and fields
+/// The engine's icon for windows and the taskbar: the wishbone on a dark
+/// tile, `size` pixels square, as straight RGBA pixels with its size.
+pub fn window_icon(size: u16) -> (Vec<u8>, u32, u32) {
+    let side = u32::from(size.clamp(16, 512));
+    (vector::app_icon(size), side, side)
+}
+
 /// by name with it instead of by pixel.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Widget {
@@ -191,7 +199,12 @@ impl Editor {
                     let bounds = node.bounds()?;
                     Some(Widget {
                         role: format!("{:?}", node.role()),
-                        label: node.label().map(str::to_owned),
+                        // A text box is named by its hint (its placeholder)
+                        // when it has no label of its own.
+                        label: node
+                            .label()
+                            .or_else(|| node.placeholder())
+                            .map(str::to_owned),
                         value: node.value().map(str::to_owned),
                         rect: Rect::from_min_max(
                             pos2(bounds.x0 as f32, bounds.y0 as f32),

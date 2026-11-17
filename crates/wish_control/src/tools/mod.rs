@@ -6,6 +6,7 @@ use crate::tool::Tool;
 mod activity;
 mod asset;
 mod checkpoint;
+mod design;
 mod export;
 mod permissions;
 mod physics;
@@ -18,6 +19,7 @@ mod sim;
 mod testing;
 mod view;
 
+pub use design::{BRIEF_FIELDS, DESIGN_FILE, read_design, summary as design_summary};
 pub(crate) use sim::parse_input;
 pub use view::{IdPicture, Picture, PictureSource};
 
@@ -62,4 +64,5 @@ pub(crate) const CATALOG: &[Tool] = &[
     permissions::PERMISSIONS,
     permissions::PROPOSALS,
     export::PROJECT_EXPORT,
+    design::GAME_DESIGN,
 ];

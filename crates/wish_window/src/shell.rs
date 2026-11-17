@@ -152,6 +152,9 @@ pub struct ShellOptions {
     /// Close after this many pictures were shown (for trying the window
     /// without a person).
     pub exit_after_frames: Option<u64>,
+    /// The window's icon: straight (not premultiplied) RGBA pixels, width
+    /// and height.
+    pub icon: Option<(Vec<u8>, u32, u32)>,
 }
 
 /// What a run did.
@@ -302,9 +305,14 @@ impl ApplicationHandler for ShellApp<'_> {
             return;
         }
         let (width, height) = self.options.size;
+        let icon =
+            self.options.icon.as_ref().and_then(|(pixels, w, h)| {
+                winit::window::Icon::from_rgba(pixels.clone(), *w, *h).ok()
+            });
         let attributes = Window::default_attributes()
             .with_title(self.shell.title())
-            .with_inner_size(PhysicalSize::new(width, height));
+            .with_inner_size(PhysicalSize::new(width, height))
+            .with_window_icon(icon);
         let window = match event_loop.create_window(attributes) {
             Ok(window) => Rc::new(window),
             Err(error) => {

@@ -52,6 +52,43 @@ pub(crate) struct Cockpit {
     pub pointing: bool,
     /// What the last task told the agent (for tests and curiosity).
     pub last_instructions: Option<String>,
+    /// The last task given to the agent.
+    pub last_task: Option<wish_agent::Task>,
+    /// The conversation to continue (the agent's id for it), while the
+    /// conversation is remembered.
+    pub session: Option<String>,
+    /// What this editor's tasks cost so far, in US dollars, as the agent
+    /// reported it.
+    pub cost: f64,
+    /// The checkpoint saved before each task, by the index of the task's
+    /// request in the transcript (the task card's "Undo" goes back to it).
+    pub before: std::collections::BTreeMap<usize, String>,
+    /// The person's choices for the agent (the AI settings).
+    pub settings: AgentSettings,
+}
+
+/// How the agent works, as the person set it (kept in the preferences).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct AgentSettings {
+    /// The model (`None`: the assistant's own default).
+    pub model: Option<String>,
+    /// Tasks continue one conversation (the agent remembers earlier ones).
+    pub memory: bool,
+    /// A checkpoint is saved before every task.
+    pub checkpoint_first: bool,
+    /// The agent may change the project's files itself (game code).
+    pub files: bool,
+}
+
+impl Default for AgentSettings {
+    fn default() -> Self {
+        Self {
+            model: None,
+            memory: true,
+            checkpoint_first: true,
+            files: true,
+        }
+    }
 }
 
 impl Cockpit {
@@ -66,6 +103,11 @@ impl Cockpit {
             context: Vec::new(),
             pointing: false,
             last_instructions: None,
+            last_task: None,
+            session: None,
+            cost: 0.0,
+            before: std::collections::BTreeMap::new(),
+            settings: AgentSettings::default(),
         }
     }
 
@@ -119,6 +161,16 @@ impl Cockpit {
                     text: problem.clone(),
                     ok: Some(false),
                 }),
+                Event::Session(id) => {
+                    if self.settings.memory {
+                        self.session = Some(id.clone());
+                    }
+                }
+                Event::Cost(dollars) => {
+                    if dollars.is_finite() && *dollars >= 0.0 {
+                        self.cost += dollars;
+                    }
+                }
             }
         }
         if over {
