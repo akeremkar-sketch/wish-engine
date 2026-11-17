@@ -747,6 +747,49 @@ impl Workspace {
         Ok(WorldView { world, ids })
     }
 
+    /// A document read from `text` as if it were the file `path`, without
+    /// opening it (a checkpoint's copy).
+    pub(crate) fn load_detached(&self, text: &str, path: &str) -> Result<SceneDocument> {
+        load_document(text, path, self.registry(), &self.docs.prefabs).map(|(doc, _)| doc)
+    }
+
+    /// Makes the open document `path` equal to `target`: by one transaction
+    /// of `actor` (its history keeps it: undoable, revertible), or, when the
+    /// operations cannot express the difference, by replacing the content
+    /// (recorded as one change; earlier changes can no longer be undone).
+    /// Returns the new revision, or `None` if it was equal already.
+    pub(crate) fn make_document_match(
+        &mut self,
+        path: &str,
+        target: &SceneDocument,
+        actor: &Actor,
+        reason: &str,
+    ) -> Result<Option<u64>> {
+        let registry = self.registry().clone();
+        let current = self.document(path)?.doc.clone();
+        if current.to_value() == target.to_value() {
+            return Ok(None);
+        }
+        let ops = diff(&current, target);
+        let mut working = current.clone();
+        let applied = working.apply(
+            &Transaction {
+                actor: actor.clone(),
+                base_revision: None,
+                ops,
+                reason: Some(reason.to_owned()),
+            },
+            &registry,
+        );
+        if applied.is_err() || working.to_value() != target.to_value() {
+            working = current;
+            working.replace_content(target, actor.clone());
+        }
+        let revision = working.revision();
+        self.commit_document(path, working)?;
+        Ok(Some(revision))
+    }
+
     /// The document at `path` with `ops` applied on a copy (nothing is kept,
     /// nothing written), as a world: what the scene would look like after
     /// the change. For previews while a change is being made.

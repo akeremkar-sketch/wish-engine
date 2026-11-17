@@ -5,6 +5,7 @@ use crate::tool::Tool;
 
 mod activity;
 mod asset;
+mod checkpoint;
 mod physics;
 mod project;
 mod replay;
@@ -55,4 +56,5 @@ pub(crate) const CATALOG: &[Tool] = &[
     testing::TEST_RUN,
     settings::PROJECT_SETTINGS,
     activity::ACTIVITY_GET,
+    checkpoint::CHECKPOINT,
 ];

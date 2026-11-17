@@ -204,6 +204,11 @@ pub const PARITY: &[Capability] = &[
         "parity_ops::a_run_is_recorded_and_played_back",
     ),
     op(
+        "checkpoint",
+        "Project menu: Checkpoints (save, go back, compare with now: the before/after window, delete)",
+        "parity_ops::a_checkpoint_is_saved_compared_and_gone_back_to",
+    ),
+    op(
         "test_run",
         "Project menu: Run tests (failures in the Problems tab), Update golden pictures",
         "parity_ops::the_tests_run_from_the_menu",

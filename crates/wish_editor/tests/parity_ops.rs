@@ -516,3 +516,54 @@ fn the_activity_tab_shows_what_an_agent_did() {
     assert!(app.status().starts_with("took back r"), "{}", app.status());
     assert!(!wish_editor::ids(app.rows()).contains("crate"));
 }
+
+/// M8b WP3: a checkpoint saved from the menu, compared with now in the
+/// before/after window, gone back to; Undo brings now back.
+#[test]
+fn a_checkpoint_is_saved_compared_and_gone_back_to() {
+    let dir = project("checkpoint");
+    let mut app = open(&dir);
+    project_menu(&mut app, &["Checkpoints", "Save checkpoint"]);
+    assert_eq!(app.status(), "checkpoint cp_1 saved", "{}", app.status());
+    assert_eq!(app.checkpoint_names(), ["cp_1"]);
+    let made = app.workspace().call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "spawn", "id": "crate", "components": {
+            "Transform": { "translation": [0, 1, 0] }, "Primitive": { "shape": "Cube" },
+            "Material": { "base_color": [1, 0, 0, 1] } } }] }),
+        &parse_actor("agent:helper"),
+    );
+    assert_eq!(made["ok"], true);
+    play(&mut app, json!([{ "seconds": 0.5 }, { "idle": 2 }]));
+    project_menu(
+        &mut app,
+        &[
+            "Checkpoints",
+            "cp_1: saved in the editor",
+            "Compare with now",
+        ],
+    );
+    assert_eq!(app.comparing(), Some("cp_1"), "{}", app.status());
+    assert!(has_text(&app, "Before (cp_1) and now"));
+    let back = named(&app, "Go back to this");
+    click(&mut app, back);
+    assert!(
+        app.status().starts_with("back to checkpoint cp_1"),
+        "{}",
+        app.status()
+    );
+    assert!(app.comparing().is_none());
+    assert!(!wish_editor::ids(app.rows()).contains("crate"));
+    let undo = app
+        .widgets()
+        .iter()
+        .filter(|w| w.role == "Button" && w.label.as_deref() == Some("Undo"))
+        .find(|w| w.rect.min.y < 30.0)
+        .map(|w| w.rect)
+        .unwrap();
+    click(&mut app, undo);
+    assert!(
+        wish_editor::ids(app.rows()).contains("crate"),
+        "now is back"
+    );
+}

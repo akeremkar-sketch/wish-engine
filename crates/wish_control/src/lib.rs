@@ -19,6 +19,7 @@
 
 mod activity;
 mod audio;
+mod checkpoints;
 mod concepts;
 pub mod docs;
 mod documents;

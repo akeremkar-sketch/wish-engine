@@ -70,6 +70,11 @@ pub(crate) const CAPTURE_FRAME: Tool = Tool {
             Kind::Boolean,
             "Replace the out file if it already exists.",
         ),
+        Param::optional(
+            "checkpoint",
+            Kind::String,
+            "Draw the scene as this checkpoint kept it (a \"before\" picture to compare with now).",
+        ),
         SHADERS,
     ],
     mutates: false,
@@ -118,7 +123,37 @@ struct Prepared {
 }
 
 fn prepare(workspace: &mut Workspace, args: &Args) -> Result<Prepared> {
+    if let Some(name) = args.str("checkpoint") {
+        return prepare_checkpoint(workspace, name, args.str("scene"));
+    }
     prepare_source(workspace, args.str("session"), args.str("scene"))
+}
+
+/// A scene as checkpoint `name` kept it (for "before" pictures).
+fn prepare_checkpoint(
+    workspace: &mut Workspace,
+    name: &str,
+    scene: Option<&str>,
+) -> Result<Prepared> {
+    let path = workspace.scene_path(scene)?;
+    let doc = workspace.checkpoint_document(name, &path)?;
+    let view = workspace.build_view(&doc)?;
+    let mut prepared_scene = extract(&view.world)?;
+    if path.ends_with(".prefab.json") {
+        stage(&mut prepared_scene);
+    }
+    let by_name = view.ids;
+    let names = by_name
+        .iter()
+        .map(|(name, entity)| (*entity, name.clone()))
+        .collect();
+    Ok(Prepared {
+        scene: prepared_scene,
+        names,
+        by_name,
+        notes: Vec::new(),
+        source: json!({ "scene": path, "checkpoint": name }),
+    })
 }
 
 /// [`prepare`] without the tool's arguments: a session's live world, or a
@@ -518,6 +553,9 @@ pub enum PictureSource<'a> {
     Preview(Option<&'a str>, &'a Value),
     /// A play session's live world.
     Session(&'a str),
+    /// A scene file as a checkpoint kept it (`None`: the project's scene):
+    /// the "before" of a before/after comparison.
+    Checkpoint(Option<&'a str>, &'a str),
 }
 
 /// A picture of a scene or session, as the editor's view shows it.
@@ -546,12 +584,12 @@ impl Workspace {
         height: u32,
         view: View,
     ) -> Result<Picture> {
-        let (session, scene, preview) = match source {
-            PictureSource::Scene(scene) => (None, scene, None),
-            PictureSource::Preview(scene, ops) => (None, scene, Some(ops)),
-            PictureSource::Session(id) => (Some(id), None, None),
+        let mut prepared = match source {
+            PictureSource::Scene(scene) => prepare_with(self, None, scene, None)?,
+            PictureSource::Preview(scene, ops) => prepare_with(self, None, scene, Some(ops))?,
+            PictureSource::Session(id) => prepare_with(self, Some(id), None, None)?,
+            PictureSource::Checkpoint(scene, name) => prepare_checkpoint(self, name, scene)?,
         };
-        let mut prepared = prepare_with(self, session, scene, preview)?;
         if let (Some(camera), Some(first)) = (camera, prepared.scene.cameras.first_mut()) {
             *first = camera(first);
         }
@@ -589,12 +627,12 @@ impl Workspace {
         width: u32,
         height: u32,
     ) -> Result<IdPicture> {
-        let (session, scene, preview) = match source {
-            PictureSource::Scene(scene) => (None, scene, None),
-            PictureSource::Preview(scene, ops) => (None, scene, Some(ops)),
-            PictureSource::Session(id) => (Some(id), None, None),
+        let mut prepared = match source {
+            PictureSource::Scene(scene) => prepare_with(self, None, scene, None)?,
+            PictureSource::Preview(scene, ops) => prepare_with(self, None, scene, Some(ops))?,
+            PictureSource::Session(id) => prepare_with(self, Some(id), None, None)?,
+            PictureSource::Checkpoint(scene, name) => prepare_checkpoint(self, name, scene)?,
         };
-        let mut prepared = prepare_with(self, session, scene, preview)?;
         if let (Some(camera), Some(first)) = (camera, prepared.scene.cameras.first_mut()) {
             *first = camera(first);
         }

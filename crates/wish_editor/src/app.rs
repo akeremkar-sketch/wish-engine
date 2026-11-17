@@ -63,6 +63,15 @@ fn open_with_system(path: &std::path::Path) -> Result<(), String> {
     spawned.map(|_| ()).map_err(|error| error.to_string())
 }
 
+/// A before/after comparison: a checkpoint's picture of the scene and
+/// now's.
+struct Compare {
+    name: String,
+    before: egui::ColorImage,
+    now: egui::ColorImage,
+    textures: RefCell<Option<(egui::TextureHandle, egui::TextureHandle)>>,
+}
+
 /// The game running in the editor.
 struct Play {
     session: String,
@@ -157,6 +166,11 @@ pub struct EditorApp {
     inspecting_resources: bool,
     /// The scene's history, newest first.
     history: Vec<Value>,
+    /// The project's checkpoints, oldest first.
+    checkpoints: Vec<Value>,
+    /// A before/after comparison being shown: the checkpoint, its picture
+    /// and now's, and their textures once made.
+    compare: Option<Compare>,
     /// Record the next run as a replay.
     record: bool,
     /// The project has game code that is not built yet.
@@ -278,6 +292,16 @@ struct Actions {
     /// Look for problems and show them.
     show_problems: bool,
     run_tests: bool,
+    /// Save a checkpoint now.
+    save_checkpoint: bool,
+    /// Go back to this checkpoint.
+    restore_checkpoint: Option<String>,
+    /// Compare this checkpoint with now.
+    compare_checkpoint: Option<String>,
+    /// Delete this checkpoint.
+    delete_checkpoint: Option<String>,
+    /// Close the before/after window.
+    close_compare: bool,
     /// Run the tests and keep their pictures as the golden ones.
     update_golden: bool,
     /// Play a saved replay back.
@@ -335,6 +359,11 @@ impl Actions {
             || self.language.is_some()
             || self.show_problems
             || self.run_tests
+            || self.save_checkpoint
+            || self.restore_checkpoint.is_some()
+            || self.compare_checkpoint.is_some()
+            || self.delete_checkpoint.is_some()
+            || self.close_compare
             || self.update_golden
             || self.replay.is_some()
             || self.save_picture
@@ -441,6 +470,8 @@ impl EditorApp {
             resource_schemas: BTreeMap::new(),
             inspecting_resources: false,
             history: Vec::new(),
+            checkpoints: Vec::new(),
+            compare: None,
             record: false,
             unbuilt: false,
             frames: 0,
@@ -1166,6 +1197,8 @@ impl EditorApp {
 
     /// The reading part of [`EditorApp::refresh_project`].
     fn read_project(&mut self) {
+        // An agent may save checkpoints too: the menu follows.
+        self.read_checkpoints();
         let info = self.call("project_info", &json!({}));
         if info["ok"] != true {
             self.status = info["error"]["message"]
@@ -1630,6 +1663,164 @@ impl EditorApp {
         };
     }
 
+    /// Reads the project's checkpoints.
+    fn read_checkpoints(&mut self) {
+        let got = self.call("checkpoint", &json!({ "action": "list" }));
+        self.checkpoints = got["checkpoints"].as_array().cloned().unwrap_or_default();
+    }
+
+    /// The checkpoints' names, oldest first.
+    pub fn checkpoint_names(&self) -> Vec<String> {
+        self.checkpoints
+            .iter()
+            .filter_map(|c| c["name"].as_str().map(str::to_owned))
+            .collect()
+    }
+
+    /// Whether the before/after window is open, and on which checkpoint.
+    pub fn comparing(&self) -> Option<&str> {
+        self.compare.as_ref().map(|c| c.name.as_str())
+    }
+
+    /// The checkpoint actions of the project menu and the compare window.
+    fn checkpoint_act(&mut self, actions: &Actions) {
+        if actions.close_compare {
+            self.compare = None;
+        }
+        if actions.save_checkpoint {
+            let saved = self.call(
+                "checkpoint",
+                &json!({ "action": "save", "note": t("saved in the editor") }),
+            );
+            self.status = if saved["ok"] == true {
+                let name = saved["checkpoint"]["name"].as_str().unwrap_or("?");
+                tf("checkpoint {name} saved", &[("name", &name)])
+            } else {
+                let message = saved["error"]["message"]
+                    .as_str()
+                    .unwrap_or(t("it did not work"));
+                tf("checkpoint not saved: {message}", &[("message", &message)])
+            };
+            self.read_checkpoints();
+        }
+        if let Some(name) = &actions.restore_checkpoint
+            && self.play.is_none()
+        {
+            let back = self.call("checkpoint", &json!({ "action": "restore", "name": name }));
+            self.status = if back["ok"] == true {
+                tf(
+                    "back to checkpoint {name} (Undo brings now back)",
+                    &[("name", name)],
+                )
+            } else {
+                let message = back["error"]["message"]
+                    .as_str()
+                    .unwrap_or(t("it did not work"));
+                tf("could not go back: {message}", &[("message", &message)])
+            };
+            self.compare = None;
+            self.revision = u64::MAX;
+            self.refresh_scene();
+            self.refresh_project();
+            self.inspected_for = (Vec::new(), u64::MAX);
+            self.picture_stale = true;
+        }
+        if let Some(name) = &actions.compare_checkpoint {
+            let scene = self.scene.clone();
+            let picture = |app: &mut Self, source: PictureSource<'_>| {
+                app.workspace
+                    .render_picture(source, None, 480, 270, View::Lit)
+                    .map(|picture| {
+                        egui::ColorImage::from_rgba_unmultiplied(
+                            [picture.image.width as usize, picture.image.height as usize],
+                            &picture.image.pixels,
+                        )
+                    })
+            };
+            let before = picture(self, PictureSource::Checkpoint(Some(&scene), name));
+            let now = picture(self, PictureSource::Scene(Some(&scene)));
+            match (before, now) {
+                (Ok(before), Ok(now)) => {
+                    self.compare = Some(Compare {
+                        name: name.clone(),
+                        before,
+                        now,
+                        textures: RefCell::new(None),
+                    });
+                }
+                (Err(problem), _) | (_, Err(problem)) => {
+                    self.status = tf(
+                        "cannot compare: {message}",
+                        &[("message", &problem.message)],
+                    );
+                }
+            }
+        }
+        if let Some(name) = &actions.delete_checkpoint {
+            let gone = self.call("checkpoint", &json!({ "action": "delete", "name": name }));
+            if gone["ok"] == true {
+                self.status = tf("checkpoint {name} deleted", &[("name", name)]);
+            }
+            if self.compare.as_ref().is_some_and(|c| c.name == *name) {
+                self.compare = None;
+            }
+            self.read_checkpoints();
+        }
+    }
+
+    /// The before/after window.
+    fn compare_window(&self, ui: &mut Ui, actions: &mut Actions) {
+        let Some(compare) = &self.compare else {
+            return;
+        };
+        let mut open = true;
+        egui::Window::new(tf("Before ({name}) and now", &[("name", &compare.name)]))
+            .open(&mut open)
+            .default_pos([240.0, 80.0])
+            .show(ui.ctx(), |ui| {
+                let mut textures = compare.textures.borrow_mut();
+                let (before, now) = textures.get_or_insert_with(|| {
+                    (
+                        ui.ctx().load_texture(
+                            format!("before:{}", compare.name),
+                            compare.before.clone(),
+                            egui::TextureOptions::LINEAR,
+                        ),
+                        ui.ctx().load_texture(
+                            format!("now:{}", compare.name),
+                            compare.now.clone(),
+                            egui::TextureOptions::LINEAR,
+                        ),
+                    )
+                });
+                ui.horizontal(|ui| {
+                    for (label, texture) in [(t("Before"), &*before), (t("Now"), &*now)] {
+                        ui.vertical(|ui| {
+                            ui.strong(label);
+                            ui.image((texture.id(), vec2(360.0, 202.5)));
+                        });
+                    }
+                });
+                ui.horizontal(|ui| {
+                    if ui
+                        .button(t("Go back to this"))
+                        .on_hover_text(t(
+                            "Brings the scenes back as they were; one change in the history, so Undo brings now back",
+                        ))
+                        .clicked()
+                    {
+                        actions.restore_checkpoint = Some(compare.name.clone());
+                    }
+                    if ui.button(t("Keep now")).clicked() {
+                        actions.close_compare = true;
+                    }
+                });
+            });
+        if !open {
+            actions.close_compare = true;
+        }
+    }
+
     /// Runs the project's scenario tests (keeping their pictures as the
     /// golden ones if `update`); failures go to the problems tab.
     fn run_tests(&mut self, update: bool) {
@@ -2047,6 +2238,7 @@ impl EditorApp {
         if actions.run_tests {
             self.run_tests(false);
         }
+        self.checkpoint_act(&actions);
         if actions.update_golden {
             self.run_tests(true);
         }
@@ -2956,6 +3148,44 @@ impl EditorApp {
                         actions.save_picture = true;
                         ui.close();
                     }
+                    ui.menu_button(t("Checkpoints"), |ui| {
+                        if ui
+                            .button(t("Save checkpoint"))
+                            .on_hover_text(t("Keeps the scenes, prefabs and settings as they are now"))
+                            .clicked()
+                        {
+                            actions.save_checkpoint = true;
+                            ui.close();
+                        }
+                        ui.separator();
+                        if self.checkpoints.is_empty() {
+                            ui.weak(t("No checkpoints yet."));
+                        }
+                        for checkpoint in self.checkpoints.iter().rev().take(12) {
+                            let name = checkpoint["name"].as_str().unwrap_or("?").to_owned();
+                            let label = match checkpoint["note"].as_str() {
+                                Some(note) => format!("{name}: {note}"),
+                                None => name.clone(),
+                            };
+                            ui.menu_button(label, |ui| {
+                                if ui
+                                    .add_enabled(self.play.is_none(), egui::Button::new(t("Go back to this")))
+                                    .clicked()
+                                {
+                                    actions.restore_checkpoint = Some(name.clone());
+                                    ui.close();
+                                }
+                                if ui.button(t("Compare with now")).clicked() {
+                                    actions.compare_checkpoint = Some(name.clone());
+                                    ui.close();
+                                }
+                                if ui.button(t("Delete")).clicked() {
+                                    actions.delete_checkpoint = Some(name.clone());
+                                    ui.close();
+                                }
+                            });
+                        }
+                    });
                     ui.separator();
                     ui.menu_button(t("Language"), |ui| {
                         for language in crate::i18n::LANGUAGES {
@@ -3212,6 +3442,7 @@ impl EditorApp {
                 inspector::panel(ui, &view, &mut actions.inspector);
             });
         crate::settings::window(ui, &self.settings, &self.scenes, &mut actions.settings);
+        self.compare_window(ui, &mut actions);
         // The middle is not painted: the scene's picture shows through.
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)

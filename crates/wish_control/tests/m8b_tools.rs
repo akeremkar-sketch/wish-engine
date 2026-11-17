@@ -169,3 +169,137 @@ fn the_activity_log_keeps_every_change_and_what_agents_do() {
     let again = call(&mut ws, "agent:helper", "activity_get", json!({}));
     assert_eq!(again["last_seq"], last);
 }
+
+#[test]
+fn a_checkpoint_brings_the_project_back_without_losing_anything() {
+    let mut ws = open("checkpoint");
+    ws.set_software(true);
+    let saved = call(
+        &mut ws,
+        "human",
+        "checkpoint",
+        json!({ "action": "save", "note": "before the agent" }),
+    );
+    assert_eq!(saved["ok"], true, "{saved}");
+    assert_eq!(saved["checkpoint"]["name"], "cp_1");
+    let before = call(
+        &mut ws,
+        "human",
+        "capture_frame",
+        json!({ "width": 64, "height": 36 }),
+    );
+    // The agent works: a crate, the sun renamed, a new scene, a new name.
+    call(
+        &mut ws,
+        "agent:helper",
+        "edit_apply",
+        json!({ "ops": [
+            { "op": "spawn", "id": "crate", "components": { "Transform": { "translation": [0, 1, 0] },
+                "Primitive": { "shape": "Cube" }, "Material": { "base_color": [1, 0, 0, 1] } } },
+            { "op": "rename", "id": "sun", "to": "star" }] }),
+    );
+    call(
+        &mut ws,
+        "agent:helper",
+        "edit_apply",
+        json!({ "scene": "scenes/extra.scene.json", "create": true,
+            "ops": [{ "op": "spawn", "id": "thing", "components": { "Transform": {} } }] }),
+    );
+    call(
+        &mut ws,
+        "agent:helper",
+        "project_settings",
+        json!({ "action": "set", "name": "Renamed" }),
+    );
+    // Before and after: the checkpoint's picture is the earlier one.
+    let then = call(
+        &mut ws,
+        "human",
+        "capture_frame",
+        json!({ "width": 64, "height": 36, "checkpoint": "cp_1" }),
+    );
+    let now = call(
+        &mut ws,
+        "human",
+        "capture_frame",
+        json!({ "width": 64, "height": 36 }),
+    );
+    assert_eq!(then["image"]["data"], before["image"]["data"], "{then}");
+    assert_ne!(then["image"]["data"], now["image"]["data"]);
+    // A dry run changes nothing.
+    let dry = call(
+        &mut ws,
+        "human",
+        "checkpoint",
+        json!({ "action": "restore", "name": "cp_1", "dry_run": true }),
+    );
+    assert_eq!(dry["restored"].as_array().unwrap().len(), 1, "{dry}");
+    let got = call(&mut ws, "human", "entity_get", json!({ "ids": ["crate"] }));
+    assert_eq!(got["ok"], true);
+    // Back.
+    let back = call(
+        &mut ws,
+        "human",
+        "checkpoint",
+        json!({ "action": "restore", "name": "cp_1" }),
+    );
+    assert_eq!(back["ok"], true, "{back}");
+    assert_eq!(back["kept_newer"], json!(["scenes/extra.scene.json"]));
+    assert_eq!(back["settings_restored"], json!(["wish.json"]));
+    let got = call(&mut ws, "human", "entity_get", json!({ "ids": ["sun"] }));
+    assert_eq!(got["ok"], true, "{got}");
+    let gone = call(&mut ws, "human", "entity_get", json!({ "ids": ["crate"] }));
+    assert_eq!(gone["error"]["code"], "unknown_entity");
+    let info = call(&mut ws, "human", "project_info", json!({}));
+    assert_eq!(info["project"]["name"], "M8b");
+    // Nothing is lost: going back is one change in the history, undone.
+    let history = call(&mut ws, "human", "edit_history", json!({}));
+    assert_eq!(
+        history["entries"][0]["reason"], "back to checkpoint cp_1",
+        "{history}"
+    );
+    let undone = call(
+        &mut ws,
+        "human",
+        "edit_history",
+        json!({ "action": "undo" }),
+    );
+    assert_eq!(undone["ok"], true, "{undone}");
+    let again = call(
+        &mut ws,
+        "human",
+        "entity_get",
+        json!({ "ids": ["crate", "star"] }),
+    );
+    assert_eq!(again["ok"], true, "{again}");
+    // List, refusals, delete.
+    let list = call(&mut ws, "human", "checkpoint", json!({ "action": "list" }));
+    assert_eq!(list["checkpoints"][0]["note"], "before the agent");
+    for (args, code) in [
+        (
+            json!({ "action": "save", "name": "cp_1" }),
+            "checkpoint_exists",
+        ),
+        (
+            json!({ "action": "save", "name": "Bad Name" }),
+            "invalid_checkpoint_name",
+        ),
+        (
+            json!({ "action": "restore", "name": "nope" }),
+            "checkpoint_not_found",
+        ),
+        (json!({ "action": "restore" }), "missing_parameter"),
+    ] {
+        let refused = call(&mut ws, "human", "checkpoint", args);
+        assert_eq!(refused["error"]["code"], code, "{refused}");
+    }
+    let deleted = call(
+        &mut ws,
+        "human",
+        "checkpoint",
+        json!({ "action": "delete", "name": "cp_1" }),
+    );
+    assert_eq!(deleted["ok"], true);
+    let list = call(&mut ws, "human", "checkpoint", json!({ "action": "list" }));
+    assert_eq!(list["checkpoints"], json!([]));
+}

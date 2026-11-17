@@ -38,7 +38,7 @@ const RESOURCE_NOT_FOUND: i64 = -32002;
 
 /// Tools that never change files or state.
 /// Tools whose effect cannot be undone through `edit_history`.
-const DESTRUCTIVE: &[&str] = &["capture_frame", "sim_stop"];
+const DESTRUCTIVE: &[&str] = &["capture_frame", "sim_stop", "checkpoint"];
 
 const READ_ONLY: &[&str] = &[
     "project_info",

@@ -159,6 +159,21 @@ impl Workspace {
         Ok(())
     }
 
+    /// Reads `wish.json` again (after it was written by something other
+    /// than [`Self::write_config`], such as a checkpoint coming back).
+    pub(crate) fn reload_config(&mut self) {
+        match read_project(&self.root) {
+            Ok(config) => {
+                self.config = config;
+                self.config_problem = None;
+            }
+            Err(problem) => {
+                self.config = None;
+                self.config_problem = Some(problem);
+            }
+        }
+    }
+
     /// Why `wish.json` could not be read.
     pub fn config_problem(&self) -> Option<&Diagnostic> {
         self.config_problem.as_ref()
@@ -191,7 +206,7 @@ impl Workspace {
         });
         let answer = envelope(outcome);
         let mutates = find_tool(tool).is_ok_and(|found| found.mutates);
-        if crate::activity::worth_noting(tool, mutates, actor) {
+        if crate::activity::worth_noting(tool, args, mutates, actor) {
             self.activity.record(tool, args, actor, &answer);
         }
         answer

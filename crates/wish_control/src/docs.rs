@@ -61,6 +61,22 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "An entity has a CharacterController but its RigidBody is not Kinematic (or it has none); the controller only moves kinematic bodies. Set RigidBody.kind to Kinematic.",
     ),
     (
+        "checkpoint_damaged",
+        "A checkpoint's description in .wish/checkpoints cannot be read. Delete it and save a new one.",
+    ),
+    (
+        "checkpoint_exists",
+        "A checkpoint of that name exists already. Choose another name or pass overwrite.",
+    ),
+    (
+        "checkpoint_lacks_document",
+        "The checkpoint was made before that scene existed, so it has no copy of it. Pick a later checkpoint or another scene.",
+    ),
+    (
+        "checkpoint_not_found",
+        "There is no checkpoint of that name. checkpoint with action list shows them.",
+    ),
+    (
         "component_not_found",
         "The entity does not have the component the operation needs. Add it first (set adds a missing component) or check the name with schema_get.",
     ),
@@ -219,6 +235,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "invalid_capture_size",
         "A picture size is outside what can be drawn. Use a width and height within the allowed range, such as 512 x 288.",
+    ),
+    (
+        "invalid_checkpoint_name",
+        "A checkpoint's name is 1 to 40 of a-z, 0-9, _ and -.",
     ),
     (
         "invalid_cursor",
@@ -775,6 +795,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "texture_too_large_for_gpu",
         "A texture is larger than this GPU accepts per side. Scale it down in the modelling tool.",
+    ),
+    (
+        "too_many_checkpoints",
+        "The project keeps at most 200 checkpoints. Delete old ones.",
     ),
     (
         "too_many_entities",

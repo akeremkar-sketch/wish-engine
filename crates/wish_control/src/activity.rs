@@ -164,6 +164,8 @@ impl Activity {
 /// Whether a call goes into the log: everything that changes something,
 /// and everything an agent does. A person's looking (the editor reads the
 /// project many times a second) is not activity.
-pub(crate) fn worth_noting(tool: &str, mutates: bool, actor: &Actor) -> bool {
-    tool != "activity_get" && (mutates || !matches!(actor, Actor::Human))
+pub(crate) fn worth_noting(tool: &str, args: &Value, mutates: bool, actor: &Actor) -> bool {
+    // A tool that changes things can also just look (listing checkpoints).
+    let looks = tool == "checkpoint" && args["action"] == "list";
+    tool != "activity_get" && ((mutates && !looks) || !matches!(actor, Actor::Human))
 }

@@ -131,6 +131,13 @@ fn examples() -> Vec<(&'static str, Value)> {
             json!({ "action": "set", "dry_run": true, "scene": "scenes/main.scene.json" }),
         ),
         ("activity_get", json!({ "limit": 5 })),
+        ("checkpoint", json!({ "action": "save", "note": "before" })),
+        ("checkpoint", json!({ "action": "list" })),
+        (
+            "checkpoint",
+            json!({ "action": "restore", "name": "cp_1", "dry_run": true }),
+        ),
+        ("checkpoint", json!({ "action": "restore", "name": "nope" })),
         ("activity_get", json!({ "since": 2, "actor": "agents" })),
         ("scene_get", json!({ "detail": "normal" })),
         ("asset_info", json!({ "path": "assets/models/tri.glb" })),
