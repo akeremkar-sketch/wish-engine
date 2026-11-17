@@ -449,6 +449,10 @@ pub fn build_game_within(
     install: bool,
     timeout: Duration,
 ) -> Result<BuildReport> {
+    // The compiler runs in the project folder: every path it is given must
+    // not depend on where this program runs (`wen build --root game`).
+    let absolute = std::path::absolute(root).unwrap_or_else(|_| root.to_path_buf());
+    let root = absolute.as_path();
     if !root.join(SCRIPTS_ENTRY).is_file() {
         return Err(Diagnostic::error(
             "script_sources_missing",
@@ -628,10 +632,14 @@ pub fn build_game_within(
             "script_compile_error",
             format!(
                 "The compiler failed without a message it could explain: {}",
-                String::from_utf8_lossy(&stderr)
-                    .chars()
-                    .take(2000)
-                    .collect::<String>()
+                if stderr.is_empty() {
+                    format!("it exited with {status} and wrote no module to {CHECKED_WASM}")
+                } else {
+                    String::from_utf8_lossy(&stderr)
+                        .chars()
+                        .take(2000)
+                        .collect::<String>()
+                }
             ),
             "Report this with the message; the previous build stays in use.",
         ));

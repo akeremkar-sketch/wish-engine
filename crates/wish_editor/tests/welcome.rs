@@ -254,3 +254,22 @@ fn a_template_whose_code_does_not_build_says_so() {
         .collect();
     assert_eq!(left, ["my-game"]);
 }
+
+/// M9: a crash report is told once, then not again.
+#[test]
+fn a_crash_report_is_told_once() {
+    let (options, base) = options("crash-notice");
+    let prefs = options.preferences.clone().unwrap();
+    let crashes = base.join("crashes");
+    assert_eq!(wish_editor::crash_notice(&prefs, &crashes), None);
+    std::fs::create_dir_all(&crashes).unwrap();
+    std::fs::write(crashes.join("crash-000000000001-wen.txt"), "report").unwrap();
+    let told = wish_editor::crash_notice(&prefs, &crashes).expect("told");
+    assert!(told.contains("crash-000000000001-wen.txt"), "{told}");
+    assert_eq!(wish_editor::crash_notice(&prefs, &crashes), None);
+    // The language the person chose is kept beside it.
+    let saved: Value = serde_json::from_str(&std::fs::read_to_string(&prefs).unwrap()).unwrap();
+    assert_eq!(saved["language"], "en");
+    std::fs::write(crashes.join("crash-000000000002-wen.txt"), "report").unwrap();
+    assert!(wish_editor::crash_notice(&prefs, &crashes).is_some());
+}

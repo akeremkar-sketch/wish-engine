@@ -25,19 +25,30 @@ pub use app::{EditorApp, Opener, Row, ids};
 /// `$XDG_CONFIG_HOME/wish` or `~/.config/wish` elsewhere), file
 /// `editor.json`.
 pub fn preferences_path() -> Option<std::path::PathBuf> {
-    let var = |name: &str| std::env::var_os(name).filter(|value| !value.is_empty());
-    let folder = if let Some(dir) = var("WISH_CONFIG_DIR") {
-        std::path::PathBuf::from(dir)
-    } else if cfg!(windows) {
-        std::path::PathBuf::from(var("APPDATA")?).join("Wish")
-    } else if let Some(dir) = var("XDG_CONFIG_HOME") {
-        std::path::PathBuf::from(dir).join("wish")
-    } else {
-        std::path::PathBuf::from(var("HOME")?)
-            .join(".config")
-            .join("wish")
-    };
-    Some(folder.join("editor.json"))
+    Some(wish_control::crash::config_folder()?.join("editor.json"))
+}
+
+/// What to tell the person once about a crash report written since the
+/// editor last said so (the newest report in `crashes`; the name told is
+/// kept in the preferences as `crash_seen`). `None` when there is nothing
+/// new.
+pub fn crash_notice(preferences: &std::path::Path, crashes: &std::path::Path) -> Option<String> {
+    let newest = wish_control::crash::reports(crashes).into_iter().next()?;
+    let name = newest.file_name()?.to_string_lossy().into_owned();
+    let seen = prefs::read(preferences)
+        .get("crash_seen")
+        .and_then(serde_json::Value::as_str)
+        == Some(name.as_str());
+    if seen {
+        return None;
+    }
+    let _ = prefs::update(preferences, |prefs| {
+        prefs.insert("crash_seen".to_owned(), serde_json::Value::String(name));
+    });
+    Some(i18n::tf(
+        "Wish Engine stopped unexpectedly last time. A report is in {path} (nothing was sent); attaching it to an issue helps fix it.",
+        &[("path", &newest.display())],
+    ))
 }
 pub use inspector::has_widget;
 

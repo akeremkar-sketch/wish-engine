@@ -166,3 +166,30 @@ fn a_project_without_game_code_or_a_mismatched_sdk_is_explained() {
     .unwrap_err();
     assert_eq!(mismatch.code, "script_toolchain_mismatch");
 }
+
+/// M9: a project given by a relative path builds (the compiler runs in the
+/// project folder, so the paths it is given must not be relative to ours).
+#[test]
+fn a_project_given_by_a_relative_path_builds() {
+    let toolchain = toolchain();
+    let root = project("relative", GAME);
+    // The same folder, written relative to where the test runs.
+    let here = std::env::current_dir().unwrap();
+    let ups = here
+        .components()
+        .filter(|part| matches!(part, std::path::Component::Normal(_)))
+        .count();
+    let mut relative = PathBuf::new();
+    for _ in 0..ups {
+        relative.push("..");
+    }
+    for part in root.components() {
+        if let std::path::Component::Normal(name) = part {
+            relative.push(name);
+        }
+    }
+    assert!(relative.is_relative() && relative.join(SCRIPTS_ENTRY).is_file());
+    let report = build_game(toolchain, &relative, true).unwrap();
+    assert!(report.passed, "{:?}", report.diagnostics);
+    assert!(root.join(GAME_WASM).is_file());
+}

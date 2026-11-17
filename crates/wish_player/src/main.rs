@@ -42,6 +42,24 @@ fn report(problem: &str) {
 }
 
 fn main() -> ExitCode {
+    // An unexpected error leaves a report next to the game (never sent):
+    // the person playing may not know the engine, but can send the file to
+    // whoever made the game.
+    wish_control::crash::install();
+    let folder = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf));
+    match wish_control::crash::guard("wish_player", folder.as_deref(), run) {
+        Ok(code) => code,
+        Err(saved) => {
+            let told = wish_control::crash::told("The game", saved.as_deref());
+            report(&told);
+            ExitCode::from(101)
+        }
+    }
+}
+
+fn run() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let root = game_folder(&args);
     let scene = value_of(&args, "--scene");

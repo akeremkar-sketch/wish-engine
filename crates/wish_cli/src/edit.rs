@@ -40,6 +40,9 @@ pub fn edit(args: &EditArgs, as_json: bool) -> Result<String> {
     {
         app.use_preferences(path);
     }
+    if let Some(note) = notice(args) {
+        app.set_status(note);
+    }
     if let Some(code) = &args.lang
         && !app.set_language(code)
     {
@@ -79,7 +82,11 @@ fn welcome(args: &EditArgs, as_json: bool) -> Result<String> {
         // A scripted picture depends only on its arguments.
         options.preferences = None;
     }
+    let crash_note = notice(args);
     let mut launcher = wish_editor::welcome::Launcher::new(options);
+    if let Some(note) = crash_note {
+        launcher.set_status(note);
+    }
     if let Some(code) = &args.lang
         && !launcher.set_language(code)
     {
@@ -164,4 +171,16 @@ fn write_picture(canvas: wish_editor::raster::Canvas, out: &str) -> Result<()> {
         pixels: canvas.pixels,
     };
     std::fs::write(out, picture.to_png()?).map_err(|error| unwritable(out, &error))
+}
+
+/// The crash notice, in a window only (a scripted picture depends only on
+/// its arguments).
+fn notice(args: &EditArgs) -> Option<String> {
+    if args.headless_frame.is_some() {
+        return None;
+    }
+    wish_editor::crash_notice(
+        &wish_editor::preferences_path()?,
+        &wish_control::crash::folder()?,
+    )
 }

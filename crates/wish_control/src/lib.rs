@@ -21,6 +21,7 @@ mod activity;
 mod audio;
 mod checkpoints;
 mod concepts;
+pub mod crash;
 pub mod docs;
 mod documents;
 pub mod expr;

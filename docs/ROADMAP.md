@@ -17,7 +17,7 @@ Boyutlar görecelidir (S < M < L < XL); takvim sözü değildir.
 | M7 | Kendi motorumuzla oyun | Vitrin oyunu, ajan değerlendirme takımı, sürtünme giderme | M | Oyun yapan ajan: Sonnet 5.5 · medium ve Haiku 5.5; düzeltmeler: Opus 5.5 · high |
 | M8a | Editör temeli (elle düzenleme) | Görünüm, hiyerarşi, otomatik denetçi, tutamaçlar, varlık tarayıcı, oynatma denetimleri | L | Sonnet 5.5 · high |
 | M8b | Yapay zekâ kokpiti | Konuşma paneli, kokpit içi ajan, "göster ve söyle", etkinlik akışı, denetim noktaları | L | Sonnet 5.5 · high (etkileşim tasarımı kararlarında Opus 5.5 · high) |
-| M9 | Ürünleştirme → **1.0** | Tek paket kurulum, dışa aktarma, ilk çalıştırma, belgeler, Steam/web | L | Sonnet 5.5 · medium; yayın denetimi Opus 5.5 · high |
+| M9 | Ürünleştirme → **1.0** | Tek paket kurulum, dışa aktarma, ilk çalıştırma, belgeler, Steam/web | L | Sonnet 5.5 · medium; yayın denetimi Opus 5.5 · high — **kod tarafı bitti** (17 Kasım 2026, `m9-product`); kalanlar kullanıcı adımları: [tasarım §5](design/M9-urunlestirme.md) |
 | M10 | 1.0 sonrası | Gelişmiş render, web hedefi, ikinci betik dili, çok oyunculu | açık uçlu | Fable 5.2 / Opus 5.5 · high–xhigh |
 | T1 | Arayüz tasarımı (paralel) | Hibrit arayüzün maketleri: elle düzenleme ve kokpit akışları, ikisi arasında geçiş, kullanıcı sınaması | S | Opus 5.5 · high — M4 ile birlikte başlar |
 

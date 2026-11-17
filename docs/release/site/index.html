@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wish Engine</title>
+<meta name="description" content="Ücretsiz, açık kaynak 3B oyun motoru: elle ya da yapay zekâ yardımcısıyla. A free, open-source 3D game engine, by hand or with an AI assistant.">
+<style>
+  :root {
+    --bg: #fbfaf7; --fg: #1d1c1a; --muted: #5d5a54; --accent: #6b4fd8; --card: #ffffff; --line: #e6e2da;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #18181b; --fg: #ecebe8; --muted: #a9a59d; --accent: #a993ff; --card: #222226; --line: #34343a; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 17px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 960px; margin: 0 auto; padding: 48px 16px 64px; }
+  header h1 { font-size: clamp(2.2rem, 6vw, 3.4rem); margin: 0; letter-spacing: -0.02em; }
+  .tagline { color: var(--muted); font-style: italic; margin: 4px 0 20px; }
+  .lead { font-size: 1.2rem; max-width: 46rem; }
+  .actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 28px 0 8px; }
+  .button { display: inline-block; padding: 12px 20px; border-radius: 10px; text-decoration: none; font-weight: 600; border: 1px solid var(--line); color: var(--fg); background: var(--card); }
+  .button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .note { color: var(--muted); font-size: 0.92rem; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 36px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; }
+  .card h2 { font-size: 1.05rem; margin: 0 0 6px; }
+  .card p { margin: 0; color: var(--muted); }
+  section.en { margin-top: 56px; padding-top: 28px; border-top: 1px solid var(--line); }
+  footer { margin-top: 56px; color: var(--muted); font-size: 0.9rem; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Wish Engine</h1>
+    <p class="tagline">Dile, olsun.</p>
+  </header>
+  <p class="lead">Ücretsiz, açık kaynak bir 3B oyun motoru. Her şeyi elle yapabilirsiniz; isterseniz bir yapay zekâ yardımcısı da aynı işleri yapar. İkisi de aynı geçmişe girer, her adım tek tıkla geri alınır.</p>
+  <div class="actions">
+    <a class="button primary" href="[indirme adresi]">Windows için indir</a>
+    <a class="button" href="[depo adresi]">Kaynak kodu</a>
+  </div>
+  <p class="note">Windows 10/11, 64 bit. Ek kurulum yok: derleyici pakette gelir. Satışlarınızdan pay alınmaz, telemetri yok.</p>
+
+  <div class="grid">
+    <div class="card"><h2>Tam bir editör</h2><p>Hiyerarşi, denetçi, tutamaçlar, prefab'lar; oynat, adım adım ilerle, zamanda geri git.</p></div>
+    <div class="card"><h2>Yapay zekâ kokpiti</h2><p>Göster ve anlat. Her değişiklik canlı görünür, tek tek geri alınır; her görevden önce denetim noktası.</p></div>
+    <div class="card"><h2>Oyun sistemleri hazır</h2><p>Fizik, ışık ve gölge, ses, animasyon, oyun içi arayüz, parçacıklar, 2B.</p></div>
+    <div class="card"><h2>Kod, durmadan</h2><p>Oyun mantığı Rust ile, güvenli alanda. Kaydedince oyun durmadan yeni kodla sürer.</p></div>
+    <div class="card"><h2>Her zaman aynı</h2><p>Aynı sahne aynı biçimde oynar; tekrar kayıtları ve testler buna dayanır.</p></div>
+    <div class="card"><h2>Tek tıkla dışa aktar</h2><p>Oyununuz, motoru olmayan bir bilgisayarda çalışan bir klasör olur.</p></div>
+  </div>
+
+  <section class="en" lang="en">
+    <h2>English</h2>
+    <p class="lead">A free, open-source 3D game engine. Do everything by hand, or let an AI assistant do the same things. Both land in one history, and every step can be undone with a click.</p>
+    <div class="actions">
+      <a class="button primary" href="[download address]">Download for Windows</a>
+      <a class="button" href="[repository address]">Source code</a>
+    </div>
+    <p class="note">Windows 10/11, 64-bit. Nothing else to install: the compiler is included. No revenue share, no telemetry. Interface in 12 languages.</p>
+  </section>
+
+  <footer>MIT ya da Apache-2.0 · MIT or Apache-2.0 · [iletişim / contact]</footer>
+</main>
+</body>
+</html>

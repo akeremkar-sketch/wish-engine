@@ -207,16 +207,44 @@ Kod okuyan bağımsız bir ajan 12 bulgu verdi; hepsi ele alındı. Regresyon te
 | Dışa aktarma: tek komut/tık, bağımsız paket | `project_export` / `wen export` / editör menüsü. Dışa aktarılan vitrin oyunu ayrı süreçte projeyle bit bit aynı (`wish_player/tests/export.rs`) | ✔ |
 | Dışa aktarılan oyun motorsuz makinede çalışır | Paket motor dosyası içermez (test). Temiz makine denemesi kullanıcıda | ◐ |
 | Temiz Windows 10 ve 11'de < 5 dk, ek kurulum yok | Kullanıcı adımı (Windows Sandbox: `clean-test.wsb`) | ◐ |
-| Bilinen çökme sıfır, açık yüksek öncelikli hata sıfır | Her kilometre taşı kapanış incelemesinin bulguları kapatıldı (M9: 12/12). Açık hata kaydı yok | ✔ |
+| Bilinen çökme sıfır, açık yüksek öncelikli hata sıfır | Her kilometre taşı kapanış incelemesinin bulguları kapatıldı (M9: 12/12). Paket denemesinin bulduğu göreli yol hatası düzeltildi. Açık hata kaydı yok | ✔ |
+| İsteğe bağlı çökme raporu | Yalnızca yerel: `wish_control::crash` (yakalanmayan panik → rapor dosyası; hiçbir şey gönderilmez); editör bir kez söyler | ✔ |
 | Depo herkese açık, katkı kılavuzu yazılmış | `CONTRIBUTING.md` yazıldı. Depoyu açmak kullanıcı kararı | ◐ |
 | Ad, marka ve alan adı uygunluğu | Kullanıcı (hukuki/para) | ✗ |
-| Güncelleyici (web), isteğe bağlı çökme raporu, son kullanıcı sözleşmesi, Steam sayfası, web sitesi | Barındırma, alan adı, Steamworks hesabı ve sözleşme metni kullanıcıya ait. Kod tarafı bunlar netleşince yapılır | ✗ |
+| Son kullanıcı sözleşmesi, Steam sayfası, web sitesi | Taslaklar: `docs/release/` (sözleşme TR/EN, Steam metinleri TR/EN, tek sayfa site). Hukuki inceleme, hesap, alan adı ve yayın kullanıcıda | ◐ |
+| Güncelleyici (web) | Bir indirme adresi (barındırma, alan adı) ister; adres belli olunca "yeni sürüm var" denetimi eklenir. O zamana kadar kılavuz ve sözleşme "kendiliğinden indirmez" der | ✗ |
 
 **Kullanıcıya ait adımlar (1.0 öncesi), önerilen sırayla:**
-1. **Paketi yeniden üret.** Statik C çalışma zamanıyla `wen` ve `wish_player`, sonra `wen package`. Ben yapabilirim (~15 dk, birkaç GB geçici derleme).
+1. ~~Paketi yeniden üret~~: yapıldı (aşağıda "Paket ve uçtan uca deneme").
 2. **Temiz makine denemesi.** Windows Sandbox'ta `clean-test.wsb`. Ayrıca bir dışa aktarılan oyunu motorsuz açmak.
 3. **Gerçek Claude Code ile kokpit koşumu ve ilk çalıştırma süresi.** Kota harcar.
 4. **3 kişiyle kullanıcı testi** (M8b ölçüt 1) ve T1 maketleri.
 5. **Ses çıkışını kulakla dinlemek** (`wen play`).
 6. **CI faturalandırma.** GitHub işleri başlatmıyor.
 7. **Ad/marka/alan adı, son kullanıcı sözleşmesi, depoyu herkese açmak, Steam, web sitesi, kod imzalama.**
+
+### WP5 — paket, uçtan uca deneme, çökme raporu, taslaklar (17 Kasım 2026)
+
+- **Paket:** `C:\wish-build\package` (558 MB), `wen` ve `wish_player` statik C çalışma zamanıyla. Uyarı yok. İçindekiler: SDK, paketlenmiş derleyici, 5 şablon, `clean-test.wsb`.
+  - Yeniden üretmek için iki adım:
+    1. `RUSTFLAGS=-C target-feature=+crt-static cargo build --release -p wish_cli -p wish_player --target x86_64-pc-windows-msvc --target-dir C:/wish-build/target-static`
+    2. O `wen.exe` ile `package --out C:/wish-build/package`.
+- **Uçtan uca deneme** (`env -i` ile boş ortam: PATH'te yalnızca `system32`, geliştirme aracı yok):
+  - `wen new --template hop` → `wen build` → `wen test` (2/2) → `wen export`.
+  - Dışa aktarılan `hop_copy.exe --headless --frames 300` kendi klasöründe çalışır.
+  - Dünya hash'i projeyle aynıdır (`1670b0d3…`).
+- **Denemenin bulduğu hata (M5'ten beri):** `wen build --root game` gibi göreli bir proje yolunda derleme sessizce başarısızdı.
+  - Neden: derleyici proje klasöründe çalışıyor, ona verilen çıktı yolu ise göreliydi; modül `game/game/.wish/...` altına yazılıyordu.
+  - Düzeltme: `build_game_within` kökü mutlak yapar. İleti artık boş kalmaz ("exited with ... and wrote no module").
+  - Test: `wish_script/tests/build_game.rs::a_project_given_by_a_relative_path_builds`.
+- **Çökme raporu** (`wish_control::crash`):
+  - Panik kancası son paniği (ileti, yer, geri iz) not eder.
+  - `guard` yalnızca `main`'den kaçan paniği rapora yazar. Yakalanan panik (düşmanca model dosyası, başarısız araç) rapor bırakmaz.
+  - Yerler:
+    - `wen`: `<yapılandırma>/crashes/crash-<zaman>-wen.txt`;
+    - oynatıcı: oyunun yanında (oyuncu motoru tanımayabilir, dosyayı oyunu yapana gönderir).
+  - Hiçbir şey gönderilmez.
+  - Editör yeni raporu bir kez söyler (`crash_notice`, tercihlerde `crash_seen`).
+  - Yapılandırma klasörü tek yerde: `wish_control::crash::config_folder` (editör tercihleri de onu kullanır).
+  - Testler: `wish_control/tests/crash.rs`, `welcome.rs::a_crash_report_is_told_once`.
+- **Taslaklar** (`docs/release/`, yayımlanmadı): son kullanıcı sözleşmesi, Steam metinleri, tek sayfa site.

@@ -227,6 +227,15 @@ impl Launcher {
         true
     }
 
+    /// Sets the status line (the welcome screen's, then the editor's).
+    pub fn set_status(&mut self, status: String) {
+        match (&mut self.app, &mut self.welcome) {
+            (Some(app), _) => app.set_status(status),
+            (None, Some(welcome)) => welcome.status = status,
+            (None, None) => {}
+        }
+    }
+
     /// Chooses who helps (as the radio buttons do).
     pub fn set_assistant(&mut self, assistant: Assistant) {
         if let Some(welcome) = &mut self.welcome {

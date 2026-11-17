@@ -251,6 +251,11 @@ Motorun bildirdiği her sorunda şunlar vardır:
 - yeri: dosya, satır ve alan;
 - bir **ipucu**: ne yapılacağı.
 
+Motorun kendisi beklenmedik bir hatayla durursa bilgisayarınıza bir çökme raporu yazar (editör
+ayarlarının yanındaki `crashes` klasörüne; dışa aktarılan bir oyun kendi yanına) ve editör bir
+sonraki açılışta yerini söyler. Hiçbir şey gönderilmez: düzeltilmesine yardım etmek isterseniz
+dosyayı bir hata kaydına ekleyin.
+
 *Sorunlar* sekmesi bütün projedekileri listeler. `wen call docs_search --query <kod>` bir kodu
 açıklar.
 

@@ -251,6 +251,11 @@ Every problem the engine reports has:
 - where it is: file, line and field;
 - a **hint**: what to do about it.
 
+If the engine itself ever stops on an unexpected error, it writes a crash report on your
+computer (in the `crashes` folder next to the editor's settings; an exported game writes it next to
+itself) and says where the next time the editor opens. Nothing is sent anywhere: attach the file to
+an issue if you want to help fix it.
+
 The *Problems* tab lists them for the whole project. `wen call docs_search --query <code>`
 explains a code.
 

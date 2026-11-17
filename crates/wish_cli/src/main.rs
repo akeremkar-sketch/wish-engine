@@ -149,6 +149,19 @@ COMMANDS:
 Add --json to any command for a single machine-readable JSON document.";
 
 fn main() -> ExitCode {
+    // An unexpected error leaves a report on this computer (never sent).
+    wish_control::crash::install();
+    let folder = wish_control::crash::folder();
+    match wish_control::crash::guard("wen", folder.as_deref(), run_wen) {
+        Ok(code) => code,
+        Err(report) => {
+            eprintln!("{}", wish_control::crash::told("wen", report.as_deref()));
+            ExitCode::from(101)
+        }
+    }
+}
+
+fn run_wen() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let json = arguments.iter().any(|argument| argument == "--json");
     // The MCP server owns standard output: nothing else may be printed.

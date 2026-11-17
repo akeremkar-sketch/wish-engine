@@ -211,6 +211,7 @@
   "What should the agent do?": "Τι να κάνει ο πράκτορας;",
   "What this is for, what to keep in mind...": "Σε τι χρησιμεύει, τι να προσέξετε...",
   "Wireframe": "Συρματόπλεγμα",
+  "Wish Engine stopped unexpectedly last time. A report is in {path} (nothing was sent); attaching it to an issue helps fix it.": "Το Wish Engine έκλεισε απροσδόκητα την προηγούμενη φορά. Υπάρχει αναφορά στο {path} (δεν στάλθηκε τίποτα)· η επισύναψή της σε ένα ζήτημα βοηθά στη διόρθωση.",
   "World": "Κόσμος",
   "a prefab cannot be played; open a scene": "ένα prefab δεν μπορεί να παιχτεί· ανοίξτε μια σκηνή",
   "a prefab cannot hold another prefab": "ένα prefab δεν μπορεί να περιέχει άλλο prefab",
