@@ -119,7 +119,13 @@ impl Activity {
             if let Some(out) = answer["out"].as_str() {
                 entry["out"] = json!(out);
             }
-            for key in ["passed", "stopped_by", "ticks_run", "diverged_at"] {
+            for key in [
+                "passed",
+                "stopped_by",
+                "ticks_run",
+                "diverged_at",
+                "proposed",
+            ] {
                 if !answer[key].is_null() {
                     entry[key] = answer[key].clone();
                 }
@@ -165,7 +171,14 @@ impl Activity {
 /// and everything an agent does. A person's looking (the editor reads the
 /// project many times a second) is not activity.
 pub(crate) fn worth_noting(tool: &str, args: &Value, mutates: bool, actor: &Actor) -> bool {
-    // A tool that changes things can also just look (listing checkpoints).
-    let looks = tool == "checkpoint" && args["action"] == "list";
+    // A tool that changes things can also just look (listing checkpoints
+    // or proposals, reading the permission mode).
+    let action = args["action"].as_str().unwrap_or("");
+    let looks = match tool {
+        "checkpoint" => action == "list",
+        "proposals" => action.is_empty() || action == "list",
+        "permissions" => action.is_empty() || action == "get",
+        _ => false,
+    };
     tool != "activity_get" && ((mutates && !looks) || !matches!(actor, Actor::Human))
 }

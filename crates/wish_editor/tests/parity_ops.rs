@@ -567,3 +567,55 @@ fn a_checkpoint_is_saved_compared_and_gone_back_to() {
         "now is back"
     );
 }
+
+/// M8b WP4: in "Only suggest", an agent's changes wait in the Activity tab;
+/// one is accepted (made, as the agent's), one rejected.
+#[test]
+fn an_agents_proposal_is_accepted_and_rejected_by_hand() {
+    let dir = project("proposals");
+    let mut app = open(&dir);
+    project_menu(&mut app, &["Permissions", "Only suggest"]);
+    assert_eq!(app.permission_mode(), "suggest", "{}", app.status());
+    let agent = parse_actor("agent:helper");
+    let held = app.workspace().call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "spawn", "id": "crate", "components": { "Transform": {} } }],
+            "reason": "a crate to jump on" }),
+        &agent,
+    );
+    assert_eq!(held["proposed"], 1, "{held}");
+    app.workspace().call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "despawn", "id": "sun" }] }),
+        &agent,
+    );
+    let tab = named(&app, "Activity");
+    click(&mut app, tab);
+    play(&mut app, json!([{ "seconds": 0.6 }, { "idle": 2 }]));
+    assert!(
+        has_text(&app, "Waiting for you: 2"),
+        "{:?}",
+        app.waiting_proposals()
+    );
+    assert!(has_text(&app, "a crate to jump on"));
+    assert!(
+        !wish_editor::ids(app.rows()).contains("crate"),
+        "not made yet"
+    );
+    // The first Accept (the top one) is the crate's: oldest first.
+    let accept = app
+        .widgets()
+        .iter()
+        .filter(|w| w.role == "Button" && w.label.as_deref() == Some("Accept"))
+        .map(|w| w.rect)
+        .min_by(|a, b| a.min.y.total_cmp(&b.min.y))
+        .unwrap();
+    click(&mut app, accept);
+    assert_eq!(app.status(), "proposal 1 accepted and made");
+    assert!(wish_editor::ids(app.rows()).contains("crate"));
+    let reject = named(&app, "Reject");
+    click(&mut app, reject);
+    assert_eq!(app.status(), "proposal 2 rejected");
+    assert!(wish_editor::ids(app.rows()).contains("sun"));
+    assert!(app.waiting_proposals().is_empty());
+}

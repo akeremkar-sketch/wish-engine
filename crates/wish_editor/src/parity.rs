@@ -209,6 +209,16 @@ pub const PARITY: &[Capability] = &[
         "parity_ops::a_checkpoint_is_saved_compared_and_gone_back_to",
     ),
     op(
+        "permissions",
+        "Project menu: Permissions (Only suggest, Apply I review, Autonomous)",
+        "parity_ops::an_agents_proposal_is_accepted_and_rejected_by_hand",
+    ),
+    op(
+        "proposals",
+        "The Activity tab: Waiting for you, Accept / Reject",
+        "parity_ops::an_agents_proposal_is_accepted_and_rejected_by_hand",
+    ),
+    op(
         "test_run",
         "Project menu: Run tests (failures in the Problems tab), Update golden pictures",
         "parity_ops::the_tests_run_from_the_menu",

@@ -303,3 +303,127 @@ fn a_checkpoint_brings_the_project_back_without_losing_anything() {
     let list = call(&mut ws, "human", "checkpoint", json!({ "action": "list" }));
     assert_eq!(list["checkpoints"], json!([]));
 }
+
+#[test]
+fn in_suggest_mode_an_agents_change_waits_for_a_person() {
+    let mut ws = open("suggest");
+    let mode = call(&mut ws, "agent:helper", "permissions", json!({}));
+    assert_eq!(mode["mode"], "apply");
+    let denied = call(
+        &mut ws,
+        "agent:helper",
+        "permissions",
+        json!({ "action": "set", "mode": "autonomous" }),
+    );
+    assert_eq!(denied["error"]["code"], "permission_denied", "{denied}");
+    let set = call(
+        &mut ws,
+        "human",
+        "permissions",
+        json!({ "action": "set", "mode": "suggest" }),
+    );
+    assert_eq!(set["mode"], "suggest");
+    // The agent's change is held, with what it would change.
+    let held = call(
+        &mut ws,
+        "agent:helper",
+        "edit_apply",
+        json!({ "ops": [{ "op": "spawn", "id": "crate", "components": { "Transform": {} } }],
+            "reason": "a crate to jump on" }),
+    );
+    assert_eq!(held["ok"], true, "{held}");
+    assert_eq!(held["proposed"], 1);
+    assert_eq!(held["preview"]["dry_run"], true, "{held}");
+    let missing = call(&mut ws, "human", "entity_get", json!({ "ids": ["crate"] }));
+    assert_eq!(
+        missing["error"]["code"], "unknown_entity",
+        "nothing changed yet"
+    );
+    // Playing, testing and looking are not held.
+    let started = call(&mut ws, "agent:helper", "sim_start", json!({}));
+    assert_eq!(started["ok"], true);
+    assert!(started.get("proposed").is_none());
+    // The feed shows the proposal.
+    let feed = call(
+        &mut ws,
+        "human",
+        "activity_get",
+        json!({ "actor": "agents" }),
+    );
+    assert!(
+        feed["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["proposed"] == 1),
+        "{feed}"
+    );
+    // The agent sees it waiting, but cannot accept it.
+    let listed = call(&mut ws, "agent:helper", "proposals", json!({}));
+    assert_eq!(listed["proposals"][0]["status"], "waiting");
+    assert_eq!(listed["proposals"][0]["reason"], "a crate to jump on");
+    let self_accept = call(
+        &mut ws,
+        "agent:helper",
+        "proposals",
+        json!({ "action": "accept", "id": 1 }),
+    );
+    assert_eq!(self_accept["error"]["code"], "permission_denied");
+    // The person accepts: made now, as the agent's.
+    let accepted = call(
+        &mut ws,
+        "human",
+        "proposals",
+        json!({ "action": "accept", "id": 1 }),
+    );
+    assert_eq!(accepted["answer"]["ok"], true, "{accepted}");
+    let history = call(&mut ws, "human", "edit_history", json!({}));
+    assert_eq!(history["entries"][0]["actor"], "agent:helper");
+    assert_eq!(history["entries"][0]["reason"], "a crate to jump on");
+    // Another one, rejected: nothing happens.
+    let second = call(
+        &mut ws,
+        "agent:helper",
+        "edit_apply",
+        json!({ "ops": [{ "op": "despawn", "id": "sun" }] }),
+    );
+    let id = second["proposed"].as_u64().unwrap();
+    let rejected = call(
+        &mut ws,
+        "human",
+        "proposals",
+        json!({ "action": "reject", "id": id }),
+    );
+    assert_eq!(rejected["proposal"]["status"], "rejected", "{rejected}");
+    let sun = call(&mut ws, "human", "entity_get", json!({ "ids": ["sun"] }));
+    assert_eq!(sun["ok"], true);
+    let again = call(
+        &mut ws,
+        "human",
+        "proposals",
+        json!({ "action": "accept", "id": id }),
+    );
+    assert_eq!(again["error"]["code"], "proposal_decided");
+    let unknown = call(
+        &mut ws,
+        "human",
+        "proposals",
+        json!({ "action": "accept", "id": 99 }),
+    );
+    assert_eq!(unknown["error"]["code"], "proposal_not_found");
+    // A person is never held; back to apply, the agent's change is made.
+    call(
+        &mut ws,
+        "human",
+        "permissions",
+        json!({ "action": "set", "mode": "apply" }),
+    );
+    let made = call(
+        &mut ws,
+        "agent:helper",
+        "edit_apply",
+        json!({ "ops": [{ "op": "rename", "id": "sun", "to": "star" }] }),
+    );
+    assert!(made.get("proposed").is_none(), "{made}");
+    assert_eq!(made["ok"], true);
+}

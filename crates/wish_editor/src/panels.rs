@@ -52,6 +52,8 @@ pub(crate) struct PanelActions {
     pub revert: Option<u64>,
     /// The same from the activity feed: the scene and the revision.
     pub revert_in: Option<(String, u64)>,
+    /// Accept (true) or reject (false) an agent's proposal.
+    pub decide: Option<(u64, bool)>,
 }
 
 impl PanelActions {
@@ -64,6 +66,7 @@ impl PanelActions {
             || self.redo
             || self.revert.is_some()
             || self.revert_in.is_some()
+            || self.decide.is_some()
     }
 }
 
@@ -344,9 +347,52 @@ fn actor_color(actor: &str) -> Color32 {
 pub(crate) fn activity(
     ui: &mut Ui,
     entries: &VecDeque<Value>,
+    proposals: &[Value],
     agents_only: &mut bool,
     actions: &mut PanelActions,
 ) {
+    // What agents propose, waiting for a person ("only suggest").
+    let waiting: Vec<&Value> = proposals
+        .iter()
+        .filter(|p| p["status"] == "waiting")
+        .collect();
+    if !waiting.is_empty() {
+        ui.strong(tf("Waiting for you: {count}", &[("count", &waiting.len())]));
+        for proposal in waiting {
+            let id = proposal["id"].as_u64().unwrap_or(0);
+            ui.horizontal(|ui| {
+                if ui.add(egui::Button::new(t("Accept")).small()).clicked() {
+                    actions.decide = Some((id, true));
+                }
+                if ui.add(egui::Button::new(t("Reject")).small()).clicked() {
+                    actions.decide = Some((id, false));
+                }
+                let actor = proposal["actor"].as_str().unwrap_or("?");
+                ui.label(RichText::new(actor).color(actor_color(actor)).strong());
+                ui.label(proposal["tool"].as_str().unwrap_or("?"));
+                let ops: Vec<String> = proposal["args"]["ops"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .take(4)
+                    .map(|op| {
+                        format!(
+                            "{} {}",
+                            op["op"].as_str().unwrap_or("?"),
+                            op["id"].as_str().or(op["name"].as_str()).unwrap_or("")
+                        )
+                    })
+                    .collect();
+                if !ops.is_empty() {
+                    ui.weak(ops.join(", "));
+                }
+            });
+            if let Some(reason) = proposal["reason"].as_str() {
+                ui.weak(format!("    {reason}"));
+            }
+        }
+        ui.separator();
+    }
     ui.horizontal(|ui| {
         ui.checkbox(agents_only, t("Agents only"));
         ui.weak(t(

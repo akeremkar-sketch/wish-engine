@@ -48,6 +48,8 @@ pub struct Workspace {
     pub(crate) scripts: crate::script::Scripts,
     /// What everyone did (M8b): the activity feed's source.
     pub(crate) activity: crate::activity::Activity,
+    /// How much agents may change by themselves, and what waits (M8b).
+    pub(crate) policy: crate::policy::Policy,
 }
 
 impl std::fmt::Debug for Workspace {
@@ -105,6 +107,7 @@ impl Workspace {
             cancel: None,
             scripts: crate::script::Scripts::default(),
             activity: crate::activity::Activity::default(),
+            policy: crate::policy::Policy::default(),
         };
         workspace.load_built_module();
         Ok(workspace)
@@ -194,6 +197,55 @@ impl Workspace {
     /// out: a bug inside a tool comes back as an `internal_error` answer, so
     /// one bad call cannot take the server down.
     pub fn call(&mut self, tool: &str, args: &Value, actor: &Actor) -> Value {
+        // "Only suggest": an agent's change to the project waits for a
+        // person (with what it would change, where the tool can say).
+        if matches!(actor, Actor::Agent(_))
+            && self.policy.mode == crate::policy::Mode::Suggest
+            && crate::policy::changes_project(tool, args)
+        {
+            let preview = self.dry_run_of(tool, args, actor);
+            let id = self.policy.propose(actor, tool, args, preview.clone());
+            let mut answer = json!({
+                "ok": true,
+                "proposed": id,
+                "status": "waiting",
+                "message": "Nothing was changed yet: the person working with you decides (permission mode \"suggest\"). proposals with action list shows whether it was accepted.",
+            });
+            if let Some(preview) = preview {
+                answer["preview"] = preview;
+            }
+            self.activity.record(tool, args, actor, &answer);
+            return answer;
+        }
+        self.call_unheld(tool, args, actor)
+    }
+
+    /// What a call would change, from its dry run (`None` if the tool has
+    /// none). Not activity.
+    pub(crate) fn dry_run_of(&mut self, tool: &str, args: &Value, actor: &Actor) -> Option<Value> {
+        let found = find_tool(tool).ok()?;
+        if !found.params.iter().any(|param| param.name == "dry_run") {
+            return None;
+        }
+        let mut dry = args.clone();
+        dry.as_object_mut()?
+            .insert("dry_run".to_owned(), Value::Bool(true));
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.run(tool, &dry, actor)
+        }))
+        .unwrap_or_else(|_| {
+            Err(Diagnostic::error(
+                "internal_error",
+                format!("The tool '{tool}' failed unexpectedly."),
+                "This is a bug in the engine. The project is unchanged; please report the call that caused it.",
+            ))
+        });
+        Some(envelope(outcome))
+    }
+
+    /// [`Self::call`] without the permission check (a proposal a person
+    /// accepted).
+    pub(crate) fn call_unheld(&mut self, tool: &str, args: &Value, actor: &Actor) -> Value {
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             self.run(tool, args, actor)
         }))

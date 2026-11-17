@@ -6,6 +6,7 @@ use crate::tool::Tool;
 mod activity;
 mod asset;
 mod checkpoint;
+mod permissions;
 mod physics;
 mod project;
 mod replay;
@@ -57,4 +58,6 @@ pub(crate) const CATALOG: &[Tool] = &[
     settings::PROJECT_SETTINGS,
     activity::ACTIVITY_GET,
     checkpoint::CHECKPOINT,
+    permissions::PERMISSIONS,
+    permissions::PROPOSALS,
 ];

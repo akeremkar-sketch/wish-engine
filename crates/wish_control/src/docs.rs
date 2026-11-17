@@ -465,6 +465,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "path_case_mismatch",
         "A path differs only in letter case from an existing file. Paths are case-sensitive: write the existing name exactly, or the same file would be opened twice under two names.",
     ),
+    (
+        "permission_denied",
+        "Only a person can do that (change the permission mode, accept or reject a proposal). Ask the person working with you.",
+    ),
     ("png_decode", "An image could not be decoded as PNG."),
     ("png_encode", "A picture could not be encoded as PNG."),
     (
@@ -508,6 +512,14 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "The folder already has a wish.json. wen new never overwrites a project.",
     ),
     ("project_not_found", "The project folder does not exist."),
+    (
+        "proposal_decided",
+        "That proposal was accepted, rejected or failed already; only waiting ones can be decided.",
+    ),
+    (
+        "proposal_not_found",
+        "There is no proposal with that id. proposals with action list shows them.",
+    ),
     (
         "replay_assets_changed",
         "Project files the simulation reads (sound and animation clip lengths, fonts) changed since the replay was recorded, so the run may differ. Re-record the replay if the change was intended.",

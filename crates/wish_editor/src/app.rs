@@ -168,6 +168,10 @@ pub struct EditorApp {
     history: Vec<Value>,
     /// The project's checkpoints, oldest first.
     checkpoints: Vec<Value>,
+    /// How much agents may change by themselves (`permissions`).
+    permission_mode: String,
+    /// Agents' proposals (waiting ones are shown in the Activity tab).
+    proposals: Vec<Value>,
     /// A before/after comparison being shown: the checkpoint, its picture
     /// and now's, and their textures once made.
     compare: Option<Compare>,
@@ -294,6 +298,8 @@ struct Actions {
     run_tests: bool,
     /// Save a checkpoint now.
     save_checkpoint: bool,
+    /// Set the permission mode.
+    permission: Option<&'static str>,
     /// Go back to this checkpoint.
     restore_checkpoint: Option<String>,
     /// Compare this checkpoint with now.
@@ -360,6 +366,7 @@ impl Actions {
             || self.show_problems
             || self.run_tests
             || self.save_checkpoint
+            || self.permission.is_some()
             || self.restore_checkpoint.is_some()
             || self.compare_checkpoint.is_some()
             || self.delete_checkpoint.is_some()
@@ -471,6 +478,8 @@ impl EditorApp {
             inspecting_resources: false,
             history: Vec::new(),
             checkpoints: Vec::new(),
+            permission_mode: "apply".to_owned(),
+            proposals: Vec::new(),
             compare: None,
             record: false,
             unbuilt: false,
@@ -1199,6 +1208,7 @@ impl EditorApp {
     fn read_project(&mut self) {
         // An agent may save checkpoints too: the menu follows.
         self.read_checkpoints();
+        self.read_proposals();
         let info = self.call("project_info", &json!({}));
         if info["ok"] != true {
             self.status = info["error"]["message"]
@@ -1493,6 +1503,29 @@ impl EditorApp {
         if let Some(seq) = got["last_seq"].as_u64() {
             self.activity_seq = self.activity_seq.max(seq);
         }
+    }
+
+    /// Reads the permission mode and the agents' proposals.
+    fn read_proposals(&mut self) {
+        let got = self.call("proposals", &json!({}));
+        if got["ok"] == true {
+            self.permission_mode = got["mode"].as_str().unwrap_or("apply").to_owned();
+            self.proposals = got["proposals"].as_array().cloned().unwrap_or_default();
+        }
+    }
+
+    /// The permission mode (`suggest`, `apply`, `autonomous`).
+    pub fn permission_mode(&self) -> &str {
+        &self.permission_mode
+    }
+
+    /// The agents' proposals waiting for a person.
+    pub fn waiting_proposals(&self) -> Vec<Value> {
+        self.proposals
+            .iter()
+            .filter(|p| p["status"] == "waiting")
+            .cloned()
+            .collect()
     }
 
     /// The activity feed's entries, oldest first.
@@ -2239,6 +2272,44 @@ impl EditorApp {
             self.run_tests(false);
         }
         self.checkpoint_act(&actions);
+        if let Some(mode) = actions.permission {
+            let set = self.call("permissions", &json!({ "action": "set", "mode": mode }));
+            if set["ok"] == true {
+                self.status = tf("agents' permission: {mode}", &[("mode", &mode_label(mode))]);
+            }
+            self.read_proposals();
+        }
+        if let Some((id, accept)) = actions.panels.decide {
+            let action = if accept { "accept" } else { "reject" };
+            let done = self.call("proposals", &json!({ "action": action, "id": id }));
+            self.status = if done["ok"] != true {
+                let message = done["error"]["message"]
+                    .as_str()
+                    .unwrap_or(t("it did not work"));
+                tf(
+                    "proposal {id}: {message}",
+                    &[("id", &id), ("message", &message)],
+                )
+            } else if !accept {
+                tf("proposal {id} rejected", &[("id", &id)])
+            } else if done["answer"]["ok"] == true {
+                tf("proposal {id} accepted and made", &[("id", &id)])
+            } else {
+                let message = done["answer"]["error"]["message"]
+                    .as_str()
+                    .unwrap_or(t("it did not work"));
+                tf(
+                    "proposal {id} accepted but failed: {message}",
+                    &[("id", &id), ("message", &message)],
+                )
+            };
+            self.read_proposals();
+            self.revision = u64::MAX;
+            self.refresh_scene();
+            self.refresh_project();
+            self.inspected_for = (Vec::new(), u64::MAX);
+            self.picture_stale = true;
+        }
         if actions.update_golden {
             self.run_tests(true);
         }
@@ -2349,6 +2420,7 @@ impl EditorApp {
             }
             if tab == Tab::Activity {
                 self.read_activity();
+                self.read_proposals();
             }
         }
         let revert = actions
@@ -3148,6 +3220,22 @@ impl EditorApp {
                         actions.save_picture = true;
                         ui.close();
                     }
+                    ui.menu_button(t("Permissions"), |ui| {
+                        for (mode, hover) in [
+                            ("suggest", t("An agent's change to the project waits for you in the Activity tab")),
+                            ("apply", t("Agents' changes are made; you review them in the Activity tab")),
+                            ("autonomous", t("As apply, and the cockpit does not ask between an agent's tasks")),
+                        ] {
+                            if ui
+                                .selectable_label(self.permission_mode == mode, mode_label(mode))
+                                .on_hover_text(hover)
+                                .clicked()
+                            {
+                                actions.permission = Some(mode);
+                                ui.close();
+                            }
+                        }
+                    });
                     ui.menu_button(t("Checkpoints"), |ui| {
                         if ui
                             .button(t("Save checkpoint"))
@@ -3403,6 +3491,7 @@ impl EditorApp {
                         crate::panels::activity(
                             ui,
                             &self.activity,
+                            &self.proposals,
                             &mut agents_only,
                             &mut actions.panels,
                         );
@@ -3530,6 +3619,7 @@ impl EditorApp {
             let before = (self.log_seq, self.activity_seq);
             self.read_log();
             self.read_activity();
+            self.read_proposals();
             log_changed = match self.tab {
                 Tab::Console => self.log_seq != before.0,
                 Tab::Activity => self.activity_seq != before.1,
@@ -3795,6 +3885,15 @@ impl Shell for EditorApp {
 
     fn wants_exit(&self) -> bool {
         self.exit
+    }
+}
+
+/// What a permission mode is called in the interface.
+fn mode_label(mode: &str) -> &'static str {
+    match mode {
+        "suggest" => t("Only suggest"),
+        "autonomous" => t("Autonomous"),
+        _ => t("Apply, I review"),
     }
 }
 

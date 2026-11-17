@@ -27,6 +27,7 @@ pub mod expr;
 mod live;
 pub mod ops;
 pub mod param;
+pub mod policy;
 pub mod project;
 pub mod render;
 mod replays;
