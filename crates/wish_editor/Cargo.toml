@@ -19,6 +19,7 @@ wish_mcp.workspace = true
 wish_render.workspace = true
 wish_script.workspace = true
 wish_text.workspace = true
+vello_cpu.workspace = true
 wish_window.workspace = true
 
 [dev-dependencies]

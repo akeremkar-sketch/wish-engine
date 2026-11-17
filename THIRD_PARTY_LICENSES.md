@@ -21,6 +21,7 @@ Made by tools/third_party.py from Cargo.lock.
 | anyhow | 1.0.104 | MIT OR Apache-2.0 | 85ad950cce87, 30fefc3a7d6a |
 | approx | 0.5.1 | Apache-2.0 | 283ea6cc2997 |
 | arbitrary | 1.5.0 | MIT OR Apache-2.0 | 954f335b8baf, 66a2ea9ed607 |
+| arboard | 3.7.0 | MIT OR Apache-2.0 | 4bf96504d6e8, b98db07f2ff2 |
 | arrayref | 0.3.9 | BSD-2-Clause | 112d1beb5fcb |
 | arrayvec | 0.7.8 | MIT OR Apache-2.0 | 954f335b8baf, 92c666480f81 |
 | as-raw-xcb-connection | 1.0.1 | MIT OR Apache-2.0 | 283ea6cc2997, 5de94d6e6075 |
@@ -52,6 +53,7 @@ Made by tools/third_party.py from Cargo.lock.
 | cfg-if | 1.0.5 | MIT OR Apache-2.0 | 954f335b8baf, 84e1bbfebd74 |
 | cfg_aliases | 0.2.2 | MIT | 48513346d335, bc56efd19e4d |
 | chacha20 | 0.10.2 | MIT OR Apache-2.0 | e8541ea93f02, 1038b7737a0a |
+| clipboard-win | 5.4.3 | BSL-1.0 | - |
 | cobs | 0.3.0 | MIT OR Apache-2.0 | 6dc0e068dcf3, b6d626830309 |
 | codespan-reporting | 0.13.1 | Apache-2.0 | 283ea6cc2997 |
 | color | 0.3.3 | Apache-2.0 OR MIT | 4bf96504d6e8, 1847e0e06981 |
@@ -110,6 +112,7 @@ Made by tools/third_party.py from Cargo.lock.
 | epaint | 0.37.0 | MIT OR Apache-2.0 | - |
 | equivalent | 1.0.3 | Apache-2.0 OR MIT | 954f335b8baf, 4428cd87371a |
 | errno | 0.3.15 | MIT OR Apache-2.0 | 954f335b8baf, 7f91c2a4eddb |
+| error-code | 3.4.0 | BSL-1.0 | 8d8291caf1ce |
 | euclid | 0.22.14 | MIT OR Apache-2.0 | 954f335b8baf, 3bfacc197ff2 |
 | fastrand | 2.5.0 | Apache-2.0 OR MIT | 954f335b8baf, 30fefc3a7d6a |
 | fdeflate | 0.3.7 | MIT OR Apache-2.0 | 4bf96504d6e8, 77949ead506e |
@@ -218,6 +221,7 @@ Made by tools/third_party.py from Cargo.lock.
 | objc2 | 0.5.3 | MIT | - |
 | objc2 | 0.6.5 | MIT | - |
 | objc2-app-kit | 0.2.2 | MIT | - |
+| objc2-app-kit | 0.3.2 | Zlib OR Apache-2.0 OR MIT | - |
 | objc2-audio-toolbox | 0.3.2 | Zlib OR Apache-2.0 OR MIT | - |
 | objc2-avf-audio | 0.3.2 | Zlib OR Apache-2.0 OR MIT | - |
 | objc2-cloud-kit | 0.2.2 | MIT | - |
@@ -460,7 +464,7 @@ Made by tools/third_party.py from Cargo.lock.
 
 ## Text 4bf96504d6e8
 
-Used by: ab_glyph 0.2.32, ab_glyph_rasterizer 0.1.10, alsa 0.11.0, android-activity 0.6.1, color 0.3.3, fdeflate 0.3.7, fearless_simd 0.4.1, half 2.7.1, image 0.25.10, linebender_resource_handle 0.1.1, miniz_oxide 0.8.9, miniz_oxide 0.9.1, naga 30.0.2, naga-types 30.0.2, owned_ttf_parser 0.25.1, pin-project 1.1.13, pin-project-internal 1.1.13, pin-project-lite 0.2.17, portable-atomic 1.15.0, portable-atomic-util 0.2.8, range-alloc 0.1.5, raw-window-handle 0.6.2, simdutf8 0.1.5, tiny-xlib 0.2.5, vello_common 0.2.0, vello_cpu 0.2.0, wgpu 30.0.2, wgpu-core 30.0.2, wgpu-core-deps-apple 30.0.2, wgpu-core-deps-emscripten 30.0.2, wgpu-core-deps-windows-linux-android 30.0.2, wgpu-hal 30.0.2, wgpu-naga-bridge 30.0.2, wgpu-types 30.0.2
+Used by: ab_glyph 0.2.32, ab_glyph_rasterizer 0.1.10, alsa 0.11.0, android-activity 0.6.1, arboard 3.7.0, color 0.3.3, fdeflate 0.3.7, fearless_simd 0.4.1, half 2.7.1, image 0.25.10, linebender_resource_handle 0.1.1, miniz_oxide 0.8.9, miniz_oxide 0.9.1, naga 30.0.2, naga-types 30.0.2, owned_ttf_parser 0.25.1, pin-project 1.1.13, pin-project-internal 1.1.13, pin-project-lite 0.2.17, portable-atomic 1.15.0, portable-atomic-util 0.2.8, range-alloc 0.1.5, raw-window-handle 0.6.2, simdutf8 0.1.5, tiny-xlib 0.2.5, vello_common 0.2.0, vello_cpu 0.2.0, wgpu 30.0.2, wgpu-core 30.0.2, wgpu-core-deps-apple 30.0.2, wgpu-core-deps-emscripten 30.0.2, wgpu-core-deps-windows-linux-android 30.0.2, wgpu-hal 30.0.2, wgpu-naga-bridge 30.0.2, wgpu-types 30.0.2
 
 ```text
 Apache License
@@ -1781,6 +1785,34 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
+```
+
+## Text b98db07f2ff2
+
+Used by: arboard 3.7.0
+
+```text
+MIT License
+
+Copyright (c) 2022 The Arboard contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ```
 
 ## Text 112d1beb5fcb
@@ -4695,6 +4727,36 @@ SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
 CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
+## Text 8d8291caf1ce
+
+Used by: error-code 3.4.0, xxhash-rust 0.8.20
+
+```text
+Boost Software License - Version 1.0 - August 17th, 2003
+
+Permission is hereby granted, free of charge, to any person or organization
+obtaining a copy of the software and accompanying documentation covered by
+this license (the "Software") to use, reproduce, display, distribute,
+execute, and transmit the Software, and to prepare derivative works of the
+Software, and to permit third-parties to whom the Software is furnished to
+do so, all subject to the following:
+
+The copyright notices in the Software and this entire statement, including
+the above license grant, this restriction and the following disclaimer,
+must be included in all copies of the Software, in whole or in part, and
+all derivative works of the Software, unless such copies or derivative
+works are solely in the form of machine-executable object code generated by
+a source language processor.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, TITLE AND NON-INFRINGEMENT. IN NO EVENT
+SHALL THE COPYRIGHT HOLDERS OR ANYONE DISTRIBUTING THE SOFTWARE BE LIABLE
+FOR ANY DAMAGES OR OTHER LIABILITY, WHETHER IN CONTRACT, TORT OR OTHERWISE,
+ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
@@ -12076,36 +12138,6 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-```
-
-## Text 8d8291caf1ce
-
-Used by: xxhash-rust 0.8.20
-
-```text
-Boost Software License - Version 1.0 - August 17th, 2003
-
-Permission is hereby granted, free of charge, to any person or organization
-obtaining a copy of the software and accompanying documentation covered by
-this license (the "Software") to use, reproduce, display, distribute,
-execute, and transmit the Software, and to prepare derivative works of the
-Software, and to permit third-parties to whom the Software is furnished to
-do so, all subject to the following:
-
-The copyright notices in the Software and this entire statement, including
-the above license grant, this restriction and the following disclaimer,
-must be included in all copies of the Software, in whole or in part, and
-all derivative works of the Software, unless such copies or derivative
-works are solely in the form of machine-executable object code generated by
-a source language processor.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE, TITLE AND NON-INFRINGEMENT. IN NO EVENT
-SHALL THE COPYRIGHT HOLDERS OR ANYONE DISTRIBUTING THE SOFTWARE BE LIABLE
-FOR ANY DAMAGES OR OTHER LIABILITY, WHETHER IN CONTRACT, TORT OR OTHERWISE,
-ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
 ```
 
 ## Text 98ed0ad9db8a

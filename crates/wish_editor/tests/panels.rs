@@ -87,7 +87,7 @@ fn menu_bar(app: &mut EditorApp, label: &str) {
     let rect = app
         .widgets()
         .iter()
-        .find(|w| w.role == "Button" && w.label.as_deref() == Some(label) && w.rect.max.y < 30.0)
+        .find(|w| w.role == "Button" && w.label.as_deref() == Some(label) && w.rect.max.y < 40.0)
         .map(|w| w.rect)
         .unwrap_or_else(|| panic!("no '{label}' in the menu bar"));
     run_script(

@@ -339,6 +339,13 @@ fn write_export(
     std::fs::create_dir_all(out).map_err(|error| unwritable(out, &error))?;
     std::fs::write(out.join(program), player)
         .map_err(|error| unwritable(&out.join(program), &error))?;
+    // Written as bytes, the program must be made runnable again (Unix).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(out.join(program), std::fs::Permissions::from_mode(0o755))
+            .map_err(|error| unwritable(&out.join(program), &error))?;
+    }
     let mut bytes = player.len() as u64;
     for path in files {
         bytes += copy_file(&root.join(path), &out.join("game").join(path))?;

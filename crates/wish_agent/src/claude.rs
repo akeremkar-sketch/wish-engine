@@ -36,17 +36,47 @@ pub fn find() -> Option<PathBuf> {
         let program = PathBuf::from(program);
         return program.is_file().then_some(program);
     }
+    let var = |name: &str| std::env::var_os(name).filter(|value| !value.is_empty());
+    find_in(
+        var("PATH").as_deref(),
+        var(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).as_deref(),
+        var("LOCALAPPDATA").as_deref(),
+    )
+}
+
+/// [`find`] without reading the environment: the folders of `path`, then
+/// `home/.local/bin` (the native installer), then (Windows) the Claude
+/// desktop app's own copy of the roaming folder. Windows keeps that copy
+/// for packaged apps: Claude Code installed with npm from inside the
+/// Claude app lands in `%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\npm`,
+/// which programs outside the app do not see as `%APPDATA%\npm`.
+pub fn find_in(
+    path: Option<&std::ffi::OsStr>,
+    home: Option<&std::ffi::OsStr>,
+    local_app_data: Option<&std::ffi::OsStr>,
+) -> Option<PathBuf> {
     let names: &[&str] = if cfg!(windows) {
         &["claude.exe", "claude.cmd"]
     } else {
         &["claude"]
     };
-    let mut folders: Vec<PathBuf> = std::env::var_os("PATH")
-        .map(|path| std::env::split_paths(&path).collect())
+    let mut folders: Vec<PathBuf> = path
+        .map(|path| std::env::split_paths(path).collect())
         .unwrap_or_default();
-    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" });
     if let Some(home) = home {
         folders.push(PathBuf::from(home).join(".local").join("bin"));
+    }
+    if let Some(local) = local_app_data {
+        let packages = PathBuf::from(local).join("Packages");
+        let mut apps: Vec<PathBuf> = std::fs::read_dir(&packages)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with("Claude_"))
+            .map(|entry| entry.path().join("LocalCache").join("Roaming").join("npm"))
+            .collect();
+        apps.sort();
+        folders.extend(apps);
     }
     folders
         .iter()

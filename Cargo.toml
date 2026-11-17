@@ -68,7 +68,9 @@ wgpu = "30"
 
 # Window (wish_window only). winit opens the window and delivers input;
 # softbuffer puts the finished picture on it (the renderer draws offscreen).
+arboard = { version = "3", default-features = false }
 softbuffer = "0.4"
+vello_cpu = { version = "0.2.0", default-features = false, features = ["std", "u8_pipeline"] }
 winit = "0.30"
 
 # Game logic (wish_script only, ADR-011). Only what running core modules

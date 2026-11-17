@@ -128,7 +128,7 @@ fn common(inspected: &[Inspected]) -> Vec<String> {
 
 /// The inspector panel.
 pub(crate) fn panel(ui: &mut Ui, view: &InspectorView<'_>, actions: &mut InspectorActions) {
-    ui.heading(t("Inspector"));
+    crate::style::panel_title(ui, t("Inspector"));
     ui.separator();
     let Some(first) = view.inspected.first() else {
         ui.weak(t("Select an entity to edit its components."));
@@ -140,7 +140,11 @@ pub(crate) fn panel(ui: &mut Ui, view: &InspectorView<'_>, actions: &mut Inspect
             "Nothing is selected: these are the scene's own settings (sky, light, physics, the game's resources).",
         ));
     } else if view.inspected.len() == 1 {
-        ui.strong(&first.id);
+        ui.label(
+            egui::RichText::new(&first.id)
+                .size(16.0)
+                .color(crate::style::TEXT),
+        );
     } else {
         ui.strong(tf("{count} entities", &[("count", &view.inspected.len())]));
         ui.weak(t(
@@ -158,6 +162,42 @@ pub(crate) fn panel(ui: &mut Ui, view: &InspectorView<'_>, actions: &mut Inspect
         ui.weak(t(
             "Part of a prefab instance: changes are kept as overrides of the instance.",
         ));
+    }
+    if !part {
+        let present = common(view.inspected);
+        let add = if view.resources {
+            t("Add resource...")
+        } else {
+            t("Add component...")
+        };
+        ui.menu_button(add, |ui| {
+            let mut filter = view.state.borrow().add_filter.clone();
+            let search = ui.add(
+                egui::TextEdit::singleline(&mut filter)
+                    .hint_text(t("Search"))
+                    .desired_width(200.0),
+            );
+            search.request_focus();
+            view.state.borrow_mut().add_filter.clone_from(&filter);
+            let wanted = filter.to_lowercase();
+            egui::ScrollArea::vertical()
+                .max_height(300.0)
+                .show(ui, |ui| {
+                    for name in view.schemas.keys() {
+                        if present.contains(name) || !name.to_lowercase().contains(&wanted) {
+                            continue;
+                        }
+                        let doc = view.schemas[name]["description"]
+                            .as_str()
+                            .unwrap_or_default();
+                        if ui.button(name).on_hover_text(doc).clicked() {
+                            actions.add = Some(name.clone());
+                            view.state.borrow_mut().add_filter.clear();
+                            ui.close();
+                        }
+                    }
+                });
+        });
     }
     ui.separator();
     egui::ScrollArea::vertical()
@@ -234,44 +274,6 @@ pub(crate) fn panel(ui: &mut Ui, view: &InspectorView<'_>, actions: &mut Inspect
                 if let Some(doc) = schema.and_then(|s| s["description"].as_str()) {
                     header_response.on_hover_text(doc);
                 }
-            }
-            if !part {
-                ui.separator();
-                let present = common(view.inspected);
-                let add = if view.resources {
-                    t("Add resource...")
-                } else {
-                    t("Add component...")
-                };
-                ui.menu_button(add, |ui| {
-                    let mut filter = view.state.borrow().add_filter.clone();
-                    let search = ui.add(
-                        egui::TextEdit::singleline(&mut filter)
-                            .hint_text(t("Search"))
-                            .desired_width(200.0),
-                    );
-                    search.request_focus();
-                    view.state.borrow_mut().add_filter.clone_from(&filter);
-                    let wanted = filter.to_lowercase();
-                    egui::ScrollArea::vertical()
-                        .max_height(300.0)
-                        .show(ui, |ui| {
-                            for name in view.schemas.keys() {
-                                if present.contains(name) || !name.to_lowercase().contains(&wanted)
-                                {
-                                    continue;
-                                }
-                                let doc = view.schemas[name]["description"]
-                                    .as_str()
-                                    .unwrap_or_default();
-                                if ui.button(name).on_hover_text(doc).clicked() {
-                                    actions.add = Some(name.clone());
-                                    view.state.borrow_mut().add_filter.clear();
-                                    ui.close();
-                                }
-                            }
-                        });
-                });
             }
         });
 }

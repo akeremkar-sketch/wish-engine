@@ -106,7 +106,7 @@ fn game_key(name: &str) -> &str {
     }
 }
 /// The window's backdrop where nothing is drawn.
-const BACKDROP: [u8; 4] = [24, 24, 27, 255];
+const BACKDROP: [u8; 4] = crate::style::BACKDROP;
 /// A viewport smaller than this is not drawn (a window being squeezed).
 const MIN_VIEWPORT: f32 = 32.0;
 /// The colour of the box around the selection in the view.
@@ -201,6 +201,17 @@ pub struct EditorApp {
     viewport: Rect,
     /// What the scene looked like last (kept while nothing changes).
     picture: Option<RgbaImage>,
+    /// The game view is wanted beside the scene view (shown when the middle
+    /// is wide enough).
+    game_view: bool,
+    /// Where the game view is this frame (`Rect::NOTHING`: not shown).
+    game_viewport: Rect,
+    /// The game view's picture: the scene's own camera, with the game's
+    /// interface.
+    game_picture: Option<RgbaImage>,
+    /// What the game picture was drawn for (scene revision, game tick,
+    /// size), so it is drawn again only when one of them changes.
+    game_drawn: Option<(u64, Option<u64>, u32, u32)>,
     /// Boxes around the selected entities, in window pixels.
     outlines: Vec<Rect>,
     drawn_size: (u32, u32),
@@ -315,6 +326,8 @@ struct Actions {
     permission: Option<&'static str>,
     /// Show or hide the agent's panel.
     toggle_cockpit: bool,
+    /// Show or hide the game view.
+    toggle_game_view: bool,
     /// Open (true) or close (false) the "connect an outside agent" window.
     connect: Option<bool>,
     /// What the agent's panel asked for.
@@ -386,6 +399,7 @@ impl Actions {
             || self.run_tests
             || self.save_checkpoint
             || self.export
+            || self.toggle_game_view
             || self.export_replace
             || self.export_cancel
             || self.permission.is_some()
@@ -456,6 +470,10 @@ impl EditorApp {
             picture: None,
             outlines: Vec::new(),
             drawn_size: (0, 0),
+            game_view: true,
+            game_viewport: Rect::NOTHING,
+            game_picture: None,
+            game_drawn: None,
             picture_stale: true,
             ui_state: RefCell::new(UiState::default()),
             prefabs: Vec::new(),
@@ -1449,7 +1467,11 @@ impl EditorApp {
     /// change. Without a file, the language comes from `WISH_LANG` or the
     /// system's; else English.
     pub fn use_preferences(&mut self, path: std::path::PathBuf) {
-        let saved = crate::prefs::read(&path)
+        let prefs = crate::prefs::read(&path);
+        if let Some(shown) = prefs.get("game_view").and_then(Value::as_bool) {
+            self.game_view = shown;
+        }
+        let saved = prefs
             .get("language")
             .and_then(Value::as_str)
             .map(str::to_owned);
@@ -1492,8 +1514,10 @@ impl EditorApp {
             return;
         };
         let language = self.language;
+        let game_view = self.game_view;
         let written = crate::prefs::update(&path, |prefs| {
             prefs.insert("language".to_owned(), json!(language));
+            prefs.insert("game_view".to_owned(), json!(game_view));
         });
         if let Err(error) = written {
             self.status = tf(
@@ -2624,6 +2648,12 @@ impl EditorApp {
         if actions.toggle_cockpit {
             self.cockpit.open = !self.cockpit.open;
         }
+        if actions.toggle_game_view {
+            self.game_view = !self.game_view;
+            self.game_drawn = None;
+            self.picture_stale = true;
+            self.save_preferences();
+        }
         match actions.connect {
             Some(true) => {
                 if self.ensure_endpoint().is_ok() {
@@ -3216,6 +3246,42 @@ impl EditorApp {
     /// The picture of the scene at the viewport's size, drawn when something
     /// changed (the scene, the camera, the size); and what a click on it
     /// means: who is under the pointer, and where the selection is.
+    /// Draws the game view's picture when what it shows has changed: the
+    /// scene (or the running game) through the scene's own camera, with the
+    /// game's interface, as the player sees it.
+    fn render_game(&mut self) {
+        let area = self.game_viewport;
+        if area == Rect::NOTHING || area.width() < MIN_VIEWPORT || area.height() < MIN_VIEWPORT {
+            self.game_picture = None;
+            self.game_drawn = None;
+            return;
+        }
+        let (width, height) = (area.width() as u32, area.height() as u32);
+        let preview = self.drag.as_ref().and_then(|active| active.ops.clone());
+        let key = (
+            self.revision,
+            self.play.as_ref().map(|play| play.tick),
+            width,
+            height,
+        );
+        if preview.is_none() && self.game_drawn == Some(key) && self.game_picture.is_some() {
+            return;
+        }
+        let scene = self.scene.clone();
+        let session = self.play.as_ref().map(|play| play.session.clone());
+        let source = match (&session, &preview) {
+            (Some(id), _) => PictureSource::Session(id),
+            (None, Some(ops)) => PictureSource::Preview(Some(&scene), ops),
+            (None, None) => PictureSource::Scene(Some(&scene)),
+        };
+        self.game_picture = self
+            .workspace
+            .render_picture(source, None, width, height, View::Lit)
+            .ok()
+            .map(|picture| picture.image);
+        self.game_drawn = Some(key);
+    }
+
     fn render_viewport(&mut self, seconds: f64) -> bool {
         let (width, height) = (
             self.viewport.width().max(0.0) as u32,
@@ -3259,12 +3325,15 @@ impl EditorApp {
                 (None, Some(ops)) => PictureSource::Preview(Some(&scene), ops),
                 (None, None) => PictureSource::Scene(Some(&scene)),
             };
-            // A running game is seen through its own camera.
-            let eye_camera: Option<&dyn Fn(&CameraView) -> CameraView> = if session.is_some() {
-                None
-            } else {
-                Some(&camera)
-            };
+            // A running game is seen through its own camera, unless the game
+            // view beside shows that: then this view keeps the editor's eye.
+            let split = self.game_viewport != Rect::NOTHING;
+            let eye_camera: Option<&dyn Fn(&CameraView) -> CameraView> =
+                if session.is_some() && !split {
+                    None
+                } else {
+                    Some(&camera)
+                };
             let drawn = self
                 .workspace
                 .render_picture(source, eye_camera, width, height, self.view);
@@ -3293,10 +3362,14 @@ impl EditorApp {
             return false;
         }
         let session = self.play.as_ref().map(|play| play.session.clone());
+        let split = self.game_viewport != Rect::NOTHING;
         let ids = match &session {
-            Some(id) => self
-                .workspace
-                .render_ids(PictureSource::Session(id), None, width, height),
+            Some(id) => self.workspace.render_ids(
+                PictureSource::Session(id),
+                if split { Some(&camera) } else { None },
+                width,
+                height,
+            ),
             None => self.workspace.render_ids(
                 PictureSource::Scene(Some(&scene)),
                 Some(&camera),
@@ -3370,15 +3443,27 @@ impl EditorApp {
     /// The hierarchy panel: select, add, delete, rename, move.
     fn hierarchy(&self, ui: &mut Ui, actions: &mut Actions) {
         ui.horizontal(|ui| {
-            ui.heading(t("Hierarchy"));
+            crate::style::panel_title(ui, t("Hierarchy"));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui
-                    .add_enabled(!self.selected.is_empty(), egui::Button::new(t("Delete")))
-                    .clicked()
+                use crate::style::{Icon, tool_button};
+                if tool_button(
+                    ui,
+                    Icon::Trash,
+                    t("Delete"),
+                    false,
+                    false,
+                    !self.selected.is_empty(),
+                    None,
+                )
+                .on_hover_text(t("Delete"))
+                .clicked()
                 {
                     actions.delete = true;
                 }
-                if ui.button("+").on_hover_text(t("Add an entity")).clicked() {
+                if tool_button(ui, Icon::Plus, "+", false, false, true, None)
+                    .on_hover_text(t("Add an entity"))
+                    .clicked()
+                {
                     actions.add = Some(None);
                 }
             });
@@ -3398,6 +3483,7 @@ impl EditorApp {
             self.ui_state.borrow_mut().rename = Some((first.clone(), first.clone()));
         }
         egui::ScrollArea::vertical().show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 1.0;
             for row in &self.rows {
                 let selected = self.selected.contains(&row.id);
                 ui.horizontal(|ui| {
@@ -3428,6 +3514,11 @@ impl EditorApp {
                         }
                         return;
                     }
+                    // What kind of thing it is, at a glance.
+                    let (icon, color) =
+                        crate::style::entity_icon(&row.components, row.prefab.is_some());
+                    let (icon_rect, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
+                    crate::style::paint(ui.painter(), icon_rect, icon, color);
                     let response = ui
                         .selectable_label(selected, &row.id)
                         .interact(Sense::click_and_drag());
@@ -3491,7 +3582,7 @@ impl EditorApp {
 
     /// The layout: menu bar, hierarchy, inspector, status bar, and the hole
     /// in the middle that the scene's picture shows through.
-    fn layout(&self, ui: &mut Ui, viewport: &mut Rect) -> Actions {
+    fn layout(&self, ui: &mut Ui, viewport: &mut Rect, game_area: &mut Rect) -> Actions {
         let mut actions = Actions::default();
         egui::Panel::top("menu").show(ui, |ui| {
             // Shortcuts, unless the person is typing (a text box has its
@@ -3701,28 +3792,22 @@ impl EditorApp {
                             }
                         }
                     });
-                ui.separator();
-                if ui
-                    .add_enabled(
-                        self.can_undo && self.play.is_none(),
-                        egui::Button::new(t("Undo")),
-                    )
-                    .on_hover_text("Ctrl+Z")
-                    .clicked()
-                {
-                    actions.undo = true;
-                }
-                if ui
-                    .add_enabled(
-                        self.can_redo && self.play.is_none(),
-                        egui::Button::new(t("Redo")),
-                    )
-                    .on_hover_text("Ctrl+Y")
-                    .clicked()
-                {
-                    actions.redo = true;
-                }
-                ui.separator();
+                use crate::style::{GO, Icon, RED, tool_button, tool_group};
+                let editing = self.play.is_none();
+                tool_group(ui, 64.0, |ui| {
+                    if tool_button(ui, Icon::Undo, t("Undo"), false, false, self.can_undo && editing, None)
+                        .on_hover_text("Ctrl+Z")
+                        .clicked()
+                    {
+                        actions.undo = true;
+                    }
+                    if tool_button(ui, Icon::Redo, t("Redo"), false, false, self.can_redo && editing, None)
+                        .on_hover_text("Ctrl+Y")
+                        .clicked()
+                    {
+                        actions.redo = true;
+                    }
+                });
                 egui::ComboBox::from_id_salt("view")
                     .selected_text(view_label(self.view.name()))
                     .show_ui(ui, |ui| {
@@ -3740,22 +3825,25 @@ impl EditorApp {
                             }
                         }
                     });
-                match &self.play {
+                tool_group(ui, 220.0, |ui| match &self.play {
                     None => {
-                        if ui
-                            .add_enabled(
-                                !self.scene.ends_with(".prefab.json"),
-                                egui::Button::new(t("Play")),
-                            )
-                            .on_hover_text(t(
-                                "Run the game here; changes made while it runs are not kept (Ctrl+P)",
-                            ))
-                            .clicked()
+                        if tool_button(
+                            ui,
+                            Icon::Play,
+                            t("Play"),
+                            true,
+                            false,
+                            !self.scene.ends_with(".prefab.json"),
+                            Some(GO),
+                        )
+                        .on_hover_text(t(
+                            "Run the game here; changes made while it runs are not kept (Ctrl+P)",
+                        ))
+                        .clicked()
                         {
                             actions.play_start = true;
                         }
-                        if ui
-                            .selectable_label(self.record, t("Record"))
+                        if tool_button(ui, Icon::Record, t("Record"), true, self.record, true, Some(RED))
                             .on_hover_text(t(
                                 "Record the next run as a replay (saved under replays/ when it stops)",
                             ))
@@ -3766,27 +3854,30 @@ impl EditorApp {
                     }
                     Some(play) => {
                         if play.recording {
-                            ui.label(
-                                egui::RichText::new(t("REC"))
-                                    .color(egui::Color32::from_rgb(235, 90, 80)),
-                            )
-                            .on_hover_text(t("This run is being recorded as a replay"));
+                            ui.label(egui::RichText::new(t("REC")).color(RED))
+                                .on_hover_text(t("This run is being recorded as a replay"));
                         }
-                        let pause = if play.paused { t("Resume") } else { t("Pause") };
-                        if ui.button(pause).clicked() {
+                        let (icon, pause) = if play.paused {
+                            (Icon::Play, t("Resume"))
+                        } else {
+                            (Icon::Pause, t("Pause"))
+                        };
+                        if tool_button(ui, icon, pause, true, false, true, Some(GO)).clicked() {
                             actions.play_pause = true;
                         }
-                        if ui
-                            .add_enabled(play.paused, egui::Button::new(t("Step")))
+                        if tool_button(ui, Icon::Step, t("Step"), false, false, play.paused, None)
                             .on_hover_text(t("One tick"))
                             .clicked()
                         {
                             actions.play_step = true;
                         }
-                        if ui.button(t("Stop")).clicked() {
+                        if tool_button(ui, Icon::Stop, t("Stop"), true, false, true, Some(RED)).clicked() {
                             actions.play_stop = true;
                         }
-                        ui.label(tf("tick {tick}", &[("tick", &play.tick)]));
+                        ui.label(
+                            egui::RichText::new(tf("tick {tick}", &[("tick", &play.tick)]))
+                                .color(crate::style::WEAK),
+                        );
                         if play.snapshots.len() > 1 {
                             let pending = self.ui_state.borrow().timeline;
                             let mut cursor = pending.unwrap_or(play.cursor);
@@ -3806,61 +3897,90 @@ impl EditorApp {
                             }
                         }
                     }
-                }
-                ui.separator();
-                if ui
-                    .selectable_label(self.cockpit.open, t("Agent"))
-                    .on_hover_text(t("The agent's panel: ask, point at things, watch it work"))
-                    .clicked()
-                {
-                    actions.toggle_cockpit = true;
-                }
-                ui.separator();
-                if ui.button(t("Reset camera")).clicked() {
-                    actions.reset_camera = true;
-                }
-                ui.separator();
-                for (mode, name) in [
-                    (Mode::Translate, t("Move")),
-                    (Mode::Rotate, t("Rotate")),
-                    (Mode::Scale, t("Scale")),
-                ] {
-                    if ui
-                        .selectable_label(self.mode == mode, name)
-                        .on_hover_text(t("Keys W, E, R"))
+                });
+                tool_group(ui, 250.0, |ui| {
+                    for (mode, icon, name) in [
+                        (Mode::Translate, Icon::Move, t("Move")),
+                        (Mode::Rotate, Icon::Rotate, t("Rotate")),
+                        (Mode::Scale, Icon::Scale, t("Scale")),
+                    ] {
+                        if tool_button(ui, icon, name, false, self.mode == mode, true, None)
+                            .on_hover_text(format!("{name} ({})", t("Keys W, E, R")))
+                            .clicked()
+                        {
+                            actions.mode = Some(mode);
+                        }
+                    }
+                    let space = if self.space == Space::World {
+                        t("World")
+                    } else {
+                        t("Local")
+                    };
+                    if tool_button(ui, Icon::Globe, space, true, false, true, None)
+                        .on_hover_text(t("The handles' axes: the world's or the entity's own"))
                         .clicked()
                     {
-                        actions.mode = Some(mode);
+                        actions.toggle_space = true;
                     }
-                }
-                let space = if self.space == Space::World {
-                    t("World")
-                } else {
-                    t("Local")
-                };
-                if ui
-                    .button(space)
-                    .on_hover_text(t("The handles' axes: the world's or the entity's own"))
+                    if tool_button(ui, Icon::Magnet, t("Snap"), false, self.snap, true, None)
+                        .on_hover_text(t("Half metres, 15 degrees, steps of 10 % when on"))
+                        .clicked()
+                    {
+                        actions.toggle_snap = true;
+                    }
+                    if tool_button(ui, Icon::Target, t("Reset camera"), false, false, true, None)
+                        .on_hover_text(t("Reset camera"))
+                        .clicked()
+                    {
+                        actions.reset_camera = true;
+                    }
+                });
+                tool_group(ui, 40.0, |ui| {
+                    if tool_button(ui, Icon::Screen, t("Game view"), false, self.game_view, true, None)
+                        .on_hover_text(t(
+                            "The game as the player sees it (the scene's camera), beside the scene view",
+                        ))
+                        .clicked()
+                    {
+                        actions.toggle_game_view = true;
+                    }
+                });
+                tool_group(ui, 90.0, |ui| {
+                    if tool_button(
+                        ui,
+                        Icon::Spark,
+                        t("Agent"),
+                        true,
+                        self.cockpit.open,
+                        true,
+                        Some(crate::style::ACCENT),
+                    )
+                    .on_hover_text(t("The agent's panel: ask, point at things, watch it work"))
                     .clicked()
-                {
-                    actions.toggle_space = true;
-                }
-                if ui
-                    .selectable_label(self.snap, t("Snap"))
-                    .on_hover_text(t("Half metres, 15 degrees, steps of 10 % when on"))
-                    .clicked()
-                {
-                    actions.toggle_snap = true;
-                }
+                    {
+                        actions.toggle_cockpit = true;
+                    }
+                });
             });
         });
         egui::Panel::bottom("status").show(ui, |ui| {
             ui.horizontal(|ui| {
                 let (errors, warnings) = self.problems;
-                ui.label(tf(
-                    "{errors} error(s), {warnings} warning(s)",
-                    &[("errors", &errors), ("warnings", &warnings)],
-                ));
+                // Problems in their colour; none in a quiet one.
+                let color = if errors > 0 {
+                    crate::style::RED
+                } else if warnings > 0 {
+                    crate::style::AMBER
+                } else {
+                    crate::style::WEAK
+                };
+                ui.label(
+                    egui::RichText::new(tf(
+                        "{errors} error(s), {warnings} warning(s)",
+                        &[("errors", &errors), ("warnings", &warnings)],
+                    ))
+                    .color(color),
+                );
                 ui.separator();
                 ui.add(egui::Label::new(&self.status).truncate())
                     .on_hover_text(&self.status);
@@ -3868,7 +3988,7 @@ impl EditorApp {
         });
         egui::Panel::bottom("assets")
             .resizable(true)
-            .default_size(190.0)
+            .default_size(170.0)
             .size_range(110.0..=420.0)
             .show(ui, |ui| {
                 crate::panels::tabs(ui, self.tab, self.found.len(), &mut actions.panels);
@@ -3949,8 +4069,25 @@ impl EditorApp {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
-                let area = ui.max_rect();
+                let full = ui.max_rect();
+                // The game view beside the scene view, when it is wanted and
+                // the middle is wide enough for both.
+                let split = self.game_view && full.width() >= GAME_VIEW_MIN_WIDTH;
+                let area = if split {
+                    let half = ((full.width() - VIEW_GAP) * 0.5).floor();
+                    *game_area = Rect::from_min_max(
+                        pos2(full.min.x + half + VIEW_GAP, full.min.y),
+                        full.max,
+                    );
+                    Rect::from_min_size(full.min, vec2(half, full.height()))
+                } else {
+                    full
+                };
                 *viewport = area;
+                if split {
+                    view_badge(ui, area, t("Scene"));
+                    view_badge(ui, *game_area, t("Game"));
+                }
                 // A file dragged from the browser is dropped on the view.
                 let target = ui.allocate_rect(area, Sense::hover());
                 if let Some(dropped) = target.dnd_release_payload::<AssetDrag>() {
@@ -4076,20 +4213,28 @@ impl EditorApp {
             let mut passes = 0;
             let frame = loop {
                 let mut viewport = self.viewport;
+                let mut game_area = Rect::NOTHING;
                 let mut actions = Actions::default();
                 let frame = editor.layout(
                     size,
                     seconds,
                     egui_events.take().unwrap_or_default(),
                     |ui| {
-                        actions = self.layout(ui, &mut viewport);
+                        actions = self.layout(ui, &mut viewport, &mut game_area);
                     },
                 );
                 self.viewport = viewport;
+                if (self.game_viewport == Rect::NOTHING) != (game_area == Rect::NOTHING) {
+                    // The scene view changes camera when the game view comes
+                    // or goes during a game.
+                    self.picture_stale = true;
+                }
+                self.game_viewport = game_area;
                 let acted = actions.any();
                 self.act(actions);
                 let render_started = std::time::Instant::now();
                 let picked = self.render_viewport(seconds);
+                self.render_game();
                 scene_ms += render_started.elapsed().as_secs_f32() * 1000.0;
                 self.refresh_inspected();
                 self.refresh_target();
@@ -4108,6 +4253,11 @@ impl EditorApp {
             }
             if let Some(picture) = &self.picture {
                 blit(&mut self.canvas, picture, self.viewport);
+            }
+            if self.game_viewport != Rect::NOTHING
+                && let Some(picture) = &self.game_picture
+            {
+                blit(&mut self.canvas, picture, self.game_viewport);
             }
             // (Not while a handle is dragged: the box would stay where the
             // entity was.)
@@ -4147,10 +4297,39 @@ impl EditorApp {
         false
     }
 
+    /// Where the game view is, if it is shown beside the scene view.
+    pub fn game_view_area(&self) -> Option<Rect> {
+        (self.game_viewport != Rect::NOTHING).then_some(self.game_viewport)
+    }
+
+    /// The scene view's place (where the editor's own camera draws).
+    pub fn scene_view_area(&self) -> Rect {
+        self.viewport
+    }
+
     /// The canvas as drawn last.
     pub fn canvas(&self) -> &Canvas {
         &self.canvas
     }
+}
+
+/// The middle must be this wide for the game view to be shown beside the
+/// scene view.
+const GAME_VIEW_MIN_WIDTH: f32 = 900.0;
+/// The gap between the scene view and the game view.
+const VIEW_GAP: f32 = 4.0;
+
+/// A view's name in its top-left corner ("Scene", "Game").
+fn view_badge(ui: &Ui, area: Rect, name: &str) {
+    let font = egui::FontId::proportional(12.0);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(name.to_owned(), font, crate::style::TEXT);
+    let rect = Rect::from_min_size(area.min + vec2(8.0, 8.0), galley.size() + vec2(16.0, 6.0));
+    ui.painter()
+        .rect_filled(rect, 6.0, egui::Color32::from_black_alpha(150));
+    ui.painter()
+        .galley(rect.min + vec2(8.0, 3.0), galley, crate::style::TEXT);
 }
 
 /// A two-pixel frame around `rect`, kept inside `clip`.
@@ -4266,6 +4445,9 @@ pub(crate) fn convert(events: &[ShellEvent], pointer: Option<(f32, f32)>) -> Vec
                 }
             }
             ShellEvent::Text(text) => out.push(egui::Event::Text(text.clone())),
+            ShellEvent::Paste(text) => out.push(egui::Event::Paste(text.clone())),
+            ShellEvent::Copy => out.push(egui::Event::Copy),
+            ShellEvent::Cut => out.push(egui::Event::Cut),
             ShellEvent::Modifiers(modifiers) => {
                 out.push(egui::Event::ModifiersChanged(egui_modifiers(*modifiers)));
             }
@@ -4299,6 +4481,10 @@ impl Shell for EditorApp {
 
     fn wants_exit(&self) -> bool {
         self.exit
+    }
+
+    fn take_clipboard(&mut self) -> Option<String> {
+        self.editor.as_mut().and_then(Editor::take_copied)
     }
 }
 

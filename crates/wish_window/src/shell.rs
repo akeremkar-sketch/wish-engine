@@ -91,6 +91,12 @@ pub enum ShellEvent {
     /// The modifier keys held changed (they stay as they are until the
     /// next one of these).
     Modifiers(Modifiers),
+    /// Text pasted from the system clipboard (Ctrl+V).
+    Paste(String),
+    /// Copy the selection to the clipboard (Ctrl+C).
+    Copy,
+    /// Cut the selection to the clipboard (Ctrl+X).
+    Cut,
     /// The raw mouse moved by this much while the window had it (for
     /// looking around with a held button).
     MouseDelta {
@@ -131,6 +137,12 @@ pub trait Shell {
     fn wants_exit(&self) -> bool {
         false
     }
+
+    /// Text the shell asked to put on the system clipboard since the last
+    /// frame (a copy or a cut), if any.
+    fn take_clipboard(&mut self) -> Option<String> {
+        None
+    }
 }
 
 /// How to open the window.
@@ -163,6 +175,7 @@ pub fn run_shell(options: ShellOptions, shell: &mut dyn Shell) -> Result<ShellRe
         last: Instant::now(),
         report: ShellReport::default(),
         error: None,
+        clipboard: None,
     };
     event_loop
         .run_app(&mut app)
@@ -191,6 +204,9 @@ struct ShellApp<'a> {
     last: Instant,
     report: ShellReport,
     error: Option<Diagnostic>,
+    /// The system clipboard, opened when first needed (a desktop without
+    /// one only loses copy and paste).
+    clipboard: Option<arboard::Clipboard>,
 }
 
 /// The name egui gives a key, if we know one for it.
@@ -225,6 +241,14 @@ fn key_name(key: &Key) -> Option<String> {
 }
 
 impl ShellApp<'_> {
+    /// The system clipboard, if this desktop has one.
+    fn clipboard(&mut self) -> Option<&mut arboard::Clipboard> {
+        if self.clipboard.is_none() {
+            self.clipboard = arboard::Clipboard::new().ok();
+        }
+        self.clipboard.as_mut()
+    }
+
     fn size(&self) -> (u32, u32) {
         self.window.as_ref().map_or(self.options.size, |window| {
             let size = window.inner_size();
@@ -239,6 +263,12 @@ impl ShellApp<'_> {
         self.last = now;
         let size = self.size();
         let events = std::mem::take(&mut self.events);
+        // What the last frame copied goes to the system clipboard.
+        if let Some(text) = self.shell.take_clipboard()
+            && let Some(clipboard) = self.clipboard()
+        {
+            let _ = clipboard.set_text(text);
+        }
         let Some(picture) = self.shell.frame(size, seconds, events) else {
             return;
         };
@@ -345,6 +375,25 @@ impl ApplicationHandler for ShellApp<'_> {
                         repeat: event.repeat,
                         modifiers: self.modifiers,
                     });
+                }
+                // Copy, cut and paste, as the system does them.
+                if pressed
+                    && self.modifiers.ctrl
+                    && let Key::Character(text) = &event.logical_key
+                {
+                    match text.to_lowercase().as_str() {
+                        "c" => self.events.push(ShellEvent::Copy),
+                        "x" => self.events.push(ShellEvent::Cut),
+                        "v" => {
+                            if let Some(text) = self
+                                .clipboard()
+                                .and_then(|clipboard| clipboard.get_text().ok())
+                            {
+                                self.events.push(ShellEvent::Paste(text));
+                            }
+                        }
+                        _ => {}
+                    }
                 }
                 if pressed
                     && !self.modifiers.ctrl

@@ -105,8 +105,15 @@ fn a_package_copies_a_template_as_a_template() {
     let template = base.join("template");
     create_project(&template, "Template", "wen").unwrap();
     put(&template, ".wish/build/game.wasm", "built");
+    put(&template, ".template/thumbnail.png", "picture");
     let to = base.join("templates").join("mine");
     copy_template(&template, &to).unwrap();
+    // Its picture for the welcome screen goes with it; a new project made
+    // from it does not get it.
+    assert!(to.join(".template/thumbnail.png").is_file());
+    let made = base.join("made");
+    create_from_template(&made, "Made", "wen", &to).unwrap();
+    assert!(!made.join(".template").exists());
     assert!(to.join("wish.json").is_file());
     assert!(to.join("scenes/main.scene.json").is_file());
     assert!(!to.join(".wish").exists());

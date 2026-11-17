@@ -185,7 +185,7 @@ fn the_interface_fits_and_is_translated_in_every_language() {
         let bar: Vec<_> = app
             .widgets()
             .iter()
-            .filter(|w| w.role == "Button" && w.rect.max.y < 30.0)
+            .filter(|w| w.role == "Button" && w.rect.max.y < 40.0)
             .collect();
         if !bar.iter().any(|w| w.label.as_deref() == Some(undo)) {
             problems.push(format!("{}: no '{undo}' in the menu bar", language.code));

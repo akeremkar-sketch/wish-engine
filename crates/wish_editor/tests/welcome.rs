@@ -73,6 +73,28 @@ fn named(launcher: &Launcher, text: &str) -> Rect {
 }
 
 fn click(launcher: &mut Launcher, text: &str) {
+    // A card below the visible part of the page is scrolled to first, as a
+    // person would (the bar at the bottom covers the page's end).
+    for _ in 0..10 {
+        let before = named(launcher, text);
+        if before.max.y < 560.0 {
+            break;
+        }
+        play(
+            launcher,
+            json!([
+                { "events": [{ "pointer": [640.0, 300.0] }] },
+                { "events": [{ "scroll": [0.0, -120.0] }] },
+                { "seconds": 0.4 },
+                { "idle": 2 }
+            ]),
+        );
+        // (Something that does not move with the page, like the bar's
+        // Create button, stays where it is.)
+        if named(launcher, text) == before {
+            break;
+        }
+    }
     let rect = named(launcher, text);
     play(
         launcher,
@@ -272,4 +294,48 @@ fn a_crash_report_is_told_once() {
     assert_eq!(saved["language"], "en");
     std::fs::write(crashes.join("crash-000000000002-wen.txt"), "report").unwrap();
     assert!(wish_editor::crash_notice(&prefs, &crashes).is_some());
+}
+
+/// Paste (Ctrl+V) types into a field; copy (Ctrl+C) gives the selection to
+/// the window for the system clipboard (found by driving the real window:
+/// a request could not be pasted into the Agent panel).
+#[test]
+fn text_is_pasted_and_copied() {
+    use wish_window::Shell;
+    let (options, _) = options("clipboard");
+    let mut launcher = Launcher::new(options);
+    play(&mut launcher, json!([{ "idle": 2 }]));
+    let name = launcher
+        .widgets()
+        .iter()
+        .find(|w| w.role == "TextInput" && w.value.as_deref() == Some("My game"))
+        .map(|w| w.rect)
+        .expect("the name field");
+    play(
+        &mut launcher,
+        json!([
+            { "events": [{ "click": [name.center().x, name.center().y] }] },
+            { "events": [{ "key": "A", "ctrl": true }] },
+            { "events": [{ "paste": "Pasted Game" }] },
+            { "idle": 2 }
+        ]),
+    );
+    assert!(
+        launcher
+            .new_project_folder()
+            .unwrap()
+            .ends_with("pasted-game"),
+        "{:?}",
+        launcher.new_project_folder()
+    );
+    play(
+        &mut launcher,
+        json!([
+            { "events": [{ "key": "A", "ctrl": true }] },
+            { "events": [{ "copy": true }] },
+            { "idle": 1 }
+        ]),
+    );
+    assert_eq!(launcher.take_clipboard().as_deref(), Some("Pasted Game"));
+    assert_eq!(launcher.take_clipboard(), None, "taken once");
 }

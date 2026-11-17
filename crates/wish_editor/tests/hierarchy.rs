@@ -3,8 +3,8 @@
 //! is a control-plane call by `human`, and one entry of the one history.
 //!
 //! The coordinates are the layout of a 1280x720 window over a new project:
-//! hierarchy rows at x = 30, y = 75 (camera), 99 (ground), 123 (sun); the
-//! "+" button at (138, 41) and "Delete" at (184, 41).
+//! hierarchy rows at y = 93 (camera), 119 (ground), 144 (sun); the "+"
+//! button at (156, 55) and "Delete" at (195, 55).
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -16,11 +16,11 @@ use wish_control::{Workspace, WorkspaceOptions, parse_actor};
 use wish_editor::script::run_script;
 use wish_editor::{EditorApp, ids};
 
-const CAMERA: [f32; 2] = [30.0, 75.0];
-const GROUND: [f32; 2] = [30.0, 99.0];
-const SUN: [f32; 2] = [26.0, 123.0];
-const ADD: [f32; 2] = [138.0, 41.0];
-const DELETE: [f32; 2] = [184.0, 41.0];
+const CAMERA: [f32; 2] = [58.0, 93.0];
+const GROUND: [f32; 2] = [58.0, 119.0];
+const SUN: [f32; 2] = [50.0, 144.0];
+const ADD: [f32; 2] = [156.0, 55.0];
+const DELETE: [f32; 2] = [195.0, 55.0];
 
 fn app(name: &str) -> (EditorApp, PathBuf) {
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("editor-h-{name}"));
@@ -93,7 +93,7 @@ fn menu_bar(app: &mut EditorApp, label: &str) {
     let rect = app
         .widgets()
         .iter()
-        .find(|w| w.role == "Button" && w.label.as_deref() == Some(label) && w.rect.max.y < 30.0)
+        .find(|w| w.role == "Button" && w.label.as_deref() == Some(label) && w.rect.max.y < 40.0)
         .map(|w| w.rect)
         .unwrap_or_else(|| panic!("no '{label}' in the menu bar"));
     run_script(
@@ -202,14 +202,19 @@ fn dragging_a_row_onto_another_changes_its_parent() {
     play(
         &mut app,
         json!([
-            { "events": [{ "pointer": SUN }, { "press": "primary" }] },
-            { "events": [{ "pointer": [28, 110] }] },
-            { "events": [{ "pointer": [30, 90] }] },
-            { "events": [{ "pointer": [32, 77] }] },
+            { "events": [{ "pointer": SUN }] },
+            { "events": [{ "press": "primary" }] },
+            { "events": [{ "pointer": [50, 136] }] },
+            { "events": [{ "pointer": [52, 124] }] },
+            { "events": [{ "pointer": [55, 108] }] },
+            { "events": [{ "pointer": [58, 95] }] },
+            { "events": [{ "pointer": [58, 93] }] },
             { "events": [{ "release": "primary" }] },
             { "idle": 2 }
         ]),
     );
+    // The hierarchy is read again on the editor's next look at the scene.
+    play(&mut app, json!([{ "seconds": 0.5 }, { "idle": 2 }]));
     let sun = app.rows().iter().find(|r| r.id == "sun").unwrap();
     assert_eq!(sun.parent.as_deref(), Some("camera"), "{:?}", app.rows());
     assert_eq!(sun.depth, 1);
@@ -217,10 +222,14 @@ fn dragging_a_row_onto_another_changes_its_parent() {
     play(
         &mut app,
         json!([
-            { "events": [{ "pointer": [40, 99] }, { "press": "primary" }] },
-            { "events": [{ "pointer": [60, 200] }] },
+            { "events": [{ "pointer": [72, 119] }] },
+            { "events": [{ "press": "primary" }] },
+            { "events": [{ "pointer": [72, 130] }] },
+            { "events": [{ "pointer": [70, 200] }] },
             { "events": [{ "pointer": [80, 400] }] },
             { "events": [{ "release": "primary" }] },
+            { "idle": 2 },
+            { "seconds": 0.5 },
             { "idle": 2 }
         ]),
     );

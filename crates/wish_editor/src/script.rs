@@ -12,6 +12,8 @@
 //! - `{ "click": [x, y] }`: move, press and release at a place
 //! - `{ "key": "Z", "ctrl": true, "up": false }` (egui key names)
 //! - `{ "text": "abc" }`
+//! - `{ "paste": "abc" }`, `{ "copy": true }`, `{ "cut": true }`: the
+//!   clipboard (what Ctrl+V, Ctrl+C and Ctrl+X do in a window)
 //! - `{ "scroll": [x, y] }`
 //! - `{ "mouse_delta": [x, y] }`
 //! - `{ "modifiers": { "ctrl": true } }`: these modifier keys are held from
@@ -111,6 +113,15 @@ pub fn parse_event(event: &Value) -> Result<Vec<ShellEvent>> {
             repeat: false,
             modifiers,
         }]);
+    }
+    if let Some(text) = event["paste"].as_str() {
+        return Ok(vec![ShellEvent::Paste(text.to_owned())]);
+    }
+    if event["copy"] == true {
+        return Ok(vec![ShellEvent::Copy]);
+    }
+    if event["cut"] == true {
+        return Ok(vec![ShellEvent::Cut]);
     }
     if let Some(text) = event["text"].as_str() {
         return Ok(vec![ShellEvent::Text(text.to_owned())]);

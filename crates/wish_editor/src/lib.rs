@@ -16,6 +16,8 @@ mod prefs;
 pub mod raster;
 pub mod script;
 mod settings;
+mod style;
+mod vector;
 pub mod welcome;
 
 pub use app::{EditorApp, Opener, Row, ids};
@@ -72,6 +74,8 @@ pub struct Editor {
     /// Textures egui no longer needs, freed when the next frame is painted
     /// (a frame laid out but not painted keeps its list here).
     to_free: Vec<egui::TextureId>,
+    /// Text a copy or a cut asked to put on the system clipboard.
+    copied: Option<String>,
 }
 
 /// A widget on screen, as the accessibility tree describes it: what a
@@ -113,6 +117,7 @@ impl Editor {
         }
         context.set_fonts(fonts);
         context.enable_accesskit();
+        style::apply(&context);
         Self {
             context,
             textures: Textures::default(),
@@ -120,6 +125,7 @@ impl Editor {
             widgets: Vec::new(),
             repaint: false,
             to_free: Vec::new(),
+            copied: None,
         }
     }
 
@@ -132,6 +138,11 @@ impl Editor {
     /// The widgets of the last frame (role, label, value, place).
     pub fn widgets(&self) -> &[Widget] {
         &self.widgets
+    }
+
+    /// Takes the text a copy or a cut asked to put on the clipboard.
+    pub fn take_copied(&mut self) -> Option<String> {
+        self.copied.take()
     }
 
     /// The egui context (to set styles; panels receive the [`Ui`]).
@@ -163,6 +174,11 @@ impl Editor {
             ..RawInput::default()
         };
         let mut output = self.context.run_ui(input, ui);
+        for command in &output.platform_output.commands {
+            if let egui::OutputCommand::CopyText(text) = command {
+                self.copied = Some(text.clone());
+            }
+        }
         self.repaint = output
             .viewport_output
             .values()

@@ -111,14 +111,26 @@ Wish Engine: yapay zekâya tamamen entegre ama yapay zekâsız da eksiksiz kulla
   - Bağımsız inceleme (12 bulgu, hepsi düzeltildi; `wish_control/tests/review_m9.rs`). **Kurallar:** `exports/` hiçbir proje taramasına girmez (`walk_files`); dışa aktarma yan klasörde kurulup yer değiştirir, bağlantı üzerinden yazmaz, yalnızca yüklü modülle aynı ve kaynaklarından yeni `game.wasm`'ı paketler; yeni proje var olan dosyanın üzerine yazmaz (`project_files_exist`).
   - WP5 (kod tarafı) bitti: güncel paket `C:\wish-build\package` (statik CRT, şablonlar; boş ortamda new → build → test → export → dışa aktarılan oyun aynı hash), göreli `--root` derleme hatası düzeltildi, yerel çökme raporu (`wish_control::crash`, hiçbir şey gönderilmez), yayın denetimi tablosu (tasarım §5), taslaklar `docs/release/` (sözleşme, Steam, site — yayımlanmadı).
   - Gerçek Claude Code kokpit koşumu yapıldı (`wish_editor/tests/cockpit_real.rs`, `#[ignore]`, kota harcar: 25,7 sn'de doğru sonuç). Ad ön araştırması: `docs/release/ad-arastirmasi.md`.
-  - **M9'da kalan her şey kullanıcıya ait** (tasarım §5 listesi): temiz makine denemesi (Sandbox `clean-test.wsb`; Windows Korumalı Alanı özelliği kapalı), 3 kişilik test, ses, CI faturalandırma, ad/marka/alan adı, sözleşmenin hukuki incelemesi, depoyu açmak, Steam, site barındırma; güncelleyici indirme adresi belli olunca.
+  - Arayüz yenilemesi (kullanıcı isteği, kapsam onaylı; tasarım "Arayüz yenilemesi"):
+    - tema `wish_editor::style` (marka moru `#8B6CFF`),
+    - vektör simgeler ve logo `wish_editor::vector` (SVG yolları, `vello_cpu`),
+    - şablon görüntüleri `examples/*/.template/thumbnail.png`,
+    - karşılama ekranında alt eylem çubuğu,
+    - Sahne + Oyun görünümü (`game_view.rs`),
+    - pano (`arboard`, `wish_window`).
+
+    **Kurallar:**
+    - Yeni simge = `style::Icon` + `vector::parts` yolu, şekil çizme yok.
+    - Editör testleri düğmeleri adla bulsun, koordinatla değil.
+    - Arayüz değişince altın resimleri `UPDATE_GOLDEN=1` ile yenile ve gözle bak.
+  - **M9'da kalan her şey kullanıcıya ait** (tasarım §5 listesi): paketle doğrudan deneme (kullanıcı kararı, 17 Kasım 2026: korumalı alan denemesi yapılmayacak), 3 kişilik test, ses, CI faturalandırma, ad/marka/alan adı, sözleşmenin hukuki incelemesi, depoyu açmak, Steam, site barındırma; güncelleyici indirme adresi belli olunca.
 - **`wen`'i çalıştırmak:** `cargo run -p wish_cli --release -- run --example bounce --frames 10000 --seed 7 --json`. Derlenmiş ikili `C:\wish-build\target\release\wen.exe` altında.
 - **Hash'leri değiştirme konusunda dikkat:** `wish_ecs/tests/snapshot.rs` ve `wish_core` testlerinde kayıtlı hash/rastgelelik değerleri var. Bunlar kırılırsa önce bilinçli bir format değişikliği olup olmadığını düşün; bilinçliyse sürüm etiketini (`wish-world-hash-v1` vb.) artır.
 - **Git:** M1 (`m1-core`) ve M2 (`m2-data`) kendi dallarında geliştirilip `main`'e birleştirildi. Her kilometre taşı kendi dalında (`m2-...`) yürür, bitince `main`'e birleştirilir. Commit kimliği depoya özel proje kimliğidir (kullanıcı kararı); kişisel e-posta kullanma.
 - **Ortam (15 Kasım 2026'da doğrulandı):** Rust 1.100.0 (`rust-toolchain.toml` ile sabit) ve Visual Studio 2022 Build Tools 17.14.45 kurulu. Bu oturumun kabuğunda `cargo` PATH'te olmayabilir; her komuttan önce `$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"` çalıştır.
 - **Disk (kullanıcı uyarısı, 16 Kasım 2026: "çok alan harcıyorsun"):** cargo eski derleme varyantlarını silmiyor; `target/debug` 104 GB'a çıkıp diski doldurdu. Her iş paketinin sonunda ve boş alan 30 GB'ın altına inince `powershell -ExecutionPolicy Bypass -File tools/clean-build.ps1` çalıştır (yalnızca motor crate'lerinin çıktıları ve artımlı önbellek; bağımlılıklar kalır). Deneme klasörlerini (`C:\wish-build\...`) işin bitince sil; kullanıcı onayı olmadan büyük indirme/kurulum yapma.
 - **Proje klasörü OneDrive altında** (`Masaüstü\wish-engine`). Derleme çıktıları git'e girmeyen yerel `.cargo/config.toml` ile `C:/wish-build/target` klasörüne yönlendirildi. Bu dosyayı silme; `target/` klasörünü asla proje klasörünün içinde bırakma.
-- **Uzak depo ve CI:** özel GitHub deposu `akeremkar-sketch/wish-engine` (kullanıcının hesabı, kullanıcı kararı 15 Kasım 2026; `origin`). CI `main`'e gönderimde ve PR'larda çalışır (Windows + Linux: fmt, clippy, test; cargo-deny lisans). İlk çalıştırma yeşil; kayıtlı hash ve rastgelelik değerleri Linux'ta da tuttu. Dalları gönderirken `git push`; `main`'e yalnızca kilometre taşı bitince birleştir.
+- **Uzak depo ve CI:** GitHub deposu `akeremkar-sketch/wish-engine` (**17 Kasım 2026'dan beri herkese açık**, kullanıcı kararı; açmadan önce geçmiş tarandı: yalnızca proje kimliği, kişisel yol/e-posta/anahtar yok. Özelken Actions dakikaları bitip işler başlamıyordu; açık depoda ücretsiz). Önceki not: (kullanıcının hesabı, kullanıcı kararı 15 Kasım 2026; `origin`). CI `main`'e gönderimde ve PR'larda çalışır (Windows + Linux: fmt, clippy, test; cargo-deny lisans). İlk çalıştırma yeşil; kayıtlı hash ve rastgelelik değerleri Linux'ta da tuttu. Dalları gönderirken `git push`; `main`'e yalnızca kilometre taşı bitince birleştir.
 
 ## Önce oku
 

@@ -51,7 +51,7 @@ Dil, karşılama ekranının sağ üstünden, sonra da proje menüsünden (*Dil*
 |---|---|
 | Üst çubuk | Proje menüsü (projenin adını taşır), sahne, *Geri al* / *Yinele*, *Oynat* / *Duraklat* / *Adım* / *Durdur*, görünüm, tutamaç kipi (*Taşı*, *Döndür*, *Ölçekle*, *Dünya* / *Yerel*, *Yapış*), *Ajan* |
 | Sol: *Hiyerarşi* | Sahnenin nesneleri, ağaç olarak. *Ara* süzer. |
-| Orta | Sahne. Tıklayınca seçer; tutamacı sürükleyince taşır, döndürür ya da ölçekler. |
+| Orta | **Sahne** görünümü: sahne, editörün kendi kamerasından. Tıklayınca seçer; tutamacı sürükleyince taşır, döndürür ya da ölçekler. Geniş pencerede yanında **Oyun** görünümü vardır: oyuncunun gördüğü oyun, sahnenin kamerasından ve oyunun arayüzüyle (üst çubukta *Oyun görünümü* açar/kapatır). Oyun koşarken sahne görünümü editör kamerasında kalır; koşan oyunun içinde dolaşabilirsiniz. |
 | Sağ: *Denetçi* | Seçili nesnenin bileşenleri ve alanları. Her alanın birimi ve aralığı vardır. |
 | Alt sekmeler | *Varlıklar* (dosyalar), *Konsol*, *Sorunlar*, *Performans*, *Geçmiş*, *Etkinlik* |
 | Durum satırı | Son eylemin ne yaptığı, hata ve uyarı sayısı |

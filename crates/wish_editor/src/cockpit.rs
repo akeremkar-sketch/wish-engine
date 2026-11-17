@@ -155,7 +155,7 @@ impl CockpitActions {
 
 /// The panel.
 pub(crate) fn panel(ui: &mut Ui, cockpit: &Cockpit, mode: &str, actions: &mut CockpitActions) {
-    ui.heading(t("Agent"));
+    crate::style::panel_title(ui, t("Agent"));
     ui.weak(tf(
         "{agent} · permission: {mode}",
         &[("agent", &cockpit.agent.name()), ("mode", &mode)],

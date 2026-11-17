@@ -209,14 +209,14 @@ Kod okuyan bağımsız bir ajan 12 bulgu verdi; hepsi ele alındı. Regresyon te
 | Temiz Windows 10 ve 11'de < 5 dk, ek kurulum yok | Kullanıcı adımı (Windows Sandbox: `clean-test.wsb`) | ◐ |
 | Bilinen çökme sıfır, açık yüksek öncelikli hata sıfır | Her kilometre taşı kapanış incelemesinin bulguları kapatıldı (M9: 12/12). Paket denemesinin bulduğu göreli yol hatası düzeltildi. Açık hata kaydı yok | ✔ |
 | İsteğe bağlı çökme raporu | Yalnızca yerel: `wish_control::crash` (yakalanmayan panik → rapor dosyası; hiçbir şey gönderilmez); editör bir kez söyler | ✔ |
-| Depo herkese açık, katkı kılavuzu yazılmış | `CONTRIBUTING.md` yazıldı. Depoyu açmak kullanıcı kararı | ◐ |
+| Depo herkese açık, katkı kılavuzu yazılmış | `CONTRIBUTING.md`; depo 17 Kasım 2026'da kullanıcı kararıyla herkese açıldı (öncesinde geçmiş tarandı: kişisel veri ve anahtar yok). CI yeniden çalışıyor | ✔ |
 | Ad, marka ve alan adı uygunluğu | Ön web araştırması: `docs/release/ad-arastirmasi.md` (aynı adlı motor yok; "WISH" yazılım sınıflarında başka şirketin markası). Uzman araştırması ve alan adı kullanıcıda | ◐ |
 | Son kullanıcı sözleşmesi, Steam sayfası, web sitesi | Taslaklar: `docs/release/` (sözleşme TR/EN, Steam metinleri TR/EN, tek sayfa site). Hukuki inceleme, hesap, alan adı ve yayın kullanıcıda | ◐ |
 | Güncelleyici (web) | Bir indirme adresi (barındırma, alan adı) ister; adres belli olunca "yeni sürüm var" denetimi eklenir. O zamana kadar kılavuz ve sözleşme "kendiliğinden indirmez" der | ✗ |
 
 **Kullanıcıya ait adımlar (1.0 öncesi), önerilen sırayla:**
 1. ~~Paketi yeniden üret~~: yapıldı (aşağıda "Paket ve uçtan uca deneme").
-2. **Temiz makine denemesi.** Windows Sandbox'ta `clean-test.wsb`. Ayrıca bir dışa aktarılan oyunu motorsuz açmak.
+2. **Paketle doğrudan deneme** (kullanıcı kararı: Windows Korumalı Alanı denemesi yerine kendi makinesinde). Windows Sandbox'ta `clean-test.wsb`. Ayrıca bir dışa aktarılan oyunu motorsuz açmak.
 3. ~~Gerçek Claude Code ile kokpit koşumu~~: yapıldı (aşağıda).
 4. **3 kişiyle kullanıcı testi** (M8b ölçüt 1) ve T1 maketleri.
 5. **Ses çıkışını kulakla dinlemek** (`wen play`).
@@ -278,3 +278,33 @@ Bağımsız inceleme 7 bulgu verdi; hepsi düzeltildi. Testler:
 
   Değişiklik tek geçmişte ajanın adıyla ve etkinlik akışında; görevden önce denetim noktası alındı. Süre 27,3 sn ve 25,7 sn (iki koşu).
 - **Bulduğu hata:** Claude Code son mesajını sonuç olarak tekrarlıyor; dökümde iki kez görünüyordu. Kokpit artık aynı metni "Bitti." diye kapatır. `Scripted` sahte ajan da artık böyle davranır, yani regresyon testi `cockpit.rs`'te.
+
+### Arayüz yenilemesi (17 Kasım 2026; kullanıcı isteği: "başlangıç ve motor arayüzü daha iyi olabilir", "ikonlar vektörel ve sorunsuz", "kapsamı büyütebiliriz")
+
+- **Tema** (`wish_editor::style`):
+  - Kendi koyu paletimiz; marka rengi mor `#8B6CFF`.
+  - Yuvarlak köşeler; panellerde sıkı, kartlarda cömert boşluk.
+  - Bileşen başlıkları şerit hâlinde.
+  - Hata sayısı renkli (hata kırmızı, uyarı amber).
+- **Vektör simgeler ve logo** (`wish_editor::vector`):
+  - Her simge 24'lük ızgarada SVG yolu (eğriler, yuvarlak uç ve köşe).
+  - `vello_cpu` ile kenar yumuşatmalı çizilir. egui'nin yazıları çizdiği kitaplık ve sürüm; yeni indirme yok.
+  - Gösterildiği tam piksel boyutunda bir kez dokuya dönüşür ve bağlamda saklanır.
+  - Logo: kavisli kenarlı dört köşeli kıvılcım, mor geçiş ve hafif parıltı, yanında küçük bir kıvılcım.
+  - Hiyerarşi nesne türünü simgeyle gösterir: kamera, güneş, ışık, model, arayüz, ses, sprite, parçacık, prefab.
+- **Üst çubuk:**
+  - Gruplar: geri al/yinele · görünüm · oynat/kaydet (yeşil oynat, kırmızı kayıt) · taşı/döndür/ölçekle/dünya/yapış/kamera · oyun görünümü · ajan.
+  - Dar pencerede grup bölünmeden alt satıra geçer.
+- **Karşılama ekranı:**
+  - Logolu başlık; yardımcı seçimi büyük kartlarla.
+  - Şablonlar, oyunun **gerçek ilk anının görüntüsüyle** kartlar hâlinde. Görüntüler `examples/*/.template/thumbnail.png`; motorun kendi `capture_frame`'iyle üretildi. Gizli klasörde oldukları için varlık sayılmaz ve yeni projeye geçmez; `wen package` onları şablonlarla taşır.
+  - Ad, klasör ve Oluştur her zaman görünen alt eylem çubuğunda.
+  - Sağda son projeler ve "İşe yarar bilgiler" kartı.
+- **Denetçi:** "Bileşen ekle" en üstte; kaydırmadan ulaşılır.
+- **Sahne + Oyun görünümü** (kullanıcı önerisi):
+  - Orta alan en az 900 px genişse yan yana gösterilir.
+  - Oyun görünümü sahnenin kamerasından, oyun arayüzüyle bakar. Yalnızca sahne sürümü, oyun tick'i ya da boyut değişince yeniden çizilir.
+  - Oyun koşarken Sahne görünümü editör kamerasında kalır; seçim ve tutamaçlar orada.
+  - Üst çubuktaki *Oyun görünümü* düğmesi açar ya da kapatır; tercih `editor.json`'da saklanır.
+  - Test: `wish_editor/tests/game_view.rs`.
+- **Pano:** Ctrl+V/C/X `arboard` ile (`wish_window` içinde). Bu, karşılama ekranına istek yapıştırılamadığı gerçek kullanımda bulundu.

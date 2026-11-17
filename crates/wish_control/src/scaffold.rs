@@ -23,7 +23,7 @@ fn unwritable(path: &Path, error: &std::io::Error) -> Diagnostic {
     Diagnostic::error(
         "file_unwritable",
         format!("Could not write '{}': {error}.", path.display()),
-        "Check that the folder can be written to.",
+        "Check that the folder can be written to. On Windows, controlled folder access (Windows Security) keeps unknown programs out of Documents and Desktop: choose another folder, or allow wen.exe there.",
     )
 }
 
@@ -434,7 +434,15 @@ pub fn copy_template(template: &Path, to: &Path) -> Result<usize> {
         )
     })?;
     let mut count = 0;
-    for relative in files.iter().map(String::as_str).chain([PROJECT_FILE]) {
+    // The template's own picture (for the welcome screen) goes with it.
+    let picture = ".template/thumbnail.png";
+    let extra = template.join(picture).is_file().then_some(picture);
+    for relative in files
+        .iter()
+        .map(String::as_str)
+        .chain([PROJECT_FILE])
+        .chain(extra)
+    {
         let target = to.join(relative);
         if let Some(folder) = target.parent() {
             std::fs::create_dir_all(folder).map_err(|error| unwritable(folder, &error))?;

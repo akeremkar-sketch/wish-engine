@@ -52,7 +52,7 @@ The language is chosen at the top right of the welcome screen, and later in the 
 |---|---|
 | Top bar | The project menu (named after the project), the scene, *Undo* / *Redo*, *Play* / *Pause* / *Step* / *Stop*, the view, the gizmo mode (*Move*, *Rotate*, *Scale*, *World* / *Local*, *Snap*), *Agent* |
 | Left: *Hierarchy* | The entities of the scene, as a tree. *Search* filters it. |
-| Middle | The scene. Click to select; drag the gizmo to move, rotate or scale. |
+| Middle | **Scene** view: the scene through the editor's own camera. Click to select; drag the gizmo to move, rotate or scale. In a wide window the **Game** view is beside it: the game as the player sees it, through the scene's camera and with the game's interface (top bar, *Game view* shows or hides it). While the game runs, the scene view keeps the editor's camera, so you can look around the running game. |
 | Right: *Inspector* | The selected entity's components and their fields. Each field has its unit and range. |
 | Bottom tabs | *Assets*, *Console*, *Problems*, *Performance*, *History*, *Activity* |
 | Status line | What the last action did, and the number of errors and warnings |
