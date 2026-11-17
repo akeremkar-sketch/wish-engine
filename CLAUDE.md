@@ -82,6 +82,24 @@ Wish Engine: yapay zekâya tamamen entegre ama yapay zekâsız da eksiksiz kulla
     - sahte modelle sınanan kokpit ajanı.
 
     Önerilen model · efor: Opus 5.5 · high.
+- **Süren: M8b (yapay zekâ kokpiti)**, `m8b-cockpit` dalında. Tasarım ve durum: [docs/design/M8b-kokpit.md](docs/design/M8b-kokpit.md) — kokpite, akışa, denetim noktalarına ya da yetki kiplerine dokunmadan önce oku.
+  - Kullanıcısız parçalar bitti:
+    - seçmeli geri al (`edit_history revert`, değer tabanlı; `wish_scene::SceneDocument::revert`),
+    - `activity_get` (27),
+    - `checkpoint` (28; geri yükleme geçmişe girer),
+    - `permissions` (29) ve `proposals` (30),
+    - `wish_mcp::http::Endpoint` (sahibinin karesinde çalışır),
+    - `wish_agent` (`ClaudeCode` alt süreç, kişinin hesabı; `Scripted`),
+    - editörde Ajan paneli (göster ve söyle; her görevden önce denetim noktası) ve "Dış ajanı bağla".
+  - Çıkış ölçütleri 2–5 testli (`wish_editor/tests/cockpit.rs`, `parity_ops.rs`).
+  - **Kullanıcı adımı bekliyor:**
+    - T1 kokpit maketleri;
+    - gerçek Claude Code koşumu (kota harcar → onay);
+    - 3 kişiyle kullanıcı testi (ölçüt 1).
+  - **Kurallar:**
+    - Yeni araç = `wish_editor::parity::PARITY` satırı + elle yapan test.
+    - Değiştiren aracın her eylemi `dry_run` ister (`tests/catalog.rs`).
+    - Salt okuyan list/get eylemleri etkinlik akışına girmez (`activity::worth_noting`).
 - **`wen`'i çalıştırmak:** `cargo run -p wish_cli --release -- run --example bounce --frames 10000 --seed 7 --json`. Derlenmiş ikili `C:\wish-build\target\release\wen.exe` altında.
 - **Hash'leri değiştirme konusunda dikkat:** `wish_ecs/tests/snapshot.rs` ve `wish_core` testlerinde kayıtlı hash/rastgelelik değerleri var. Bunlar kırılırsa önce bilinçli bir format değişikliği olup olmadığını düşün; bilinçliyse sürüm etiketini (`wish-world-hash-v1` vb.) artır.
 - **Git:** M1 (`m1-core`) ve M2 (`m2-data`) kendi dallarında geliştirilip `main`'e birleştirildi. Her kilometre taşı kendi dalında (`m2-...`) yürür, bitince `main`'e birleştirilir. Commit kimliği depoya özel proje kimliğidir (kullanıcı kararı); kişisel e-posta kullanma.

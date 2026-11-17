@@ -210,6 +210,20 @@ Arayüz hibrittir (ADR-018): elle düzenleme ve yapay zekâ kokpiti eşit düzey
 
 ### M8b — Yapay zekâ kokpiti
 
+**Durum: sürüyor** (`m8b-cockpit`). Tasarım: [design/M8b-kokpit.md](design/M8b-kokpit.md).
+
+Kullanıcısız parçalar bitti (17 Kasım 2026):
+- seçmeli geri al,
+- etkinlik akışı,
+- denetim noktaları ve önce/sonra,
+- yetki kipleri,
+- editörün MCP uç noktası,
+- `wish_agent` (Claude Code + betikli),
+- kokpit paneli, göster ve söyle,
+- dış ajan bağlantısı.
+
+Çıkış ölçütleri 2–5 testli. Kalan: ölçüt 1 (3 kullanıcıyla, gerçek modelle) ve T1 maketleri.
+
 **Ön koşul.** M8a; T1'in kokpit maketleri; ADR-024 (Claude bağdaştırıcı yöntemi) kesinleşmiş.
 
 **Çıktı.** Görünümle yan yana konuşma paneli, kokpit içi ajan ve yapay zekâ bağlantı ayarları, "göster ve söyle", etkinlik akışı ve kart başına geri al, otomatik denetim noktaları, önce/sonra karşılaştırma, yetki kipleri, canlı gözlem.

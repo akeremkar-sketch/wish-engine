@@ -113,3 +113,75 @@ Politika bir kontrol düzlemi ayarıdır (değişmez 4). Dış ajanlar da ona ta
   - dışarıdan değişiklik eski kartları kapatır.
 - Elden ele geçiş (çıkış ölçütü 3): sahte ajan bir varlığı değiştirirken kişi başka birini değiştirir. Sonra ajanın kartı geri alınır: kişinin değişikliği yerinde kalır.
 - Akış: her kart kim/ne/neden taşır; dış ajan (MCP) ve kokpit ajanı aynı akışta.
+
+## 5. Uygulama notları (17 Kasım 2026, gece; Opus 5.5 · high)
+
+### WP1 — seçmeli geri al
+- `wish_scene`: `SceneDocument::revert / revertible / is_reverted`.
+- **Ölçüt:** değer tabanlı. Bir kart, değiştirdiği her şey (kaynak, bileşen, üzerine yazım, ebeveyn, varlık) hâlâ kartın bıraktığı değerdeyse geri alınabilir. İlk deneme geçmiş tabanlıydı: bir geri almanın kendisi geri alınınca o da çakışma sayılıyordu; değer tabanlı ölçüt doğru davranıyor.
+- Reddedildiğinde `revert_conflict`, sonraki değişiklikleri ve kimin yaptığını adıyla söyler.
+- Geri alma yeni bir işlemdir; geri alınıp yinelenebilir. Geri alınmış bir geri alma, kartı yeniden yürürlüğe koyar.
+- `already_reverted`, `not_revertible`.
+- `edit_apply reason`; `edit_history revert`; liste her kartın nedenini, geri alınabilirliğini (ya da neden olmadığını) ve geri alınmış olup olmadığını verir.
+- Editör: Geçmiş sekmesinde "Bunu geri al".
+
+### WP2 — etkinlik akışı
+- `wish_control::activity`, sıra numaralı, en çok 2000 kayıt. Kaydedilenler:
+  - her değiştiren çağrı (kim yaparsa yapsın),
+  - ajanların her çağrısı, okuyanlar da.
+- Kişinin okumaları ve değiştiren araçların list/get eylemleri kaydedilmez.
+- `activity_get` (27. araç).
+- Editör: Etkinlik sekmesi.
+  - Ajanlar renkli gösterilir; "Yalnızca ajanlar" süzgeci var.
+  - Neden kartın altında, hata kırmızı.
+  - Düzenleme kartında "Bunu geri al".
+
+### WP3 — denetim noktaları ve önce/sonra
+- `checkpoint` (28. araç): save, list, restore, delete.
+- Geri yükleme her belgeyi tek işlemle eşler (fark işlemleri); geçmişe girer, geri alınabilir.
+  - Sonradan yapılan sahneler korunur.
+  - Silinmiş belgeler geri yazılır.
+  - Ayar dosyaları geri yazılır.
+- `capture_frame checkpoint` ve `PictureSource::Checkpoint`.
+- Editör: proje menüsünde Denetim noktaları; "Önce / Şimdi" penceresi.
+
+### WP4 — yetki kipleri
+- `permissions` (29.) ve `proposals` (30.) araçları.
+- **suggest:** ajanın projeyi değiştiren çağrısı bekletilir; mümkünse kuru çalıştırma önizlemesi gösterilir.
+- **apply:** varsayılan.
+- **autonomous.**
+- Kişi asla bekletilmez. Oyunu çalıştırma, test, derleme ve bakma asla bekletilmez.
+- Kabul edilen öneri ajanın adıyla uygulanır.
+- Editör: İzinler alt menüsü; Etkinlik sekmesinde "Sizi bekleyen" listesi.
+
+### WP5 — kokpit
+- **Uç nokta:** `wish_mcp::http::Endpoint`, HTTP taşımasının döngüsünden ayrıldı. Sahibi, bekleyen çağrıları kendi çalışma alanında çalıştırır.
+- **`wish_agent`** (yeni crate):
+  - `Adapter` / `Run` / `Event`.
+  - `ClaudeCode` (alt süreç, kişinin kendi hesabı; `stream-json` çözümleyicisi birim testli).
+  - `Scripted` (testler).
+  - Yalnızca std kullanan bir MCP istemcisi.
+- **Editör:**
+  - "Ajan" paneli: konuşma dökümü; göster ve söyle (seçimi ekle, görünümde işaret et); Gönder ve Durdur.
+  - Her görevden önce bir denetim noktası.
+  - Ajanın çağrıları editörün karesinde çalışır, değişiklikler anında görünür.
+  - "Dış ajanı bağla" (adres, jeton, `claude mcp add` komutu).
+- **Testler:** `tests/cockpit.rs`.
+  - Kokpitten ajan; kişinin aynı andaki düzenlemesi korunur.
+  - Dış ajan, kokpit ajanı ve kişi aynı anda: hiçbir şey kaybolmaz, her değişiklik yapanının adıyla (çıkış ölçütü 5).
+
+### Çıkış ölçütleri — durum
+
+| # | Ölçüt | Durum |
+|---|---|---|
+| 1 | 30 dakikada konuşarak mini oyun (3 kişi) | **Kullanıcıya ait:** gerçek modelle (Claude Code, kişinin hesabı) ve 3 kişiyle sınanmalı |
+| 2 | Ajanın her değişikliği akışta, tek tıkla geri alınır | ✅ Etkinlik sekmesi + "Bunu geri al" (WP1–WP2, testli) |
+| 3 | Elden ele geçiş, hiçbir değişiklik kaybolmaz | ✅ Değer tabanlı seçmeli geri al; kokpit testi |
+| 4 | Elle ve ajanla yapılanlar aynı geçmişte, kimin yaptığıyla | ✅ |
+| 5 | Dış ajan ve kokpit ajanı aynı anda, veri kaybı yok | ✅ `cockpit.rs::an_outside_agent_and_the_cockpit_agent_work_together` |
+
+**Açık kalanlar:**
+- T1 kokpit maketleri ve kullanıcı sınaması.
+- Claude Code ile gerçek bir kokpit koşumu (kota harcar). `WISH_CLAUDE` ile program yolu verilebilir.
+- Uzun bir ajan çağrısı (çok uzun bir `sim_step`) o süre boyunca editörün karesini bekletir; ilerleme ve iş parçacığı ayrımı sonraya.
+- Gerçek modelle "göster ve söyle"nin değeri ölçülmedi.
