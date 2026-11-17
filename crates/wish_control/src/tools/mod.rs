@@ -8,6 +8,7 @@ mod asset;
 mod checkpoint;
 mod design;
 mod export;
+mod packages;
 mod permissions;
 mod physics;
 mod project;
@@ -65,4 +66,5 @@ pub(crate) const CATALOG: &[Tool] = &[
     permissions::PROPOSALS,
     export::PROJECT_EXPORT,
     design::GAME_DESIGN,
+    packages::PACKAGES,
 ];

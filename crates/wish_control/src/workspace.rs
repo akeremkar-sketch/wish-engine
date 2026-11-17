@@ -166,6 +166,22 @@ impl Workspace {
         Ok(())
     }
 
+    /// Writes the project's package requirements into `wish.json` (M10).
+    pub(crate) fn write_packages(
+        &mut self,
+        packages: std::collections::BTreeMap<String, String>,
+    ) -> Result<()> {
+        let Some(config) = self.config.as_mut() else {
+            return Ok(());
+        };
+        let mut next = config.clone();
+        next.packages = packages;
+        let text = next.to_canonical()?;
+        crate::documents::write_project_file(&self.root, crate::project::PROJECT_FILE, &text)?;
+        *config = next;
+        Ok(())
+    }
+
     /// Reads `wish.json` again (after it was written by something other
     /// than [`Self::write_config`], such as a checkpoint coming back).
     pub(crate) fn reload_config(&mut self) {

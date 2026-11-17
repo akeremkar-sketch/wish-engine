@@ -157,6 +157,13 @@ fn examples() -> Vec<(&'static str, Value)> {
         ),
         ("game_design", json!({ "action": "forget", "id": 99 })),
         ("game_design", json!({})),
+        ("packages", json!({})),
+        ("packages", json!({ "action": "check", "path": "nowhere" })),
+        (
+            "packages",
+            json!({ "action": "remove", "id": "com.example.none" }),
+        ),
+        ("packages", json!({ "action": "lock", "dry_run": true })),
         ("permissions", json!({})),
         ("permissions", json!({ "action": "set", "mode": "suggest" })),
         ("proposals", json!({})),

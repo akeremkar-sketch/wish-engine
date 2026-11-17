@@ -114,6 +114,7 @@ pub(crate) fn changes_project(tool: &str, args: &Value) -> bool {
         "replay" => action == "save",
         "capture_frame" => !args["out"].is_null(),
         "test_run" => args["update_golden"] == true,
+        "packages" => matches!(action, "install" | "remove" | "lock"),
         // Refused outright for agents (a person decides), never held.
         "permissions" | "proposals" => false,
         _ => false,

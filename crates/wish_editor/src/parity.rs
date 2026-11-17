@@ -219,6 +219,11 @@ pub const PARITY: &[Capability] = &[
         "ai_mode::the_design_is_made_by_hand",
     ),
     op(
+        "packages",
+        "Project menu: Packages (install from a folder into the project or for yourself, remove, write the lock again)",
+        "packages::packages_are_installed_and_removed_by_hand",
+    ),
+    op(
         "permissions",
         "Project menu: Permissions (Only suggest, Apply I review, Autonomous)",
         "parity_ops::an_agents_proposal_is_accepted_and_rejected_by_hand",

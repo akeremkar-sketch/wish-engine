@@ -21,6 +21,7 @@ pub const NON_ASSET_FOLDERS: &[&str] = &[
     "replays/",
     EXPORTS_FOLDER,
     "design/",
+    "packages/",
 ];
 
 /// Where exported games go (M9): copies of the project's files, not the

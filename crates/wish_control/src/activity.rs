@@ -177,11 +177,17 @@ pub(crate) fn worth_noting(tool: &str, args: &Value, mutates: bool, actor: &Acto
     // project_settings, permissions, game_design get.)
     let action = args["action"].as_str().unwrap_or("");
     let looks = action == "list"
+        || (tool == "packages" && action == "check")
         || action == "get"
         || (action.is_empty()
             && matches!(
                 tool,
-                "edit_history" | "proposals" | "project_settings" | "permissions" | "game_design"
+                "edit_history"
+                    | "proposals"
+                    | "project_settings"
+                    | "permissions"
+                    | "game_design"
+                    | "packages"
             ));
     tool != "activity_get" && ((mutates && !looks) || !matches!(actor, Actor::Human))
 }

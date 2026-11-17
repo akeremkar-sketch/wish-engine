@@ -187,6 +187,8 @@ pub struct EditorApp {
     assistant: Option<String>,
     /// The "connect an outside agent" window is open.
     connect_open: bool,
+    /// The Packages window (M10a).
+    packages: crate::packages_window::PackagesState,
     /// An earlier export of this name is there: the person is asked before
     /// it is replaced (its folder).
     export_confirm: Option<String>,
@@ -347,6 +349,10 @@ struct Actions {
     switch_mode: Option<bool>,
     /// What the AI mode's panels asked for.
     ai: crate::ai_mode::AiActions,
+    /// Open the Packages window.
+    open_packages: bool,
+    /// What the Packages window asked for.
+    packages: crate::packages_window::PackagesActions,
     /// Go back to this checkpoint.
     restore_checkpoint: Option<String>,
     /// Compare this checkpoint with now.
@@ -422,6 +428,8 @@ impl Actions {
             || self.connect.is_some()
             || self.cockpit.any()
             || self.switch_mode.is_some()
+            || self.open_packages
+            || self.packages.any()
             || self.ai.any()
             || self.restore_checkpoint.is_some()
             || self.compare_checkpoint.is_some()
@@ -541,6 +549,7 @@ impl EditorApp {
             permission_mode: "apply".to_owned(),
             proposals: Vec::new(),
             connect_open: false,
+            packages: crate::packages_window::PackagesState::default(),
             export_confirm: None,
             cockpit: crate::cockpit::Cockpit::new(Box::new(
                 wish_agent::claude::ClaudeCode::default(),
@@ -1833,6 +1842,64 @@ impl EditorApp {
         }
     }
 
+    /// Reads the installed packages for the Packages window.
+    fn read_packages(&mut self) {
+        let got = self.call("packages", &json!({}));
+        if got["ok"] == true {
+            self.packages.listing = got;
+        }
+    }
+
+    /// What the Packages window asked for: each a `packages` call.
+    fn packages_act(&mut self, asked: crate::packages_window::PackagesActions) {
+        if asked.close {
+            self.packages.open = false;
+        }
+        let mut answer = Value::Null;
+        if let Some((path, scope)) = asked.install {
+            answer = self.call(
+                "packages",
+                &json!({ "action": "install", "path": path, "scope": scope,
+                    "replace": self.packages.replace.get() }),
+            );
+            if answer["ok"] == true {
+                self.packages.path.borrow_mut().clear();
+                self.status = tf(
+                    "installed {name} {version}",
+                    &[
+                        ("name", &answer["package"]["name"].as_str().unwrap_or("?")),
+                        (
+                            "version",
+                            &answer["package"]["version"].as_str().unwrap_or("?"),
+                        ),
+                    ],
+                );
+            }
+        }
+        if let Some((id, scope)) = asked.remove {
+            answer = self.call(
+                "packages",
+                &json!({ "action": "remove", "id": id, "scope": scope }),
+            );
+            if answer["ok"] == true {
+                self.status = tf("{id} moved to the trash", &[("id", &id)]);
+            }
+        }
+        if asked.lock {
+            answer = self.call("packages", &json!({ "action": "lock" }));
+            if answer["ok"] == true {
+                self.status = t("the lock was written again").to_owned();
+            }
+        }
+        if answer["ok"] == false {
+            self.status = answer["error"]["message"]
+                .as_str()
+                .unwrap_or(t("it did not work"))
+                .to_owned();
+        }
+        self.read_packages();
+    }
+
     /// The AI mode's actions.
     fn ai_act(&mut self, ai: crate::ai_mode::AiActions) {
         if let Some(fields) = ai.save_card
@@ -3032,6 +3099,14 @@ impl EditorApp {
             None => {}
         }
         self.cockpit_act(&actions.cockpit);
+        if actions.open_packages {
+            self.packages.open = true;
+            self.read_packages();
+        }
+        let asked = std::mem::take(&mut actions.packages);
+        if asked.any() {
+            self.packages_act(asked);
+        }
         if let Some(on) = actions.switch_mode {
             self.set_ai_mode(on);
         }
@@ -4093,6 +4168,14 @@ impl EditorApp {
                         actions.connect = Some(true);
                         ui.close();
                     }
+                    if ui
+                        .button(t("Packages..."))
+                        .on_hover_text(t("Themes, workspaces, languages, recipes and templates: install, remove"))
+                        .clicked()
+                    {
+                        actions.open_packages = true;
+                        ui.close();
+                    }
                     ui.menu_button(t("Checkpoints"), |ui| {
                         if ui
                             .button(t("Save checkpoint"))
@@ -4451,6 +4534,7 @@ impl EditorApp {
         crate::settings::window(ui, &self.settings, &self.scenes, &mut actions.settings);
         self.compare_window(ui, &mut actions);
         self.connect_window(ui, &mut actions);
+        crate::packages_window::window(ui, &self.packages, &mut actions.packages);
         self.export_window(ui, &mut actions);
         // The middle is not painted: the scene's picture shows through.
         egui::CentralPanel::default()
@@ -4536,6 +4620,7 @@ impl EditorApp {
         crate::settings::window(ui, &self.settings, &self.scenes, &mut actions.settings);
         self.compare_window(ui, actions);
         self.connect_window(ui, actions);
+        crate::packages_window::window(ui, &self.packages, &mut actions.packages);
         self.export_window(ui, actions);
         let scene_view = self.ai.borrow().scene_view;
         egui::CentralPanel::default()

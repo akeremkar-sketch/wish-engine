@@ -11,6 +11,7 @@ mod cockpit;
 mod gizmo;
 pub mod i18n;
 mod inspector;
+mod packages_window;
 mod panels;
 pub mod parity;
 mod prefs;

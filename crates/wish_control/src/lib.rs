@@ -28,6 +28,7 @@ pub mod expr;
 pub mod licenses;
 mod live;
 pub mod ops;
+pub mod packages;
 pub mod param;
 pub mod pe;
 pub mod policy;

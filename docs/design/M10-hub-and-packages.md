@@ -206,3 +206,36 @@ Not a separate program, but the evolution of the welcome screen (the screen that
 - **Freezing the API early:** ABI v1 comes out marked "experimental"; the version field exists from day one.
 - **Security:** plugin code is treated as untrusted as game code; no file or network access without permission; hostile tests are part of the closing review.
 - **Determinism:** packages are tracked in the replay and in the hash; playback without a lock file gives a warning.
+
+## 12. M10a in detail (decisions before code)
+
+**Work packages, in order** (each one is built, tested and committed on its own):
+
+| WP | Content | Why in this order |
+|---|---|---|
+| WP1 | Package core in the control plane: manifest, validation, versions and version requirements, install / remove / list / check / lock, `wish.lock`, the `packages` tool (33rd) | Everything else is a kind of package |
+| WP2 | Theme tokens and theme packages; the default theme is a package | The first content kind; it changes the look without rebuilding |
+| WP3 | Workspace documents: the AI mode's layout, card fields, ready requests and agent instructions from data; workspace packages | The user's main wish: the AI mode as a template |
+| WP4 | Command registry, command palette (Ctrl+K), remappable shortcuts | Every action gets an id that packages and agents can name |
+| WP5 | Templates, languages and recipes from packages | The remaining data kinds |
+| WP6 | Closing review | |
+
+**Package files.**
+- A package is a folder with `wish-package.json` at its root. Hidden files and folders (`.git`, `.wish`) are not part of it.
+- `id`: lowercase, dot-separated, at least two parts (`com.example.dusk`), 3 to 64 characters of `a-z 0-9 - .`. The engine's own packages start with `wish.`; a package from outside cannot take that prefix.
+- `version`: `major.minor.patch`, numbers only (pre-release tags later if needed).
+- `engine`: a version requirement: comparators `>=`, `>`, `<=`, `<`, `=`, `^`, `~`, joined with commas (`>=0.9, <2.0`). A bare version means `^`.
+- `license`: an SPDX expression. Known permissive licenses pass silently; anything else installs with the warning `package_license_unknown`, so the person decides.
+- `contents`: kind → list of package-relative paths. Kinds in M10a: `themes` (`.json`), `workspaces` (`.json`), `languages` (`.json`), `recipes` (`.md`), `templates` (folders with a `wish.json`). An unknown kind is an error with the closest real one as the hint.
+- Limits: 4,096 files, 64 MiB, no links (a link could point outside the package).
+
+**Two scopes.**
+- `project`: inside the project, `packages/<id>/`, recorded in `wish.json` (`"packages": { "<id>": "<requirement>" }`, only written when there is at least one, so old projects stay byte-identical) and in `wish.lock` (canonical JSON: every package's id, version and content hash, the stable hash of its sorted files). The project carries its packages: it opens the same way on any machine, offline.
+- `user`: the person's own packages (themes, languages, workspaces), in `<config>/packages/<id>/`.
+- `packages/` is not an asset folder.
+
+**Install, remove, lock.**
+- Install copies the folder into a side folder, checks it there, and only then moves it into place (a failed install leaves nothing behind). The same id at another version is replaced only with `replace: true`.
+- Remove moves the package to `.wish/trash/packages/` (project) or `<config>/trash/packages/` (user), never deletes it: a removal can be undone by hand (ADR-022).
+- `lock` writes `wish.lock` from what is installed; `list` warns (`package_lock_mismatch`) when a package's files no longer match its lock entry.
+- Every mutating action has `dry_run`; every action enters the history and activity feed with its actor.
