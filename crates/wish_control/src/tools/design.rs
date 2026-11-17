@@ -27,6 +27,104 @@ pub const BRIEF_FIELDS: &[&str] = &[
 /// The fields that are lists (of short lines).
 const LIST_FIELDS: &[&str] = &["must", "later"];
 
+/// The default card's labels (English; the editor translates them).
+const DEFAULT_LABELS: &[&str] = &[
+    "Name",
+    "In one sentence",
+    "Genre",
+    "The player's goal",
+    "Core loop",
+    "Controls",
+    "Look and feel",
+    "For whom",
+    "Must have",
+    "Later",
+];
+
+/// Most fields on a card.
+const MAX_CARD_FIELDS: usize = 20;
+
+/// A field of the game card.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CardField {
+    /// Its key in the brief (`pitch`, `characters`).
+    pub key: String,
+    /// Its name for people (English; a workspace may bring translations).
+    pub label: String,
+    /// It is a list of short lines rather than one text.
+    pub list: bool,
+}
+
+/// The game card's fields: the workspace's (M10a, `design.card`) or the
+/// default ten.
+pub fn card_fields(design: &Value) -> Vec<CardField> {
+    let custom: Vec<CardField> = design["card"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|field| {
+            Some(CardField {
+                key: field["key"].as_str()?.to_owned(),
+                label: field["label"].as_str().unwrap_or_default().to_owned(),
+                list: field["list"] == true,
+            })
+        })
+        .collect();
+    if !custom.is_empty() {
+        return custom;
+    }
+    BRIEF_FIELDS
+        .iter()
+        .zip(DEFAULT_LABELS)
+        .map(|(key, label)| CardField {
+            key: (*key).to_owned(),
+            label: (*label).to_owned(),
+            list: LIST_FIELDS.contains(key),
+        })
+        .collect()
+}
+
+/// Checks a card given to `set_workspace`: 1 to 20 fields, keys of
+/// `a-z 0-9 _` starting with a letter, unique, labels of 1 to 40 characters.
+fn check_card(card: &[Value]) -> Result<Vec<Value>> {
+    if card.is_empty() || card.len() > MAX_CARD_FIELDS {
+        return Err(invalid(
+            format!("A card has 1 to {MAX_CARD_FIELDS} fields."),
+            "Leave \"card\" out to use the default card.",
+        )
+        .at_path("/card"));
+    }
+    let mut seen = Vec::new();
+    let mut kept = Vec::new();
+    for (index, field) in card.iter().enumerate() {
+        let path = format!("/card/{index}");
+        let key = field["key"].as_str().unwrap_or("");
+        let key_ok = (1..=32).contains(&key.len())
+            && key.starts_with(|c: char| c.is_ascii_lowercase())
+            && key
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+        if !key_ok || seen.contains(&key) {
+            return Err(invalid(
+                format!("Field {index} needs a key of its own: lowercase a-z, 0-9 and _, starting with a letter."),
+                "Write it like { \"key\": \"characters\", \"label\": \"Characters\", \"list\": true }.",
+            )
+            .at_path(path));
+        }
+        let label = field["label"].as_str().unwrap_or("").trim();
+        if label.is_empty() || label.chars().count() > 40 {
+            return Err(invalid(
+                format!("The field '{key}' needs a label of 1 to 40 characters."),
+                "The label is what people read: \"label\": \"Characters\".",
+            )
+            .at_path(path));
+        }
+        seen.push(key);
+        kept.push(json!({ "key": key, "label": label, "list": field["list"] == true }));
+    }
+    Ok(kept)
+}
+
 /// Longest text kept in one field or line.
 const MAX_TEXT: usize = 2000;
 /// Most items in one list (decisions, plan, notes, questions).
@@ -35,13 +133,14 @@ const MAX_ITEMS: usize = 500;
 pub(crate) const GAME_DESIGN: Tool = Tool {
     name: "game_design",
     title: "The game's design: card, decisions, plan, notes, questions",
-    description: "What the game is and what was decided about it, in design/game.json. get returns all of it. set_brief sets fields of the game card (title, pitch: one sentence; genre; goal: what the player wants; loop: what the player does every few seconds; controls; look: art style and mood; audience; must and later: lists of features that must be in and that wait). decide records a decision that holds for every change (\"jump height 2.5 m\", \"pastel colours only\"), forget removes one. plan_add, plan_set (status todo, doing or done) and plan_remove keep the plan of small steps. note records a note from playing (with the scene and tick it is about), note_done closes one. ask puts a question to the person with choices (use it when a choice is theirs: difficulty, look, feel; then stop and wait), answer (a person) answers it, and with remember also records the answer as a decision. Read it before you change the game, and keep it up to date.",
+    description: "What the game is and what was decided about it, in design/game.json. get returns all of it. set_brief sets fields of the game card (by default title, pitch: one sentence; genre; goal: what the player wants; loop: what the player does every few seconds; controls; look: art style and mood; audience; must and later: lists of features that must be in and that wait; a workspace may bring other fields: get shows them under card). set_workspace changes the card's fields (a workspace's), keeping every value. decide records a decision that holds for every change (\"jump height 2.5 m\", \"pastel colours only\"), forget removes one. plan_add, plan_set (status todo, doing or done) and plan_remove keep the plan of small steps. note records a note from playing (with the scene and tick it is about), note_done closes one. ask puts a question to the person with choices (use it when a choice is theirs: difficulty, look, feel; then stop and wait), answer (a person) answers it, and with remember also records the answer as a decision. Read it before you change the game, and keep it up to date.",
     params: &[
         Param::optional(
             "action",
             Kind::Choice(&[
                 "get",
                 "set_brief",
+                "set_workspace",
                 "decide",
                 "forget",
                 "plan_add",
@@ -64,6 +163,16 @@ pub(crate) const GAME_DESIGN: Tool = Tool {
             "text",
             Kind::String,
             "For decide, plan_add, note and ask: the decision, the step, the note or the question.",
+        ),
+        Param::optional(
+            "workspace",
+            Kind::String,
+            "For set_workspace: the workspace (a package's, such as \"wish.workspace.story/story.json\"); leave it and card out for the default.",
+        ),
+        Param::optional(
+            "card",
+            Kind::Array,
+            "For set_workspace: the game card's fields, [{ \"key\": \"characters\", \"label\": \"Characters\", \"list\": true }, ...]; the brief keeps every value it had.",
         ),
         Param::optional(
             "id",
@@ -182,8 +291,9 @@ pub fn read_design(root: &Path) -> Result<Value> {
 pub fn summary(design: &Value) -> Option<String> {
     let mut out = String::new();
     let brief = &design["brief"];
-    for field in BRIEF_FIELDS {
-        let line = match &brief[*field] {
+    for field in card_fields(design) {
+        let field = field.key.as_str();
+        let line = match &brief[field] {
             Value::String(text) if !text.trim().is_empty() => text.trim().to_owned(),
             Value::Array(items) if !items.is_empty() => items
                 .iter()
@@ -347,16 +457,18 @@ fn game_design(
                 )
                 .at_path("/fields"));
             };
+            let card = card_fields(&design);
+            let keys: Vec<&str> = card.iter().map(|f| f.key.as_str()).collect();
             for (field, value) in fields {
-                if !BRIEF_FIELDS.contains(&field.as_str()) {
+                let Some(known) = card.iter().find(|f| f.key == *field) else {
                     return Err(invalid(
                         format!("The game card has no field '{field}'."),
-                        &wish_core::suggest::unknown_name_hint(field, BRIEF_FIELDS),
+                        &wish_core::suggest::unknown_name_hint(field, &keys),
                     )
                     .at_path(format!("/fields/{field}")));
-                }
+                };
                 let path = format!("/fields/{field}");
-                let kept = if LIST_FIELDS.contains(&field.as_str()) {
+                let kept = if known.list {
                     let Some(items) = value.as_array() else {
                         return Err(invalid(
                             format!("'{field}' is a list of short lines."),
@@ -390,6 +502,47 @@ fn game_design(
                     json!(short(text, &path)?)
                 };
                 design["brief"][field] = kept;
+            }
+        }
+        "set_workspace" => {
+            // The workspace (a package's) and its card; no card: the default.
+            let workspace_key = args.str("workspace").map(str::trim).unwrap_or("");
+            match args.value("card").and_then(Value::as_array) {
+                Some(card) => {
+                    let card = check_card(card)?;
+                    for field in &card {
+                        let key = field["key"].as_str().unwrap_or_default();
+                        if design["brief"][key].is_null() {
+                            design["brief"][key] = if field["list"] == true {
+                                json!([])
+                            } else {
+                                json!("")
+                            };
+                        }
+                    }
+                    design["card"] = Value::Array(card);
+                    if workspace_key.is_empty() {
+                        if let Some(object) = design.as_object_mut() {
+                            object.remove("workspace");
+                        }
+                    } else {
+                        design["workspace"] = json!(short(workspace_key, "/workspace")?);
+                    }
+                }
+                None => {
+                    if !workspace_key.is_empty() {
+                        return Err(Diagnostic::error(
+                            "missing_parameter",
+                            "set_workspace with a workspace needs its \"card\": the fields of its game card.",
+                            "Write it like \"card\": [{ \"key\": \"pitch\", \"label\": \"In one sentence\" }]; leave both out to go back to the default card.",
+                        )
+                        .at_path("/card"));
+                    }
+                    if let Some(object) = design.as_object_mut() {
+                        object.remove("card");
+                        object.remove("workspace");
+                    }
+                }
             }
         }
         "decide" => {

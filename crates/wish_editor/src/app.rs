@@ -194,6 +194,8 @@ pub struct EditorApp {
     themes: Vec<crate::themes::ThemeEntry>,
     /// The theme changed: the interface takes it before its next layout.
     restyle: bool,
+    /// The workspaces there are, in the interface's language (M10a).
+    workspaces: Vec<crate::workspaces::WorkspaceEntry>,
     /// An earlier export of this name is there: the person is asked before
     /// it is replaced (its folder).
     export_confirm: Option<String>,
@@ -562,6 +564,7 @@ impl EditorApp {
             theme_key: crate::themes::DEFAULT_KEY.to_owned(),
             themes: Vec::new(),
             restyle: false,
+            workspaces: Vec::new(),
             export_confirm: None,
             cockpit: crate::cockpit::Cockpit::new(Box::new(
                 wish_agent::claude::ClaudeCode::default(),
@@ -580,6 +583,7 @@ impl EditorApp {
         app.refresh_project();
         app.load_schemas();
         app.themes = crate::themes::available(Some(app.workspace.root()));
+        app.read_workspaces();
         app
     }
 
@@ -1495,6 +1499,8 @@ impl EditorApp {
             Some(language) => {
                 self.language = language.code;
                 crate::i18n::set_language(language.code);
+                // Workspaces name their fields in the person's language.
+                self.read_workspaces();
                 self.picture_stale = true;
                 true
             }
@@ -1958,10 +1964,45 @@ impl EditorApp {
         }
         self.read_packages();
         self.themes = crate::themes::available(Some(self.workspace.root()));
+        self.read_workspaces();
+    }
+
+    /// Reads the workspaces packages bring (in the interface's language).
+    fn read_workspaces(&mut self) {
+        self.workspaces = crate::workspaces::available(self.workspace.root(), self.language);
+    }
+
+    /// The project's workspace, if it is one a package here brings.
+    fn current_workspace(&self) -> Option<&crate::workspaces::WorkspaceEntry> {
+        let key = self.design["workspace"].as_str()?;
+        self.workspaces
+            .iter()
+            .find(|workspace| workspace.key == key)
     }
 
     /// The AI mode's actions.
     fn ai_act(&mut self, ai: crate::ai_mode::AiActions) {
+        if let Some(chosen) = ai.workspace {
+            let args = match chosen
+                .as_deref()
+                .and_then(|key| self.workspaces.iter().find(|w| w.key == key))
+            {
+                Some(workspace) => {
+                    let card: Vec<Value> = workspace
+                        .card
+                        .iter()
+                        .map(|field| json!({ "key": field.key, "label": field.label_en, "list": field.list }))
+                        .collect();
+                    json!({ "action": "set_workspace", "workspace": workspace.key, "card": card })
+                }
+                None => json!({ "action": "set_workspace" }),
+            };
+            if self.design_call(args) {
+                let mut state = self.ai.borrow_mut();
+                state.card_from = None;
+                state.card.clear();
+            }
+        }
         if let Some(fields) = ai.save_card
             && self.design_call(json!({ "action": "set_brief", "fields": fields }))
         {
@@ -2271,7 +2312,21 @@ impl EditorApp {
         let settings = self.cockpit.settings.clone();
         let task = wish_agent::Task {
             context: self.cockpit.context.clone(),
-            design: wish_control::design_summary(&self.design),
+            design: {
+                let summary = wish_control::design_summary(&self.design);
+                match self
+                    .current_workspace()
+                    .filter(|w| !w.instructions.trim().is_empty())
+                {
+                    Some(workspace) => Some(format!(
+                        "{}The workspace ({}): {}\n",
+                        summary.unwrap_or_default(),
+                        workspace.name,
+                        workspace.instructions.trim()
+                    )),
+                    None => summary,
+                }
+            },
             model: settings.model.clone(),
             resume: if settings.memory {
                 self.cockpit.session.clone()
@@ -4679,6 +4734,8 @@ impl EditorApp {
             permission: &self.permission_mode,
             waiting,
             assistant: self.assistant.as_deref(),
+            workspaces: &self.workspaces,
+            workspace: self.current_workspace(),
         };
         egui::Panel::left("ai-game")
             .default_size(290.0)

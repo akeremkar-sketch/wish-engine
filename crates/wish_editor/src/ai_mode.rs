@@ -133,6 +133,8 @@ pub(crate) struct AiState {
 #[derive(Default)]
 pub(crate) struct AiActions {
     pub save_card: Option<Map<String, Value>>,
+    /// Use this workspace (`Some(None)`: the default).
+    pub workspace: Option<Option<String>>,
     pub draft_card: bool,
     pub decide: Option<String>,
     pub forget: Option<u64>,
@@ -172,6 +174,7 @@ pub(crate) struct AiActions {
 impl AiActions {
     pub fn any(&self) -> bool {
         self.save_card.is_some()
+            || self.workspace.is_some()
             || self.draft_card
             || self.decide.is_some()
             || self.forget.is_some()
@@ -220,6 +223,57 @@ pub(crate) struct AiView<'a> {
     pub waiting: usize,
     /// Where Claude Code is, if it was found.
     pub assistant: Option<&'a str>,
+    /// The workspaces there are, and the project's (`None`: the default).
+    pub workspaces: &'a [crate::workspaces::WorkspaceEntry],
+    pub workspace: Option<&'a crate::workspaces::WorkspaceEntry>,
+}
+
+/// A field of the card as the panel shows it.
+pub(crate) struct Field {
+    pub key: String,
+    pub label: String,
+    pub hint: String,
+    pub list: bool,
+    pub tall: bool,
+}
+
+/// The card's fields: the workspace's, else the ones the design file names
+/// (its package is not installed here), else the default card.
+pub(crate) fn fields(view: &AiView) -> Vec<Field> {
+    if let Some(workspace) = view.workspace {
+        return workspace
+            .card
+            .iter()
+            .map(|field| Field {
+                key: field.key.clone(),
+                label: field.label.clone(),
+                hint: field.hint.clone(),
+                list: field.list,
+                tall: field.tall,
+            })
+            .collect();
+    }
+    if view.design["card"].is_array() {
+        return wish_control::card_fields(view.design)
+            .into_iter()
+            .map(|field| Field {
+                tall: field.list,
+                list: field.list,
+                hint: String::new(),
+                label: field.label,
+                key: field.key,
+            })
+            .collect();
+    }
+    CARD.iter()
+        .map(|(key, name, hint, tall)| Field {
+            key: (*key).to_owned(),
+            label: name().to_owned(),
+            hint: hint().to_owned(),
+            list: matches!(*key, "must" | "later"),
+            tall: *tall,
+        })
+        .collect()
 }
 
 /// The switch between the two modes, in the menu bar: returns the mode
@@ -316,16 +370,18 @@ pub(crate) fn game_panel(ui: &mut Ui, view: &AiView, actions: &mut AiActions) {
     // The boxes follow the file when it changed and nothing was being
     // written (an agent wrote the card).
     let brief = &view.design["brief"];
+    let card_fields = fields(view);
     if state.card_from.as_ref() != Some(brief) {
         let editing = state.card_from.as_ref().is_some_and(|from| {
-            CARD.iter().any(|(key, ..)| {
-                state.card.get(*key).map(String::as_str).unwrap_or("") != field_text(&from[*key])
+            card_fields.iter().any(|field| {
+                state.card.get(&field.key).map(String::as_str).unwrap_or("")
+                    != field_text(&from[&field.key])
             })
         });
         if !editing {
-            state.card = CARD
+            state.card = card_fields
                 .iter()
-                .map(|(key, ..)| ((*key).to_owned(), field_text(&brief[*key])))
+                .map(|field| (field.key.clone(), field_text(&brief[&field.key])))
                 .collect();
             state.card_from = Some(brief.clone());
         }
@@ -356,6 +412,41 @@ pub(crate) fn game_panel(ui: &mut Ui, view: &AiView, actions: &mut AiActions) {
         }
         ui.add_space(4.0);
     }
+    // The workspace: what kind of game the card is for.
+    let chosen = view.workspace.map_or_else(
+        || t("Default").to_owned(),
+        |workspace| workspace.name.clone(),
+    );
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new(t("Workspace"))
+                .color(crate::style::pal().weak)
+                .size(12.0),
+        );
+        egui::ComboBox::from_id_salt("ai-workspace")
+            .selected_text(chosen)
+            .show_ui(ui, |ui| {
+                if ui
+                    .selectable_label(view.workspace.is_none(), t("Default"))
+                    .on_hover_text(t("The engine's own card, for any game"))
+                    .clicked()
+                    && view.workspace.is_some()
+                {
+                    actions.workspace = Some(None);
+                }
+                for workspace in view.workspaces {
+                    let is = view.workspace.is_some_and(|w| w.key == workspace.key);
+                    if ui
+                        .selectable_label(is, &workspace.name)
+                        .on_hover_text(&workspace.description)
+                        .clicked()
+                        && !is
+                    {
+                        actions.workspace = Some(Some(workspace.key.clone()));
+                    }
+                }
+            });
+    });
     ui.horizontal(|ui| {
         let decisions = items(view.design, "decisions").count();
         if tab(ui, state.left == Left::Card, t("Game card")) {
@@ -380,42 +471,48 @@ pub(crate) fn game_panel(ui: &mut Ui, view: &AiView, actions: &mut AiActions) {
 }
 
 fn card(ui: &mut Ui, view: &AiView, state: &mut AiState, actions: &mut AiActions) {
-    let filled = CARD
+    let card_fields = fields(view);
+    let filled = card_fields
         .iter()
-        .filter(|(key, ..)| !field_text(&view.design["brief"][*key]).trim().is_empty())
+        .filter(|field| {
+            !field_text(&view.design["brief"][&field.key])
+                .trim()
+                .is_empty()
+        })
         .count();
     ui.weak(tf(
         "{filled} of {all} filled. The agent reads the card before every task.",
-        &[("filled", &filled), ("all", &CARD.len())],
+        &[("filled", &filled), ("all", &card_fields.len())],
     ));
     ui.add_space(4.0);
-    for (key, name, hint, tall) in CARD {
+    for field in &card_fields {
         ui.label(
-            RichText::new(name())
+            RichText::new(&field.label)
                 .color(crate::style::pal().weak)
                 .size(12.0),
         );
-        let text = state.card.entry((*key).to_owned()).or_default();
-        let edit = if *tall {
+        let text = state.card.entry(field.key.clone()).or_default();
+        let edit = if field.tall {
             egui::TextEdit::multiline(text).desired_rows(2)
         } else {
             egui::TextEdit::singleline(text)
         };
         ui.add(
             edit.desired_width(f32::INFINITY)
-                .hint_text(hint())
-                .id_salt(("card", *key)),
+                .hint_text(&field.hint)
+                .id_salt(("card", field.key.as_str())),
         )
-        .on_hover_text(name());
+        .on_hover_text(&field.label);
         ui.add_space(2.0);
     }
-    let changed: Map<String, Value> = CARD
+    let changed: Map<String, Value> = card_fields
         .iter()
-        .filter_map(|(key, ..)| {
-            let now = state.card.get(*key).cloned().unwrap_or_default();
-            let was = field_text(&view.design["brief"][*key]);
+        .filter_map(|field| {
+            let key = &field.key;
+            let now = state.card.get(key).cloned().unwrap_or_default();
+            let was = field_text(&view.design["brief"][key]);
             (now != was).then(|| {
-                let value = if matches!(*key, "must" | "later") {
+                let value = if field.list {
                     Value::Array(
                         now.lines()
                             .map(str::trim)
@@ -426,7 +523,7 @@ fn card(ui: &mut Ui, view: &AiView, state: &mut AiState, actions: &mut AiActions
                 } else {
                     json!(now.trim())
                 };
-                ((*key).to_owned(), value)
+                (key.clone(), value)
             })
         })
         .collect();
@@ -983,13 +1080,20 @@ fn ask(ui: &mut Ui, view: &AiView, actions: &mut AiActions) {
     }
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
-        for (name, request) in ready_requests() {
+        let ready: Vec<(String, String)> = match view.workspace {
+            Some(workspace) if !workspace.ready.is_empty() => workspace.ready.clone(),
+            _ => ready_requests()
+                .iter()
+                .map(|(name, request)| ((*name).to_owned(), (*request).to_owned()))
+                .collect(),
+        };
+        for (name, request) in ready {
             if ui
-                .add(egui::Button::new(RichText::new(name).size(12.0)).small())
-                .on_hover_text(request)
+                .add(egui::Button::new(RichText::new(&name).size(12.0)).small())
+                .on_hover_text(&request)
                 .clicked()
             {
-                actions.ready = Some(request.to_owned());
+                actions.ready = Some(request.clone());
             }
         }
     });

@@ -22,6 +22,7 @@ mod style;
 mod themes;
 mod vector;
 pub mod welcome;
+mod workspaces;
 
 pub use app::{EditorApp, Opener, Row, ids};
 

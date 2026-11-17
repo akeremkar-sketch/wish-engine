@@ -399,3 +399,82 @@ fn the_window_icon_is_the_mark_on_a_dark_tile() {
         .count();
     assert!(star * 10 > gold * 8, "{star} of {gold}");
 }
+
+#[test]
+fn a_workspace_brings_its_card_and_ready_requests() {
+    let (mut app, _dir) = app("workspace");
+    app.set_ai_mode(true);
+    app.set_agent(Box::new(Scripted {
+        name: "scripted".to_owned(),
+        says: "Done.".to_owned(),
+        calls: Vec::new(),
+    }));
+    play(&mut app, json!([{ "idle": 2 }]));
+    assert!(find(&app, "Genre").is_some(), "the default card");
+    // The workspace box → Story game.
+    let combo = app
+        .widgets()
+        .iter()
+        .find(|w| w.role == "ComboBox" && w.value.as_deref() == Some("Default"))
+        .map(|w| w.rect)
+        .expect("the workspace box");
+    click(&mut app, combo);
+    let story = named(&app, "Story game");
+    click(&mut app, story);
+    assert_eq!(
+        app.design()["workspace"],
+        "wish.workspace.story/story.json",
+        "{}",
+        app.status()
+    );
+    assert!(find(&app, "Genre").is_none(), "the story card has no genre");
+    assert!(find(&app, "Characters").is_some(), "{:?}", app.design());
+    assert!(
+        find(&app, "Add a character").is_some(),
+        "the workspace's ready requests"
+    );
+    // Its fields are written by hand like any other.
+    type_into(&mut app, "Characters", "Mira\nthe keeper");
+    let save = named(&app, "Save card");
+    click(&mut app, save);
+    assert_eq!(
+        app.design()["brief"]["characters"],
+        json!(["Mira", "the keeper"])
+    );
+    // The agent gets the card and the workspace's words.
+    type_into(&mut app, "Tell the agent what to make or change", "begin");
+    let send = named(&app, "Send");
+    click(&mut app, send);
+    wait_for_agent(&mut app);
+    let design = app.last_task().unwrap().design.clone().unwrap();
+    assert!(
+        design.contains("- characters: Mira; the keeper"),
+        "{design}"
+    );
+    assert!(
+        design.contains("The workspace (Story game): This is a story game"),
+        "{design}"
+    );
+    // Back to the default card: nothing written is lost.
+    let combo = app
+        .widgets()
+        .iter()
+        .find(|w| w.role == "ComboBox" && w.value.as_deref() == Some("Story game"))
+        .map(|w| w.rect)
+        .expect("the workspace box");
+    click(&mut app, combo);
+    let default = app
+        .widgets()
+        .iter()
+        .filter(|w| w.label.as_deref() == Some("Default") && w.role != "ComboBox")
+        .map(|w| w.rect)
+        .next_back()
+        .unwrap();
+    click(&mut app, default);
+    assert!(app.design().get("workspace").is_none(), "{}", app.design());
+    assert!(find(&app, "Genre").is_some());
+    assert_eq!(
+        app.design()["brief"]["characters"],
+        json!(["Mira", "the keeper"])
+    );
+}

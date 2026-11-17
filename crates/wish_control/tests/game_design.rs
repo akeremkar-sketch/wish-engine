@@ -277,3 +277,84 @@ fn play_test_pictures_are_not_assets() {
     let check = ws.call("check", &json!({}), &parse_actor("human"));
     assert_eq!(check["ok"], true, "{check}");
 }
+
+#[test]
+fn a_workspace_brings_its_own_card_and_keeps_every_value() {
+    let (mut ws, _dir) = open("workspace");
+    call(
+        &mut ws,
+        "human",
+        json!({ "action": "set_brief", "fields": { "pitch": "A ghost story", "genre": "adventure" } }),
+    );
+    let card = json!([
+        { "key": "pitch", "label": "In one sentence" },
+        { "key": "setting", "label": "Setting" },
+        { "key": "characters", "label": "Characters", "list": true }
+    ]);
+    let set = call(
+        &mut ws,
+        "human",
+        json!({ "action": "set_workspace", "workspace": "wish.workspace.story/story.json", "card": card }),
+    );
+    assert_eq!(set["ok"], true, "{set}");
+    assert_eq!(
+        set["design"]["workspace"],
+        "wish.workspace.story/story.json"
+    );
+    assert_eq!(set["design"]["brief"]["characters"], json!([]));
+    // The new fields are set; the old ones are no longer on the card.
+    let filled = call(
+        &mut ws,
+        "agent:a",
+        json!({ "action": "set_brief", "fields": { "characters": ["Mira", "the keeper"], "setting": "a lighthouse" } }),
+    );
+    assert_eq!(filled["ok"], true, "{filled}");
+    let gone = call(
+        &mut ws,
+        "agent:a",
+        json!({ "action": "set_brief", "fields": { "genre": "x" } }),
+    );
+    assert_eq!(gone["error"]["code"], "invalid_design", "{gone}");
+    let summary = design_summary(&filled["design"]).unwrap();
+    assert!(
+        summary.contains("- characters: Mira; the keeper"),
+        "{summary}"
+    );
+    assert!(summary.contains("- setting: a lighthouse"), "{summary}");
+    assert!(
+        !summary.contains("adventure"),
+        "only the card's fields: {summary}"
+    );
+    // Back to the default card: every value is still there.
+    let back = call(&mut ws, "human", json!({ "action": "set_workspace" }));
+    assert_eq!(back["ok"], true, "{back}");
+    assert!(back["design"].get("card").is_none() && back["design"].get("workspace").is_none());
+    assert_eq!(back["design"]["brief"]["genre"], "adventure");
+    assert_eq!(
+        back["design"]["brief"]["characters"],
+        json!(["Mira", "the keeper"])
+    );
+    // A bad card is explained.
+    for (card, why) in [
+        (json!([]), "empty"),
+        (json!([{ "key": "Bad Key", "label": "X" }]), "key"),
+        (
+            json!([{ "key": "a", "label": "A" }, { "key": "a", "label": "B" }]),
+            "twice",
+        ),
+        (json!([{ "key": "a", "label": "" }]), "label"),
+    ] {
+        let got = call(
+            &mut ws,
+            "human",
+            json!({ "action": "set_workspace", "workspace": "x/y.json", "card": card }),
+        );
+        assert_eq!(got["error"]["code"], "invalid_design", "{why}: {got}");
+    }
+    let no_card = call(
+        &mut ws,
+        "human",
+        json!({ "action": "set_workspace", "workspace": "x/y.json" }),
+    );
+    assert_eq!(no_card["error"]["code"], "missing_parameter", "{no_card}");
+}

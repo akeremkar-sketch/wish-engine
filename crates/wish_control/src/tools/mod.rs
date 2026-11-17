@@ -20,7 +20,9 @@ mod sim;
 mod testing;
 mod view;
 
-pub use design::{BRIEF_FIELDS, DESIGN_FILE, read_design, summary as design_summary};
+pub use design::{
+    BRIEF_FIELDS, CardField, DESIGN_FILE, card_fields, read_design, summary as design_summary,
+};
 pub(crate) use sim::parse_input;
 pub use view::{IdPicture, Picture, PictureSource};
 

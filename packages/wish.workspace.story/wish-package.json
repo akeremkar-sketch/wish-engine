@@ -1,0 +1,14 @@
+{
+  "contents": {
+    "workspaces": [
+      "story.json"
+    ]
+  },
+  "description": "A workspace for story games: a card with the setting, characters, tone, choices and endings, and ready requests for scenes, characters and branches.",
+  "engine": ">=0.1",
+  "format": 1,
+  "id": "wish.workspace.story",
+  "license": "MIT OR Apache-2.0",
+  "name": "Story game",
+  "version": "1.0.0"
+}
