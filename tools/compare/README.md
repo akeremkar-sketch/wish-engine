@@ -23,9 +23,16 @@ install).
    `Unity.exe -batchmode -projectPath <project> -executeMethod CompareSetup.Build -quit`:
    it writes `Assets/Scenes/CompareBase.unity` (the start scene, Z mirrored,
    text serialization).
-3. Open the project in the editor (the MCP relay talks to the open editor).
-4. Run the comparison. Before the first task the runner checks that every
-   task *fails* on the real start scene (proof that the scene reader reads
+3. `python tools/compare/run.py prepare-unity --unity-project <project>`
+   while the editor is **closed**: each task gets its own copy of the start
+   scene, which the editor imports when it opens (a scene copied in while
+   the editor runs in the background is not imported, and the agent cannot
+   open it).
+4. Close every other Unity project (the relay talks to the open editor),
+   and open this project in the editor.
+5. Run the comparison. Before the first task the runner checks that every
+   task *fails* on the real start scene and that every task scene is an
+   untouched copy (proof that the scene reader reads
    Unity's files); each task gets its own copy of the start scene.
 
 ## How the checks differ

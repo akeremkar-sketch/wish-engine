@@ -141,4 +141,4 @@ Two independent reviewers (read-only; one on the engine code, one on examples + 
 
 **What went into the engine:** `asset_create` (25th tool), SDK `asset()`, `entity_get resources`, `scene_not_session`, the character contact offset, the moving platform carrying the character exactly (and seeing walls), the `wen do` streaming input, `wish://docs/recipes` (8 recipes tested by playing), game systems in the guide, the interface child order doc, the encoding hint, `tools/clean-build.ps1`.
 
-**Pending user steps:** the Haiku 5.5 run (~2–4 $); the comparison runs (Wish ~1 $, Unity ~1–2 $ + a temporary 2–3 GB project). From earlier milestones: the M5 Windows Sandbox trial, trying the audio output by ear.
+**Pending user steps:** the Haiku 5.5 run (~2–4 $). The comparison runs were done on 18 November 2026: Wish Engine 8/8 for 0.70 $, Unity 6.3 7/8 for 0.80 $ (`evals/results/compare-2026-11-18.md`; the first Unity run was invalid because of a harness bug, fixed). From earlier milestones: the M5 Windows Sandbox trial, trying the audio output by ear.
