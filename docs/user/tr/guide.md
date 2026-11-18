@@ -12,10 +12,11 @@ Bu kılavuz bir oyunu ilk açılıştan dışa aktarılmış hâline kadar izler
 - [4. Oynatma, tekrar kayıtları ve testler](#4-oynatma-tekrar-kayıtları-ve-testler)
 - [5. Oyun kodu](#5-oyun-kodu)
 - [6. Yapay zekâ yardımcısıyla çalışma](#6-yapay-zekâ-yardımcısıyla-çalışma)
-- [7. Oyunu dışa aktarma](#7-oyunu-dışa-aktarma)
-- [8. Komut satırı](#8-komut-satırı)
-- [9. Bir şey ters gidince](#9-bir-şey-ters-gidince)
-- [10. Proje klasöründe neler var](#10-proje-klasöründe-neler-var)
+- [7. Paketler, temalar, çalışma alanları ve komut paleti](#7-paketler-temalar-çalışma-alanları-ve-komut-paleti)
+- [8. Oyunu dışa aktarma](#8-oyunu-dışa-aktarma)
+- [9. Komut satırı](#9-komut-satırı)
+- [10. Bir şey ters gidince](#10-bir-şey-ters-gidince)
+- [11. Proje klasöründe neler var](#11-proje-klasöründe-neler-var)
 
 ## 1. Kurulum ve ilk açılış
 

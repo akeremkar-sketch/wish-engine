@@ -13,7 +13,7 @@ A 3D game engine that is **fully integrated with AI**; whose interface is built 
 - **Distribution.** Steam and our own website.
 - **The AI belongs to the user.** The user connects their own Claude (or another provider) account. The engine does not step in between and takes no share of AI usage.
 - **Hybrid.** You can work with AI, or fully by hand like in today's engines; the two can be mixed in the same scene. Connecting an AI is optional.
-- **Zero setup.** Download → open → connect your AI (or start by hand without it) → start making a game. The user is not asked to install a compiler or any extra tool.
+- **Zero setup.** Download → open → connect your AI (or start by hand without it) → start making a game. The user is not asked to install a compiler or any extra tool. At 1.0 the download is one package that carries everything. From release 1.3 it is a small base engine that plays its templates as it arrives; heavier parts (the compiler, export players for other systems) become components the engine adds itself when they are first needed, and a full offline bundle carries all of them (ADR-023, amended twice on 18 November 2026).
 - **End to end.** Every step from the idea to a distributable game file (export) is inside the engine.
 - **"Seamless" is a quality bar.** It is measured with the criteria at the end of this document; a release does not ship until these criteria are met.
 
@@ -86,21 +86,30 @@ Each principle is written so that it can be tested. If a feature breaks one of t
 
 ## Scope: the 1.0 goal
 
-"The best engine for making small and medium-sized 3D games from start to finish, seamlessly, with AI, by hand, or with both together."
+"The first engine in which one person, an agent, or both together can make a small or medium-sized desktop 3D game from start to finish, seamlessly, **and prove that it works**."
 
-- 3D first (2D as a subset, with an orthographic camera + sprites)
-- Windows desktop (Linux/macOS from the same code); web is a later milestone
-- PBR rendering, shadows, glTF import, skeletal animation
+**1.0 is the short path** (user decisions of 18 November 2026: the scope was first grown to the full plan of M12 and cut the same day to the part the user asked for most, graphics and platforms; [design/M12-road-to-1-0.md](design/M12-road-to-1-0.md) §0; the milestone: M12 in [ROADMAP.md](ROADMAP.md)). Nothing is dropped: what moved out of 1.0 is named below with the release it now belongs to, on the train of [design/road-to-2-0.md](design/road-to-2-0.md).
+
+- 3D first; 2D as a subset, with an orthographic camera and sprites. *(The first-class 2D kit, with sprite sheets, tilemaps and a 2D physics profile, is release 1.7.)*
+- **Desktop, on two systems.** People work on Windows and on Linux: both are packaged from a tag and tested end to end in CI, and each exports games for itself. *(Export to the other system from one machine, Steam Deck and macOS as a labelled preview are release 1.3.)*
+- PBR rendering with cascaded shadows, sky-lit ambient lighting with a sun disc, fog, colour grading, FXAA and HDR bloom; material files, an alpha-blended pass; a default look locked once and signed off by eye; glTF import, skeletal animation *(the 1.0 part of ADR-012; environment maps are release 1.1, quality tiers 1.3, ambient occlusion 1.4)*
 - Physics, audio, input, in-game UI
 - Wasm-based game logic (first language: Rust)
-- MCP + command line + hybrid editor (AI cockpit and full manual editing)
+- MCP + command line + hybrid editor (AI cockpit and manual editing, as built in M8a) *(The editor's first hour, with an orbit camera, a Create menu, duplicate and new scene, is release 1.1; picking, gizmo completion, asset import, a console with click-through and a profiler are 1.4; a material editor with a preview is 1.8.)*
 - Exporting the game to a distributable package
-- Single-package install (Steam and website), Turkish and English interface
+- Single-package install, downloaded from GitHub Releases at 1.0. *(Steam and our own website are the product's channels (ADR-023) and wait for user steps; they are not packages of the short path. A small base engine with optional components and a full offline bundle is release 1.3.)*
+- Turkish and English interface
+- A published AI scorecard with its first baseline, and a short stability note: after 1.0 a format changes only by addition or with a migration. *(The stability contract in full, with labels and snapshot tests, is release 1.3.)*
+
+**Web export is a preview in release 1.9.** It leaves preview in 1.10 only if the determinism matrix passes. It is not in 1.0, and the first page says so.
+
+**What 2.0 is.** A free, open-source engine for one person, an AI agent, or both together, to make small and medium 3D and 2D games and ship them to Windows, Linux, Steam Deck and the browser from one machine, working fully by hand with no AI connected. Its one bet: proof, not generation, is what makes AI useful for games. The simulation is deterministic, so the engine itself can say whether a game still works: one gate an agent's work must pass, a replay that reproduces any bug, a server that re-runs a player's run to confirm a score, and the same bits on every supported platform. The claim is published with every release as a scorecard, with the command that reproduces each number. The releases from 1.1 to 2.0 are in [design/road-to-2-0.md](design/road-to-2-0.md).
 
 ## Out of scope (deliberately, for 1.0)
 
 - Unreal-level AAA rendering (virtual geometry, ray-traced global illumination) → a research line after 1.0. The architecture leaves the door open for it, but does not promise it.
 - Multiplayer/networking → after 1.0. The determinism and snapshot infrastructure prepares the ground for it.
+- Web → a preview in release 1.9 (its constraints are respected from the start: ADR-019). macOS → an unsigned preview in release 1.3; a signed, first-class target after 2.0.
 - Console and mobile platforms.
 - Visual (node-based) scripting.
 - Expert manual editing tools: animation timeline editor, visual shader graph, terrain sculpting, a full code editor inside the engine → after 1.0. Until then, an external tool (Blender, VS Code), a text file or AI is used.
@@ -120,7 +129,7 @@ These limits are for honesty: the reason "next-generation engine" projects fail 
 | Use without AI | With no AI connected, building a scene, playing, testing and exporting all work completely |
 | Manual/agent parity | Every scene/entity operation in the control plane has a manual counterpart in the interface (checked automatically) |
 | First run | After download: connect the AI → first request → a working scene in < 5 minutes |
-| Install | A single package; the user does not install a compiler or any extra tool |
+| Install | A single package, on Windows and on Linux; the user does not install a compiler or any extra tool (from release 1.3: a small base that plays its templates as downloaded, or the full offline bundle) |
 | Agent-caused crash/freeze | Zero (faulty game code only produces a diagnostic) |
 | Reversibility | Every change the agent makes can be undone from the interface with one click |
-| Export | A standalone game package that works with a single command/click |
+| Export | A standalone game package that works with a single command/click, for the system it is made on, Windows or Linux (from release 1.3: for Windows, Linux and Steam Deck, from either system) |

@@ -223,6 +223,8 @@ The [VISION.md](../VISION.md) success criteria and the M9 exit criteria. Proof a
 6. **CI billing.** GitHub does not start the jobs.
 7. **Name/brand/domain, end-user agreement, making the repository public, Steam, website, code signing.**
 
+*(18 November 2026: 1.0 is now the short path of [M12-road-to-1-0.md](M12-road-to-1-0.md) section 0. The name, downloading and merging to `main` are needed before its release candidates; the formal three-person test of step 4 is placed at release 1.4 by [road-to-2-0.md](road-to-2-0.md).)*
+
 ### WP5 — package, end-to-end trial, crash report, drafts (17 November 2026)
 
 - **Package:** `C:\wish-build\package` (558 MB), `wen` and `wish_player` with the static C runtime. No warnings. Contents: SDK, packaged compiler, 5 templates, `clean-test.wsb`.

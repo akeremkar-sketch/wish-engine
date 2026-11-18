@@ -83,6 +83,6 @@ The goal (fewer than 4.5 calls per task without losing a task) is met. Unity
 What still costs turns: the client's own tool loading (one call per task), the
 falling box (6 calls: starting, stepping and stopping the session are three
 separate calls) and the camera task (a look before and a look after). The next round (the game-code loop, one
-call to change and prove, a default scene detail that shows values) is in the
-road-to-1.0 plan.
+call to change and prove, a default scene detail that shows values) is after
+1.0: release 1.1 of the train ([road-to-2-0.md](road-to-2-0.md) section 3).
 

@@ -19,8 +19,8 @@ Sizes are relative (S < M < L < XL); they are not a promise about the calendar.
 | M8b | AI cockpit | Chat panel, in-cockpit agent, "show and tell", activity feed, checkpoints | L | Sonnet 5.5 · high (Opus 5.5 · high for interaction design decisions) |
 | M9 | Productization → **1.0** | One-package install, export, first run, docs, Steam/web | L | Sonnet 5.5 · medium; release audit Opus 5.5 · high — **code side done** (17 November 2026, `m9-product`); what remains are user steps: [design §5](design/M9-productization.md) |
 | M10 | Hub, packages and modding (M10a and M10b in **1.0**, M10c–e after it) | Registries, command palette, themes, workspace documents (the AI mode as a template), data packages, `wish.lock`, the Hub with packages and engine versions | L | Opus 5.5 · xhigh (M10a, M10c), high (M10b, M10d, M10e) — **M10a done** (17 November 2026); M10b in progress on `m9-product` (the Hub, the offline package index, side-by-side engine versions and the closing review done; downloading waits for the user): [design](design/M10-hub-and-packages.md) |
-| M12 | The road to a strong 1.0 (**proposal**, grows the 1.0 scope; waits for the user) | Graphics baseline and look lock, Windows + Linux + Steam Deck with cross-export, a small base with components, 2D kit, editor musts, quality mode, verified runs, docs site, stability contract, beta | XL | Fable 5.2 · high (plan, foundations, render); Opus 5.5 · high and Sonnet 5.5 · medium for settled packages: [design](design/M12-road-to-1-0.md) |
-| M11 | After 1.0 | Advanced rendering, web target, second scripting language, multiplayer | open-ended | Fable 5.2 / Opus 5.5 · high–xhigh |
+| M12 | The road to a strong 1.0 → **1.0** (approved by the user at full scope on 18 November 2026 and **cut the same day to the short path**; nothing is dropped, the rest follows after 1.0) | The render foundation; a release pipeline for Windows and Linux, and Linux as a tested host; sky-lit ambient, fog, colour grading, FXAA, bloom, cascaded shadows, material files, an alpha-blended pass, then the look lock; the AI scorecard with a first baseline; the public face made true; a closing review; a two-week beta | L (about 13 packages) | Fable 5.2 · high (plan, foundation, render); Opus 5.5 · high and Sonnet 5.5 · medium for settled packages — **in progress**: [design §0](design/M12-road-to-1-0.md), [section below](#m12--the-road-to-a-strong-10) |
+| M11 | After 1.0 | The train to 2.0: releases 1.1 to 1.10, then 2.0 (the rest of the M12 plan first; web export a preview in 1.9; 2.0 adds no features). Ideas outside the train stay on the M11 list: advanced rendering, a second scripting language, multiplayer | XL (about 130 packages) | Fable 5.2 / Opus 5.5 · high–xhigh for foundations, formats and the ABI; Sonnet 5.5 · medium for settled packages; stated again at the start of each release: [design](design/road-to-2-0.md), [section below](#after-10-the-train-to-20) |
 | T1 | Interface design (parallel) | Mockups of the hybrid interface: manual-editing and cockpit flows, switching between the two, user testing | S | Opus 5.5 · high — starts together with M4 |
 
 ### Rule for choosing model and effort
@@ -239,7 +239,7 @@ Exit criteria 2–5 are tested. Remaining: criterion 1 (with 3 users, with a rea
 
 ## M9 — Productization → 1.0
 
-**Output.** One-package install (with the embedded toolchain), `wen export` (standalone game package), first-run flow (connect the AI or skip it → pick a template → first request or start by hand), example projects, user docs (TR/EN), updater (web version), optional crash report, third-party license file, end-user agreement (free, no commission), Steam page and website.
+**Output.** One-package install (with the embedded toolchain), `wen export` (standalone game package), first-run flow (connect the AI or skip it → pick a template → first request or start by hand), example projects, user docs (TR/EN), updater (web version), optional crash report, third-party license file, end-user agreement (free, no commission), Steam page and website. *(18 November 2026: the updater belongs to the download layer, which has no release number: [design/road-to-2-0.md](design/road-to-2-0.md) §3. At 1.0 the package is downloaded from GitHub Releases.)*
 
 **Exit criterion — the "smooth" bar.** All the success criteria in [VISION.md](VISION.md) are met. In addition:
 - On clean Windows 10 and 11 installs: download → first running scene < 5 minutes, no extra install.
@@ -254,21 +254,90 @@ Exit criteria 2–5 are tested. Remaining: criterion 1 (with 3 users, with a rea
 **Why.** The user's request (17 November 2026): the AI mode should be a basic template people can easily change, there should be a Hub like Unity's or Unreal's (projects, engine versions, plugins, mods), and the interface and much more should be moddable, with the groundwork laid early. Plan and reasons: [design/M10-hub-and-packages.md](design/M10-hub-and-packages.md). **This grows the 1.0 scope** (user decision, 17 November 2026: M10a and M10b go into 1.0).
 
 - **M10a — Foundations (1.0):** registries (tools, commands, panels, themes, icons, languages, templates, diagnostics) that the engine's own parts go through; command palette (Ctrl+K) and remappable shortcuts; theme tokens and theme files; workspace documents (the AI mode and the manual mode are the two default workspaces; game card fields and ready requests come from data); package manifest, `wish.lock`, local data packages; the engine version in `wish.json`.
-- **M10b — Hub (1.0):** the welcome screen grows into the Hub (Projects, Learn, Packages, Look, AI, Settings, Engine versions); a serverless package index (a git repository, signed entries); `wen pkg search/add/remove/update/lock`; side-by-side engine versions.
-- **M10c — Code extensions (after 1.0):** the `wish_ext` Wasm ABI; tools, panels, importers and hooks from packages, in the game code's sandbox, with permissions.
-- **M10d — Game packages (after 1.0):** components, systems, prefabs and assets as packages, compiled with the game.
-- **M10e — Ecosystem (after 1.0):** publishing, signing keys, docs site, RFC process.
+- **M10b — Hub (1.0):** the welcome screen grows into the Hub (Projects, Learn, Packages, Look, AI, Settings, Engine versions); a serverless package index (a git repository, signed entries); `wen pkg search/add/remove/update/lock`; side-by-side engine versions. *(18 November 2026: built as an offline index; fetching over the network, the signed index and the updater are the download layer, which has no release number: [design/road-to-2-0.md](design/road-to-2-0.md) §3.)*
+- **M10c — Code extensions (after 1.0):** the `wish_ext` Wasm ABI; tools, panels, importers and hooks from packages, in the game code's sandbox, with permissions. *(18 November 2026, on the train: after 2.0.)*
+- **M10d — Game packages (after 1.0):** components, systems, prefabs and assets as packages, compiled with the game. *(18 November 2026, on the train after 1.0: assets and prefabs in packages, package dependencies and author tooling are release 1.6; code in packages is an experiment in 1.10.)*
+- **M10e — Ecosystem (after 1.0):** publishing, signing keys, docs site, RFC process. *(18 November 2026, on the train after 1.0: the docs site is release 1.3.)*
 
 **Exit criterion (M10a + M10b).** The AI mode, the manual mode, the default theme and the templates are all loaded from the registries as packages; a theme, a workspace and a recipe package made outside the engine install from the Hub, change the editor without rebuilding it, and come off again cleanly; a project with a `wish.lock` opens with the same packages on another machine; every package action is a control-plane tool with a headless test.
 
+## M12 — The road to a strong 1.0
+
+**Status: in progress** (the work is on the `m9-product` branch until the user decides about merging to `main`). Two user decisions of 18 November 2026: the user first said yes to the full scope of the plan, starting with graphics and platforms, and **cut it the same day to the short path**, because the full scope (45 to 50 packages, 2.5 to 3 months by the plan's estimate) does not fit the user's time and tokens before a first release. **1.0 is the short path**; it is tagged at the end of this milestone. Everything else the plan describes is done after 1.0, in the order of [the train to 2.0](#after-10-the-train-to-20); nothing is dropped. Plan: [design/M12-road-to-1-0.md](design/M12-road-to-1-0.md) (§0 is the scope of 1.0; its phases describe the full scope); backlog every package starts from: [design/M12-area-maps.md](design/M12-area-maps.md) (written by agents: a claim is verified against the code before anything is built on it). Decisions on paper: [VISION.md](VISION.md) (scope), [DECISIONS.md](DECISIONS.md) (ADR-012, 019, 020, 023 and 027 amended for the full scope and again for the short path; ADR-028 added).
+
+**What 1.0 is now.** The first engine in which one person, an agent, or both together can make a small or medium desktop 3D game and prove that it works, with a default look locked by eye, packaged and tested for Windows and Linux. Not yet for cross-export, Steam Deck, macOS, web, mobile or consoles, and 2D is still the subset of M6; the first page says so.
+
+**Packages (about 13; 3 to 4 weeks with the beta; estimates, not measurements).**
+
+| # | Package | What it brings |
+|---|---|---|
+| 1 | Render foundation | Pass structure, pooled targets, `RenderSettings`, statistics |
+| 2 | Release pipeline | A tag builds archives for Windows and Linux with checksums and every licence text; a `dist` profile |
+| 3 | Linux as a tested host | The package end to end in CI; audio on Linux |
+| 4 | Sky and atmosphere | Sky-lit ambient with a sun disc, fog, colour grading, FXAA |
+| 5 | Bloom | HDR bloom |
+| 6 | Cascaded shadows | With masked casters |
+| 7 | Materials | Material files and textures on primitives |
+| 8 | Transparency | An alpha-blended pass |
+| 9 | **The look lock** | Presets and the one switch of the default look, signed off by the user by eye; every new setting editable by hand in the editor (invariant 9) |
+| 10 | The AI scorecard | The card and its first baseline, in one measurement campaign (spends quota: the user's approval) |
+| 11 | The public face made true | The README with pictures, the guides, a link test; the code follow-ups of ADR-027; a short stability note |
+| 12 | Closing review | Independent, with a fix budget |
+| 13 | Beta and release | A beta of two weeks, release candidates, 1.0.0 |
+
+**Rules of the milestone.**
+- Graphics and platforms first (the user's order). Two packages are the first candidates to pull back in if the user wants to make a game by hand at 1.0: the editor's first hour, and scene switching with save games. The user is asked once more before the 1.0 label goes on.
+- Versions are three numbers (ADR-027); the beta builds and release candidates are `0.x.0` tags.
+- The plan allows at most two code lanes at once, split by crate, plus a docs lane. On the development machine only one agent writes code at a time: there is one shared build folder.
+- The AI scorecard (the plan's "The AI scorecard") judges every AI package from its first baseline on; its held-out tasks are never read or run while the engine is being improved.
+- The user's, and needed before the release candidates (the plan's §7, decisions 2 to 4): the name, downloading, merging to `main`. Of the user steps left in M9, the short path needs only these three before the release candidates. The formal three-person test is release 1.4; a code-signing certificate is optional (the train's §7); the Steam page, the website, the legal review of the EULA and audio by ear are not packages of the short path and stay user steps (M9 design note §5).
+
+**Exit criterion** (M9's "smooth" bar, carried over, with what the short path adds). A tag builds the Windows and the Linux package, and each passes new → build → test → export in an empty environment in CI; the default look is signed off by the user by eye and golden images hold on both software adapters; the scorecard's first baseline is published with the command that reproduces it; every claim on the first page has a command that reproduces it and every documentation link resolves (ADR-027); the closing review's findings are addressed; the two-week beta is done; known crash bugs and open "high" priority bugs are zero.
+
+**Model · effort.** Fable 5.2 · high for the render foundation and the render packages up to the look lock; Opus 5.5 · high and Sonnet 5.5 · medium for packages whose design is settled. Stated again at the start of each package.
+
+## After 1.0: the train to 2.0
+
+**Status: plan, not started** (user decision, 18 November 2026). It begins when 1.0 is out. Plan, with what each release contains, the rules, the scores, what is not in 2.0, the cut order and the user's decisions: [design/road-to-2-0.md](design/road-to-2-0.md). Read its §2 before any package after 1.0. Every number is an estimate; each release is counted again, in tokens, at its start.
+
+**What 2.0 is.** The same engine, for 3D and 2D, shipping to Windows, Linux, Steam Deck and the browser from one machine, with one bet: proof, not generation, is what makes AI useful for games. 2.0 itself adds no features; it proves in public what 1.1 to 1.10 built.
+
+| Release | Theme | Packages (about) | What the user sees |
+|---|---|---|---|
+| 1.1 | The loop and the proof | 14 | Environment maps (off by default); an orbit camera, a Create menu and duplicate in the editor; an instant first Play and build on save; the verification gate |
+| 1.2 | The format window and the screen | 14 | The picture drawn straight to the screen (vsync, fullscreen, HiDPI); gamepad; save games and scene switching; the showcase games re-dressed |
+| 1.3 | Every desktop, small | 14 | Quality tiers with a render scale; export to the other system, Steam Deck checked in CI, a macOS preview; a small base download; a reference site |
+| 1.4 | By hand. **First stopping point** | 13 | Ambient occlusion; picking, gizmos, asset import, a console and a profiler in the editor; the first formal three-person test |
+| 1.5 | Prove | 12 | Shadows for spot and point lights; the quality mode; verified runs |
+| 1.6 | Share and teach | 12 | Starter packs and genre templates, a feature gallery, tutorials; the first agent-made game released in public |
+| 1.7 | The 2D kit. **Second stopping point** | 12 | Sprite sheets and animation, tilemaps with painting, a pixel-perfect camera, a 2D mode in the editor |
+| 1.8 | Smaller and faster | 10 | GPU skinning; a material editor with a preview; a smaller player |
+| 1.9 | The browser, as a preview | 11 | A game exported to the web and opened from a link (**preview**); touch input; textured and soft particles; MSAA only if the measurement of 1.3 passed |
+| 1.10 | Depth | 11 | Reflection probes and baked light probes; the web leaves preview only if the determinism matrix passes |
+| 2.0 | Proven in public (no new features) | 9 | A second look lock; the determinism matrix; a beta of at least four weeks; 2.0.0 |
+
+About 130 packages, plus a maintenance reserve of 15 to 20 percent of each release.
+
+**The two stopping points.** After 1.4 (about 55 packages) platforms, the editor and the loop have most of their gain; after 1.7 (about 91 packages) everything in the full scope of M12 is done except GPU skinning (1.8), the material editor (1.8), MSAA (1.9) and the four-week beta with its freeze audit (2.0). At either, the engine is a coherent, published whole, and the train can stop there.
+
+**Rules that are architecture** are recorded in ADR-028: "supported" means the committed replays give the same hashes on that platform and executor in CI, otherwise "preview"; replays carry the engine version and the executor id; simulation results and pinned dependencies change only in a minor version; formats change by addition or with a migration proven on a corpus. The other rules (something to see in every release, the scorecard as a release gate, a budget in tokens, one decision sheet per release) are in the plan's §2.
+
+**Model · effort.** By the rule above: Fable 5.2 or Opus 5.5 · high for what is expensive to change later (the format window, the presenter, components, the executor probe, ABI 2), Sonnet 5.5 · medium for settled packages. Stated again at the start of each release.
+
 ## M11 — After 1.0 (order depends on need)
 
-- Advanced rendering: GPU-driven drawing, bindless resources, meshlet/virtual geometry, ray-traced lighting, cascaded shadow maps (because a single map is fitted to the scene, a distant object softens nearby shadows: an M8a WP9 finding)
-- Web target (WebGPU + Wasm)
-- A second scripting language that needs no toolchain
-- Parallel system execution
-- Multiplayer (rollback netcode — the determinism infrastructure is ready)
-- Linux and macOS packages
+*(Corrected on 18 November 2026: cascaded shadow maps and Linux packages moved into 1.0. The order after 1.0 is now [the train to 2.0](#after-10-the-train-to-20); this list keeps the ideas, and each line names the release the train gives it, or says that it is after 2.0. New out-of-scope ideas are still added here.)*
+
+- Advanced rendering: GPU-driven drawing, bindless resources, meshlet/virtual geometry, ray-traced lighting, global illumination, TAA: after 2.0. Reflection probes and baked light probes: release 1.10. *(Cascaded shadow maps were listed here against ADR-012; they are in 1.0, with sky-lit ambient and basic post-processing. They also answer the M8a WP9 finding that put them on this list: because a single map is fitted to the scene, a distant object softens nearby shadows. MSAA is release 1.9, and only if the two-adapter measurement of 1.3 says it can be tested.)*
+- **Web export (WebGPU + Wasm): a preview in release 1.9**, after the executor probe and the lean runtime of 1.8; it leaves preview in 1.10 only if the determinism matrix passes
+- macOS: an unsigned arm64 preview in release 1.3; a signed, first-class target after 2.0. Android and iOS: after 2.0. *(Linux packages moved into 1.0: Linux is a packaged and tested host. Export to the other system and Steam Deck are release 1.3.)*
+- A second scripting language that needs no toolchain: after 2.0 *(the rules experiment of release 1.1 asks first whether game logic written as data should enter)*
+- Parallel system execution: after 2.0
+- Multiplayer (rollback netcode — the determinism infrastructure is ready): after 2.0
+- Code in packages (kits): an experiment in release 1.10 (M10d). Editor plugins (`wish_ext`, M10c): after 2.0
+- How native SDKs attach (Steamworks, a kernel anti-cheat): as engine-built player variants, after 2.0
+- Docking and specialist editors, 2D lights: after 2.0. Autotile rules: release 1.10
+- A public multi-engine benchmark: release 2.0, and the first thing to cut
 - Interface languages outside Latin/Cyrillic/Greek: Chinese, Japanese, Korean, Arabic (right to left), Hindi — needs a font (Noto, SIL OFL-1.1: adding it to the allowed list is a user decision) and right-to-left text layout (user decision, 16 November 2026)
 - Translating the engine's diagnostic messages (`message`/`hint`): the editor interface is in 12 languages (M8a WP8), but the control plane's messages are in English (one language for agents and docs); translating a diagnostic into the person's language in the editor needs a translation file per code
 - Accessible names per row in the editor: buttons such as "Remove" repeated on every row are told apart only by their row (an M10b closing review finding)
@@ -280,7 +349,7 @@ Exit criteria 2–5 are tested. Remaining: criterion 1 (with 3 users, with a rea
 
 | Risk | Effect | Mitigation | Checkpoint |
 |---|---|---|---|
-| Scope growth | The project never ends | The 1.0 scope is fixed ([VISION.md](VISION.md)); new ideas go to the M11 list | End of every milestone |
+| Scope growth | The project never ends | The 1.0 scope is fixed ([VISION.md](VISION.md)); new ideas go to the M11 list. It has grown only by the user's decision (the hybrid interface on 11 November 2026, M10 on 17 November, M12 on 18 November), and M12 was cut the same day to the short path; the train after 1.0 has a written cut order, a list of what is never cut and two stopping points ([design/road-to-2-0.md](design/road-to-2-0.md) §6) | End of every milestone; start of every release of the train |
 | The embedded toolchain cannot be packaged smoothly | The "zero install" promise cannot be kept | Trial on a clean machine in M5; fallback plan in ADR-023 | M5 |
 | The custom ECS performs too slowly | Big scenes are slow | Early benchmark; fallback plan in ADR-004 | End of M1 |
 | Wasm boundary cost | Game logic is slow | Bulk data transfer; benchmark; ADR-011 trigger | M5 |

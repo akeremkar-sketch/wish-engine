@@ -12,10 +12,11 @@ This guide follows a game from the first start to an exported game.
 - [4. Playing, replays and tests](#4-playing-replays-and-tests)
 - [5. Game code](#5-game-code)
 - [6. Working with an AI assistant](#6-working-with-an-ai-assistant)
-- [7. Exporting a game](#7-exporting-a-game)
-- [8. The command line](#8-the-command-line)
-- [9. When something goes wrong](#9-when-something-goes-wrong)
-- [10. What is in a project folder](#10-what-is-in-a-project-folder)
+- [7. Packages, themes, workspaces and the command palette](#7-packages-themes-workspaces-and-the-command-palette)
+- [8. Exporting a game](#8-exporting-a-game)
+- [9. The command line](#9-the-command-line)
+- [10. When something goes wrong](#10-when-something-goes-wrong)
+- [11. What is in a project folder](#11-what-is-in-a-project-folder)
 
 ## 1. Install and first start
 

@@ -3,6 +3,7 @@
 **Status:** approved 17 November 2026 (user decision: M10a and M10b go into 1.0, M10c–e come after it); M10a in progress.
 **Recommended model · effort:** M10a and M10c Opus 5.5 · xhigh (lasting interface decisions); M10b, M10d and M10e Opus 5.5 · high.
 **Scope warning:** This plan grows the 1.0 scope. The recommendation is in §9: the base infrastructure (M10a) and the Hub (M10b) go into 1.0; plugins with code (M10c), game packages (M10d) and the ecosystem (M10e) come in 1.x releases.
+**18 November 2026, on the train after 1.0** ([road-to-2-0.md](road-to-2-0.md)): M10c (`wish_ext`) is after 2.0; of M10d, assets and prefabs in packages are release 1.6 and code in packages is an experiment in 1.10; of M10e, the docs site is release 1.3; the signed index and the signed updater are the download layer, which has no release number.
 
 ## 1. The request
 

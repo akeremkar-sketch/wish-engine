@@ -1,7 +1,64 @@
-# M12 (proposal): the road to a strong 1.0
+# M12: the road to a strong 1.0
 
-**Status:** proposal, 18 November 2026; waits for the user's decision on the
-scope (section 7). **This grows the 1.0 scope.**
+**Status:** in progress. Approved on 18 November 2026 at full scope, and **cut
+the same day to the short path** (user decision: section 0). 1.0 is the short
+path. Everything else in this note is done after 1.0; nothing is dropped. The
+decisions it needed on paper are in [VISION.md](../VISION.md),
+[DECISIONS.md](../DECISIONS.md) (ADR-012, 019, 020, 023, 027) and
+[ROADMAP.md](../ROADMAP.md).
+
+## 0. The scope of 1.0: the short path
+
+User decision, 18 November 2026. The full scope below was estimated at 45 to
+50 work packages and 2.5 to 3 months, four weeks of beta in it. The user's
+time and tokens do not allow that before a first release. So 1.0 is cut to
+what the user asked for most, and the rest follows after 1.0 in the same order
+of priority, on the way to 2.0.
+
+1.0 contains (about 13 packages; 3 to 4 weeks with a two-week beta; these are
+estimates, not measurements):
+
+1. The render foundation: pass structure, pooled targets, `RenderSettings`,
+   statistics.
+2. A release pipeline for Windows and Linux: a tag builds archives with
+   checksums and every licence text; a `dist` profile.
+3. Linux as a tested host: the package end to end in CI, audio on Linux.
+4. Sky-lit ambient with a sun disc, fog, colour grading, FXAA.
+5. HDR bloom.
+6. Cascaded shadows with masked casters.
+7. Material files and textures on primitives.
+8. An alpha-blended pass.
+9. The look lock: presets and the one switch of the default look, signed off
+   by the user by eye. Every new setting is editable by hand in the editor
+   (invariant 9).
+10. The AI scorecard and its first baseline (one measurement campaign).
+11. The public face made true: the README with pictures, the guides, a link
+    test; the code follow-ups of ADR-027; a short stability note (after 1.0 a
+    format changes only with a migration or by addition).
+12. An independent closing review with a fix budget.
+13. A beta of two weeks, release candidates, 1.0.0.
+
+Not in 1.0, all of it after: the presenter, components and the small base,
+the format window (gamepad, player-indexed actions, replay format 2, save
+games, scene switching, cross-fade), the editor's first hour and its musts,
+the 2D kit, cross-export, Steam Deck, macOS, environment maps and the
+High-tier render items, code freshness and the verification gate, AI
+efficiency round 2, the rules experiment, the quality mode, verified runs, the
+ecosystem and documentation packages, the four-week beta.
+
+Two packages are the first candidates to pull back in if the user wants to
+make a game by hand at 1.0: the editor's first hour (duplicate, an orbit
+camera, a Create menu, new scene: none of these exist today) and scene
+switching with save games. The user is asked once more before the 1.0 label
+goes on.
+
+Expected scores at 1.0: graphics 3 → 5, platforms 1 → 3, maturity 2 → 3, the
+others as today; "AI with small games" 64 → about 67, "commercial release"
+36 → about 44. Section 6 is the full scope.
+
+The short path makes three of the user's decisions urgent: the name (2),
+downloading (3) and merging to `main` (4) are needed before the release
+candidates.
 
 User request: "Considering these evaluations, how can we make the engine
 better: a general plan, and a beautiful and strong entry into 1.0." Highest
@@ -35,23 +92,37 @@ users and time make them.
 
 ## 3. What 1.0 is
 
-The first engine in which one person, an agent, or both together can make a
-small or medium desktop game, 3D or 2D, **and prove that it works**: for
-Windows and Linux developers (macOS as a labelled preview) who export to
-Windows, Linux and Steam Deck from one machine, with file formats, the tool
-surface and the SDK source API frozen under a written contract. Not yet for
-web, mobile or consoles, and the first page says so.
+1.0 is the short path of section 0: the first engine in which one person, an
+agent, or both together can make a small or medium desktop 3D game **and prove
+that it works**, with a default look locked by eye, packaged and tested for
+Windows and Linux. It is not yet for cross-export, Steam Deck, macOS, web,
+mobile or consoles, 2D is still the subset of M6, and the first page says so.
+
+What this section described on the morning of 18 November 2026 is the full
+scope: 3D and 2D, export to Windows, Linux and Steam Deck from one machine,
+macOS as a labelled preview, and file formats, the tool surface and the SDK
+source API frozen under a written contract. It is still where the engine is
+going, and the train of [road-to-2-0.md](road-to-2-0.md) reaches it around
+release 1.7 (section 6).
 
 What limits the work is not writing code (M1 to M10b took four days) but the
-owner's attention (decisions, pictures reviewed by eye, sound by ear) and what
-only strangers and calendar time can give (a beta). The plan is about three
-times the size of everything built so far, in the roadmap's units.
+owner's attention (decisions, pictures reviewed by eye, sound by ear), the
+owner's tokens, and what only strangers and calendar time can give (a beta).
+The full scope is about three times the size of everything built so far, in
+the roadmap's units; that is why it was cut.
 
 ## 4. Phases
 
-Every phase ends with a quiet numbered pre-release (0.2.0, 0.3.0, ...; versions
-are three numbers) and an independent closing review with a fix budget.
-At most two code lanes at once, split by crate, plus a docs lane.
+**The phases are the full scope, not the plan to 1.0.** Section 0 says which
+of their items are in 1.0. Everything else is done after 1.0, in the order of
+the train ([road-to-2-0.md](road-to-2-0.md) section 3), which regroups these
+items into releases 1.1 to 1.10: the phase text below is kept as the
+description the train's packages come from, and where it says "1.0", "the
+format window of Phase 1" or a 0.x pre-release at the end of a phase, the
+train's release is what holds (the format window is release 1.2; the beta of
+at least four weeks is the beta of 2.0; 1.0 has a beta of two weeks). At most
+two code lanes at once, split by crate, plus a docs lane; every release ends
+with an independent closing review with a fix budget.
 
 **Phase 0: ground truth.** Make what the public sees true and turn cheap
 unknowns into facts.
@@ -72,6 +143,20 @@ unknowns into facts.
 - Measure first: render statistics, `wen bench --render`, fuel per system.
 - AI efficiency round 2 (small scenes answer values by default, start-run-report
   in one call, `keep_world`, `look_at`), measured with three tries.
+- The rules experiment (user request, 18 November 2026). It answers, before
+  the format window, whether game logic written as data should enter 1.0.
+  A prototype puts rules in the scene file (a trigger, a condition, actions;
+  the expression language grown; run by an engine system, no compile step).
+  Then the same models do the same game-logic tasks two ways, as Rust game
+  code and as rules, and the AI scorecard (below, after Phase 5) judges.
+  Rules enter 1.0 only if they are no worse on correctness and errors for any
+  task and better overall; cheaper or faster but less correct loses, and a
+  result that breaks the frame budget at the bench scale loses whatever else
+  it wins. Tasks that rules cannot express are recorded: that is where Rust
+  stays. A yes grows the 1.0 scope and is asked again with the results.
+- The AI scorecard itself: built and given its first baseline here, in one
+  measurement campaign shared with AI efficiency round 2, before anything is
+  improved against it.
 
 **Phase 1: foundations, built once.** Each structure several areas share, and
 the single hash-and-format break.
@@ -138,30 +223,98 @@ first runs on named platforms, three weekly builds); the formal three-person
 test with people who have never seen the engine; release candidates; 1.0.0 and
 a planned 1.0.1.
 
+### The AI scorecard
+
+The engine's main goal is to be used effectively with AI (user, 18 November
+2026), and "effectively" is not "fewest tokens". Every AI package from here
+on, the rules experiment and the quality mode included, is judged by this
+card, in this order:
+
+1. Correctness: passed on the first attempt, and passed in the end; the
+   hidden test includes edge cases, and a replay of the result holds.
+2. Errors: tool and compile errors, repair turns, and above all results the
+   agent believed right that the hidden test refuted.
+3. The quality of what was made: a clean `check`, and a second agent asked
+   to change the result does it correctly and cheaply.
+4. People: a person can read the result and change it by hand in the editor
+   (the editor parity test now, people in the user tests). A result that only
+   an agent can maintain loses: the engine works fully without AI.
+5. Efficiency: tokens and cost per *passed* task.
+6. Speed, two kinds. How long the agent takes: wall time from the request to
+   a proven result, with the build and repair time in it (the harness
+   measures it; tool answers stay free of wall-clock numbers). How fast the
+   result runs: tick time at 10,000 entities, measured the way
+   `wen bench --script` measures game code.
+7. Consistency across three tries.
+
+How it is measured:
+
+- **Held-out tasks.** A second set of tasks is never read or run while the
+  engine is being improved, and the score that counts comes from it. Its
+  failures are reported as numbers and not studied; a task that is studied
+  moves to the open set and a new one replaces it.
+- **Two models.** The usual one and a smaller one (today Sonnet 5.5 medium
+  and Haiku 5.5). The gap between them is reported: the smaller the gap, the
+  more of the work the engine carries.
+- **A long task.** From a one-paragraph brief to a finished mini game that a
+  hidden scenario test can win. One long task from the first baseline on; the
+  hard tier of Phase 4 grows it.
+
+When:
+
+- The card and its first baseline in 1.0 (package 10 of section 0), after
+  the render foundation and the release pipeline, before anything is improved
+  against it.
+- The rules decision in release 1.1, before the format window of 1.2 opens.
+  The held-out task set is written in 1.1.
+- With every release of the train the card is measured again and published,
+  with the command that reproduces it (ADR-027); a release does not ship if
+  correctness or errors got worse on the held-out tasks.
+
+Every campaign spends quota and needs the user's approval, or a spending cap
+(decision 6 of section 7).
+
 ## 5. After 1.0, and the cut order
 
-After 1.0: **web export** as the headline of 1.1 (with the lean runtime and a
-second executor it needs); macOS as a signed first-class target; code in
-packages (kits) and editor plugins (`wish_ext`); how native SDKs attach
-(Steamworks, a kernel anti-cheat) as engine-built player variants; global
-illumination, reflection probes, TAA; docking and specialist editors; 2D
-lights and autotiling; Android and iOS; a scripting language that needs no
-compiler; rollback netcode; a public multi-engine benchmark.
+After 1.0 the engine follows the train in [road-to-2-0.md](road-to-2-0.md):
+releases 1.1 to 1.10, then 2.0. Its section 3 says what each release contains,
+section 2 the rules, section 5 what is not in 2.0, section 6 the cut order and
+what is never cut. This note does not repeat them. In short, for what this
+section used to list: everything in the phases above that is not in section 0
+comes first (releases 1.1 to 1.7, with GPU skinning and the material editor
+in 1.8, MSAA in 1.9 and the four-week beta with its freeze audit at 2.0);
+**web export is a preview in release 1.9**, not the headline of 1.1, and
+leaves preview in 1.10 only if the determinism matrix passes; code in packages
+(kits) is an experiment in 1.10; a signed macOS target, editor plugins
+(`wish_ext`), native SDKs as player variants, global illumination and TAA,
+docking and specialist editors, 2D lights, Android and iOS, a scripting
+language that needs no compiler and rollback netcode are after 2.0.
 
-If time runs short, cut in this order: first what the user did not ask for
-(benchmark runs, extra agent adapters, time-travel depth, Hub missions), then
-second-tier depth (inspector depth, half the templates), and last anything in
-graphics or platforms. Never cut: the release pipeline, the format window, the
-look lock, the stability contract, the beta.
+Five smaller items of the phases above have their release on the train too:
+the menu split with the editor's first hour (1.1), proposal preview in the
+play loop (1.4), a launch kit with the honest pages (1.6), inspector depth
+beside the material editor (1.8) and particles that glow with the particle
+package (1.9).
 
-## 6. Where the scores would stand at 1.0
+For 1.0 itself the cut already happened (section 0). If the short path runs
+short too, graphics and platforms are cut last, and the release pipeline, the
+look lock, the closing review and the beta are not cut.
 
-| Area | Now | At 1.0 | Basis |
+## 6. Where the scores would stand at the full scope
+
+This table is the full scope, which the train reaches around release 1.7 (GPU
+skinning and MSAA, in the Graphics row, are 1.8 and 1.9; the material editor
+is 1.8; the four-week beta, in the Maturity row, is the beta of 2.0). It is not 1.0: the
+expected scores at 1.0 are in section 0 (graphics 5, platforms 3, maturity 3,
+the others as today), and the scores at 1.0 and at 2.0 side by side, with
+Godot and Unity, are in [road-to-2-0.md](road-to-2-0.md) section 4.
+
+| Area | Now | At the full scope | Basis |
 |---|---|---|---|
 | Graphics | 3 | 5.5 to 6 | the must tier; 6 with the High-tier items |
 | Platforms | 1 | 5 | Windows, Linux, Deck, cross-export, macOS preview |
 | Ecosystem | 1 | 3 | first-party content; 4 needs outside authors |
-| Maturity and docs | 2 | 4.5 | needs the beta; 4 without it |
+| Maturity and docs | 2 | 4.5 | 4 at release 1.7; 4.5 needs the four-week beta, which is the beta of 2.0 |
 | Editor tools | 4 | 6.5 | the musts of Phase 1 and 3 |
 | 2D | 4 | 7 | the 2D kit |
 | Determinism | 10 | 10 | becomes a product feature |
@@ -171,24 +324,43 @@ look lock, the stability contract, the beta.
 | License | 10 | 10 | |
 
 With the report's weights: "AI with small games" 64 → about 78 (Godot 72,
-Unity 68); "commercial release" 36 → about 60. Parity in the two top areas
+Unity 68); "commercial release" 36 → about 60. The train's own estimate for
+the same point is about 79 and 60 after 1.7. Parity in the two top areas
 costs more: graphics 6 needs GPU skinning, spot and point shadows and MSAA on
 top of the must tier; platforms 6 needs a web preview.
 
 ## 7. Decisions that are the user's
 
+Decision 1 was answered twice on the same day. Decisions 2, 3 and 4 are open
+and **urgent now**: the short path needs them before the release candidates of
+1.0. Decision 6 is asked now, and decision 7 starts with the testers of the
+1.0 beta. Decisions 5 and 8 are open and are asked with the release that
+needs them ([road-to-2-0.md](road-to-2-0.md) section 7). Nothing that depends on an open
+one is treated as decided.
+
 1. The scope: is this what 1.0 is (it is about three times what was built so
    far), or a smaller cut?
-2. The name: it is frozen by the format freeze (file names carry it), so it is
-   needed before Phase 4 ends, not at the announcement.
-3. Downloading: the index repository and the HTTP/TLS library (still open);
-   GitHub Releases as the download address.
-4. Merging to `main` now, so the public sees the current state.
-5. Where the art of the showcase games and starter packs comes from.
-6. A spending cap per measurement campaign, so runs do not need a yes each
-   time.
-7. Outside people: one or two for an early informal run, three fresh ones for
-   the formal test, ten or more for the beta.
-8. What "plugins" means at 1.0: the compiler, SDK, export targets, looks,
-   asset packs, templates and verified runs are extras; physics, audio and the
-   interface stay compiled in; code plugins come after 1.0.
+   **Answered, 18 November 2026: yes, this is what 1.0 is, starting with
+   graphics and platforms.**
+   **Answered again the same day: cut to the short path (section 0). 1.0 is
+   the short path; the rest is done after 1.0, and nothing is dropped.**
+2. *(open, urgent)* The name: the first release carries it in file names and
+   on the download page, so it is needed before the release candidates of
+   1.0, not at the format freeze.
+3. *(open, urgent)* Downloading: GitHub Releases as the download address of
+   1.0. The index repository and the HTTP/TLS library (the download layer
+   inside the engine) stay open and have no release number.
+4. *(open, urgent)* Merging to `main`, so the public sees the current state
+   and the release pipeline can tag it.
+5. *(open; release 1.6)* Where the art of the showcase games and starter
+   packs comes from.
+6. *(open; asked now)* A spending cap per measurement campaign, so runs do
+   not need a yes each time. The first campaign is the scorecard baseline of
+   1.0.
+7. *(open)* Outside people: testers for the two-week beta of 1.0; after it,
+   one or two for an informal run at 1.3, three fresh ones for the formal
+   test at 1.4 and again at 2.0, ten or more for the beta of 2.0.
+8. *(open; release 1.3)* What "plugins" means: the compiler, SDK, export
+   targets, looks, asset packs, templates and verified runs are extras;
+   physics, audio and the interface stay compiled in; code plugins come after
+   2.0 (kits as an experiment in 1.10).
