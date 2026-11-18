@@ -467,6 +467,10 @@ const SEARCH_WORDS: &[(&str, &str)] = &[
     ("PointLight", "lamp bulb light omni"),
     ("SpotLight", "spotlight flashlight torch cone light"),
     ("DirectionalLight", "sun sunlight light"),
+    (
+        "RenderSettings",
+        "graphics quality performance shadow shadows resolution settings options",
+    ),
     ("Camera", "view viewpoint eye lens fov"),
     ("Sprite", "2d image picture texture"),
     ("AudioSource", "sound music sfx"),

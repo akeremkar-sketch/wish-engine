@@ -34,18 +34,19 @@ pub mod ui;
 
 pub use capture::{MAX_CAPTURE_SIZE, draw_probe};
 pub use components::{
-    Ambient, Camera, DirectionalLight, Exposure, Material, Model, Primitive, Shape, Sky,
+    Ambient, Camera, DirectionalLight, Exposure, Material, Model, Primitive, RenderSettings, Shape,
+    Sky,
 };
 pub use extract::{
     CameraView, ColliderView, Draw, EmitterView, LightView, LocalLightView, MaterialData, Mesh,
     RenderScene, SkyData, SpriteView, UiBoxView, UiTextView, extract,
 };
-pub use gpu::{AdapterSummary, Gpu, GpuOptions};
+pub use gpu::{AdapterSummary, Created, Gpu, GpuOptions};
 pub use image::{ImageDiff, RgbaImage, Tolerance};
 pub use renderer::{
-    Description, ENTRY_SHADERS, Frame, IdBuffer, MAX_VISIBILITY_MEASUREMENTS, Renderer, View,
-    VisibleEntity, check_shaders, engine_shaders, engine_shaders_from_dir, exposure_multiplier,
-    project_to_pixel,
+    Description, ENTRY_SHADERS, Frame, IdBuffer, MAX_VISIBILITY_MEASUREMENTS, PoolCounts,
+    RenderStats, Renderer, View, VisibleEntity, check_shaders, engine_shaders,
+    engine_shaders_from_dir, exposure_multiplier, project_to_pixel,
 };
 pub use shader::{CheckedShader, ComposedShader, ShaderLibrary, SourceLine, check_wgsl};
 pub use sprites::OverlayElement;

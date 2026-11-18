@@ -71,6 +71,7 @@ const SCENE: &str = r#"{
   "resources": {
     "Ambient": { "intensity": 0.5 },
     "Exposure": { "ev100": 12 },
+    "RenderSettings": { "shadow_map_size": 1024 },
     "Sky": { "zenith": [0.1, 0.2, 0.9, 1] }
   }
 }
@@ -142,6 +143,9 @@ fn a_scene_file_becomes_a_render_scene() {
 
     // Resources: set ones apply, the rest are defaults.
     assert_eq!(scene.ev100, 12.0);
+    // A field that is left out keeps its default.
+    assert_eq!(scene.settings.shadow_map_size, 1024);
+    assert!(scene.settings.shadows);
     assert!(
         (scene.ambient[2] - 0.8 * 0.5).abs() < 1e-6,
         "{:?}",
@@ -169,6 +173,14 @@ fn an_empty_world_gives_an_empty_scene_with_the_default_sky_and_exposure() {
     let scene = extract(&world).unwrap();
     assert!(scene.cameras.is_empty() && scene.lights.is_empty() && scene.draws.is_empty());
     assert_eq!(scene.ev100, 14.0);
+    // Without the resource the picture is drawn as it always was: shadows
+    // on, in a map of 2048 texels.
+    assert!(scene.settings.shadows);
+    assert_eq!(
+        scene.settings.shadow_map_size,
+        wish_render::renderer::SHADOW_MAP_SIZE
+    );
+    assert_eq!(wish_render::renderer::SHADOW_MAP_SIZE, 2048);
     assert!((scene.ambient[0] - 0.5 * 20000.0).abs() < 1e-2);
     assert_eq!(scene.sky.luminance, 20000.0);
 }

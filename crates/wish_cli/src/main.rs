@@ -11,6 +11,7 @@
 //! ```
 
 mod args;
+mod bench_render;
 mod bench_script;
 mod capture;
 mod edit;
@@ -41,6 +42,7 @@ USAGE:
     wen run --example <name> [--scene <file> [--root <folder>]] [--frames <n>] [--seed <n>]
             [--hash-every <n>] [--headless] [--json]
     wen bench [--entities <n>] [--ticks <n>] [--seed <n>] [--script] [--json]
+    wen bench --render [--entities <draws>] [--ticks <frames>] [--size <w>x<h>] [--software] [--json]
     wen check [files...] --example <name> [--root <folder>] [--json]
     wen fmt [files...] --example <name> [--root <folder>] [--check] [--json]
     wen migrate [files...] [--root <folder>] [--json]
@@ -85,6 +87,10 @@ COMMANDS:
     bench      Time the core on many moving entities (defaults: 100000 entities, 600 ticks).
                Build with --release for meaningful numbers. --script measures game code instead: the
                same system natively and as WebAssembly on 1, 1 000 and 10 000 entities (needs the SDK).
+               --render measures drawing instead: a built-in scene of 2500 surfaces (--entities), a sun
+               with shadows and sixteen lamps, drawn 60 times (--ticks) at 1280x720 (--size) on the
+               hardware adapter if there is one (--software: the CPU rasterizer). It prints the time
+               of a frame, drawn and read back, and the frame's counts (draw calls, triangles, lights).
     check      Check every prefab, scene and meta file of the project (syntax, schema,
                references, asset files) and report all problems with file, line and
                column. Exits with failure if there is any error.
@@ -490,8 +496,24 @@ fn execute(args: Args) -> Result<String> {
         Command::Bench {
             entities,
             ticks,
+            render: true,
+            size,
+            software,
+            ..
+        } => bench_render::bench_render(
+            &bench_render::RenderBench {
+                draws: entities,
+                frames: ticks,
+                size,
+                software,
+            },
+            args.json,
+        ),
+        Command::Bench {
+            entities,
+            ticks,
             seed,
-            script: false,
+            ..
         } => bench(entities, ticks, seed, args.json),
         Command::Check { .. }
         | Command::Format { .. }

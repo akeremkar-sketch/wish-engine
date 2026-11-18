@@ -67,7 +67,21 @@ During a session, `entity_query`, `entity_get` and `edit_apply` also apply to th
 | `describe_view` | Semantic vision: visible entities, screen boxes, visibility percentage, distance | `camera`, `limit` |
 | `logs_get` | Structured logs and events (including audio events) | `since`, `severity`, `kinds` |
 | `physics_query` | Ask the physics world (M6): what a ray hits, what a shape covers, what touches an entity — in a session or in the scene file | `ray`, `overlap`, `touching`, `mask`, `session` |
-| `profile_get` | Frame time breakdown, time per system, draw calls, memory | `session`, `frames` |
+| `profile_get` | **Planned, not built** (see the total below). Frame time breakdown, time per system, draw calls, memory | `session`, `frames` |
+
+`capture_frame` and `describe_view` also answer **`stats`** (M12): what the picture takes to draw, in counts that are the same on every machine and every run, so they can be compared and asserted.
+
+```json
+"stats": { "width": 512, "height": 288, "draw_calls": 10, "triangles": 3870,
+           "shadow_casters": 4, "point_lights": 0, "spot_lights": 0 }
+```
+
+- `draw_calls` and `triangles` cover every pass of the frame (the shadow map, the sky, the surfaces, tone mapping, sprites and particles, the interface); `shadow_casters` is how many of those draws went into the shadow map (0: none was drawn); `point_lights` and `spot_lights` are the lights that reach some part of the view.
+- In `capture_frame` they describe the picture that was returned (a debug view counts its own pass); in `describe_view` they describe the lit picture of that view.
+- **`stats` and the rest of these two answers carry no time value**: two runs on one adapter give the same answer (`wish_control/tests/view_tools.rs` compares the answers of two workspaces on the software adapter, pictures included). Time depends on the machine; `wen bench --render` measures it on the command line. This is not yet true of every tool: `script_build` answers `seconds` and `project_info` answers `last_build.seconds`, the open follow-ups of ADR-027.
+- Both tools report what is not drawn, in `diagnostics`. Every `view` of `capture_frame` reports what holds for the scene whatever the view: entities that are not drawn and the scene's light warnings (`too_many_lights`, `extra_directional_lights`). The warnings that belong to the lit picture alone (`light_clusters_full`, and the interface's, such as `ui_atlas_full`) come with `view: "lit"` and with `describe_view`, which reports every warning of the lit picture it describes. Entities are named by their scene ids. `extra_directional_lights` (a scene with more than one `DirectionalLight`: only the first in scene order is drawn) names the light that is used and the ones that are not, and points at the first unused one in the scene file (`location.file` and `location.path`; a checkpoint's or a preview's picture carries no place).
+- A tool call leaves at most 64 MiB of render targets in memory for the next call (the usual picture sizes are reused, a large capture is let go of when the call ends).
+- The `RenderSettings` resource (`shadows`, `shadow_map_size`) is set like any other resource (`edit_apply` `set_resource`) and changes these counts.
 
 ### Verification and scripting
 

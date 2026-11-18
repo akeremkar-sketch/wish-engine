@@ -14,6 +14,7 @@ use wish_core::{Diagnostic, Entity, Result};
 
 use crate::extract::{RenderScene, UiBoxView};
 use crate::gpu::Gpu;
+use crate::renderer::{Pool, TextureKey};
 
 /// The atlas's width in texels.
 pub(crate) const ATLAS_WIDTH: u32 = 4096;
@@ -48,6 +49,15 @@ pub(crate) struct Batch {
     pub atlas_height: u32,
     /// What could not be drawn.
     pub warnings: Vec<Diagnostic>,
+}
+
+impl Batch {
+    /// How many draw calls and how many triangles drawing it takes (an
+    /// interface that shows nothing is not drawn at all).
+    pub(crate) fn counts(&self) -> (u32, u64) {
+        let triangles = self.vertices.len() as u64 / VERTEX_BYTES / 3;
+        (u32::from(triangles > 0), triangles)
+    }
 }
 
 /// A shelf packer over a growing atlas.
@@ -475,11 +485,14 @@ impl UiPipeline {
         })
     }
 
-    /// Records drawing `batch` over `target` into `encoder`. Call inside
+    /// Records drawing `batch` over `target` into `encoder`. The atlas
+    /// texture and the vertex buffer come from `pool` and are filled here,
+    /// whole, every frame; the bind group is this frame's. Call inside
     /// `Gpu::checked`.
-    pub fn draw(
+    pub(crate) fn draw(
         &self,
         gpu: &Gpu,
+        pool: &mut Pool,
         encoder: &mut wgpu::CommandEncoder,
         target: &wgpu::TextureView,
         batch: &Batch,
@@ -493,19 +506,19 @@ impl UiPipeline {
             height: batch.atlas_height,
             depth_or_array_layers: 1,
         };
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("interface atlas"),
-            size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: ATLAS_FORMAT,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
+        let view = pool.texture(
+            gpu,
+            TextureKey {
+                name: "interface atlas",
+                width: ATLAS_WIDTH,
+                height: batch.atlas_height,
+                format: ATLAS_FORMAT,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            },
+        );
         gpu.queue.write_texture(
             wgpu::TexelCopyTextureInfo {
-                texture: &texture,
+                texture: view.texture(),
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
@@ -518,7 +531,6 @@ impl UiPipeline {
             },
             size,
         );
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("interface"),
             layout: &self.layout,
@@ -533,11 +545,11 @@ impl UiPipeline {
                 },
             ],
         });
-        let vertices = crate::renderer::buffer_with(
+        let vertices = pool.buffer(
             gpu,
-            "interface",
-            &batch.vertices,
+            "interface vertices",
             wgpu::BufferUsages::VERTEX,
+            &batch.vertices,
         );
         let count = u32::try_from(batch.vertices.len() as u64 / VERTEX_BYTES).unwrap_or(0);
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -558,7 +570,8 @@ impl UiPipeline {
         });
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &group, &[]);
-        pass.set_vertex_buffer(0, vertices.slice(..));
+        // Only this frame's vertices: the pooled buffer may be larger.
+        pass.set_vertex_buffer(0, vertices.slice(..batch.vertices.len() as u64));
         pass.draw(0..count, 0..1);
     }
 }

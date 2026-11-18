@@ -180,3 +180,21 @@ pub struct Exposure {
     #[schema(range = -10.0..=30.0, default = 14.0)]
     pub ev100: f32,
 }
+
+/// How the picture is drawn: settings that change what a frame costs and how
+/// fine it looks, never what happens in the game. A scene without this
+/// resource is drawn with the defaults.
+#[resource]
+pub struct RenderSettings {
+    /// Whether directional lights cast shadows at all. Off, no shadow map is
+    /// drawn, whatever a light's own `shadows` says: the cheapest setting
+    /// for a slow machine.
+    #[schema(default = true)]
+    pub shadows: bool,
+    /// The side of the directional light's shadow map. A larger map gives
+    /// sharper shadow edges and costs more to draw; the map covers
+    /// everything drawn, so a large scene needs a larger map for the same
+    /// sharpness.
+    #[schema(unit = "px", range = 64..=4096, default = 2048)]
+    pub shadow_map_size: u32,
+}

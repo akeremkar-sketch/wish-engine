@@ -181,6 +181,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "A scene file was changed outside the engine and is now invalid. The last valid scene is kept and changes are refused until the file is fixed.",
     ),
     (
+        "extra_directional_lights",
+        "The scene has more than one DirectionalLight; only the first (in entity order; in a scene file: parents before their children, siblings by `order`, then by id; a prefab's entities follow their instance) lights the picture and casts shadows, the others are not drawn. The message names the one that is used and the ones that are not. Keep one as the sun and remove the rest, or turn them into PointLight or SpotLight entities.",
+    ),
+    (
         "file_changed_during_edit",
         "A file was saved by someone else at the very moment a change was being written, so nothing was written (their save is kept). Call again: the change is applied on top of their version.",
     ),
@@ -905,6 +909,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "A play session was closed (a log entry, not a problem).",
     ),
     (
+        "shader_entry_point_missing",
+        "A shader file that replaces an engine shader is valid WGSL but lacks a function the engine builds a pipeline from (the message names it). The file was probably copied from an earlier engine version: start again from the current engine shader and carry the changes over.",
+    ),
+    (
         "shader_import_cycle",
         "Shader modules import each other in a circle. Move what both need into a third module.",
     ),
@@ -1280,6 +1288,8 @@ Physics (`Collider`, `RigidBody`, `CharacterController`, `CollisionStarted`, `ph
 `PlaySound`; `logs_get` kinds [\"audio\"]), lights (`PointLight`, `SpotLight`), animation (`AnimationPlayer`), the in-game\n\
 interface (`UiNode`, `UiText`, `UiButton`; `describe_view` lists it; `sim_step` input `pointer` and `click`), particles\n\
 (`ParticleEmitter`), 2D (orthographic `Camera`, `Sprite`). `asset_create` makes placeholder sounds and pictures.\n\
+Picture quality is the `RenderSettings` resource (shadows on or off, the shadow map's size); `capture_frame` and\n\
+`describe_view` give `stats`: what the picture costs in draw calls, triangles and lights.\n\
 **`wish://docs/recipes` has working pieces of games** (a platformer character, a follow camera, pickups with a score,\n\
 checkpoints, moving platforms, a win screen and a button, a 2D scene, tests): start from them.\n\
 \n\
@@ -1518,7 +1528,7 @@ pub struct Collected { /// Its points.
 Field types: `bool`, integers, `f32`, `f64`, `Vec2`, `Vec3`, `Vec4`, `Quat`, `Mat4`, `Color`, `Entity`, `Text`,
 `AssetRef`, fixed arrays `[T; N]`, and structs / fieldless enums marked `#[schema]`. No `String`, `Vec`, `Option`:
 data must have a fixed size. The engine's own types are there too: `Transform`, `GlobalTransform` (read only),
-`Camera`, `DirectionalLight`, `Primitive`, `Material`, `Model`, `Sky`, `Ambient`, `Exposure`, `Time`.
+`Camera`, `DirectionalLight`, `Primitive`, `Material`, `Model`, `Sky`, `Ambient`, `Exposure`, `RenderSettings`, `Time`.
 
 ## Systems
 

@@ -5,14 +5,16 @@
 //! so the same world always gives the same scene (and the same debug
 //! images).
 
+use std::collections::BTreeMap;
+
 use wish_core::math::{Mat4, Vec3};
 use wish_core::{AssetRef, Color, Diagnostic, Entity, Result};
 use wish_ecs::World;
 use wish_transform::GlobalTransform;
 
 use crate::components::{
-    Ambient, Camera, DirectionalLight, Exposure, Material, Model, PointLight, Primitive, Shape,
-    Sky, SpotLight,
+    Ambient, Camera, DirectionalLight, Exposure, Material, Model, PointLight, Primitive,
+    RenderSettings, Shape, Sky, SpotLight,
 };
 
 /// What a draw shows.
@@ -250,6 +252,9 @@ pub struct RenderScene {
     pub ambient: [f32; 3],
     /// Exposure value at ISO 100.
     pub ev100: f32,
+    /// How the picture is drawn (the world's `RenderSettings`, or the
+    /// defaults).
+    pub settings: RenderSettings,
     /// The interface's boxes, in drawing order.
     pub ui: Vec<UiBoxView>,
     /// The interface's virtual screen.
@@ -262,6 +267,23 @@ pub struct RenderScene {
     pub emitters: Vec<EmitterView>,
     /// The simulation time shown (`Time.elapsed`), for particles.
     pub time: f64,
+    /// What entities are called where the scene came from (their ids in the
+    /// scene file), for warnings: "entity 'sun'" can be acted on, "entity
+    /// 3v0" cannot. [`extract`] leaves it empty; whoever knows the names
+    /// fills it in (the control plane does). Nothing is drawn differently.
+    pub names: BTreeMap<Entity, String>,
+}
+
+impl RenderScene {
+    /// How a warning names `entity`: its name in quotes when
+    /// [`RenderScene::names`] has one, `#<id>` otherwise (the way the tools
+    /// write an entity that has no name).
+    pub fn name_of(&self, entity: Entity) -> String {
+        match self.names.get(&entity) {
+            Some(name) => format!("'{name}'"),
+            None => format!("#{entity}"),
+        }
+    }
 }
 
 fn rgb(color: Color) -> [f32; 3] {
@@ -317,6 +339,10 @@ pub fn extract(world: &World) -> Result<RenderScene> {
             .copied()
             .unwrap_or_default()
             .ev100,
+        settings: world
+            .resource::<RenderSettings>()
+            .copied()
+            .unwrap_or_default(),
         ui: Vec::new(),
         ui_settings: world
             .resource::<wish_types::ui::UiSettings>()
@@ -329,6 +355,7 @@ pub fn extract(world: &World) -> Result<RenderScene> {
         sprites: Vec::new(),
         emitters: Vec::new(),
         time: wish_particles::now(world),
+        names: BTreeMap::new(),
     };
     let global = |world: &World, entity: Entity| {
         world

@@ -8,7 +8,7 @@ use wish_core::Result;
 use wish_ecs::World;
 pub use wish_types::render::{
     Ambient, Camera, DirectionalLight, EMISSIVE_NITS, Exposure, Material, Model, PointLight,
-    Primitive, Projection, Shape, Sky, SpotLight,
+    Primitive, Projection, RenderSettings, Shape, Sky, SpotLight,
 };
 
 /// Registers every rendering component and resource.
@@ -24,5 +24,6 @@ pub fn register(world: &mut World) -> Result<()> {
     world.register_resource::<Sky>()?;
     world.register_resource::<Ambient>()?;
     world.register_resource::<Exposure>()?;
+    world.register_resource::<RenderSettings>()?;
     Ok(())
 }

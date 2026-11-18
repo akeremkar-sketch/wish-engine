@@ -52,6 +52,12 @@ pub enum Command {
         seed: u64,
         /// Measure game code (WebAssembly) against native systems instead.
         script: bool,
+        /// Measure drawing instead: `entities` surfaces, `ticks` frames.
+        render: bool,
+        /// With `render`: the picture's width and height.
+        size: (u32, u32),
+        /// With `render`: use the software adapter even if there is hardware.
+        software: bool,
     },
     /// Move an asset file or folder and update the scenes that refer to it.
     Move {
@@ -508,6 +514,9 @@ fn flags_of(command: &str) -> &'static [(&'static str, bool)] {
             ("--ticks", true),
             ("--seed", true),
             ("--script", false),
+            ("--render", false),
+            ("--size", true),
+            ("--software", false),
             ("--json", false),
         ],
         "schema" => &[("--example", true), ("--json", false)],
@@ -743,20 +752,37 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
             scene: value_of("--scene").map(str::to_owned),
             root: value_of("--root").map(str::to_owned),
         },
-        "bench" => Command::Bench {
-            entities: value_of("--entities")
-                .map_or(Ok(100_000), |value| parse_number("--entities", value))?
-                .try_into()
-                .map_err(|_| {
-                    usage_error(
-                        "--entities is too large.".to_owned(),
-                        "Use at most 4294967294 entities.".to_owned(),
-                    )
-                })?,
-            ticks: value_of("--ticks").map_or(Ok(600), |value| parse_number("--ticks", value))?,
-            seed: value_of("--seed").map_or(Ok(0), |value| parse_number("--seed", value))?,
-            script: values.iter().any(|(flag, _)| *flag == "--script"),
-        },
+        "bench" => {
+            let script = values.iter().any(|(flag, _)| *flag == "--script");
+            let render = values.iter().any(|(flag, _)| *flag == "--render");
+            if script && render {
+                return Err(usage_error(
+                    "'wen bench' measures one thing at a time: --script or --render.".to_owned(),
+                    "Run it once with --script and once with --render.".to_owned(),
+                ));
+            }
+            // Drawing is measured on a few thousand surfaces and a second of
+            // frames; the core on many more entities and ticks.
+            let (entities, ticks) = if render { (2500, 60) } else { (100_000, 600) };
+            Command::Bench {
+                entities: value_of("--entities")
+                    .map_or(Ok(entities), |value| parse_number("--entities", value))?
+                    .try_into()
+                    .map_err(|_| {
+                        usage_error(
+                            "--entities is too large.".to_owned(),
+                            "Use at most 4294967294 entities.".to_owned(),
+                        )
+                    })?,
+                ticks: value_of("--ticks")
+                    .map_or(Ok(ticks), |value| parse_number("--ticks", value))?,
+                seed: value_of("--seed").map_or(Ok(0), |value| parse_number("--seed", value))?,
+                script,
+                render,
+                size: value_of("--size").map_or(Ok((1280, 720)), parse_size)?,
+                software: values.iter().any(|(flag, _)| *flag == "--software"),
+            }
+        }
         "schema" => Command::Schema {
             example: value_of("--example").map(str::to_owned),
         },

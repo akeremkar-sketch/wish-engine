@@ -72,10 +72,10 @@ pub use wish_types::{
     ButtonClicked, Camera, CharacterController, CharacterMotion, CharacterState, Collider,
     ColliderShape, CollisionEnded, CollisionStarted, DirectionalLight, Exposure, GlobalTransform,
     Material, Model, ParticleEmitter, ParticleState, PhysicsSettings, PlaySound, PointLight,
-    Pointer, Primitive, Projection, RigidBody, Shape, Sky, SoundEnded, SoundStarted, SpotLight,
-    Sprite, Time, Transform, UiAlign, UiButton, UiDirection, UiImage, UiInteraction, UiJustify,
-    UiLayout, UiLength, UiNode, UiPosition, UiSettings, UiText, UiTextAlign, UiUnit,
-    world_position,
+    Pointer, Primitive, Projection, RenderSettings, RigidBody, Shape, Sky, SoundEnded,
+    SoundStarted, SpotLight, Sprite, Time, Transform, UiAlign, UiButton, UiDirection, UiImage,
+    UiInteraction, UiJustify, UiLayout, UiLength, UiNode, UiPosition, UiSettings, UiText,
+    UiTextAlign, UiUnit, world_position,
 };
 
 pub use physics::{Ray, RayHit, raycast};
@@ -92,10 +92,10 @@ pub mod prelude {
         Camera, CharacterController, CharacterMotion, CharacterState, Collider, ColliderShape,
         CollisionEnded, CollisionStarted, Color, Commands, DirectionalLight, Entity, EventReader,
         EventWriter, Exposure, GlobalTransform, Material, Model, PhysicsSettings, PlaySound,
-        PointLight, Primitive, Query, Ray, RayHit, Res, ResMut, RigidBody, Shape, Sky, SoundEnded,
-        SoundStarted, SpotLight, Text, Time, Transform, With, Without, asset, component, event,
-        random_f32, random_range, random_u64, raycast, resource, schema, system, text, text_of,
-        world_position,
+        PointLight, Primitive, Query, Ray, RayHit, RenderSettings, Res, ResMut, RigidBody, Shape,
+        Sky, SoundEnded, SoundStarted, SpotLight, Text, Time, Transform, With, Without, asset,
+        component, event, random_f32, random_range, random_u64, raycast, resource, schema, system,
+        text, text_of, world_position,
     };
     pub use crate::{
         ButtonClicked, Pointer, UiAlign, UiButton, UiDirection, UiImage, UiInteraction, UiJustify,

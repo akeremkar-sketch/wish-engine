@@ -37,7 +37,7 @@ const SHADERS: Param = Param::optional(
 pub(crate) const CAPTURE_FRAME: Tool = Tool {
     name: "capture_frame",
     title: "Take a picture",
-    description: "Draws the scene (or a session's live world) from a camera and returns the picture as a PNG (image content over MCP; image.data is base64 on the command line unless out is given). The default 512x288 keeps it cheap; ask for more only to inspect detail. view picks what is drawn: lit (the real picture), ids (each entity its own color), depth (white near, black far), normals (surface direction as color), wireframe (triangle edges), colliders (the wireframe with every physics collider over it: fixed green, moving cyan, sensors yellow), lights (the wireframe with how far each point and spot light reaches). Use describe_view to ask what is visible instead of reading pixels.",
+    description: "Draws the scene (or a session's live world) from a camera and returns the picture as a PNG (image content over MCP; image.data is base64 on the command line unless out is given). The default 512x288 keeps it cheap; ask for more only to inspect detail. view picks what is drawn: lit (the real picture), ids (each entity its own color), depth (white near, black far), normals (surface direction as color), wireframe (triangle edges), colliders (the wireframe with every physics collider over it: fixed green, moving cyan, sensors yellow), lights (the wireframe with how far each point and spot light reaches). stats says what drawing the picture took, in counts that are the same on every machine: draw_calls, triangles, shadow_casters, point_lights, spot_lights. Use describe_view to ask what is visible instead of reading pixels.",
     params: &[
         SCENE,
         SESSION,
@@ -84,7 +84,7 @@ pub(crate) const CAPTURE_FRAME: Tool = Tool {
 pub(crate) const DESCRIBE_VIEW: Tool = Tool {
     name: "describe_view",
     title: "What the camera sees",
-    description: "Says what a camera sees without a picture: for each visible entity its pixel count, how much of it is not hidden by other things (visible_percent), its box on screen [left, top, right, bottom] and its distance in meters; and the entities that are drawn but not visible (hidden behind something, or outside the picture); the sprites (their box in the picture and layer) and particle emitters (the box their particles cover, how many are alive); and the in-game interface (interface: each box that shows something, its box in the picture, its text, whether it is a button and if the pointer is over it). Use it to check that what you built is on screen and not blocked, and what the interface says.",
+    description: "Says what a camera sees without a picture: for each visible entity its pixel count, how much of it is not hidden by other things (visible_percent), its box on screen [left, top, right, bottom] and its distance in meters; and the entities that are drawn but not visible (hidden behind something, or outside the picture); the sprites (their box in the picture and layer) and particle emitters (the box their particles cover, how many are alive); and the in-game interface (interface: each box that shows something, its box in the picture, its text, whether it is a button and if the pointer is over it); and stats, what drawing the lit picture of this view takes (draw_calls, triangles, shadow_casters, point_lights, spot_lights: counts, the same on every machine). Use it to check that what you built is on screen and not blocked, what the interface says, and what makes a scene heavy.",
     params: &[
         SCENE,
         SESSION,
@@ -113,6 +113,14 @@ pub(crate) const DESCRIBE_VIEW: Tool = Tool {
     run: describe_view,
 };
 
+/// How many bytes of render targets the renderer may keep after a tool
+/// call. The picture of a tool call is drawn now and then, not every frame:
+/// what the usual sizes take (a 1280x720 lit picture with its shadow map is
+/// 34 MiB) stays for the next call, a large capture does not sit in memory
+/// until some later call. The editor's views draw through the same renderer
+/// many times a second and keep their targets (`Workspace::render_picture`).
+const KEPT_AFTER_A_TOOL_CALL: u64 = 64 << 20;
+
 /// What drawing needs from the world, taken while it is borrowed.
 struct Prepared {
     scene: RenderScene,
@@ -120,6 +128,68 @@ struct Prepared {
     by_name: BTreeMap<String, Entity>,
     notes: Vec<Diagnostic>,
     source: Value,
+}
+
+impl Prepared {
+    /// Puts the parts together and tells the scene what its entities are
+    /// called, so that what the renderer warns about is named the way the
+    /// scene file names it. Entities without a scene id (made while a
+    /// session runs) keep their `#<id>` form.
+    fn new(
+        mut scene: RenderScene,
+        by_name: BTreeMap<String, Entity>,
+        notes: Vec<Diagnostic>,
+        source: Value,
+    ) -> Self {
+        let names: BTreeMap<Entity, String> = by_name
+            .iter()
+            .map(|(name, entity)| (*entity, name.clone()))
+            .collect();
+        scene.names = names
+            .iter()
+            .filter(|(_, name)| !name.starts_with('#'))
+            .map(|(entity, name)| (*entity, name.clone()))
+            .collect();
+        Self {
+            scene,
+            names,
+            by_name,
+            notes,
+            source,
+        }
+    }
+
+    /// Gives the renderer's warnings about the scene's lights a place in
+    /// the scene file where there is one: the first light that is not
+    /// drawn, when the picture is of the scene file as it is now (not a
+    /// checkpoint's copy, not a preview) and the light is an entity of
+    /// that file (not one a prefab brought in). The place names the file,
+    /// because a path without a file points into the call's arguments.
+    fn locate(&self, mut warnings: Vec<Diagnostic>) -> Vec<Diagnostic> {
+        let file = self
+            .source
+            .get("scene")
+            .and_then(Value::as_str)
+            .filter(|_| {
+                self.source.get("checkpoint").is_none() && self.source.get("preview").is_none()
+            });
+        let extra = self
+            .scene
+            .lights
+            .get(1)
+            .and_then(|light| self.scene.names.get(&light.entity))
+            .filter(|name| !name.contains('/'));
+        if let (Some(file), Some(name)) = (file, extra) {
+            for warning in &mut warnings {
+                if warning.code == "extra_directional_lights" && warning.location.path.is_none() {
+                    warning.location.file = Some(file.to_owned());
+                    warning.location.path =
+                        Some(format!("/entities/{name}/components/DirectionalLight"));
+                }
+            }
+        }
+        warnings
+    }
 }
 
 fn prepare(workspace: &mut Workspace, args: &Args) -> Result<Prepared> {
@@ -142,18 +212,12 @@ fn prepare_checkpoint(
     if path.ends_with(".prefab.json") {
         stage(&mut prepared_scene);
     }
-    let by_name = view.ids;
-    let names = by_name
-        .iter()
-        .map(|(name, entity)| (*entity, name.clone()))
-        .collect();
-    Ok(Prepared {
-        scene: prepared_scene,
-        names,
-        by_name,
-        notes: Vec::new(),
-        source: json!({ "scene": path, "checkpoint": name }),
-    })
+    Ok(Prepared::new(
+        prepared_scene,
+        view.ids,
+        Vec::new(),
+        json!({ "scene": path, "checkpoint": name }),
+    ))
 }
 
 /// [`prepare`] without the tool's arguments: a session's live world, or a
@@ -220,17 +284,7 @@ fn prepare_with(
     {
         stage(&mut scene);
     }
-    let names = by_name
-        .iter()
-        .map(|(name, entity)| (*entity, name.clone()))
-        .collect();
-    Ok(Prepared {
-        scene,
-        names,
-        by_name,
-        notes,
-        source,
-    })
+    Ok(Prepared::new(scene, by_name, notes, source))
 }
 
 /// Gives a scene with no camera one, and one with no light a sun: what a
@@ -354,6 +408,21 @@ fn size(args: &Args, width: i64, height: i64) -> (u32, u32) {
     )
 }
 
+/// The statistics of a picture as the tools give them: counts only, the same
+/// on every machine and in every run (no time is part of these answers:
+/// time is measured by `wen bench --render`, on the command line).
+fn stats_json(stats: &wish_render::RenderStats) -> Value {
+    json!({
+        "width": stats.width,
+        "height": stats.height,
+        "draw_calls": stats.draw_calls,
+        "triangles": stats.triangles,
+        "shadow_casters": stats.shadow_casters,
+        "point_lights": stats.point_lights,
+        "spot_lights": stats.spot_lights,
+    })
+}
+
 fn adapter_json(open: &Drawing) -> Value {
     let adapter = open.gpu.adapter();
     json!({ "name": adapter.name, "backend": adapter.backend, "software": adapter.software })
@@ -372,12 +441,13 @@ fn capture_frame(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
     let frame =
         open.renderer
             .render_view(&open.gpu, &prepared.scene, camera, width, height, view)?;
+    open.renderer.trim(KEPT_AFTER_A_TOOL_CALL);
     let png = frame.image.to_png()?;
     let adapter = adapter_json(open);
-    let mut warnings = prepared.notes;
+    let mut warnings = prepared.notes.clone();
     warnings.extend(model_warnings);
     warnings.extend(frame.warnings);
-    let warnings = without_repeats(warnings);
+    let warnings = without_repeats(prepared.locate(warnings));
 
     let mut image =
         json!({ "mime": "image/png", "width": width, "height": height, "bytes": png.len() });
@@ -420,6 +490,7 @@ fn capture_frame(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
         ),
     );
     out.insert("drawn".to_owned(), json!(frame.drawn));
+    out.insert("stats".to_owned(), stats_json(&frame.stats));
     out.insert("image".to_owned(), image);
     out.insert("adapter".to_owned(), adapter);
     if !warnings.is_empty() {
@@ -440,6 +511,7 @@ fn describe_view(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
     let overlay = open
         .renderer
         .overlay_elements(&prepared.scene, camera, width, height)?;
+    open.renderer.trim(KEPT_AFTER_A_TOOL_CALL);
     let adapter = adapter_json(open);
     let name = |entity: Entity| {
         prepared
@@ -491,10 +563,10 @@ fn describe_view(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
             entry
         })
         .collect();
-    let mut warnings = prepared.notes;
+    let mut warnings = prepared.notes.clone();
     warnings.extend(model_warnings);
     warnings.extend(description.warnings.iter().cloned());
-    let warnings = without_repeats(warnings);
+    let warnings = without_repeats(prepared.locate(warnings));
     let mut out = Map::new();
     if let Value::Object(source) = prepared.source {
         out.extend(source);
@@ -535,6 +607,7 @@ fn describe_view(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
     if !interface.is_empty() {
         out.insert("interface".to_owned(), json!(interface));
     }
+    out.insert("stats".to_owned(), stats_json(&description.stats));
     out.insert("adapter".to_owned(), adapter);
     if !warnings.is_empty() {
         out.insert("diagnostics".to_owned(), json!(warnings));
@@ -597,14 +670,27 @@ impl Workspace {
         let frame =
             open.renderer
                 .render_view(&open.gpu, &prepared.scene, None, width, height, view)?;
-        let mut warnings = prepared.notes;
+        let mut warnings = prepared.notes.clone();
         warnings.extend(model_warnings);
         warnings.extend(frame.warnings);
+        let warnings = without_repeats(prepared.locate(warnings));
         Ok(Picture {
             image: frame.image,
             names: prepared.names,
-            warnings: without_repeats(warnings),
+            warnings,
         })
+    }
+}
+
+impl Workspace {
+    /// How many bytes of render targets this workspace's renderer keeps for
+    /// its next picture (0 before the first one): for tests of what a tool
+    /// call leaves behind in memory.
+    #[doc(hidden)]
+    pub fn kept_render_bytes(&self) -> u64 {
+        self.renderer
+            .as_ref()
+            .map_or(0, |open| open.renderer.kept_bytes())
     }
 }
 

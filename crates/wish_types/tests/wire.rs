@@ -91,6 +91,7 @@ fn every_engine_type_round_trips() {
         Sky::schema(),
         Ambient::schema(),
         Exposure::schema(),
+        RenderSettings::schema(),
         Time::schema(),
         Everything::schema(),
     ] {
