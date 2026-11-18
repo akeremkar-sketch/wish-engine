@@ -13,10 +13,6 @@ use crate::param::{Args, Kind, Param};
 use crate::tool::Tool;
 use crate::workspace::Workspace;
 
-/// The engine's own licenses, shipped with every exported game.
-const LICENSE_MIT: &str = include_str!("../../../../LICENSE-MIT");
-const LICENSE_APACHE: &str = include_str!("../../../../LICENSE-APACHE");
-
 pub(crate) const PROJECT_EXPORT: Tool = Tool {
     name: "project_export",
     title: "Export the game",
@@ -359,7 +355,9 @@ fn write_export(
         bytes += code.len() as u64;
     }
     let licenses = format!(
-        "{project_name} was made with Wish Engine, which is free and open source under the MIT license or the Apache License 2.0, at your option. Both texts follow, then the licenses of the libraries the engine uses.\n\n==== MIT ====\n\n{LICENSE_MIT}\n\n==== Apache License 2.0 ====\n\n{LICENSE_APACHE}\n\n==== Third-party libraries ====\n\n{}",
+        "{project_name} was made with Wish Engine, which is free and open source under the MIT license or the Apache License 2.0, at your option. Both texts follow, then the licenses of the libraries the engine uses.\n\n==== MIT ====\n\n{}\n\n==== Apache License 2.0 ====\n\n{}\n\n==== Third-party libraries ====\n\n{}",
+        crate::licenses::MIT,
+        crate::licenses::APACHE,
         crate::licenses::THIRD_PARTY
     );
     std::fs::write(out.join("LICENSES.txt"), &licenses)

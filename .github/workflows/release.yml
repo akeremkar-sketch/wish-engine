@@ -1,0 +1,203 @@
+name: Release
+
+# The engine's release archives for Windows and Linux
+# (docs/design/M12-release-pipeline.md).
+#
+# - A tag of three numbers (ADR-027 rule 3: 0.2.0, 1.0.0; no "v", no suffix)
+#   builds both, checks them, and makes a DRAFT GitHub Release with the two
+#   archives and SHA256SUMS. A person writes the notes and publishes it.
+# - The dry run: a push that touches the packaging code, or a run by hand,
+#   does the same up to the draft; the archives stay artifacts of the run.
+
+on:
+  push:
+    tags: ["[0-9]+.[0-9]+.[0-9]+"]
+    # Path filters apply to these branch pushes, never to tags.
+    branches: [main, "m[0-9]*"]
+    paths:
+      - .github/workflows/release.yml
+      - Cargo.toml
+      - crates/wish_cli/src/tool_cmds.rs
+      - crates/wish_control/src/archive.rs
+      - crates/wish_control/src/licenses.rs
+      - crates/wish_control/src/release.rs
+      - crates/wish_script/src/build.rs
+      - tools/third_party.py
+  workflow_dispatch:
+
+# Nothing by default; each job asks for what it needs.
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    name: version (and the tag)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Read the workspace version; a tag must be that version
+        id: read
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error file=Cargo.toml::The workspace version '$version' is not three numbers (ADR-027 rule 3)."
+            exit 1
+          fi
+          if [ "$REF_TYPE" = tag ] && [ "$REF_NAME" != "$version" ]; then
+            echo "::error::The tag '$REF_NAME' is not the workspace version '$version' (Cargo.toml). Tag the commit that carries that version, or change the version first."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  package:
+    name: package (${{ matrix.platform }})
+    needs: version
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows-x86_64
+            target: x86_64-pc-windows-msvc
+            archive: zip
+            exe: .exe
+            # The shipped programs carry the C runtime: a clean Windows may
+            # lack VCRUNTIME140.dll. With --target the flag stays off build
+            # scripts and proc macros.
+            rustflags: -C target-feature=+crt-static
+          - os: ubuntu-latest
+            platform: linux-x86_64
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+            exe: ""
+            rustflags: ""
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      TARGET: ${{ matrix.target }}
+      EXE: ${{ matrix.exe }}
+      STEM: wish-engine-${{ needs.version.outputs.version }}-${{ matrix.platform }}
+      ARCHIVE: wish-engine-${{ needs.version.outputs.version }}-${{ matrix.platform }}.${{ matrix.archive }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      # As in CI: the Linux runner needs room for the build.
+      - name: Free disk space
+        if: runner.os == 'Linux'
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
+      # Sound output links ALSA (cpal): headers and pkg-config to build.
+      - name: Install the ALSA headers
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config
+      # The toolchain pinned in rust-toolchain.toml, with the wasm32 target.
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
+      # No build cache: a release is built from the sources alone.
+      - name: Build wen, the player and the launcher (dist profile)
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+        run: cargo build --locked --profile dist --target "$TARGET" -p wish_cli -p wish_player
+      # Every entry is dated with the commit's time, so the archive is the
+      # same whenever this commit is packaged.
+      - name: Package
+        run: |
+          export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          "target/$TARGET/dist/wen$EXE" package --out "$RUNNER_TEMP/release/package"
+          ls -l "$RUNNER_TEMP/release"
+      - name: Check the checksum
+        working-directory: ${{ runner.temp }}/release
+        run: sha256sum -c SHA256SUMS
+      - name: Package again into another folder; the archive must be the same bytes
+        run: |
+          export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          "target/$TARGET/dist/wen$EXE" package --out "$RUNNER_TEMP/again/package" > /dev/null
+          cmp "$RUNNER_TEMP/release/$ARCHIVE" "$RUNNER_TEMP/again/$ARCHIVE"
+          cmp "$RUNNER_TEMP/release/SHA256SUMS" "$RUNNER_TEMP/again/SHA256SUMS"
+          rm -rf "$RUNNER_TEMP/again"
+      # Read by a tool that shares no code with the writer.
+      - name: Extract the archive with another tool
+        run: |
+          mkdir -p "$RUNNER_TEMP/unpacked"
+          if [ "$RUNNER_OS" = Windows ]; then
+            pwsh -NoProfile -Command 'Expand-Archive -LiteralPath (Join-Path $env:RUNNER_TEMP "release/$env:ARCHIVE") -DestinationPath (Join-Path $env:RUNNER_TEMP "unpacked")'
+          else
+            tar -xzf "$RUNNER_TEMP/release/$ARCHIVE" -C "$RUNNER_TEMP/unpacked"
+          fi
+          ls -l "$RUNNER_TEMP/unpacked/$STEM"
+          for file in LICENSE-MIT LICENSE-APACHE THIRD_PARTY_LICENSES.md wish-engine.json; do
+            test -s "$RUNNER_TEMP/unpacked/$STEM/$file"
+          done
+          test -d "$RUNNER_TEMP/unpacked/$STEM/toolchain/share/doc/rust"
+      # Only the extracted copy: its programs, its packed compiler, its SDK
+      # and its player (on Linux this also proves the execute bits).
+      - name: "From the extracted archive alone: version, new, build, test, export, play"
+        run: |
+          wen="$RUNNER_TEMP/unpacked/$STEM/wen$EXE"
+          game="$RUNNER_TEMP/smoke"
+          test "$("$wen" version)" = "wen $VERSION"
+          "$wen" new "$game" --name Smoke
+          "$wen" build --root "$game"
+          "$wen" test --root "$game"
+          "$wen" export --root "$game" --name smoke
+          "$game/exports/smoke/smoke$EXE" --headless --frames 60
+      - name: Keep the archive and its checksum
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.STEM }}
+          path: |
+            ${{ runner.temp }}/release/${{ env.ARCHIVE }}
+            ${{ runner.temp }}/release/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7
+          # The archive is compressed already.
+          compression-level: 0
+
+  release:
+    name: draft release
+    if: github.ref_type == 'tag'
+    needs: [version, package]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Join the two checksum lists and check them
+        run: |
+          mkdir release
+          cp artifacts/*/wish-engine-* release/
+          cat artifacts/*/SHA256SUMS | LC_ALL=C sort -k 2 > release/SHA256SUMS
+          cat release/SHA256SUMS
+          cd release && sha256sum -c SHA256SUMS
+      - name: Make the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh release create "$TAG" release/* --repo "$REPO" --draft --verify-tag \
+            --title "Wish Engine $TAG" \
+            --notes "Draft made by the release workflow from the tag $TAG: the Windows and Linux archives and their SHA-256 checksums (check them with sha256sum -c SHA256SUMS). Write the notes, then publish."

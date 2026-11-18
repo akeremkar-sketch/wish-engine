@@ -26,10 +26,12 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
       # Rendering tests use the software adapter: WARP ships with Windows;
-      # on Linux it is Mesa's lavapipe (Vulkan on the CPU).
-      - name: Install the software Vulkan driver
+      # on Linux it is Mesa's lavapipe (Vulkan on the CPU). Sound output
+      # (wen play, the player) links ALSA on Linux: its headers and
+      # pkg-config are needed to build.
+      - name: Install the software Vulkan driver and the ALSA headers
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers libasound2-dev pkg-config
       # Installs the toolchain pinned in rust-toolchain.toml.
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2

@@ -18,6 +18,7 @@
 //! Design: `docs/design/M4-control-plane.md`.
 
 mod activity;
+pub mod archive;
 mod audio;
 mod checkpoints;
 mod concepts;
@@ -35,6 +36,7 @@ pub mod param;
 pub mod pe;
 pub mod policy;
 pub mod project;
+pub mod release;
 pub mod render;
 mod replays;
 pub mod scaffold;

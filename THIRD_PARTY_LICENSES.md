@@ -2,7 +2,9 @@
 
 Wish Engine and the games made with it use these libraries. Each is listed with its license;
 the license texts the libraries ship follow, each text once, with the libraries it belongs to.
-Made by tools/third_party.py from Cargo.lock.
+Made by tools/third_party.py from Cargo.lock, with the works that are not libraries last.
+Engine packages also carry the Rust compiler (toolchain/): its own notices are in
+toolchain/share/doc/rust.
 
 | Library | Version | License | Texts |
 |---|---|---|---|
@@ -461,6 +463,7 @@ Made by tools/third_party.py from Cargo.lock.
 | zmij | 1.0.23 | MIT | 30fefc3a7d6a |
 | zune-core | 0.5.3 | MIT OR Apache-2.0 OR Zlib | 283ea6cc2997, 4ae441972cdd, b8cba0284c86 |
 | zune-jpeg | 0.5.15 | MIT OR Apache-2.0 OR Zlib | 283ea6cc2997, 4ae441972cdd, b8cba0284c86 |
+| Roboto (the engine's font) | 2.138 | Apache-2.0 | 283ea6cc2997 |
 
 ## Text 4bf96504d6e8
 
@@ -1547,7 +1550,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ## Text 283ea6cc2997
 
-Used by: approx 0.5.1, as-raw-xcb-connection 1.0.1, codespan-reporting 0.13.1, cpal 0.18.2, hound 3.5.1, kurbo 0.13.1, memfd 0.6.6, nohash-hasher 0.2.0, peniko 0.6.1, polycool 0.4.0, raw-window-metal 1.1.0, self_cell 1.3.0, spade 2.15.1, static_assertions 1.1.0, tinyvec 1.13.3, unarray 0.1.4, x11rb 0.13.2, x11rb-protocol 0.13.2, zune-core 0.5.3, zune-jpeg 0.5.15
+Used by: approx 0.5.1, as-raw-xcb-connection 1.0.1, codespan-reporting 0.13.1, cpal 0.18.2, hound 3.5.1, kurbo 0.13.1, memfd 0.6.6, nohash-hasher 0.2.0, peniko 0.6.1, polycool 0.4.0, raw-window-metal 1.1.0, self_cell 1.3.0, spade 2.15.1, static_assertions 1.1.0, tinyvec 1.13.3, unarray 0.1.4, x11rb 0.13.2, x11rb-protocol 0.13.2, zune-core 0.5.3, zune-jpeg 0.5.15, Roboto (the engine's font) 2.138
 
 ```text
 Apache License

@@ -88,8 +88,8 @@ pub fn load_models(
 
 /// The game, as window content.
 pub struct Game {
-    /// The sound card, where there is one to open (Windows for now).
-    #[cfg(windows)]
+    /// The sound card, where there is one to open (Windows and Linux).
+    #[cfg(any(windows, target_os = "linux"))]
     speaker: Option<wish_audio::output::Speaker>,
     workspace: Workspace,
     root: PathBuf,
@@ -115,7 +115,7 @@ impl Game {
         })?;
         workspace.set_software(options.software);
         Ok(Self {
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "linux"))]
             speaker: wish_audio::output::Speaker::open().ok(),
             workspace,
             root: options.root.clone(),
@@ -139,7 +139,7 @@ impl Game {
     }
 
     /// Makes the speakers match the sounds the game says are playing.
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     fn hear(&mut self, id: &str) {
         let Some(speaker) = self.speaker.as_mut() else {
             return;
@@ -150,7 +150,7 @@ impl Game {
         }
     }
 
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "linux")))]
     fn hear(&mut self, _id: &str) {}
 
     fn run_tool(&mut self, tool: &str, args: &Value) -> Value {

@@ -925,9 +925,53 @@ pub fn icon_file() -> wish_core::Result<Vec<u8>> {
     Ok(ico)
 }
 
+/// What `wen package` writes into its folder: the only names it replaces
+/// when it packages into the same folder again.
+const PACKAGE_ENTRIES: &[&str] = &[
+    "wen.exe",
+    "wen",
+    "wish_player.exe",
+    "wish_player",
+    "wish-engine.exe",
+    "wish-engine",
+    "wish-engine.ico",
+    wish_control::engines::ENGINE_FILE,
+    "packages",
+    "sdk",
+    "toolchain",
+    "templates",
+    "clean-test.ps1",
+    "clean-test.wsb",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+    "THIRD_PARTY_LICENSES.md",
+];
+
+/// The SDK's compile-time macro libraries (`sdk/host/*.dll`) that need the
+/// Visual C++ runtime DLL, by name.
+fn macros_needing_c_runtime(sdk: &std::path::Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(sdk.join("host"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".dll"))
+        .filter(|entry| {
+            wish_control::pe::needs_c_runtime_dll(&std::fs::read(entry.path()).unwrap_or_default())
+        })
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
 /// `wen package`: a folder with everything a machine without developer
-/// tools needs to build and run game code (engine development).
+/// tools needs to build and run game code (engine development), and beside
+/// it the release archive (`.zip` on Windows, `.tar.gz` elsewhere) and
+/// `SHA256SUMS` (M12 release pipeline). What is written depends on the host:
+/// the icon, the Windows Sandbox trial and the C runtime checks are
+/// Windows's.
 pub fn package(out: Option<&str>, as_json: bool) -> wish_core::Result<String> {
+    let windows = cfg!(windows);
     let exe = std::env::current_exe().map_err(|error| {
         Diagnostic::error(
             "package_failed",
@@ -939,7 +983,6 @@ pub fn package(out: Option<&str>, as_json: bool) -> wish_core::Result<String> {
         .parent()
         .map(std::path::Path::to_path_buf)
         .unwrap_or_default();
-    let out = out.map_or_else(|| beside.join("package"), std::path::PathBuf::from);
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml");
     if !manifest.is_file() {
         return Err(Diagnostic::error(
@@ -955,25 +998,21 @@ pub fn package(out: Option<&str>, as_json: bool) -> wish_core::Result<String> {
             "Check that the package folder can be written to.",
         )
     };
-    wish_script::build::clear_output_folder(
-        &out,
-        &[
-            "wen.exe",
-            "wen",
-            "wish_player.exe",
-            "wish_player",
-            "wish-engine.exe",
-            "wish-engine",
-            "wish-engine.ico",
-            wish_control::engines::ENGINE_FILE,
-            "packages",
-            "sdk",
-            "toolchain",
-            "templates",
-            "clean-test.ps1",
-            "clean-test.wsb",
-        ],
-    )?;
+    let out = out.map_or_else(|| beside.join("package"), std::path::PathBuf::from);
+    let out = std::path::absolute(&out).map_err(|e| failed("find the package folder", e))?;
+    // The archive and its checksum go beside the package folder.
+    let into = out
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .ok_or_else(|| {
+            Diagnostic::error(
+                "package_failed",
+                format!("'{}' has no parent folder for the archive.", out.display()),
+                "Choose a folder inside another folder for --out.",
+            )
+        })?;
+    let time = wish_control::release::source_date_epoch()?;
+    wish_script::build::clear_output_folder(&out, PACKAGE_ENTRIES)?;
     std::fs::create_dir_all(&out).map_err(|e| failed("create the package folder", e))?;
     std::fs::copy(&exe, out.join(exe.file_name().unwrap_or_default()))
         .map_err(|e| failed("copy wen", e))?;
@@ -994,9 +1033,11 @@ pub fn package(out: Option<&str>, as_json: bool) -> wish_core::Result<String> {
             "Build it first: cargo build --release -p wish_player (with the same flags as wen), then package again.",
         ));
     }
-    // The program a person starts (no console window), and its icon for
-    // shortcuts.
-    let launcher_name = if cfg!(windows) {
+    // The program a person starts (a shortcut, a double-click): on Windows
+    // without a console window, and with an icon for shortcuts. On Linux
+    // the same program, built for Linux; its desktop entry and icon need an
+    // install step that does not exist yet.
+    let launcher_name = if windows {
         "wish-engine.exe"
     } else {
         "wish-engine"
@@ -1008,12 +1049,18 @@ pub fn package(out: Option<&str>, as_json: bool) -> wish_core::Result<String> {
     } else {
         warnings.push(Diagnostic::warning(
             "package_without_launcher",
-            "The launcher (wish-engine) is not built beside wen, so starting the editor from a shortcut also opens a console window.",
-            "Build it first: cargo build --release -p wish_cli builds both (with the same flags as wen), then package again.",
+            if windows {
+                "The launcher (wish-engine) is not built beside wen, so starting the editor from a shortcut also opens a console window."
+            } else {
+                "The launcher (wish-engine) is not built beside wen, so the package has no program that starts the editor from a double-click."
+            },
+            "Build it first: cargo build -p wish_cli builds both (with the same profile and flags as wen), then package again.",
         ));
     }
-    std::fs::write(out.join("wish-engine.ico"), icon_file()?)
-        .map_err(|e| failed("write the icon", e))?;
+    if windows {
+        std::fs::write(out.join("wish-engine.ico"), icon_file()?)
+            .map_err(|e| failed("write the icon", e))?;
+    }
     // The engine's own packages (themes, workspaces...): `packages/` of the
     // repository, each copied as a package (hidden files left out).
     let engine_packages = std::path::Path::new(&manifest)
@@ -1060,72 +1107,121 @@ pub fn package(out: Option<&str>, as_json: bool) -> wish_core::Result<String> {
     )?;
     let rustc = std::env::var_os("RUSTC").map_or_else(|| "rustc".into(), std::path::PathBuf::from);
     let toolchain = wish_script::build::pack_toolchain(&rustc, &out.join("toolchain"))?;
+    if !out
+        .join("toolchain")
+        .join(wish_script::build::TOOLCHAIN_NOTICES)
+        .is_dir()
+    {
+        warnings.push(Diagnostic::warning(
+            "package_without_compiler_notices",
+            "The packed compiler has no licence notices (share/doc/rust beside its bin folder), so the package ships it without them.",
+            "Package with a rustup toolchain (its rustc component installs them), or put the compiler's COPYRIGHT and licence files into toolchain/share/doc/rust before sharing the package.",
+        ));
+    }
+    // The engine's licences and the third-party notices.
+    wish_control::release::write_licenses(&out)?;
+    // The clean-machine trial (Windows Sandbox): a person's, on Windows.
     let result = out.with_file_name(format!(
         "{}-result",
         out.file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("package")
     ));
-    std::fs::create_dir_all(&result).map_err(|e| failed("create the result folder", e))?;
-    std::fs::write(out.join("clean-test.ps1"), SANDBOX_SCRIPT)
-        .map_err(|e| failed("write clean-test.ps1", e))?;
-    std::fs::write(out.join("clean-test.wsb"), sandbox_config(&out, &result))
-        .map_err(|e| failed("write clean-test.wsb", e))?;
+    if windows {
+        std::fs::create_dir_all(&result).map_err(|e| failed("create the result folder", e))?;
+        std::fs::write(out.join("clean-test.ps1"), SANDBOX_SCRIPT)
+            .map_err(|e| failed("write clean-test.ps1", e))?;
+        std::fs::write(out.join("clean-test.wsb"), sandbox_config(&out, &result))
+            .map_err(|e| failed("write clean-test.wsb", e))?;
+    }
     // A program linked against the Visual C++ runtime DLL does not start on a
     // Windows that lacks it; the package needs one linked statically.
-    let bytes = std::fs::read(&exe).unwrap_or_default();
-    if player.is_file()
-        && wish_control::pe::needs_c_runtime_dll(&std::fs::read(&player).unwrap_or_default())
-    {
-        warnings.push(Diagnostic::warning(
-            "package_needs_static_crt",
-            "This wish_player needs VCRUNTIME140.dll, so games exported with it may not start on a clean Windows.",
-            "Build the packaged player with the C runtime linked in: set RUSTFLAGS=-C target-feature=+crt-static, then cargo build -p wish_player --release (into the same --target-dir as wen).",
-        ));
-    }
-    if launcher.is_file()
-        && wish_control::pe::needs_c_runtime_dll(&std::fs::read(&launcher).unwrap_or_default())
-    {
-        warnings.push(Diagnostic::warning(
-            "package_needs_static_crt",
-            "This wish-engine (the launcher) needs VCRUNTIME140.dll, so it may not start on a clean Windows.",
-            "Build it with the C runtime linked in: set RUSTFLAGS=-C target-feature=+crt-static, then cargo build -p wish_cli --release (into the same --target-dir as wen).",
-        ));
-    }
-    if wish_control::pe::needs_c_runtime_dll(&bytes) {
-        warnings.push(Diagnostic::warning(
-            "package_needs_static_crt",
-            "This wen.exe needs VCRUNTIME140.dll, which a clean Windows may not have.",
-            "Build the packaged wen with the C runtime linked in: set RUSTFLAGS=-C target-feature=+crt-static, then cargo build -p wish_cli --release (into a separate --target-dir), and run that wen's `package`.",
-        ));
+    if windows {
+        let bytes = std::fs::read(&exe).unwrap_or_default();
+        if player.is_file()
+            && wish_control::pe::needs_c_runtime_dll(&std::fs::read(&player).unwrap_or_default())
+        {
+            warnings.push(Diagnostic::warning(
+                "package_needs_static_crt",
+                "This wish_player needs VCRUNTIME140.dll, so games exported with it may not start on a clean Windows.",
+                "Build the packaged player with the C runtime linked in: set RUSTFLAGS=-C target-feature=+crt-static, then cargo build -p wish_player --release (into the same --target-dir as wen).",
+            ));
+        }
+        if launcher.is_file()
+            && wish_control::pe::needs_c_runtime_dll(&std::fs::read(&launcher).unwrap_or_default())
+        {
+            warnings.push(Diagnostic::warning(
+                "package_needs_static_crt",
+                "This wish-engine (the launcher) needs VCRUNTIME140.dll, so it may not start on a clean Windows.",
+                "Build it with the C runtime linked in: set RUSTFLAGS=-C target-feature=+crt-static, then cargo build -p wish_cli --release (into the same --target-dir as wen).",
+            ));
+        }
+        if wish_control::pe::needs_c_runtime_dll(&bytes) {
+            warnings.push(Diagnostic::warning(
+                "package_needs_static_crt",
+                "This wen.exe needs VCRUNTIME140.dll, which a clean Windows may not have.",
+                "Build the packaged wen with the C runtime linked in: set RUSTFLAGS=-C target-feature=+crt-static, then cargo build -p wish_cli --release (into a separate --target-dir), and run that wen's `package`.",
+            ));
+        }
+        // The packed compiler loads these to build game code.
+        let macros = macros_needing_c_runtime(&out.join("sdk"));
+        if !macros.is_empty() {
+            warnings.push(Diagnostic::warning(
+                "package_needs_static_crt",
+                format!(
+                    "The SDK's compile-time macros ({}) need VCRUNTIME140.dll, so game code may not build on a Windows without the Visual C++ runtime.",
+                    macros.join(", ")
+                ),
+                "Not fixed yet: cargo builds them for the host, where RUSTFLAGS does not reach when the SDK is built for wasm32 (docs/design/M12-release-pipeline.md, section 6). Until then such a machine needs the Visual C++ Redistributable.",
+            ));
+        }
     }
     // What makes the folder an engine the Hub can list beside others:
     // written last, so a package that stopped half way is not one.
+    let version = wish_control::packages::Version::engine();
     std::fs::write(
         out.join(wish_control::engines::ENGINE_FILE),
-        wish_control::engines::engine_file_text(wish_control::packages::Version::engine())?,
+        wish_control::engines::engine_file_text(version)?,
     )
     .map_err(|e| failed("write the engine file", e))?;
+    // The release archive of the finished folder, and its checksum.
+    let release = wish_control::release::write(
+        &out,
+        &into,
+        &wish_control::release::archive_stem(&version.to_string()),
+        wish_control::archive::Format::for_host(),
+        time,
+    )?;
     let toolchain_mib = toolchain["bytes"].as_u64().unwrap_or(0) / (1024 * 1024);
     Ok(if as_json {
         serde_json::json!({
             "out": out.display().to_string(),
             "sdk": sdk,
             "toolchain": toolchain,
-            "sandbox": out.join("clean-test.wsb").display().to_string(),
-            "result": result.display().to_string(),
+            "archive": release.to_json(),
+            "sandbox": windows.then(|| out.join("clean-test.wsb").display().to_string()),
+            "result": windows.then(|| result.display().to_string()),
             "diagnostics": warnings,
         })
         .to_string()
     } else {
         let mut text: String = warnings.iter().map(|w| format!("{w}\n")).collect();
         text.push_str(&format!(
-            "Package written to {} (toolchain {toolchain_mib} MiB, {}).\nClean-machine test: open {} in Windows Sandbox; the result appears in {}.",
+            "Package written to {} (toolchain {toolchain_mib} MiB, {}).\nArchive: {} ({} MiB), SHA-256 {} (in {}).",
             out.display(),
             toolchain["rustc"].as_str().unwrap_or("?"),
-            out.join("clean-test.wsb").display(),
-            result.display()
+            release.archive.display(),
+            release.bytes / (1024 * 1024),
+            release.sha256,
+            release.sums.display(),
         ));
+        if windows {
+            text.push_str(&format!(
+                "\nClean-machine test: open {} in Windows Sandbox; the result appears in {}.",
+                out.join("clean-test.wsb").display(),
+                result.display()
+            ));
+        }
         text
     })
 }

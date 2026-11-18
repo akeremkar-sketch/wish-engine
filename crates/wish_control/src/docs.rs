@@ -21,6 +21,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "That change was taken back already (edit_history revert). Undo the revert to bring it back.",
     ),
     (
+        "archive_failed",
+        "An archive could not be written or read (the engine's release archives, `wen package`): a link or a name that is not UTF-8 in the folder, a file too large for the format, a damaged archive, or a checksum list that is not one. The message names the file.",
+    ),
+    (
         "asset_exists",
         "A move would put an asset where a file already exists. Moves never overwrite: pick another destination or remove the other file first.",
     ),
@@ -579,7 +583,7 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     ),
     (
         "package_needs_static_crt",
-        "The wen being packaged needs the Visual C++ runtime DLL, which a clean Windows may not have; build it with the C runtime linked in (RUSTFLAGS=-C target-feature=+crt-static).",
+        "A program in the Windows package (wen, the player, the launcher, or the SDK's compile-time macros) needs the Visual C++ runtime DLL, which a clean Windows may not have; build it with the C runtime linked in (RUSTFLAGS=-C target-feature=+crt-static).",
     ),
     (
         "package_not_found",
@@ -602,8 +606,12 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "No version of the package in the index fits this engine (and the version asked for). The hint lists the versions there are.",
     ),
     (
+        "package_without_compiler_notices",
+        "The compiler being packed has no licence notices where rustup puts them (share/doc/rust), so the package ships the compiler without them. Package with a rustup toolchain.",
+    ),
+    (
         "package_without_launcher",
-        "The launcher (wish-engine) is not built beside wen, so the package has no program that starts the editor without a console window. Build wish_cli (both programs) first.",
+        "The launcher (wish-engine) is not built beside wen, so the package has no program to start the editor from a shortcut or a double-click (on Windows, without a console window). Build wish_cli (both programs) first.",
     ),
     (
         "package_without_player",

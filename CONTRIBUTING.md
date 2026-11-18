@@ -10,7 +10,9 @@ is fully usable by hand and fully controllable by AI agents over MCP. These rule
 You need:
 - Rust 1.100.0 (pinned by `rust-toolchain.toml`; `rustup` installs it);
 - the `wasm32-unknown-unknown` target;
-- on Windows, Visual Studio Build Tools with the C++ workload.
+- on Windows, Visual Studio Build Tools with the C++ workload;
+- on Linux, the ALSA headers and `pkg-config` (`libasound2-dev pkg-config` on Debian and Ubuntu):
+  sound output links ALSA.
 
 Before every commit, all three must be clean:
 
@@ -102,6 +104,25 @@ A change that breaks one of these is wrong, however useful it looks. The reasons
    so with the output.
 4. An idea outside the current scope goes to the M10 list in [docs/ROADMAP.md](docs/ROADMAP.md),
    not into the code.
+
+## Releases
+
+`.github/workflows/release.yml` builds the release archives
+([docs/design/M12-release-pipeline.md](docs/design/M12-release-pipeline.md)). A tag of three
+numbers that equals the workspace version (`0.2.0`; no `v`, no suffix) builds the Windows `.zip`
+and the Linux `.tar.gz` with `SHA256SUMS`, checks them, and makes a draft GitHub Release that a
+person publishes. A push that changes the packaging code runs the same build as a dry run.
+
+To make one locally, build the shipped programs with the `dist` profile, then package:
+
+```bash
+cargo build --profile dist -p wish_cli -p wish_player
+target/dist/wen package --out <folder>/package
+```
+
+On Windows, set `RUSTFLAGS=-C target-feature=+crt-static` and add
+`--target x86_64-pc-windows-msvc` (the programs then are in `target/x86_64-pc-windows-msvc/dist`),
+so that they start on a Windows without the Visual C++ runtime.
 
 ## Where things are
 

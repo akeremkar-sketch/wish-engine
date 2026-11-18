@@ -108,6 +108,13 @@ lewton = "0.10"
 taffy = { version = "0.15", default-features = false, features = ["std", "taffy_tree", "flexbox", "block_layout", "content_size"] }
 ab_glyph = "0.2.32"
 
+# Release archives (wish_control::archive): deflate and gzip from `flate2`
+# (MIT OR Apache-2.0, already in the tree through png), SHA-256 from `sha2`
+# (MIT OR Apache-2.0, already in the tree through Cranelift). Zip, tar and
+# the checksum list are the engine's own code.
+flate2 = "1"
+sha2 = { version = "0.10", default-features = false }
+
 # Procedural macros. syn 3, the same major version serde_derive uses, so the
 # build compiles one syn.
 proc-macro2 = "1"
@@ -126,6 +133,18 @@ trybuild = "1.0.123"
 # tens of gigabytes (M5 WP3, the disk filled up).
 [profile.dev.package."*"]
 debug = "line-tables-only"
+
+# The programs a release ships (`cargo build --profile dist`; the release
+# workflow, docs/design/M12-release-pipeline.md). Release, with link-time
+# optimization across crates (thin: fat LTO of wen on a 4-core runner costs
+# far more time and memory). Unwinding stays on: hostile files are read under
+# catch_unwind and the crash report needs the panic. Symbol names stay, so a
+# crash report's backtrace names functions on Linux. The static C runtime of
+# the Windows programs is a RUSTFLAGS setting (a profile cannot set it).
+[profile.dist]
+inherits = "release"
+lto = "thin"
+strip = "debuginfo"
 
 [workspace.lints.rust]
 # `unsafe` is allowed only in the crates listed in CLAUDE.md, which opt in locally.

@@ -40,6 +40,22 @@ fn a_packed_toolchain_builds_game_code_on_its_own() {
         megabytes < 800.0,
         "the pack should stay small enough to ship"
     );
+    // The compiler's licence notices travel with it (a package
+    // redistributes the compiler: M12 release pipeline).
+    let notices = packed.join(wish_script::build::TOOLCHAIN_NOTICES);
+    let names: Vec<String> = std::fs::read_dir(&notices)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        names.iter().any(|name| name.starts_with("COPYRIGHT")),
+        "the compiler's notices are missing from {}: {names:?}",
+        notices.display()
+    );
+    assert!(
+        !names.iter().any(|name| name == "html"),
+        "documentation is not packed"
+    );
 
     let exe = if cfg!(windows) { "rustc.exe" } else { "rustc" };
     let toolchain = Toolchain {

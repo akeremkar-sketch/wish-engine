@@ -63,7 +63,10 @@ pub fn clear_output_folder(out: &Path, known: &[&str]) -> Result<()> {
 /// What an SDK pack holds.
 pub const SDK_ENTRIES: &[&str] = &[SDK_FILE, "wasm", "host"];
 /// What a packed toolchain holds.
-pub const TOOLCHAIN_ENTRIES: &[&str] = &[TOOLCHAIN_FILE, "bin", "lib"];
+pub const TOOLCHAIN_ENTRIES: &[&str] = &[TOOLCHAIN_FILE, "bin", "lib", "share"];
+/// Where a packed toolchain keeps the compiler's licence notices (where
+/// rustup's rustc component puts them, relative to the sysroot).
+pub const TOOLCHAIN_NOTICES: &str = "share/doc/rust";
 
 fn io_failed(what: &str, error: &std::io::Error) -> Diagnostic {
     Diagnostic::error(
@@ -682,9 +685,12 @@ fn copy_tree(from: &Path, to: &Path, skip: &dyn Fn(&str) -> bool) -> Result<u64>
 
 /// Copies the parts of the compiler `rustc` that a game build needs into
 /// `out` (ADR-025): the compiler and its libraries, the WebAssembly linker,
-/// and the standard library for wasm32. Nothing else: no cargo, no rustup,
-/// no host standard library, no debug databases. The folder works on its
-/// own: `out/bin/rustc` finds its standard library relative to itself.
+/// and the standard library for wasm32, with the compiler's licence notices
+/// ([`TOOLCHAIN_NOTICES`]: `COPYRIGHT*` and `licenses/`, when the compiler
+/// has them; a package redistributes the compiler). Nothing else: no cargo,
+/// no rustup, no host standard library, no debug databases, no
+/// documentation. The folder works on its own: `out/bin/rustc` finds its
+/// standard library relative to itself.
 pub fn pack_toolchain(rustc: &Path, out: &Path) -> Result<Value> {
     let real = real_rustc(rustc)?;
     let version = rustc_version(&real)?;
@@ -750,6 +756,15 @@ pub fn pack_toolchain(rustc: &Path, out: &Path) -> Result<Value> {
             !wanted || name.ends_with(".pdb")
         },
     )?;
+    // The compiler's notices (the Rust project's and those of what it is
+    // built from: LLVM and others): COPYRIGHT*.html and licenses/.
+    let notices = sysroot.join(TOOLCHAIN_NOTICES);
+    if notices.is_dir() {
+        bytes += copy_tree(&notices, &out.join(TOOLCHAIN_NOTICES), &|name| {
+            !(name.starts_with("COPYRIGHT") || name.starts_with("LICENSE") || name == "licenses")
+                && !name.ends_with(".txt")
+        })?;
+    }
     let description = json!({
         "format": 1,
         "rustc": version,

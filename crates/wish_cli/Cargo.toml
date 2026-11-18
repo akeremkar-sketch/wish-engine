@@ -40,9 +40,10 @@ wish_window.workspace = true
 [dev-dependencies]
 serde_json.workspace = true
 
-# Sound out of the speakers (`wen play`): Windows for now; ALSA and CoreAudio
-# come with the Linux and macOS packages (M9).
-[target.'cfg(windows)'.dependencies]
+# Sound out of the speakers (`wen play`): Windows and Linux (ALSA, so a Linux
+# build needs libasound2-dev and the program needs libasound.so.2). macOS
+# comes with its package (CoreAudio).
+[target.'cfg(any(windows, target_os = "linux"))'.dependencies]
 wish_audio = { workspace = true, features = ["output"] }
 
 [lints]

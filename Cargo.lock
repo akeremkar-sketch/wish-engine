@@ -4576,7 +4576,9 @@ dependencies = [
 name = "wish_control"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "serde_json",
+ "sha2",
  "wish_anim",
  "wish_app",
  "wish_asset",

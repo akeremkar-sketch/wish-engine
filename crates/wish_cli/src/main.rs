@@ -152,8 +152,11 @@ COMMANDS:
     sdk        Engine development: build the game SDK pack from the engine's sources (needs cargo).
                Packaged engines ship it; game builds look for it next to wen or in WISH_SDK.
     package    Engine development: a folder with wen, the game SDK and the packed compiler (no cargo,
-               rustup or Visual Studio needed to build game code), plus clean-test.wsb, which runs
-               a project build and its tests in Windows Sandbox (a machine with no developer tools).
+               rustup or Visual Studio needed to build game code) and the licence texts; beside
+               it the release archive wish-engine-<version>-<os>-<arch> (.zip on Windows,
+               .tar.gz on Linux; the same bytes every time, dated SOURCE_DATE_EPOCH if set) and
+               SHA256SUMS. On Windows also clean-test.wsb, which runs a project build and its
+               tests in Windows Sandbox (a machine with no developer tools).
     mcp        Serve the tools over MCP (Model Context Protocol, stdio). Claude Code and other MCP
                clients start it themselves from .mcp.json (wen new writes it); --software draws
                with the CPU adapter. Standard output carries only the protocol.

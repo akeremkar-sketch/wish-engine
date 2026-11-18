@@ -21,8 +21,9 @@ wish_render.workspace = true
 wish_script.workspace = true
 wish_window.workspace = true
 
-# Sound out of the speakers: Windows for now (as wen play).
-[target.'cfg(windows)'.dependencies]
+# Sound out of the speakers: Windows and Linux (as wen play; on Linux through
+# ALSA, so the program needs libasound.so.2).
+[target.'cfg(any(windows, target_os = "linux"))'.dependencies]
 wish_audio = { workspace = true, features = ["output"] }
 
 [lints]
