@@ -77,6 +77,7 @@ pub use wish_types::{
     UiInteraction, UiJustify, UiLayout, UiLength, UiNode, UiPosition, UiSettings, UiText,
     UiTextAlign, UiUnit, world_position,
 };
+pub use wish_types::{AmbientSource, Antialiasing, ColorGrading, Fog};
 
 pub use physics::{Ray, RayHit, raycast};
 
@@ -97,6 +98,7 @@ pub mod prelude {
         component, event, random_f32, random_range, random_u64, raycast, resource, schema, system,
         text, text_of, world_position,
     };
+    pub use crate::{AmbientSource, Antialiasing, ColorGrading, Fog};
     pub use crate::{
         ButtonClicked, Pointer, UiAlign, UiButton, UiDirection, UiImage, UiInteraction, UiJustify,
         UiLayout, UiLength, UiNode, UiPosition, UiSettings, UiText, UiTextAlign, UiUnit,

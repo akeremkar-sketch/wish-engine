@@ -3,6 +3,7 @@
 
 use wish_core::Result;
 
+use super::look::GRADE_UNIFORM_SIZE;
 use super::{DEPTH_FORMAT, DRAW_UNIFORM_SIZE, FRAME_UNIFORM_SIZE, HDR_FORMAT, SHADOW_FORMAT};
 use crate::capture::CAPTURE_FORMAT;
 use crate::gpu::Gpu;
@@ -18,13 +19,21 @@ pub(super) struct Pipelines {
     pub frame_layout: wgpu::BindGroupLayout,
     /// One draw's uniform data, picked by a dynamic offset.
     pub draw_layout: wgpu::BindGroupLayout,
-    /// The HDR picture, read by the tone mapping pass.
+    /// One picture read pixel by pixel: the HDR picture for the tone mapping
+    /// pass, the tone-mapped picture for the FXAA pass.
     pub hdr_layout: wgpu::BindGroupLayout,
+    /// The HDR picture and the colour grading's numbers, for the tone
+    /// mapping pass of a graded frame.
+    pub grade_layout: wgpu::BindGroupLayout,
     /// A material's five textures and the sampler.
     pub material_layout: wgpu::BindGroupLayout,
     /// The light's matrix, for the shadow pass.
     pub light_layout: wgpu::BindGroupLayout,
     pub sky: wgpu::RenderPipeline,
+    /// The sky with the sun's disc and the fog (`fs_look`): used only by a
+    /// frame that has one of them, so that the plain sky stays the code it
+    /// was.
+    pub sky_look: wgpu::RenderPipeline,
     pub opaque: wgpu::RenderPipeline,
     /// The same, without back-face culling, for double-sided materials.
     pub opaque_double: wgpu::RenderPipeline,
@@ -34,6 +43,11 @@ pub(super) struct Pipelines {
     /// fragment stage that leaves out the pixels the material cuts out.
     pub shadow_masked: wgpu::RenderPipeline,
     pub tonemap: wgpu::RenderPipeline,
+    /// Tone mapping with colour grading (`fs_graded`): used only by a graded
+    /// frame, so that plain tone mapping stays the code it was.
+    pub tonemap_graded: wgpu::RenderPipeline,
+    /// Anti-aliasing over the tone-mapped picture.
+    pub fxaa: wgpu::RenderPipeline,
     pub sampler: wgpu::Sampler,
     pub shadow_sampler: wgpu::Sampler,
 }
@@ -146,18 +160,24 @@ impl Pipelines {
                 label: Some("draw"),
                 entries: &[uniform_entry(0, true, DRAW_UNIFORM_SIZE)],
             });
+            // A picture read with `textureLoad`, never through a sampler.
+            let loaded_entry = wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            };
             let hdr_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("hdr"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                }],
+                entries: &[loaded_entry],
+            });
+            let grade_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("grade"),
+                entries: &[loaded_entry, uniform_entry(1, false, GRADE_UNIFORM_SIZE)],
             });
             let texture_entry = |binding: u32| wgpu::BindGroupLayoutEntry {
                 binding,
@@ -195,7 +215,7 @@ impl Pipelines {
                     immediate_size: 0,
                 })
             };
-            let fullscreen = |name: &str,
+            let fullscreen = |(name, fragment): (&str, &str),
                               pipeline_layout: &wgpu::PipelineLayout,
                               format: wgpu::TextureFormat| {
                 let shader = module(name);
@@ -213,7 +233,7 @@ impl Pipelines {
                     multisample: wgpu::MultisampleState::default(),
                     fragment: Some(wgpu::FragmentState {
                         module: &shader,
-                        entry_point: Some("fs_main"),
+                        entry_point: Some(fragment),
                         compilation_options: wgpu::PipelineCompilationOptions::default(),
                         targets: &[Some(wgpu::ColorTargetState {
                             format,
@@ -225,8 +245,28 @@ impl Pipelines {
                     cache: None,
                 })
             };
-            let sky = fullscreen("sky_pass", &layout(&[&frame_layout]), HDR_FORMAT);
-            let tonemap = fullscreen("tonemap_pass", &layout(&[&hdr_layout]), CAPTURE_FORMAT);
+            // The plain sky and plain tone mapping are built from the
+            // functions they always were (`fs_main`); what a look adds to
+            // them is in functions of its own, used only by frames that ask
+            // for it.
+            let sky_layout = layout(&[&frame_layout]);
+            let sky = fullscreen(("sky_pass", "fs_main"), &sky_layout, HDR_FORMAT);
+            let sky_look = fullscreen(("sky_pass", "fs_look"), &sky_layout, HDR_FORMAT);
+            let tonemap = fullscreen(
+                ("tonemap_pass", "fs_main"),
+                &layout(&[&hdr_layout]),
+                CAPTURE_FORMAT,
+            );
+            let tonemap_graded = fullscreen(
+                ("tonemap_pass", "fs_graded"),
+                &layout(&[&grade_layout]),
+                CAPTURE_FORMAT,
+            );
+            let fxaa = fullscreen(
+                ("fxaa_pass", "fs_main"),
+                &layout(&[&hdr_layout]),
+                CAPTURE_FORMAT,
+            );
 
             let opaque_shader = module("opaque");
             let attributes = [
@@ -400,14 +440,18 @@ impl Pipelines {
                 frame_layout,
                 draw_layout,
                 hdr_layout,
+                grade_layout,
                 material_layout,
                 light_layout,
                 sky,
+                sky_look,
                 opaque,
                 opaque_double,
                 shadow,
                 shadow_masked,
                 tonemap,
+                tonemap_graded,
+                fxaa,
                 sampler,
                 shadow_sampler,
             }

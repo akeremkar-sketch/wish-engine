@@ -31,6 +31,24 @@ struct Frame {
     // x: near plane; y: far plane; z: slices per unit of ln(depth / near);
     // w: tile size in pixels.
     cluster_depth: vec4<f32>,
+    // The look settings (`look.rs`). Each effect has a flag; when it is 0
+    // the frame is computed as if the effect did not exist.
+    // rgb: the sun disc's luminance (cd/m2); w: 1 when a disc is drawn.
+    sun_radiance: vec4<f32>,
+    // x: the angle from the sun's centre (radians) up to which the disc is at
+    // full strength; y: 1 / the angle over which it then fades by e.
+    sun_disc: vec4<f32>,
+    // x: 1 when the ambient light comes from the sky; y: its strength.
+    sky_light: vec4<f32>,
+    // rgb: the fog's luminance (cd/m2); w: 1 when there is fog.
+    fog_colour: vec4<f32>,
+    // x: share of light lost per meter at the base height; y: how fast the
+    // fog thins with height (1/m); z: the base height (world Y);
+    // w: how far from the camera the fog starts (m).
+    fog: vec4<f32>,
+    // x: the most the fog hides (0 to 1); y: 1 when the camera is
+    // orthographic (fog then goes by depth along the view axis).
+    fog_limit: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> frame: Frame;

@@ -285,6 +285,8 @@ Exit criteria 2–5 are tested. Remaining: criterion 1 (with 3 users, with a rea
 | 12 | Closing review | Independent, with a fix budget |
 | 13 | Beta and release | A beta of two weeks, release candidates, 1.0.0 |
 
+**Done so far:** packages 1 to 4 (19 November 2026). Package 3 was proven by the release workflow's dry run (the Linux archive, extracted and used end to end in CI); sound on Linux has not been checked by ear. Package 4's settings are all off by default: the default look changes only at the look lock.
+
 **Rules of the milestone.**
 - Graphics and platforms first (the user's order). Two packages are the first candidates to pull back in if the user wants to make a game by hand at 1.0: the editor's first hour, and scene switching with save games. The user is asked once more before the 1.0 label goes on.
 - Versions are three numbers (ADR-027); the beta builds and release candidates are `0.x.0` tags.

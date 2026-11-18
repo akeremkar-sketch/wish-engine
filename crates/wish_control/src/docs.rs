@@ -957,6 +957,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "The scene changed since the base_revision the edit was prepared against. Read it again and redo the change on top of the current revision.",
     ),
     (
+        "sun_disc_without_light",
+        "Sky.sun_size_deg asks for a sun disc and the scene has no DirectionalLight, so none is drawn: the disc sits where that light shines from. Add the light, or set sun_size_deg to 0.",
+    ),
+    (
         "system_failed",
         "A system returned an error, was switched off, and the world went on without it. The message says why.",
     ),
@@ -1296,8 +1300,11 @@ Physics (`Collider`, `RigidBody`, `CharacterController`, `CollisionStarted`, `ph
 `PlaySound`; `logs_get` kinds [\"audio\"]), lights (`PointLight`, `SpotLight`), animation (`AnimationPlayer`), the in-game\n\
 interface (`UiNode`, `UiText`, `UiButton`; `describe_view` lists it; `sim_step` input `pointer` and `click`), particles\n\
 (`ParticleEmitter`), 2D (orthographic `Camera`, `Sprite`). `asset_create` makes placeholder sounds and pictures.\n\
-Picture quality is the `RenderSettings` resource (shadows on or off, the shadow map's size); `capture_frame` and\n\
-`describe_view` give `stats`: what the picture costs in draw calls, triangles and lights.\n\
+Picture quality is the `RenderSettings` resource (shadows on or off, the shadow map's size, `antialiasing`); `capture_frame`\n\
+and `describe_view` give `stats`: what the picture costs in draw calls, triangles and lights, and which effects it used.\n\
+The look is data too, all of it off until a scene asks: `Ambient` `source: \"Sky\"` lights surfaces from the sky's own\n\
+colours, `Sky` `sun_size_deg` draws the sun's disc, `Fog` (`density`, `height_falloff`) fades far things into the horizon,\n\
+`ColorGrading` sets contrast, saturation, white balance and a vignette, `RenderSettings` `antialiasing: \"Fxaa\"` smooths edges.\n\
 **`wish://docs/recipes` has working pieces of games** (a platformer character, a follow camera, pickups with a score,\n\
 checkpoints, moving platforms, a win screen and a button, a 2D scene, tests): start from them.\n\
 \n\
@@ -1536,7 +1543,8 @@ pub struct Collected { /// Its points.
 Field types: `bool`, integers, `f32`, `f64`, `Vec2`, `Vec3`, `Vec4`, `Quat`, `Mat4`, `Color`, `Entity`, `Text`,
 `AssetRef`, fixed arrays `[T; N]`, and structs / fieldless enums marked `#[schema]`. No `String`, `Vec`, `Option`:
 data must have a fixed size. The engine's own types are there too: `Transform`, `GlobalTransform` (read only),
-`Camera`, `DirectionalLight`, `Primitive`, `Material`, `Model`, `Sky`, `Ambient`, `Exposure`, `RenderSettings`, `Time`.
+`Camera`, `DirectionalLight`, `Primitive`, `Material`, `Model`, `Sky`, `Ambient`, `Exposure`, `Fog`, `ColorGrading`,
+`RenderSettings`, `Time`.
 
 ## Systems
 

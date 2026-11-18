@@ -248,6 +248,7 @@ fn the_cost_of_a_picture_is_reported_in_counts_and_render_settings_change_it() {
             "width": 160, "height": 90,
             "draw_calls": 6, "triangles": 2 * (2 + 960) + 2,
             "shadow_casters": 2, "point_lights": 0, "spot_lights": 0,
+            "effects": [],
         })
     );
     // describe_view says what the lit picture of its view takes.
@@ -512,5 +513,235 @@ fn a_tool_call_does_not_leave_a_large_picture_in_memory() {
     // describe_view lets go the same way.
     ok(&ws.call("describe_view", &small, &me));
     assert!(ws.kept_render_bytes() < 64 * MIB);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The look settings of M12 (sky light, sun disc, fog, colour grading, FXAA)
+/// from the control plane: documented, searchable, set with edits, written
+/// to the scene file, seen in the answers, and off until asked for.
+#[test]
+fn the_look_settings_are_documented_set_with_edits_and_reported() {
+    let (dir, mut ws) = project("look");
+    let me = parse_actor("claude-code");
+    ok(&ws.call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "spawn", "id": "ball", "components": {
+            "Primitive": { "shape": "Sphere" }, "Transform": { "translation": [0, 1, 0] } } }] }),
+        &me,
+    ));
+    let size = json!({ "width": 160, "height": 90 });
+    let plain = ok(&ws.call("capture_frame", &size, &me)).clone();
+    assert_eq!(plain["stats"]["effects"], json!([]));
+
+    // Every setting is in the schema with its documentation, range and
+    // default, and every default is "off".
+    let schema = ok(&ws.call(
+        "schema_get",
+        &json!({ "names": ["Ambient", "Sky", "Fog", "ColorGrading", "RenderSettings"], "detail": "full" }),
+        &me,
+    ))
+    .clone();
+    let properties = |name: &str| {
+        schema["types"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == name)
+            .unwrap_or_else(|| panic!("{name} is not a type: {schema}"))["schema"]["properties"]
+            .clone()
+    };
+    let fog = properties("Fog");
+    assert_eq!(fog["density"]["default"], 0.0, "{fog}");
+    assert_eq!(fog["density"]["x-unit"], "1/m");
+    assert_eq!(
+        (
+            fog["density"]["minimum"].as_f64(),
+            fog["density"]["maximum"].as_f64()
+        ),
+        (Some(0.0), Some(1.0))
+    );
+    assert_eq!(fog["height_falloff"]["x-unit"], "1/m");
+    assert_eq!(fog["base_height"]["x-unit"], "m");
+    assert_eq!(fog["start"]["x-unit"], "m");
+    assert_eq!(fog["max_opacity"]["default"], 1.0);
+    let grading = properties("ColorGrading");
+    for (field, default, low, high) in [
+        ("contrast", 1.0, 0.0, 2.0),
+        ("saturation", 1.0, 0.0, 2.0),
+        ("temperature", 0.0, -1.0, 1.0),
+        ("tint", 0.0, -1.0, 1.0),
+        ("vignette", 0.0, 0.0, 1.0),
+    ] {
+        let property = &grading[field];
+        assert_eq!(property["default"].as_f64(), Some(default), "{field}");
+        assert_eq!(property["minimum"].as_f64(), Some(low), "{field}");
+        assert_eq!(property["maximum"].as_f64(), Some(high), "{field}");
+    }
+    let ambient = properties("Ambient");
+    assert_eq!(ambient["source"]["default"], "Color", "{ambient}");
+    assert_eq!(ambient["sky_strength"]["default"], 1.0);
+    let sky = properties("Sky");
+    assert_eq!(sky["sun_size_deg"]["default"], 0.0);
+    assert_eq!(sky["sun_size_deg"]["x-unit"], "deg");
+    let settings = properties("RenderSettings");
+    assert_eq!(settings["antialiasing"]["default"], "Off", "{settings}");
+    for (name, fields) in [
+        ("Fog", &fog),
+        ("ColorGrading", &grading),
+        ("Ambient", &ambient),
+        ("Sky", &sky),
+        ("RenderSettings", &settings),
+    ] {
+        for (field, property) in fields.as_object().unwrap() {
+            assert!(
+                property["description"]
+                    .as_str()
+                    .is_some_and(|text| text.len() > 10),
+                "{name}.{field} says what it is: {property}"
+            );
+        }
+    }
+    // The words people use find them.
+    for (words, name) in [
+        ("fog", "Fog"),
+        ("haze", "Fog"),
+        ("contrast", "ColorGrading"),
+        ("white balance", "ColorGrading"),
+        ("vignette", "ColorGrading"),
+        ("antialiasing", "RenderSettings"),
+        ("fxaa", "RenderSettings"),
+        ("sun disc", "Sky"),
+        ("skylight", "Ambient"),
+    ] {
+        let found = ok(&ws.call("schema_get", &json!({ "search": words }), &me)).clone();
+        assert!(
+            found["types"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|t| t["name"] == name),
+            "a search for {words} finds {name}: {found}"
+        );
+    }
+
+    // Set with one edit; the scene file holds what was said and nothing
+    // else.
+    let look = json!({ "ops": [
+        { "op": "set_resource", "name": "Ambient", "value": { "source": "Sky", "sky_strength": 0.5 } },
+        { "op": "set_resource", "name": "Sky", "value": { "sun_size_deg": 4 } },
+        { "op": "set_resource", "name": "Fog", "value": { "density": 0.01, "height_falloff": 0.05 } },
+        { "op": "set_resource", "name": "ColorGrading", "value": { "contrast": 1.1, "vignette": 0.3 } },
+        { "op": "set_resource", "name": "RenderSettings", "value": { "antialiasing": "Fxaa" } }
+    ] });
+    ok(&ws.call("edit_apply", &look, &me));
+    let file: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("scenes/main.scene.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        file["resources"],
+        json!({
+            "Ambient": { "sky_strength": 0.5, "source": "Sky" },
+            "ColorGrading": { "contrast": 1.1, "vignette": 0.3 },
+            "Fog": { "density": 0.01, "height_falloff": 0.05 },
+            "RenderSettings": { "antialiasing": "Fxaa" },
+            "Sky": { "sun_size_deg": 4 }
+        })
+    );
+    let all = json!(["sky_light", "sun_disc", "fog", "color_grading", "fxaa"]);
+    let shot = ok(&ws.call("capture_frame", &size, &me)).clone();
+    assert_eq!(shot["stats"]["effects"], all);
+    assert_eq!(
+        shot["stats"]["draw_calls"].as_u64().unwrap(),
+        plain["stats"]["draw_calls"].as_u64().unwrap() + 1,
+        "FXAA is one more pass"
+    );
+    assert_ne!(shot["image"]["data"], plain["image"]["data"]);
+    assert_eq!(shot.get("diagnostics"), plain.get("diagnostics"));
+    // describe_view says what the lit picture uses; a debug view uses none.
+    let seen = ok(&ws.call("describe_view", &size, &me)).clone();
+    assert_eq!(seen["stats"], shot["stats"]);
+    let ids = ok(&ws.call(
+        "capture_frame",
+        &json!({ "width": 160, "height": 90, "view": "ids" }),
+        &me,
+    ))
+    .clone();
+    assert_eq!(ids["stats"]["effects"], json!([]));
+    // A running game is drawn with the scene's look.
+    ok(&ws.call("sim_start", &json!({}), &me));
+    let live = ok(&ws.call(
+        "capture_frame",
+        &json!({ "session": "s1", "width": 160, "height": 90 }),
+        &me,
+    ))
+    .clone();
+    assert_eq!(live["stats"]["effects"], all);
+    ok(&ws.call("sim_stop", &json!({ "session": "s1" }), &me));
+
+    // What is out of range, or not one of the choices, is refused when it is
+    // set, with what would be accepted.
+    for value in [
+        json!({ "name": "Fog", "value": { "density": 5 } }),
+        json!({ "name": "ColorGrading", "value": { "saturation": -1 } }),
+        json!({ "name": "Sky", "value": { "sun_size_deg": 90 } }),
+        json!({ "name": "RenderSettings", "value": { "antialiasing": "Msaa" } }),
+        json!({ "name": "Ambient", "value": { "source": "Sun" } }),
+    ] {
+        let mut op = value.clone();
+        op["op"] = json!("set_resource");
+        let refused = ws.call("edit_apply", &json!({ "ops": [op] }), &me);
+        assert_eq!(refused["ok"], false, "{value}: {refused}");
+        assert!(
+            refused["error"]["hint"]
+                .as_str()
+                .is_some_and(|hint| !hint.is_empty()),
+            "{refused}"
+        );
+    }
+
+    // A sun disc without a sun is said, not hidden.
+    ok(&ws.call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "despawn", "id": "sun" }] }),
+        &me,
+    ));
+    let sunless = ok(&ws.call("capture_frame", &size, &me)).clone();
+    let warned = |answer: &Value| {
+        answer["diagnostics"].as_array().is_some_and(|all| {
+            all.iter().any(|d| {
+                // The place is the field of the scene file that asks for
+                // the disc (review of package 4).
+                d["code"] == "sun_disc_without_light"
+                    && d["hint"]
+                        .as_str()
+                        .is_some_and(|hint| hint.contains("DirectionalLight"))
+                    && d["location"]["path"] == "/resources/Sky/sun_size_deg"
+                    && d["location"]["file"]
+                        .as_str()
+                        .is_some_and(|file| file.ends_with(".scene.json"))
+            })
+        })
+    };
+    assert!(warned(&sunless), "{}", sunless["diagnostics"]);
+    assert_eq!(
+        sunless["stats"]["effects"],
+        json!(["sky_light", "fog", "color_grading", "fxaa"])
+    );
+    assert!(warned(ok(&ws.call("describe_view", &size, &me))));
+
+    // Taking the settings away again (and the ball's sun back) gives the
+    // first picture, to the byte: nothing of a look stays behind.
+    let mut ops: Vec<Value> = ["Ambient", "Sky", "Fog", "ColorGrading", "RenderSettings"]
+        .iter()
+        .map(|name| json!({ "op": "remove_resource", "name": name }))
+        .collect();
+    ops.push(json!({ "op": "spawn", "id": "sun", "components": {
+        "DirectionalLight": { "illuminance_lux": 100000 },
+        "Transform": { "rotation": [-0.4545195, 0.3304543, 0.1786597, 0.8067046] } } }));
+    ok(&ws.call("edit_apply", &json!({ "ops": ops }), &me));
+    let back = ok(&ws.call("capture_frame", &size, &me)).clone();
+    assert_eq!(back["stats"], plain["stats"]);
+    assert_eq!(back["image"]["data"], plain["image"]["data"]);
+
     std::fs::remove_dir_all(&dir).unwrap();
 }

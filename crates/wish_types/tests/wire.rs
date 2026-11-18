@@ -92,6 +92,8 @@ fn every_engine_type_round_trips() {
         Ambient::schema(),
         Exposure::schema(),
         RenderSettings::schema(),
+        Fog::schema(),
+        ColorGrading::schema(),
         Time::schema(),
         Everything::schema(),
     ] {

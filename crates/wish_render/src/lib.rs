@@ -34,8 +34,8 @@ pub mod ui;
 
 pub use capture::{MAX_CAPTURE_SIZE, draw_probe};
 pub use components::{
-    Ambient, Camera, DirectionalLight, Exposure, Material, Model, Primitive, RenderSettings, Shape,
-    Sky,
+    Ambient, AmbientSource, Antialiasing, Camera, ColorGrading, DirectionalLight, Exposure, Fog,
+    Material, Model, Primitive, RenderSettings, Shape, Sky,
 };
 pub use extract::{
     CameraView, ColliderView, Draw, EmitterView, LightView, LocalLightView, MaterialData, Mesh,
@@ -44,7 +44,7 @@ pub use extract::{
 pub use gpu::{AdapterSummary, Created, Gpu, GpuOptions};
 pub use image::{ImageDiff, RgbaImage, Tolerance};
 pub use renderer::{
-    Description, ENTRY_SHADERS, Frame, IdBuffer, MAX_VISIBILITY_MEASUREMENTS, PoolCounts,
+    Description, ENTRY_SHADERS, Effects, Frame, IdBuffer, MAX_VISIBILITY_MEASUREMENTS, PoolCounts,
     RenderStats, Renderer, View, VisibleEntity, check_shaders, engine_shaders,
     engine_shaders_from_dir, exposure_multiplier, project_to_pixel,
 };

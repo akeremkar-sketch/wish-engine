@@ -685,3 +685,132 @@ fn the_game_is_exported_from_the_menu() {
             .contains("\"format\"")
     );
 }
+
+/// "Add resource...", type a name into its search box, click the match.
+fn add_resource(app: &mut EditorApp, name: &str) {
+    let add = named(app, "Add resource...");
+    click(app, add);
+    play(
+        app,
+        json!([{ "events": [{ "text": name }] }, { "idle": 2 }]),
+    );
+    let choice = app
+        .widgets()
+        .iter()
+        .find(|w| w.role == "Button" && w.label.as_deref() == Some(name))
+        .map(|w| w.rect)
+        .unwrap_or_else(|| panic!("'{name}' is not offered"));
+    click(app, choice);
+}
+
+/// The widget of `role` on the row of the inspector's field `label`.
+fn field_of(app: &EditorApp, label: &str, role: &str) -> Rect {
+    let widgets = app.widgets();
+    let row = widgets
+        .iter()
+        .find(|w| w.role == "Label" && w.value.as_deref() == Some(label))
+        .map(|w| w.rect)
+        .unwrap_or_else(|| panic!("no field '{label}' in the inspector"));
+    widgets
+        .iter()
+        .filter(|w| w.role == role)
+        .filter(|w| (w.rect.center().y - row.center().y).abs() < 8.0 && w.rect.min.x > row.max.x)
+        .min_by(|a, b| a.rect.min.x.total_cmp(&b.rect.min.x))
+        .map(|w| w.rect)
+        .unwrap_or_else(|| panic!("no {role} next to '{label}'"))
+}
+
+/// Clicks a number box, types a value and presses Enter.
+fn type_number(app: &mut EditorApp, label: &str, text: &str) {
+    let field = field_of(app, label, "SpinButton");
+    play(
+        app,
+        json!([
+            { "events": [{ "click": [field.center().x, field.center().y] }] },
+            { "idle": 1 },
+            { "events": [{ "key": "A", "ctrl": true }] },
+            { "events": [{ "text": text }] },
+            { "events": [{ "key": "Enter" }] },
+            { "idle": 2 }
+        ]),
+    );
+}
+
+/// Opens a field's list of choices and clicks one.
+fn choose(app: &mut EditorApp, label: &str, choice: &str) {
+    let list = field_of(app, label, "ComboBox");
+    click(app, list);
+    let item = named(app, choice);
+    click(app, item);
+}
+
+/// The look settings of M12 (sky light, sun disc, fog, colour grading,
+/// anti-aliasing) are resources with a schema, so a person sets every one of
+/// them in the inspector, with no editor code written for them (invariant 9).
+#[test]
+fn the_look_of_a_scene_is_set_by_hand() {
+    let dir = project("look");
+    let mut app = open(&dir);
+    let size = json!({ "width": 96, "height": 54 });
+    let before = app.call("capture_frame", &size);
+    assert_eq!(before["stats"]["effects"], json!([]), "{before}");
+    assert!(has_text(&app, "Scene resources"));
+
+    // Each resource is added from the list, one of its fields is set, and
+    // its section is folded away again to keep the next one in view.
+    let fold = |app: &mut EditorApp, name: &str| {
+        let header = named(app, name);
+        click(app, header);
+    };
+    add_resource(&mut app, "Fog");
+    type_number(&mut app, "density", "0.02");
+    type_number(&mut app, "height_falloff", "0.1");
+    fold(&mut app, "Fog");
+    add_resource(&mut app, "RenderSettings");
+    choose(&mut app, "antialiasing", "Fxaa");
+    fold(&mut app, "RenderSettings");
+    add_resource(&mut app, "Ambient");
+    choose(&mut app, "source", "Sky");
+    type_number(&mut app, "sky_strength", "0.5");
+    fold(&mut app, "Ambient");
+    add_resource(&mut app, "ColorGrading");
+    type_number(&mut app, "contrast", "1.2");
+    type_number(&mut app, "saturation", "0.8");
+    type_number(&mut app, "temperature", "0.25");
+    type_number(&mut app, "vignette", "0.4");
+    fold(&mut app, "ColorGrading");
+    add_resource(&mut app, "Sky");
+    type_number(&mut app, "sun_size_deg", "4.5");
+
+    assert_eq!(
+        scene_file(&dir)["resources"],
+        json!({
+            "Ambient": { "sky_strength": 0.5, "source": "Sky" },
+            "ColorGrading": { "contrast": 1.2, "saturation": 0.8, "temperature": 0.25, "vignette": 0.4 },
+            "Fog": { "density": 0.02, "height_falloff": 0.1 },
+            "RenderSettings": { "antialiasing": "Fxaa" },
+            "Sky": { "sun_size_deg": 4.5 }
+        }),
+        "{}",
+        scene_file(&dir)
+    );
+    // The picture uses all of them.
+    let after = app.call("capture_frame", &size);
+    assert_eq!(
+        after["stats"]["effects"],
+        json!(["sky_light", "sun_disc", "fog", "color_grading", "fxaa"]),
+        "{after}"
+    );
+    assert_ne!(after["image"]["data"], before["image"]["data"]);
+    // Every step was one change by a human: five resources added, ten
+    // fields set.
+    let history = app.call("edit_history", &json!({ "action": "list", "limit": 50 }));
+    let entries = history["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 15, "{history}");
+    assert!(
+        entries
+            .iter()
+            .all(|entry| entry.to_string().contains("human")),
+        "{history}"
+    );
+}

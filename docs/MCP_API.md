@@ -73,15 +73,16 @@ During a session, `entity_query`, `entity_get` and `edit_apply` also apply to th
 
 ```json
 "stats": { "width": 512, "height": 288, "draw_calls": 10, "triangles": 3870,
-           "shadow_casters": 4, "point_lights": 0, "spot_lights": 0 }
+           "shadow_casters": 4, "point_lights": 0, "spot_lights": 0, "effects": [] }
 ```
 
-- `draw_calls` and `triangles` cover every pass of the frame (the shadow map, the sky, the surfaces, tone mapping, sprites and particles, the interface); `shadow_casters` is how many of those draws went into the shadow map (0: none was drawn); `point_lights` and `spot_lights` are the lights that reach some part of the view.
+- `draw_calls` and `triangles` cover every pass of the frame (the shadow map, the sky, the surfaces, tone mapping, FXAA, sprites and particles, the interface); `shadow_casters` is how many of those draws went into the shadow map (0: none was drawn); `point_lights` and `spot_lights` are the lights that reach some part of the view.
+- `effects` lists the optional look effects the lit picture used, in the order of the frame's passes: `sky_light` (`Ambient.source: Sky`), `sun_disc` (`Sky.sun_size_deg` above 0, with a `DirectionalLight`), `fog` (`Fog.density` above 0), `color_grading` (a `ColorGrading` field off its default), `fxaa` (`RenderSettings.antialiasing: Fxaa`). All are off by default, so a scene that sets none answers `[]` and is drawn as it was before they existed; a debug view uses none. A sun disc asked for in a scene without a `DirectionalLight` is the warning `sun_disc_without_light`; in a picture of a scene file its `location` is that file and `/resources/Sky/sun_size_deg`.
 - In `capture_frame` they describe the picture that was returned (a debug view counts its own pass); in `describe_view` they describe the lit picture of that view.
 - **`stats` and the rest of these two answers carry no time value**: two runs on one adapter give the same answer (`wish_control/tests/view_tools.rs` compares the answers of two workspaces on the software adapter, pictures included). Time depends on the machine; `wen bench --render` measures it on the command line. This is not yet true of every tool: `script_build` answers `seconds` and `project_info` answers `last_build.seconds`, the open follow-ups of ADR-027.
 - Both tools report what is not drawn, in `diagnostics`. Every `view` of `capture_frame` reports what holds for the scene whatever the view: entities that are not drawn and the scene's light warnings (`too_many_lights`, `extra_directional_lights`). The warnings that belong to the lit picture alone (`light_clusters_full`, and the interface's, such as `ui_atlas_full`) come with `view: "lit"` and with `describe_view`, which reports every warning of the lit picture it describes. Entities are named by their scene ids. `extra_directional_lights` (a scene with more than one `DirectionalLight`: only the first in scene order is drawn) names the light that is used and the ones that are not, and points at the first unused one in the scene file (`location.file` and `location.path`; a checkpoint's or a preview's picture carries no place).
 - A tool call leaves at most 64 MiB of render targets in memory for the next call (the usual picture sizes are reused, a large capture is let go of when the call ends).
-- The `RenderSettings` resource (`shadows`, `shadow_map_size`) is set like any other resource (`edit_apply` `set_resource`) and changes these counts.
+- The `RenderSettings` resource (`shadows`, `shadow_map_size`, `antialiasing`) is set like any other resource (`edit_apply` `set_resource`) and changes these counts; so are the look's resources (`Ambient`, `Sky`, `Fog`, `ColorGrading`), which change `effects`.
 
 ### Verification and scripting
 

@@ -11,6 +11,7 @@ use wish_core::Diagnostic;
 use wish_core::math::Mat4;
 
 use super::draw_list::{Collected, DrawList};
+use super::look::{Effects, GRADE_UNIFORM_SIZE, Look};
 use super::models::Posed;
 use super::pipelines::{LIGHT_UNIFORM_SIZE, Pipelines};
 use super::pool::{Pool, TextureKey};
@@ -19,6 +20,7 @@ use super::{
     Bytes, DEPTH_FORMAT, FRAME_UNIFORM_SIZE, HDR_FORMAT, LIGHT_STRIDE, Renderer, SHADOW_FORMAT,
     exposure_multiplier,
 };
+use crate::capture::CAPTURE_FORMAT;
 use crate::cluster::{self, Clusters};
 use crate::components::EMISSIVE_NITS;
 use crate::extract::{CameraView, LocalLightView, RenderScene};
@@ -34,7 +36,7 @@ pub struct RenderStats {
     /// The picture's height in pixels.
     pub height: u32,
     /// Draw calls of the frame, all passes together (the shadow map, the
-    /// sky, the surfaces, tone mapping, sprites and particles, the
+    /// sky, the surfaces, tone mapping, FXAA, sprites and particles, the
     /// interface).
     pub draw_calls: u32,
     /// Triangles those draw calls hand to the GPU (before it culls any).
@@ -45,6 +47,9 @@ pub struct RenderStats {
     pub point_lights: u32,
     /// Spot lights that light some part of the view.
     pub spot_lights: u32,
+    /// Which optional effects the lit picture used: the sky's light, the
+    /// sun's disc, fog, colour grading, FXAA.
+    pub effects: Effects,
 }
 
 /// Everything a lit frame draws, worked out before any GPU call.
@@ -59,6 +64,13 @@ pub(super) struct FramePlan<'a> {
     pub frame_uniform: Vec<u8>,
     /// The light's matrix, for the shadow pass.
     pub light_uniform: Vec<u8>,
+    /// Whether the sky pass draws a sun disc or fog with the gradient.
+    pub sky_look: bool,
+    /// For a graded frame, the colour grading (`Grade` in
+    /// `tonemap_pass.wgsl`).
+    pub grade_uniform: Option<Vec<u8>>,
+    /// Whether the FXAA pass runs.
+    pub fxaa: bool,
     /// The point and spot lights (`LocalLight` in `lights.wgsl`).
     pub local_lights: Vec<u8>,
     /// For each cluster, where its lights start and how many there are.
@@ -174,6 +186,7 @@ fn lit_stats(
     draws: &DrawList<'_>,
     shadow: Option<&ShadowPlan>,
     lights: (u32, u32),
+    effects: Effects,
     overlay: Option<&crate::sprites::Overlay>,
     interface: Option<&crate::ui::Batch>,
 ) -> RenderStats {
@@ -186,8 +199,8 @@ fn lit_stats(
     };
     let (overlay_draws, overlay_triangles) = overlay.map_or((0, 0), |overlay| overlay.counts());
     let (interface_draws, interface_triangles) = interface.map_or((0, 0), |batch| batch.counts());
-    // The sky and tone mapping are one triangle each.
-    let fullscreen = 2;
+    // The sky, tone mapping and FXAA are one triangle each.
+    let fullscreen = 2 + u32::from(effects.fxaa);
     RenderStats {
         width: size.0,
         height: size.1,
@@ -204,6 +217,7 @@ fn lit_stats(
         shadow_casters,
         point_lights: lights.0,
         spot_lights: lights.1,
+        effects,
     }
 }
 
@@ -307,7 +321,19 @@ impl Renderer {
             clusters.log_scale,
             cluster::TILE_PX as f32,
         ]);
+        let look = Look::of(scene, exposure);
+        look.write_frame(&mut frame, view.ortho_height.is_some());
         frame.pad_to(FRAME_UNIFORM_SIZE);
+        let sun_size = scene.sky.sun_size_deg;
+        if scene.lights.is_empty() && sun_size.is_finite() && sun_size > 0.0 {
+            warnings.push(Diagnostic::warning(
+                "sun_disc_without_light",
+                format!(
+                    "The sky asks for a sun disc (Sky.sun_size_deg is {sun_size}) and the scene has no DirectionalLight, so no disc is drawn: the disc sits where that light shines from and has its colour."
+                ),
+                "Add an entity with a DirectionalLight (its Transform's rotation says where the sun stands), or set Sky.sun_size_deg to 0.",
+            ));
+        }
 
         let cluster_ranges: Vec<u8> = clusters
             .ranges
@@ -332,6 +358,7 @@ impl Renderer {
             &draws,
             shadow.as_ref(),
             lights_in_view(&scene.local_lights, &clusters),
+            look.effects(),
             overlay.as_ref(),
             interface.as_ref(),
         );
@@ -341,6 +368,9 @@ impl Renderer {
             shadow,
             frame_uniform: frame.0,
             light_uniform: light_uniform.0,
+            sky_look: look.sky(),
+            grade_uniform: look.grade_uniform((width, height)),
+            fxaa: look.fxaa,
             local_lights: light_bytes(&scene.local_lights),
             cluster_ranges,
             cluster_lights,
@@ -368,8 +398,12 @@ pub(super) struct FrameResources {
     pub light_group: wgpu::BindGroup,
     /// One draw's uniform data, picked by its offset.
     pub draw_group: wgpu::BindGroup,
-    /// The HDR picture, for tone mapping.
-    pub hdr_group: wgpu::BindGroup,
+    /// The HDR picture, for tone mapping; in a graded frame with the
+    /// grading's numbers.
+    pub tonemap_group: wgpu::BindGroup,
+    /// With FXAA: the tone-mapped picture that tone mapping writes instead
+    /// of the picture itself, and the group the FXAA pass reads it through.
+    pub fxaa: Option<(wgpu::TextureView, wgpu::BindGroup)>,
 }
 
 /// A uniform buffer bound at its struct's size, whatever the pooled buffer's
@@ -472,13 +506,56 @@ impl FrameResources {
             ],
         });
         let draw_group = plan.draws.upload(gpu, pool, &pipelines.draw_layout);
-        let hdr_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("hdr"),
-            layout: &pipelines.hdr_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&hdr),
-            }],
+        // Only a graded frame has the grading's buffer, and the group that
+        // binds it.
+        let hdr_entry = wgpu::BindGroupEntry {
+            binding: 0,
+            resource: wgpu::BindingResource::TextureView(&hdr),
+        };
+        let tonemap_group = match &plan.grade_uniform {
+            Some(numbers) => {
+                let grade = pool.buffer(gpu, "grade", uniform, numbers);
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("grade"),
+                    layout: &pipelines.grade_layout,
+                    entries: &[
+                        hdr_entry,
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: sized(&grade, GRADE_UNIFORM_SIZE),
+                        },
+                    ],
+                })
+            }
+            None => device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("hdr"),
+                layout: &pipelines.hdr_layout,
+                entries: &[hdr_entry],
+            }),
+        };
+        // The picture between tone mapping and FXAA: only a frame that
+        // smooths its edges has one.
+        let fxaa = plan.fxaa.then(|| {
+            let tone_mapped = pool.texture(
+                gpu,
+                TextureKey {
+                    name: "tone mapped",
+                    width,
+                    height,
+                    format: CAPTURE_FORMAT,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING,
+                },
+            );
+            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("tone mapped"),
+                layout: &pipelines.hdr_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&tone_mapped),
+                }],
+            });
+            (tone_mapped, group)
         });
         Self {
             hdr,
@@ -487,7 +564,8 @@ impl FrameResources {
             frame_group,
             light_group,
             draw_group,
-            hdr_group,
+            tonemap_group,
+            fxaa,
         }
     }
 }

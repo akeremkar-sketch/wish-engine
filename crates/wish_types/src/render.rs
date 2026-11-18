@@ -142,7 +142,8 @@ pub struct Model {
 }
 
 /// The sky behind everything: a gradient from the ground, up through the
-/// horizon, to the zenith. It also lights the scene faintly.
+/// horizon, to the zenith. Shiny surfaces reflect it, and with
+/// `Ambient.source` set to `Sky` it is also the scene's ambient light.
 #[resource]
 pub struct Sky {
     /// The colour straight up.
@@ -158,6 +159,27 @@ pub struct Sky {
     /// horizon is around 20000 cd/m².
     #[schema(unit = "cd/m2", range = 0.0..=100000.0, default = 20000.0)]
     pub luminance: f32,
+    /// How wide the sun's disc is in the sky, from edge to edge. 0 draws no
+    /// disc. The disc sits where the scene's `DirectionalLight` shines from
+    /// and has that light's colour; its edge is soft. The real sun is 0.53
+    /// degrees wide; games usually draw it larger (2 to 6). Leave it at 0
+    /// for a scene seen through an orthographic camera: such a camera
+    /// looks at one point of the sky, so the disc would fill the
+    /// background or not show at all.
+    #[schema(unit = "deg", range = 0.0..=45.0, default = 0.0)]
+    pub sun_size_deg: f32,
+}
+
+/// Where ambient light comes from.
+#[schema]
+pub enum AmbientSource {
+    /// One colour, the same on every surface whichever way it faces:
+    /// `Ambient.color` and `Ambient.intensity`.
+    Color,
+    /// The sky: a surface is lit by the part of the `Sky` it faces, so tops
+    /// take the zenith's colour, sides the horizon's and undersides the
+    /// ground's. `Ambient.color` and `Ambient.intensity` are not used.
+    Sky,
 }
 
 /// Light that comes from everywhere, so that shadows are not pitch black.
@@ -170,6 +192,14 @@ pub struct Ambient {
     /// gets around 20000 lux.
     #[schema(unit = "lux", range = 0.0..=200000.0, default = 20000.0)]
     pub intensity: f32,
+    /// Where the light comes from: one colour (`Color`), or the sky's own
+    /// colours by the direction a surface faces (`Sky`).
+    pub source: AmbientSource,
+    /// With `source: Sky`, how strongly the sky lights the scene: 1 is the
+    /// light the sky's colours and luminance give by themselves, 0.5 half of
+    /// it. Not used with `source: Color`.
+    #[schema(range = 0.0..=10.0, default = 1.0)]
+    pub sky_strength: f32,
 }
 
 /// Camera exposure: how bright the scene looks.
@@ -197,4 +227,86 @@ pub struct RenderSettings {
     /// sharpness.
     #[schema(unit = "px", range = 64..=4096, default = 2048)]
     pub shadow_map_size: u32,
+    /// How jagged edges are smoothed in the lit picture. The in-game
+    /// interface, sprites and particles are drawn afterwards and stay as
+    /// sharp as they were made.
+    pub antialiasing: Antialiasing,
+}
+
+/// How jagged edges are smoothed.
+#[schema]
+pub enum Antialiasing {
+    /// Not at all: every pixel is one sample.
+    Off,
+    /// FXAA: one pass over the finished picture that finds edges by their
+    /// contrast and blends along them. Cheap; softens fine detail a little.
+    Fxaa,
+}
+
+/// Fog: far things fade into the colour of the horizon, and the sky near the
+/// horizon hazes over with them. With `density` 0 (the default) there is no
+/// fog.
+///
+/// The fog is thickest at `base_height` and thins out above it by
+/// `height_falloff`; with a falloff of 0 it is the same at every height and
+/// only distance counts. The sky is fogged like a surface 100 km away, so
+/// fog without a height falloff covers the sky as well. Sprites, particles
+/// and the in-game interface are not fogged.
+#[resource]
+pub struct Fog {
+    /// The fog's colour as a tint of the sky's horizon colour. White is the
+    /// horizon's own colour: far things then fade into the horizon without a
+    /// seam.
+    #[schema(default = Color::rgb(1.0, 1.0, 1.0))]
+    pub tint: Color,
+    /// How thick the fog is at `base_height`: the share of light lost per
+    /// meter. 0 is no fog; 0.005 is a light haze (half of a thing shows
+    /// through at 140 m), 0.05 a thick fog (half at 14 m).
+    #[schema(unit = "1/m", range = 0.0..=1.0, default = 0.0)]
+    pub density: f32,
+    /// How fast the fog thins out with height: at `1 / height_falloff`
+    /// meters above `base_height` it is down to about a third. 0 keeps it
+    /// the same at every height.
+    #[schema(unit = "1/m", range = 0.0..=10.0, default = 0.0)]
+    pub height_falloff: f32,
+    /// The height (world Y) at which the fog is as thick as `density` says.
+    /// Below it the fog gets thicker when `height_falloff` is above 0.
+    #[schema(unit = "m", range = -100000.0..=100000.0, default = 0.0)]
+    pub base_height: f32,
+    /// How far from the camera the fog starts; nearer things are clear.
+    #[schema(unit = "m", range = 0.0..=100000.0, default = 0.0)]
+    pub start: f32,
+    /// The most the fog can hide: 1 lets far things vanish completely, 0.8
+    /// always leaves a fifth of them (and of the sky) showing.
+    #[schema(range = 0.0..=1.0, default = 1.0)]
+    pub max_opacity: f32,
+}
+
+/// Colour grading: the finishing touches on the lit picture, applied to the
+/// sky and to surfaces before tone mapping. The defaults leave the picture
+/// as it is. Sprites, particles and the in-game interface keep the colours
+/// they were made with.
+#[resource]
+pub struct ColorGrading {
+    /// The difference between dark and bright around middle grey. 1 leaves
+    /// it as it is, above 1 is punchier, below 1 flatter (0 is plain grey).
+    #[schema(range = 0.0..=2.0, default = 1.0)]
+    pub contrast: f32,
+    /// How colourful the picture is. 1 leaves it as it is, 0 is black and
+    /// white, above 1 is more vivid.
+    #[schema(range = 0.0..=2.0, default = 1.0)]
+    pub saturation: f32,
+    /// White balance between blue and orange. 0 leaves colours as they
+    /// are, positive is warmer (towards orange), negative cooler (towards
+    /// blue).
+    #[schema(range = -1.0..=1.0, default = 0.0)]
+    pub temperature: f32,
+    /// White balance between green and magenta. 0 leaves colours as they
+    /// are, positive is more magenta, negative more green.
+    #[schema(range = -1.0..=1.0, default = 0.0)]
+    pub tint: f32,
+    /// How much the corners of the picture are darkened, like a lens does.
+    /// 0 is not at all, 1 takes the corners to black.
+    #[schema(range = 0.0..=1.0, default = 0.0)]
+    pub vignette: f32,
 }

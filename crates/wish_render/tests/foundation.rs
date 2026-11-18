@@ -132,6 +132,8 @@ fn the_statistics_of_a_known_scene_are_its_counts() {
             shadow_casters: 4,
             point_lights: 0,
             spot_lights: 0,
+            // The scene asks for none of the optional effects.
+            effects: wish_render::Effects::default(),
         }
     );
     assert_eq!(frame.drawn, 4);

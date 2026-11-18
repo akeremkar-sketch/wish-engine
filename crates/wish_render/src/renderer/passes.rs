@@ -5,7 +5,8 @@
 //! | [`shadow`] | the draw list, the light's matrix | the shadow map |
 //! | [`sky`] | the frame uniform | the HDR picture (all of it) |
 //! | [`opaque`] | the draw list, the frame uniform, the shadow map, the light lists | the HDR picture, the depth buffer |
-//! | [`tone_map`] | the HDR picture | the picture (all of it) |
+//! | [`tone_map`] | the HDR picture, the colour grading | the picture, or with FXAA the tone-mapped picture (all of it) |
+//! | [`fxaa`] (only when asked for) | the tone-mapped picture | the picture (all of it) |
 //! | [`overlay`] | sprites and particles, the depth buffer | the picture |
 //! | [`interface`] | the interface batch | the picture |
 //! | [`copy_out`] and [`readback`] | the picture | an [`RgbaImage`] on the CPU |
@@ -108,7 +109,8 @@ pub(super) fn shadow(encoder: &mut wgpu::CommandEncoder, inputs: &Shadow<'_>) {
 }
 
 /// The sky pass: fills the HDR picture with the sky, replacing whatever the
-/// pooled target held.
+/// pooled target held. `pipeline` is the plain sky's, or the one that also
+/// draws the sun's disc and the fog.
 pub(super) fn sky(
     encoder: &mut wgpu::CommandEncoder,
     hdr: &wgpu::TextureView,
@@ -180,7 +182,9 @@ pub(super) fn opaque(encoder: &mut wgpu::CommandEncoder, inputs: &Opaque<'_>) {
 }
 
 /// The tone mapping pass: from the HDR picture to the displayable one,
-/// replacing whatever the pooled picture held.
+/// replacing whatever the pooled picture held. For a graded frame `pipeline`
+/// is the grading one and `hdr` carries the grading's numbers with the HDR
+/// picture.
 pub(super) fn tone_map(
     encoder: &mut wgpu::CommandEncoder,
     picture: &wgpu::TextureView,
@@ -197,6 +201,30 @@ pub(super) fn tone_map(
     });
     pass.set_pipeline(pipeline);
     pass.set_bind_group(0, hdr, &[]);
+    pass.draw(0..3, 0..1);
+}
+
+/// The FXAA pass: the tone-mapped picture with its edges smoothed, replacing
+/// whatever the pooled picture held. It runs before the sprites, the
+/// particles and the interface are drawn: those are made of textures and
+/// soft shapes that have no jagged edges to mend, and smoothing them would
+/// only blur pixel art and text.
+pub(super) fn fxaa(
+    encoder: &mut wgpu::CommandEncoder,
+    picture: &wgpu::TextureView,
+    pipeline: &wgpu::RenderPipeline,
+    tone_mapped: &wgpu::BindGroup,
+) {
+    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("fxaa"),
+        color_attachments: &[colour(picture, wgpu::LoadOp::Clear(wgpu::Color::BLACK))],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    });
+    pass.set_pipeline(pipeline);
+    pass.set_bind_group(0, tone_mapped, &[]);
     pass.draw(0..3, 0..1);
 }
 

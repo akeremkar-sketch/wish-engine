@@ -9,11 +9,17 @@
 //!    one directional light with its shadow, the point and spot lights of
 //!    the pixel's cluster, ambient light and the sky's reflection, with a
 //!    depth buffer.
-//! 4. **Tone mapping:** Khronos PBR Neutral, from the HDR target to the 8-bit
-//!    sRGB picture.
-//! 5. **Overlay:** sprites and particles, tested against the depth buffer.
-//! 6. **Interface:** the in-game interface.
-//! 7. **Readback:** the picture copied to the CPU.
+//! 4. **Tone mapping:** colour grading when the scene asks for it, then
+//!    Khronos PBR Neutral, from the HDR target to the 8-bit sRGB picture.
+//! 5. **FXAA:** when the scene asks for it, edges smoothed over the
+//!    tone-mapped picture.
+//! 6. **Overlay:** sprites and particles, tested against the depth buffer.
+//! 7. **Interface:** the in-game interface.
+//! 8. **Readback:** the picture copied to the CPU.
+//!
+//! The sky's light, the sun's disc, fog, grading and FXAA are each off
+//! unless the scene asks for them (`look.rs`): a scene that asks for none is
+//! drawn exactly as it was before they existed.
 //!
 //! Values are pre-exposed: the sky and opaque passes multiply by the
 //! exposure before writing, so the HDR target holds displayable magnitudes.
@@ -26,12 +32,14 @@
 //!   that draws meshes, the debug views included;
 //! - `shadow.rs`: the shadow map's size and the light's fitted view;
 //! - `frame.rs`: the frame plan, its statistics, and its GPU resources;
+//! - `look.rs`: the look settings as the numbers the shaders read;
 //! - `pool.rs`: targets and buffers kept across frames (and why bind groups
 //!   are not);
 //! - `passes.rs`: the passes;
 //! - `debug.rs`: the debug views, the identity buffer and `describe`.
 //!
-//! Design: `docs/design/M12-render-foundation.md`.
+//! Design: `docs/design/M12-render-foundation.md`; the look settings:
+//! `docs/design/M12-look-1-sky-fog-grading-fxaa.md`.
 
 use std::collections::BTreeMap;
 use std::sync::{Mutex, MutexGuard};
@@ -51,6 +59,7 @@ use crate::texture;
 mod debug;
 mod draw_list;
 mod frame;
+mod look;
 mod models;
 mod passes;
 mod pipelines;
@@ -61,6 +70,7 @@ mod warp_probe;
 
 pub use debug::{Description, IdBuffer, MAX_VISIBILITY_MEASUREMENTS, View, VisibleEntity};
 pub use frame::RenderStats;
+pub use look::Effects;
 pub use pool::PoolCounts;
 pub use shadow::SHADOW_MAP_SIZE;
 
@@ -72,8 +82,8 @@ pub(crate) use pool::{Pool, TextureKey};
 const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-/// Bytes of the frame uniform: four matrices and eleven vectors.
-const FRAME_UNIFORM_SIZE: u64 = 432;
+/// Bytes of the frame uniform: four matrices and seventeen vectors.
+const FRAME_UNIFORM_SIZE: u64 = 528;
 /// Bytes of one point or spot light in the light buffer: four vectors.
 const LIGHT_STRIDE: usize = 64;
 const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -94,6 +104,11 @@ const SHADERS: &[(&str, &str, &str)] = &[
         "sky",
         "wish_render/shaders/sky.wgsl",
         include_str!("shaders/sky.wgsl"),
+    ),
+    (
+        "fog",
+        "wish_render/shaders/fog.wgsl",
+        include_str!("shaders/fog.wgsl"),
     ),
     (
         "brdf",
@@ -136,6 +151,11 @@ const SHADERS: &[(&str, &str, &str)] = &[
         include_str!("shaders/tonemap_pass.wgsl"),
     ),
     (
+        "fxaa_pass",
+        "wish_render/shaders/fxaa_pass.wgsl",
+        include_str!("shaders/fxaa_pass.wgsl"),
+    ),
+    (
         "debug_pass",
         "wish_render/shaders/debug_pass.wgsl",
         include_str!("shaders/debug_pass.wgsl"),
@@ -172,6 +192,7 @@ pub const ENTRY_SHADERS: &[&str] = &[
     "sky_pass",
     "opaque",
     "tonemap_pass",
+    "fxaa_pass",
     "shadow_pass",
     "debug_pass",
     "gizmo_pass",
@@ -190,12 +211,24 @@ pub const ENTRY_SHADERS: &[&str] = &[
 const ENTRY_POINTS: &[(&str, &[(naga::ShaderStage, &str)])] = {
     use naga::ShaderStage::{Fragment, Vertex};
     &[
-        ("sky_pass", &[(Vertex, "vs_main"), (Fragment, "fs_main")]),
+        (
+            "sky_pass",
+            &[
+                (Vertex, "vs_main"),
+                (Fragment, "fs_main"),
+                (Fragment, "fs_look"),
+            ],
+        ),
         ("opaque", &[(Vertex, "vs_main"), (Fragment, "fs_main")]),
         (
             "tonemap_pass",
-            &[(Vertex, "vs_main"), (Fragment, "fs_main")],
+            &[
+                (Vertex, "vs_main"),
+                (Fragment, "fs_main"),
+                (Fragment, "fs_graded"),
+            ],
         ),
+        ("fxaa_pass", &[(Vertex, "vs_main"), (Fragment, "fs_main")]),
         (
             "shadow_pass",
             &[
@@ -657,7 +690,11 @@ impl Renderer {
             passes::sky(
                 &mut encoder,
                 &resources.hdr,
-                &self.pipelines.sky,
+                if plan.sky_look {
+                    &self.pipelines.sky_look
+                } else {
+                    &self.pipelines.sky
+                },
                 &resources.frame_group,
             );
             passes::opaque(
@@ -672,12 +709,26 @@ impl Renderer {
                     draws: &plan.draws,
                 },
             );
-            passes::tone_map(
-                &mut encoder,
-                &picture.view,
-                &self.pipelines.tonemap,
-                &resources.hdr_group,
-            );
+            // With FXAA the tone-mapped picture is an intermediate one and
+            // the FXAA pass writes the picture; without, tone mapping writes
+            // the picture itself, as it always did.
+            let tonemap = if plan.grade_uniform.is_some() {
+                &self.pipelines.tonemap_graded
+            } else {
+                &self.pipelines.tonemap
+            };
+            match &resources.fxaa {
+                Some((tone_mapped, group)) => {
+                    passes::tone_map(&mut encoder, tone_mapped, tonemap, &resources.tonemap_group);
+                    passes::fxaa(&mut encoder, &picture.view, &self.pipelines.fxaa, group);
+                }
+                None => passes::tone_map(
+                    &mut encoder,
+                    &picture.view,
+                    tonemap,
+                    &resources.tonemap_group,
+                ),
+            }
             if let Some(overlay) = &plan.overlay {
                 passes::overlay(
                     (gpu, pool),
@@ -756,7 +807,13 @@ mod tests {
             (
                 "pipelines.rs",
                 include_str!("renderer/pipelines.rs"),
-                &["sky_pass", "opaque", "tonemap_pass", "shadow_pass"],
+                &[
+                    "sky_pass",
+                    "opaque",
+                    "tonemap_pass",
+                    "fxaa_pass",
+                    "shadow_pass",
+                ],
             ),
             (
                 "debug.rs",

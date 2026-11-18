@@ -3,9 +3,12 @@
 #import brdf
 #import draw
 #import lights
+#import fog
 
 // Opaque surfaces, lit by one directional light, the point and spot lights
-// of their cluster, the ambient light, and the sky's reflection. Output is already multiplied by the exposure.
+// of their cluster, the ambient light (one colour, or the sky's own light),
+// and the sky's reflection, seen through the fog when there is one. Output
+// is already multiplied by the exposure.
 
 // The material's textures. A slot without a texture holds a 1x1 default, so
 // the factors alone decide.
@@ -107,10 +110,34 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
     }
     // Ambient light on the diffuse part, the sky's reflection on the
     // specular part.
-    colour += diffuse_colour * frame.ambient.rgb / PI * occlusion;
     let reflected = reflect(-v, n);
-    colour += environment_brdf(f0, roughness, n_dot_v) * sky_radiance(reflected) * occlusion;
+    if (frame.sky_light.x > 0.5) {
+        // From the sky: each surface gathers the part of the sky it faces,
+        // and a rough surface reflects a wide part of it.
+        let strength = occlusion * frame.sky_light.y;
+        colour += diffuse_colour * sky_irradiance(n) / PI * strength;
+        colour += environment_brdf(f0, roughness, n_dot_v)
+            * sky_reflection(reflected, roughness) * strength;
+    } else {
+        colour += diffuse_colour * frame.ambient.rgb / PI * occlusion;
+        colour += environment_brdf(f0, roughness, n_dot_v) * sky_radiance(reflected) * occlusion;
+    }
     let emission = textureSample(emissive_texture, material_sampler, in.uv).rgb * draw.emissive.rgb;
     colour += emission * frame.exposure.y;
+    if (frame.fog_colour.w > 0.5) {
+        if (frame.fog_limit.y > 0.5) {
+            // An orthographic camera looks along one direction from every
+            // point of its plane: the ray to a surface is as long as the
+            // surface is deep, wherever in the picture it is.
+            let forward_y = -frame.view[1].z;
+            let deep = max(in.view_depth, 0.0);
+            colour = fogged(colour, in.world_position.y - forward_y * deep, forward_y, deep);
+        } else {
+            let to_surface = in.world_position - frame.camera_position.xyz;
+            let away = length(to_surface);
+            colour = fogged(colour, frame.camera_position.y,
+                to_surface.y / max(away, 1e-6), away);
+        }
+    }
     return vec4<f32>(colour * frame.exposure.x, 1.0);
 }

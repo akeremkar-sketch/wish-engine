@@ -13,8 +13,8 @@ use wish_ecs::World;
 use wish_transform::GlobalTransform;
 
 use crate::components::{
-    Ambient, Camera, DirectionalLight, Exposure, Material, Model, PointLight, Primitive,
-    RenderSettings, Shape, Sky, SpotLight,
+    Ambient, AmbientSource, Camera, ColorGrading, DirectionalLight, Exposure, Fog, Material, Model,
+    PointLight, Primitive, RenderSettings, Shape, Sky, SpotLight,
 };
 
 /// What a draw shows.
@@ -231,6 +231,8 @@ pub struct SkyData {
     pub ground: [f32; 3],
     /// cd/m² of a colour of 1.
     pub luminance: f32,
+    /// The width of the sun's disc in degrees; 0 for none.
+    pub sun_size_deg: f32,
 }
 
 /// Everything drawn in one frame, copied out of the world.
@@ -248,8 +250,17 @@ pub struct RenderScene {
     pub draws: Vec<Draw>,
     /// The sky.
     pub sky: SkyData,
-    /// Ambient light: linear RGB multiplied by its illuminance (lux).
+    /// Ambient light of one colour: linear RGB multiplied by its illuminance
+    /// (lux). Not used when [`RenderScene::sky_light`] is set.
     pub ambient: [f32; 3],
+    /// When the ambient light comes from the sky (`Ambient.source: Sky`):
+    /// its strength, 1 for what the sky gives by itself.
+    pub sky_light: Option<f32>,
+    /// The fog (the world's `Fog`, or the defaults: none).
+    pub fog: Fog,
+    /// The colour grading (the world's `ColorGrading`, or the defaults:
+    /// none).
+    pub grading: ColorGrading,
     /// Exposure value at ISO 100.
     pub ev100: f32,
     /// How the picture is drawn (the world's `RenderSettings`, or the
@@ -310,6 +321,7 @@ fn bad_camera(entity: Entity, message: String, hint: &str) -> Diagnostic {
 /// `GlobalTransform` are drawn at the origin. A camera with `far <= near`, or
 /// whose placement is not finite, is an `invalid_camera` error.
 pub fn extract(world: &World) -> Result<RenderScene> {
+    let ambient = world.resource::<Ambient>().copied().unwrap_or_default();
     let mut scene = RenderScene {
         cameras: Vec::new(),
         lights: Vec::new(),
@@ -323,10 +335,10 @@ pub fn extract(world: &World) -> Result<RenderScene> {
                 horizon: rgb(sky.horizon),
                 ground: rgb(sky.ground),
                 luminance: sky.luminance,
+                sun_size_deg: sky.sun_size_deg,
             }
         },
         ambient: {
-            let ambient = world.resource::<Ambient>().copied().unwrap_or_default();
             let [r, g, b] = rgb(ambient.color);
             [
                 r * ambient.intensity,
@@ -334,6 +346,12 @@ pub fn extract(world: &World) -> Result<RenderScene> {
                 b * ambient.intensity,
             ]
         },
+        sky_light: (ambient.source == AmbientSource::Sky).then_some(ambient.sky_strength),
+        fog: world.resource::<Fog>().copied().unwrap_or_default(),
+        grading: world
+            .resource::<ColorGrading>()
+            .copied()
+            .unwrap_or_default(),
         ev100: world
             .resource::<Exposure>()
             .copied()

@@ -469,7 +469,20 @@ const SEARCH_WORDS: &[(&str, &str)] = &[
     ("DirectionalLight", "sun sunlight light"),
     (
         "RenderSettings",
-        "graphics quality performance shadow shadows resolution settings options",
+        "graphics quality performance shadow shadows resolution settings options antialiasing anti-aliasing aa fxaa jagged jaggies edges smooth",
+    ),
+    (
+        "Ambient",
+        "ambient skylight indirect environment fill light shade shadows dark",
+    ),
+    ("Sky", "background horizon sun disc sunset skybox"),
+    (
+        "Fog",
+        "mist haze atmosphere distance depth weather smog fade far",
+    ),
+    (
+        "ColorGrading",
+        "color colour grade grading contrast saturation vivid white balance temperature warm cool tint vignette post processing filter look mood tone",
     ),
     ("Camera", "view viewpoint eye lens fov"),
     ("Sprite", "2d image picture texture"),
