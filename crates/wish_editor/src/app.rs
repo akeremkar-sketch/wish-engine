@@ -50,15 +50,27 @@ pub type Opener = Box<dyn FnMut(&std::path::Path) -> Result<(), String>>;
 /// The default way to open a file: the program named by the `WISH_EDITOR`
 /// environment variable (such as `code`), or the system's own choice.
 pub(crate) fn open_with_system(path: &std::path::Path) -> Result<(), String> {
-    use std::process::Command;
-    let spawned = match std::env::var("WISH_EDITOR") {
-        Ok(program) if !program.trim().is_empty() => Command::new(program.trim()).arg(path).spawn(),
-        _ if cfg!(windows) => Command::new("cmd")
-            .args(["/C", "start", ""])
+    match std::env::var("WISH_EDITOR") {
+        Ok(program) if !program.trim().is_empty() => std::process::Command::new(program.trim())
             .arg(path)
-            .spawn(),
-        _ if cfg!(target_os = "macos") => Command::new("open").arg(path).spawn(),
-        _ => Command::new("xdg-open").arg(path).spawn(),
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| error.to_string()),
+        _ => open_with_os(path),
+    }
+}
+
+/// Opens a folder or a web page with the system (the file manager, the
+/// browser), never with `WISH_EDITOR`. On Windows through `explorer`, not
+/// `cmd /C start` (which would read `&` in a path as another command).
+pub(crate) fn open_with_os(path: &std::path::Path) -> Result<(), String> {
+    use std::process::Command;
+    let spawned = if cfg!(windows) {
+        Command::new("explorer").arg(path).spawn()
+    } else if cfg!(target_os = "macos") {
+        Command::new("open").arg(path).spawn()
+    } else {
+        Command::new("xdg-open").arg(path).spawn()
     };
     spawned.map(|_| ()).map_err(|error| error.to_string())
 }
@@ -1547,12 +1559,7 @@ impl EditorApp {
         if let Some(shown) = prefs.get("game_view").and_then(Value::as_bool) {
             self.game_view = shown;
         }
-        if let Some(keys) = prefs.get("keys").and_then(Value::as_object) {
-            self.keys = keys
-                .iter()
-                .filter_map(|(id, keys)| Some((id.clone(), keys.as_str()?.to_owned())))
-                .collect();
-        }
+        self.keys = crate::commands::overrides_from(&prefs);
         if let Some(key) = prefs.get("theme").and_then(Value::as_str) {
             self.set_theme(key);
         }
@@ -2102,9 +2109,14 @@ impl EditorApp {
         let mut search = false;
         if let Some(ask) = asked.index {
             let index = self.packages.index.index_arg();
-            if let (Some(path), Some(folder)) = (self.preferences.clone(), index.clone()) {
-                let _ = crate::prefs::update(&path, |prefs| {
-                    prefs.insert("package_index".to_owned(), json!(folder));
+            if let Some(path) = self.preferences.clone() {
+                let _ = crate::prefs::update(&path, |prefs| match &index {
+                    Some(folder) => {
+                        prefs.insert("package_index".to_owned(), json!(folder));
+                    }
+                    None => {
+                        prefs.remove("package_index");
+                    }
                 });
             }
             let mut call = |action: &str, id: &str, scope: &str| {
@@ -2114,35 +2126,24 @@ impl EditorApp {
                 }
                 self.call("packages", &args)
             };
+            let mut asked_id = None;
             match ask {
                 crate::packages_window::IndexAsk::Search => search = true,
                 crate::packages_window::IndexAsk::Add(id, scope) => {
                     answer = call("add", &id, scope);
+                    asked_id = Some(id);
                     search = true;
                 }
                 crate::packages_window::IndexAsk::Update(id, scope) => {
                     answer = call("update", &id, scope);
+                    asked_id = Some(id);
                     search = true;
                 }
             }
-            if answer["ok"] == true {
-                let package = &answer["package"];
-                self.status = match answer["updated"].as_array().and_then(|u| u.first()) {
-                    Some(change) => tf(
-                        "{id} updated to {version}",
-                        &[
-                            ("id", &change["id"].as_str().unwrap_or("?")),
-                            ("version", &change["to"].as_str().unwrap_or("?")),
-                        ],
-                    ),
-                    None => tf(
-                        "installed {name} {version}",
-                        &[
-                            ("name", &package["name"].as_str().unwrap_or("?")),
-                            ("version", &package["version"].as_str().unwrap_or("?")),
-                        ],
-                    ),
-                };
+            if let Some(id) = asked_id
+                && answer["ok"] == true
+            {
+                self.status = crate::packages_window::index_status(&answer, &id);
             }
         }
         if asked.lock {

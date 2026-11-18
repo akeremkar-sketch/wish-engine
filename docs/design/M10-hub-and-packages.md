@@ -295,3 +295,43 @@ where `path` is a folder inside the index (forward slashes, no `..`) and `hash` 
 - Adding and removing are a person's (`permission_denied` for agents): they change the person's computer for every project. `list` and `pick` are looks.
 
 **Test plan.** Control plane: add (dry run, twice, not an engine, bad version), list order and warnings, remove (added: forgotten, installed: trash, running: refused, unknown), a broken list, the choice rules (exact, running among equals, newest compatible, 0.x minors, none), the tool's person-only actions. `wen engines` parses and runs add/list/pick/remove against `WISH_CONFIG_DIR`. Editor: the Hub adds and removes an engine by hand, and a recent project made with another installed version is handed to it (the window would close).
+
+## 16. M10b closing review
+
+Three independent reviews (package index, engine versions, the Hub) read the M10b changes (`ad0b2e0..991ec1d`). 31 findings; each was checked against the code before it was fixed. Regression tests: `wish_control/tests/review_m10b.rs`, `wish_editor/tests/welcome.rs` (`the_hub_forgets_a_gone_engine_and_shows_the_persons_shortcuts`), and the updated `package_index.rs`.
+
+**Package index and packages**
+- `update` of every package stopped at the first one that failed (a stale index entry, an engine mismatch, a `wish.` id from another index) and, after a failed install, left `wish.lock` and `wish.json` behind the files. Now a failing package is listed in `failed` (id, code, message, hint), the others still update, and whatever went into place is locked. Asked for by `id`, the problem is the answer; an installed package with a broken manifest is reported, not "up to date".
+- An `index.json` `path` could lead out of the index through a link or junction (only the text was checked). The real folder must now be inside the real index (`package_index_invalid`).
+- The `wish.` prefix check compared paths as text, so `<engine packages>/../..` passed. Both folders are now resolved first.
+- Partial versions in requirements were filled with zeros and compared exactly (`=1.2` was only 1.2.0, `^0` only 0.0.0). They now mean every version they start, as in Cargo.
+- A replace whose old version went to the trash but whose new one could not move in left nothing in place and a side folder behind. The side folder is cleared on every failure and the old version comes back.
+- Manifests are read up to 256 KiB, and a scanned index looks at no more than 20,000 folders (a folder that is not an index, such as a whole disk, no longer freezes the editor).
+- `search` names, per scope, whether an update waits (`update: { project, user }`): the editor showed Update beside a scope with nothing to update, and its answer read "installed ? ?". The status line is shared (`packages_window::index_status`) and says "up to date".
+- The Hub had its own copies of install, add and update. They now call the control plane's own functions, which the `packages` tool calls too (`packages::install_from`, `package_index::add`/`update`): no silent replace (an installed package must be removed first), warnings shown, a folder written in full.
+
+**Engine versions**
+- A Hub hand-off closed the window as soon as the other engine's process existed; if that engine stopped at once (it did not know the `--lang` passed to it, say), nothing opened and nothing was said. The window now stays until the engine has run for 2 s; if it ends with an error, the project opens here with what it wrote (`<machine folder>/hand-off-error.txt`). `--lang` is no longer passed (the preference carries it).
+- An older engine rewrote a newer engine's `engines.json` as format 1 with one entry. A list of a newer format is now never written (`engine_registry_invalid`); a broken one is kept as `engines.json.bak` before the list is written anew.
+- The limit of 64 counted only folders that were engines at that moment, and the list was cut to 64 when read for writing, dropping entries. Every listed folder now counts, nothing is cut on writing, and engines past the limit are a warning.
+- Installed engines and the list of added folders lived in the roaming `%APPDATA%`: hundreds of MiB per engine would roam, and this computer's paths would show on others. They are now in the machine's own folder (`crash::machine_folder()`: `%LOCALAPPDATA%\Wish` on Windows; `WISH_CONFIG_DIR` when set).
+- Every folder is resolved once per listing (a folder on an offline drive no longer makes each comparison wait), and `wen edit --headless-frame` does not look at the engines at all (its picture depends only on its arguments).
+- `wen package` writes `wish-engine.json` last: a package that stopped half way is not an engine.
+- An installed engine also in the list stayed there as a gone folder after removal; the running engine's folder in the list could never be forgotten. Both are forgotten now.
+- `wen edit --pick-engine` passes `--size` and `--exit-after` on, and an engine that ends with an error is not blamed on an incomplete folder.
+- Added folders that are no longer engines are listed apart (`Listing::stale`, the tool's `stale`), and the Hub shows them with Remove (it had no way to forget them).
+
+**The Hub**
+- Templates and their pictures are read again after a package comes or goes (a removed template package left a card pointing into the trash).
+- The packages and engines are read once (an empty theme list made the Hub read every package every frame), and each theme is parsed once, not on every layout of the Look tab.
+- The Learn tab shows the person's own shortcuts (the `keys` preference).
+- Folders and web pages open with the system (`app::open_with_os`, through `explorer` on Windows, never `cmd /C start`, which reads `&` in a path as another command), never with `WISH_EDITOR`.
+- The tab column is as wide as its longest name in the person's language (es/fr/it/el cut "Engine versions").
+- Emptying the index field forgets the `package_index` preference.
+- Wording: de "Look" → "Aussehen"; tr "this one" → "çalışan", "added" → "eklenmiş", "yours" → "sizde"; el "added".
+
+**Accepted, not changed**
+- `wen engines add` and `wen pkg add --user` from a shell count as the person (the actor of the command line is `human`): an agent with a shell is the person's own tool there, as with `permissions`. The `person_only` rule is for agents calling through MCP.
+- `the_engines_tool_lists_picks_and_is_a_persons` reads the machine's real engines list; its assertions hold whatever engines are installed.
+- Buttons named only "Remove" (one per row) are told apart by their row, not by name, for screen readers. Moved to the M11 list (accessible names per row).
+

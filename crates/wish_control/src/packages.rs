@@ -31,6 +31,8 @@ pub const ENGINE_PREFIX: &str = "wish.";
 pub const MAX_FILES: usize = 4096;
 /// Most bytes in a package.
 pub const MAX_BYTES: u64 = 64 * 1024 * 1024;
+/// The largest manifest read.
+pub const MAX_MANIFEST_BYTES: u64 = 256 * 1024;
 
 /// Licenses a package may have without a warning (SPDX ids).
 const KNOWN_LICENSES: &[&str] = &[
@@ -155,7 +157,9 @@ enum Op {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VersionReq {
     text: String,
-    comparators: Vec<(Op, Version)>,
+    /// Each comparator, its version and how many of its parts were
+    /// written (1 to 3: `=1.2` means any 1.2.x).
+    comparators: Vec<(Op, Version, u8)>,
 }
 
 impl fmt::Display for VersionReq {
@@ -191,13 +195,14 @@ impl VersionReq {
             .find_map(|(prefix, op)| part.strip_prefix(prefix).map(|rest| (*op, rest)))
             .unwrap_or((Op::Caret, part));
             let rest = rest.trim();
-            let filled = match rest.split('.').count() {
+            let parts = rest.split('.').count();
+            let filled = match parts {
                 1 => format!("{rest}.0.0"),
                 2 => format!("{rest}.0"),
                 _ => rest.to_owned(),
             };
             let version = Version::parse(&filled).map_err(|_| invalid())?;
-            comparators.push((op, version));
+            comparators.push((op, version, parts.min(3) as u8));
         }
         if comparators.is_empty() {
             return Err(invalid());
@@ -208,26 +213,41 @@ impl VersionReq {
         })
     }
 
-    /// Whether `version` meets every comparator.
+    /// Whether `version` meets every comparator. A version written in
+    /// part stands for every version it starts (as in Cargo): `=1.2` is
+    /// any 1.2.x, `<=1` anything below 2.0.0, `>1.2` 1.3.0 and above,
+    /// `~1` and `^1` anything 1.x, `^0` anything below 1.0.0, `^0.0` any
+    /// 0.0.x.
     pub fn matches(&self, version: Version) -> bool {
-        self.comparators.iter().all(|(op, want)| match op {
-            Op::Exact => version == *want,
-            Op::Greater => version > *want,
-            Op::GreaterEq => version >= *want,
-            Op::Less => version < *want,
-            Op::LessEq => version <= *want,
-            Op::Tilde => {
-                version >= *want && version.major == want.major && version.minor == want.minor
-            }
-            Op::Caret => {
-                version >= *want
-                    && if want.major > 0 {
-                        version.major == want.major
-                    } else if want.minor > 0 {
-                        version.major == 0 && version.minor == want.minor
-                    } else {
-                        version.major == 0 && version.minor == 0 && version.patch == want.patch
-                    }
+        self.comparators.iter().all(|&(op, want, parts)| {
+            // The parts that were written, of `version` and of `want`.
+            let cut = |v: Version| match parts {
+                1 => (v.major, 0, 0),
+                2 => (v.major, v.minor, 0),
+                _ => (v.major, v.minor, v.patch),
+            };
+            let (have, want_cut) = (cut(version), cut(want));
+            match op {
+                Op::Exact => have == want_cut,
+                Op::Greater => have > want_cut,
+                Op::GreaterEq => version >= want,
+                Op::Less => version < want,
+                Op::LessEq => have <= want_cut,
+                Op::Tilde => {
+                    version >= want
+                        && version.major == want.major
+                        && (parts == 1 || version.minor == want.minor)
+                }
+                Op::Caret => {
+                    version >= want
+                        && if want.major > 0 || parts == 1 {
+                            version.major == want.major
+                        } else if want.minor > 0 || parts == 2 {
+                            version.major == 0 && version.minor == want.minor
+                        } else {
+                            version.major == 0 && version.minor == 0 && version.patch == want.patch
+                        }
+                }
             }
         })
     }
@@ -316,6 +336,16 @@ pub(crate) fn inside_path(path: &str) -> bool {
 /// there and of the right kind).
 pub fn read_manifest(folder: &Path) -> Result<Manifest> {
     let path = folder.join(MANIFEST);
+    if std::fs::metadata(&path).is_ok_and(|meta| meta.len() > MAX_MANIFEST_BYTES) {
+        return Err(manifest_problem(
+            "",
+            format!(
+                "{MANIFEST} is larger than {} KiB.",
+                MAX_MANIFEST_BYTES / 1024
+            ),
+            "A manifest names the package and lists its contents; keep the contents themselves in their own files.",
+        ));
+    }
     let text = std::fs::read_to_string(&path).map_err(|error| {
         Diagnostic::error(
             "package_not_found",
@@ -795,9 +825,16 @@ pub fn plan_install(from: &Path, scope: Scope, project: &Path, replace: bool) ->
             "Use a version of the package made for this engine, or this engine's version the package names.",
         ));
     }
-    if manifest.id.starts_with(ENGINE_PREFIX)
-        && !engine_packages_folder().is_some_and(|engine| from.starts_with(engine))
-    {
+    // Compared as real folders: `..` parts or links must not make another
+    // folder look like the engine's own.
+    let from_engine = || {
+        let real = |path: &Path| std::fs::canonicalize(path).ok();
+        engine_packages_folder()
+            .and_then(|engine| real(&engine))
+            .zip(real(from))
+            .is_some_and(|(engine, from)| from.starts_with(engine))
+    };
+    if manifest.id.starts_with(ENGINE_PREFIX) && !from_engine() {
         return Err(Diagnostic::error(
             "package_invalid",
             format!(
@@ -867,6 +904,9 @@ pub fn install(from: &Path, plan: &Plan, scope: Scope, project: &Path) -> Result
     if side.exists() {
         std::fs::remove_dir_all(&side).map_err(|e| failed("clear an earlier install", e))?;
     }
+    let clear_side = || {
+        let _ = std::fs::remove_dir_all(&side);
+    };
     let copied = copy_package(from, &side).and_then(|()| {
         let manifest = read_manifest(&side)?;
         if manifest != plan.manifest {
@@ -889,14 +929,76 @@ pub fn install(from: &Path, plan: &Plan, scope: Scope, project: &Path) -> Result
         }
     });
     if let Err(problem) = copied {
-        let _ = std::fs::remove_dir_all(&side);
+        clear_side();
         return Err(problem);
     }
-    if plan.folder.exists() {
-        to_trash(scope, project, &plan.folder, &plan.manifest.id)?;
+    // The old version goes to the trash only once the new one is checked;
+    // if the new one cannot take its place, the old one comes back.
+    let old = if plan.folder.exists() {
+        match to_trash(scope, project, &plan.folder, &plan.manifest.id) {
+            Ok(trash) => Some(trash),
+            Err(problem) => {
+                clear_side();
+                return Err(problem);
+            }
+        }
+    } else {
+        None
+    };
+    if let Err(error) = std::fs::rename(&side, &plan.folder) {
+        clear_side();
+        if let Some(old) = old {
+            let _ = std::fs::rename(&old, &plan.folder);
+        }
+        return Err(failed("move the package into place", error));
     }
-    std::fs::rename(&side, &plan.folder).map_err(|e| failed("move the package into place", e))?;
     Ok(())
+}
+
+/// What a package action answers (the `packages` tool's answer, which the
+/// Hub shows too), and whether any package went into place (the project's
+/// lock is written again then).
+pub struct Done {
+    /// The answer.
+    pub answer: Map<String, Value>,
+    /// Whether anything was installed.
+    pub installed: bool,
+}
+
+/// Diagnostics as an answer's list.
+pub(crate) fn warnings_value(found: &[Diagnostic]) -> Value {
+    json!(found.iter().map(|d| json!(**d)).collect::<Vec<_>>())
+}
+
+/// Installs the package folder `from` into `scope` (the `packages` tool's
+/// `install`, and the Hub's): checked, copied beside its place, moved in.
+/// An installed version is replaced only with `replace`.
+pub fn install_from(
+    from: &Path,
+    scope: Scope,
+    project: &Path,
+    replace: bool,
+    dry_run: bool,
+) -> Result<Done> {
+    let plan = plan_install(from, scope, project, replace)?;
+    let mut answer = Map::new();
+    answer.insert("package".to_owned(), plan.manifest.to_value());
+    answer.insert("scope".to_owned(), json!(scope.name()));
+    answer.insert("replaces".to_owned(), json!(plan.replaces));
+    answer.insert("diagnostics".to_owned(), warnings_value(&plan.warnings));
+    if dry_run {
+        answer.insert("dry_run".to_owned(), json!(true));
+        return Ok(Done {
+            answer,
+            installed: false,
+        });
+    }
+    install(from, &plan, scope, project)?;
+    answer.insert("installed".to_owned(), json!(true));
+    Ok(Done {
+        answer,
+        installed: true,
+    })
 }
 
 /// Removes the installed package `id` of `scope` (to the trash); returns

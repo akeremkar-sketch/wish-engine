@@ -56,18 +56,25 @@ pub fn config_folder() -> Option<PathBuf> {
     Some(PathBuf::from(var("HOME")?).join(".config").join("wish"))
 }
 
-/// Where crash reports of the engine's own programs go: this computer's
-/// own folder (`%LOCALAPPDATA%\Wish\crashes` on Windows, which a roaming
-/// profile does not copy elsewhere), or `crashes` under
-/// [`config_folder`].
-pub fn folder() -> Option<PathBuf> {
+/// This computer's own folder for the engine, for what must not travel
+/// with a roaming profile (crash reports, installed engines and the list
+/// of engine folders, which name this computer's paths):
+/// `%LOCALAPPDATA%\Wish` on Windows, else [`config_folder`] (also when
+/// `WISH_CONFIG_DIR` names one).
+pub fn machine_folder() -> Option<PathBuf> {
     if std::env::var_os("WISH_CONFIG_DIR").is_none_or(|value| value.is_empty())
         && cfg!(windows)
         && let Some(local) = std::env::var_os("LOCALAPPDATA").filter(|v| !v.is_empty())
     {
-        return Some(PathBuf::from(local).join("Wish").join("crashes"));
+        return Some(PathBuf::from(local).join("Wish"));
     }
-    config_folder().map(|dir| dir.join("crashes"))
+    config_folder()
+}
+
+/// Where crash reports of the engine's own programs go: `crashes` under
+/// [`machine_folder`].
+pub fn folder() -> Option<PathBuf> {
+    machine_folder().map(|dir| dir.join("crashes"))
 }
 
 /// The crash reports in `folder`, newest first.

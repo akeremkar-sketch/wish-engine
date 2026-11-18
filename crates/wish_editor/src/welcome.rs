@@ -93,7 +93,7 @@ impl LaunchOptions {
             build: true,
             toolchain: None,
             splash: true,
-            engines: wish_control::crash::config_folder(),
+            engines: wish_control::crash::machine_folder(),
             hand_off: true,
         }
     }
@@ -153,6 +153,14 @@ struct Welcome {
     tab: crate::hub::Tab,
     theme_key: String,
     themes: Vec<crate::themes::ThemeEntry>,
+    /// Each theme read (the Look tab draws them every frame).
+    theme_looks: Vec<Option<crate::style::Theme>>,
+    /// Whether the packages were read (an empty list is an answer too).
+    packages_read: bool,
+    /// A package came or went: the templates are read again.
+    templates_stale: bool,
+    /// The person's shortcuts (the `keys` preference).
+    keys: std::collections::BTreeMap<String, String>,
     user_packages: Vec<Value>,
     engine_packages: Vec<Value>,
     /// The `agent` preferences (the AI mode reads them too).
@@ -168,6 +176,8 @@ struct Welcome {
     /// The engines on this computer (Engine versions tab).
     engines: Vec<wish_control::engines::Engine>,
     engine_warnings: Vec<String>,
+    /// Added folders that are no longer engines.
+    engine_stale: Vec<PathBuf>,
     /// The folder typed on the Engine versions tab.
     engine_path: String,
 }
@@ -189,17 +199,25 @@ impl Welcome {
         self.engine_packages
             .sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
         self.themes = crate::themes::available(None);
+        self.theme_looks = self
+            .themes
+            .iter()
+            .map(|entry| crate::themes::load(&self.themes, &entry.key).ok())
+            .collect();
+        self.packages_read = true;
         self.read_engines();
     }
 
     /// Reads the engines on this computer for the Hub.
     fn read_engines(&mut self) {
-        let (engines, warnings) = wish_control::engines::engines(self.engines_config.as_deref());
-        self.engines = engines;
-        self.engine_warnings = warnings
+        let listing = wish_control::engines::listing(self.engines_config.as_deref());
+        self.engine_warnings = listing
+            .warnings
             .iter()
             .map(|w| format!("{} {}", w.message, w.hint))
             .collect();
+        self.engine_stale = listing.stale.into_iter().map(|(f, _)| f).collect();
+        self.engines = listing.engines;
     }
 }
 
@@ -220,8 +238,27 @@ pub struct Launcher {
     welcome: Option<Box<Welcome>>,
     app: Option<Box<EditorApp>>,
     /// The engine a project was handed to (this window then closes).
-    handed_off: Option<wish_control::engines::Engine>,
+    handed_off: Option<HandOff>,
 }
+
+/// A project handed to another engine: this window stays a moment, until
+/// that engine is surely up; if it ends with an error at once, the
+/// project opens here and says what it said.
+struct HandOff {
+    engine: wish_control::engines::Engine,
+    root: PathBuf,
+    /// The other engine (none when only recorded, in tests).
+    child: Option<std::process::Child>,
+    /// Where its error output goes.
+    log: Option<PathBuf>,
+    started: std::time::Instant,
+    /// It is up (or done): the window may close.
+    settled: bool,
+}
+
+/// How long a handed-off engine must keep running before this window
+/// closes.
+const HAND_OFF_SECONDS: f64 = 2.0;
 
 impl Launcher {
     /// The welcome screen.
@@ -301,6 +338,10 @@ impl Launcher {
                 .unwrap_or(crate::themes::DEFAULT_KEY)
                 .to_owned(),
             themes: Vec::new(),
+            theme_looks: Vec::new(),
+            packages_read: false,
+            templates_stale: false,
+            keys: crate::commands::overrides_from(&prefs),
             user_packages: Vec::new(),
             engine_packages: Vec::new(),
             agent: prefs
@@ -315,6 +356,7 @@ impl Launcher {
             engines_config: options.engines.clone(),
             engines: Vec::new(),
             engine_warnings: Vec::new(),
+            engine_stale: Vec::new(),
             engine_path: String::new(),
         };
         Self {
@@ -388,7 +430,7 @@ impl Launcher {
     /// The engine a project was handed to: it opens the project in its own
     /// window, and this one closes.
     pub fn handed_off(&self) -> Option<&wish_control::engines::Engine> {
-        self.handed_off.as_ref()
+        self.handed_off.as_ref().map(|hand_off| &hand_off.engine)
     }
 
     /// Hands the project in `root` to the engine version it was made with
@@ -398,14 +440,15 @@ impl Launcher {
     fn hand_off(&mut self, root: &Path) -> Option<Result<(), String>> {
         let choice = wish_control::engines::choose(root, self.options.engines.as_deref());
         let engine = choice.switch()?.clone();
+        let mut child = None;
+        let mut log = None;
         if self.options.hand_off {
             let mut command = std::process::Command::new(engine.wen());
+            // (No --lang: the choice is in the preferences, and an older
+            // engine may not know a language this one has.)
             command.arg("edit").arg("--root").arg(root);
             if self.options.software {
                 command.arg("--software");
-            }
-            if let Some(welcome) = &self.welcome {
-                command.args(["--lang", welcome.language]);
             }
             #[cfg(windows)]
             {
@@ -414,16 +457,34 @@ impl Launcher {
                 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
                 command.creation_flags(CREATE_NO_WINDOW);
             }
-            if let Err(error) = command
+            // What it says on failing is kept, to show it here.
+            let errors = wish_control::crash::machine_folder()
+                .map(|folder| folder.join("hand-off-error.txt"))
+                .and_then(|path| {
+                    let _ = std::fs::create_dir_all(path.parent()?);
+                    let file = std::fs::File::create(&path).ok()?;
+                    Some((path, file))
+                });
+            let stderr = match errors {
+                Some((path, file)) => {
+                    log = Some(path);
+                    std::process::Stdio::from(file)
+                }
+                None => std::process::Stdio::null(),
+            };
+            match command
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
+                .stderr(stderr)
                 .spawn()
             {
-                return Some(Err(tf(
-                    "Wish Engine {version} (the version this project was made with) could not be started: {error}. This engine opened it.",
-                    &[("version", &engine.version), ("error", &error)],
-                )));
+                Ok(started) => child = Some(started),
+                Err(error) => {
+                    return Some(Err(tf(
+                        "Wish Engine {version} (the version this project was made with) could not be started: {error}. This engine opened it.",
+                        &[("version", &engine.version), ("error", &error)],
+                    )));
+                }
             }
         }
         if let Some(welcome) = &mut self.welcome {
@@ -432,8 +493,67 @@ impl Launcher {
                 &[("root", &root.display()), ("version", &engine.version)],
             );
         }
-        self.handed_off = Some(engine);
+        self.handed_off = Some(HandOff {
+            engine,
+            root: root.to_path_buf(),
+            settled: child.is_none(),
+            child,
+            log,
+            started: std::time::Instant::now(),
+        });
         Some(Ok(()))
+    }
+
+    /// Watches a handed-off engine for its first moment: settled when it
+    /// keeps running (or ends well); when it ends with an error, the
+    /// project opens here with what it said.
+    fn watch_hand_off(&mut self) {
+        let Some(hand_off) = &mut self.handed_off else {
+            return;
+        };
+        if hand_off.settled {
+            return;
+        }
+        let Some(child) = &mut hand_off.child else {
+            hand_off.settled = true;
+            return;
+        };
+        match child.try_wait() {
+            Ok(Some(status)) if !status.success() => {
+                let said = hand_off
+                    .log
+                    .as_ref()
+                    .and_then(|path| std::fs::read_to_string(path).ok())
+                    .map(|text| text.trim().chars().take(600).collect::<String>())
+                    .filter(|text| !text.is_empty())
+                    .unwrap_or_else(|| status.to_string());
+                let problem = tf(
+                    "Wish Engine {version}, which this project was made with, stopped at once: {said} This engine opened it.",
+                    &[("version", &hand_off.engine.version), ("said", &said)],
+                );
+                let root = hand_off.root.clone();
+                self.handed_off = None;
+                match self.open(&root, false) {
+                    Ok(()) => {
+                        if let Some(app) = &mut self.app {
+                            app.set_status(problem);
+                        }
+                        self.welcome = None;
+                    }
+                    Err(message) => {
+                        if let Some(welcome) = &mut self.welcome {
+                            welcome.status = format!("{problem} {message}");
+                        }
+                    }
+                }
+            }
+            Ok(Some(_)) => hand_off.settled = true,
+            Ok(None) => {
+                hand_off.settled = hand_off.started.elapsed().as_secs_f64() >= HAND_OFF_SECONDS;
+            }
+            // It cannot be watched: trust that it started.
+            Err(_) => hand_off.settled = true,
+        }
     }
 
     /// Opens the project in `root` in the editor.
@@ -647,6 +767,21 @@ impl Launcher {
                 _ => {}
             }
         }
+        if std::mem::take(&mut welcome.templates_stale) {
+            let chosen = welcome
+                .template
+                .and_then(|i| self.options.templates.get(i))
+                .map(|template| template.id.clone());
+            self.options.templates = wish_control::scaffold::all_templates();
+            welcome.template = chosen.and_then(|id| {
+                self.options
+                    .templates
+                    .iter()
+                    .position(|template| template.id == id)
+            });
+            welcome.pictures_loaded = false;
+            welcome.pictures.clear();
+        }
         let templates = &self.options.templates;
         let claude = self.options.claude.as_deref();
         let mut asked = Asked::default();
@@ -770,12 +905,29 @@ fn layout(
 ) -> Asked {
     let mut asked = Asked::default();
     welcome.load_pictures(ui.ctx(), templates);
-    if welcome.themes.is_empty() {
+    if !welcome.packages_read {
         welcome.read_packages();
     }
+    // As wide as the longest tab name in the person's language.
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let widest = crate::hub::Tab::ALL
+        .iter()
+        .map(|tab| {
+            ui.painter()
+                .layout_no_wrap(
+                    tab.name().to_owned(),
+                    font.clone(),
+                    crate::style::pal().text,
+                )
+                .size()
+                .x
+        })
+        .fold(0.0_f32, f32::max);
+    // (Button padding 16 + icon 15 + gap 6, and the panel's margins 20.)
+    let tabs_width = (widest + 16.0 + 15.0 + 6.0 + 20.0 + 4.0).max(150.0).ceil();
     egui::Panel::left("hub_tabs")
         .resizable(false)
-        .exact_size(150.0)
+        .exact_size(tabs_width)
         .frame(
             egui::Frame::new()
                 .fill(crate::style::pal().panel)
@@ -838,6 +990,9 @@ fn layout(
                                     index: &welcome.index,
                                     engines: &welcome.engines,
                                     engine_warnings: &welcome.engine_warnings,
+                                    engine_stale: &welcome.engine_stale,
+                                    theme_looks: &welcome.theme_looks,
+                                    keys: &welcome.keys,
                                 };
                                 match welcome.tab {
                                     crate::hub::Tab::Packages => {
@@ -935,9 +1090,14 @@ fn index_act(
     use crate::packages_window::IndexAsk;
     use wish_control::{package_index, packages};
     let given = welcome.index.index_arg();
-    if let (Some(folder), Some(path)) = (&given, preferences) {
-        let _ = crate::prefs::update(path, |prefs| {
-            prefs.insert("package_index".to_owned(), json!(folder));
+    if let Some(path) = preferences {
+        let _ = crate::prefs::update(path, |prefs| match &given {
+            Some(folder) => {
+                prefs.insert("package_index".to_owned(), json!(folder));
+            }
+            None => {
+                prefs.remove("package_index");
+            }
         });
     }
     let index = package_index::index_folder(given.map(PathBuf::from))
@@ -952,40 +1112,18 @@ fn index_act(
     };
     let here = Path::new("");
     let user = packages::Scope::User;
+    // The same control-plane code the packages tool runs (the Hub has no
+    // project, so there is no workspace to call).
     let done = match &ask {
         IndexAsk::Search => None,
         IndexAsk::Add(id, _) => Some(
-            package_index::plan_add(&index, id, None, user, here, false).and_then(
-                |(plan, folder)| {
-                    packages::install(&folder, &plan, user, here)?;
-                    Ok(tf(
-                        "installed {name} {version}",
-                        &[
-                            ("name", &plan.manifest.name),
-                            ("version", &plan.manifest.version),
-                        ],
-                    ))
-                },
-            ),
+            package_index::add(&index, id, None, user, here, false, false)
+                .map(|done| crate::packages_window::index_status(&Value::Object(done.answer), id)),
         ),
-        IndexAsk::Update(id, _) => Some(index.require(id).and_then(|entry| {
-            let had = package_index::installed_version(id, user, here);
-            let chosen = had
-                .and_then(|had| package_index::update_for(entry, had))
-                .ok_or_else(|| {
-                    wish_core::Diagnostic::error(
-                        "package_version_not_found",
-                        format!("'{id}' has no newer compatible version in the index."),
-                        "It is up to date.",
-                    )
-                })?;
-            let plan = package_index::plan_from_index(entry, chosen, user, here, true)?;
-            packages::install(&chosen.folder, &plan, user, here)?;
-            Ok(tf(
-                "{id} updated to {version}",
-                &[("id", id), ("version", &plan.manifest.version)],
-            ))
-        })),
+        IndexAsk::Update(id, _) => Some(
+            package_index::update(&index, Some(id), None, user, here, false)
+                .map(|done| crate::packages_window::index_status(&Value::Object(done.answer), id)),
+        ),
     };
     match done {
         Some(Ok(message)) => welcome.status = message,
@@ -1056,28 +1194,36 @@ fn hub_act(
     let user = wish_control::packages::Scope::User;
     if let Some(folder) = hub.install {
         let from = PathBuf::from(folder.trim());
-        let done = wish_control::packages::plan_install(&from, user, here, true).and_then(|plan| {
-            wish_control::packages::install(&from, &plan, user, here).map(|()| plan)
-        });
-        welcome.status = match done {
-            Ok(plan) => {
-                welcome.package_path.clear();
-                tf(
-                    "installed {name} {version}",
-                    &[
-                        ("name", &plan.manifest.name),
-                        ("version", &plan.manifest.version),
-                    ],
-                )
+        welcome.status = if !from.is_absolute() {
+            t("Write the package folder's full path.").to_owned()
+        } else {
+            // The same control-plane code as the packages tool's install.
+            match wish_control::packages::install_from(&from, user, here, false, false) {
+                Ok(done) => {
+                    welcome.package_path.clear();
+                    let answer = Value::Object(done.answer);
+                    let mut line = crate::packages_window::index_status(&answer, "");
+                    for warning in answer["diagnostics"].as_array().into_iter().flatten() {
+                        line.push_str(" · ");
+                        line.push_str(warning["message"].as_str().unwrap_or(""));
+                    }
+                    line
+                }
+                Err(problem) if problem.code == "package_exists" => tf(
+                    "{problem} Remove the installed one first, then install this one.",
+                    &[("problem", &problem.message)],
+                ),
+                Err(problem) => format!("{} {}", problem.message, problem.hint),
             }
-            Err(problem) => format!("{} {}", problem.message, problem.hint),
         };
         welcome.read_packages();
         crate::themes::load_languages(None);
+        welcome.templates_stale = true;
         acted = true;
     }
     if let Some(ask) = hub.index {
         index_act(welcome, ask, preferences);
+        welcome.templates_stale = true;
         acted = true;
     }
     if let Some(id) = hub.remove {
@@ -1086,10 +1232,11 @@ fn hub_act(
             Err(problem) => format!("{} {}", problem.message, problem.hint),
         };
         welcome.read_packages();
+        welcome.templates_stale = true;
         acted = true;
     }
     if let Some(place) = hub.open {
-        if let Err(error) = crate::app::open_with_system(Path::new(&place)) {
+        if let Err(error) = crate::app::open_with_os(Path::new(&place)) {
             welcome.status = error;
         }
         acted = true;
@@ -1133,32 +1280,45 @@ fn engines_act(welcome: &mut Welcome, add: Option<String>, remove: Option<PathBu
     let Some(config) = welcome.engines_config.clone() else {
         return t("There is no settings folder to keep the list of engines in.").to_owned();
     };
+    // The same control-plane code as the engines tool (and `wen engines`).
+    let act = |action: &str, folder: &Path| {
+        wish_control::engines_act_in(Some(&config), action, Some(folder), None, false)
+    };
+    let version = |answer: &serde_json::Map<String, Value>| {
+        answer["engine"]["version"]
+            .as_str()
+            .unwrap_or("?")
+            .to_owned()
+    };
     let done = if let Some(folder) = add {
         let folder = PathBuf::from(folder.trim());
-        if folder.is_absolute() {
-            wish_control::engines::add(&config, &folder, false).map(|(engine, new)| {
-                welcome.engine_path.clear();
-                if new {
-                    tf(
-                        "Wish Engine {version} added",
-                        &[("version", &engine.version)],
-                    )
-                } else {
-                    tf(
-                        "Wish Engine {version} was already here",
-                        &[("version", &engine.version)],
-                    )
-                }
-            })
-        } else {
-            Ok(t("Write the engine folder's full path.").to_owned())
+        if !folder.is_absolute() {
+            return t("Write the engine folder's full path.").to_owned();
         }
+        act("add", &folder).map(|answer| {
+            welcome.engine_path.clear();
+            if answer["added"] == true {
+                tf(
+                    "Wish Engine {version} added",
+                    &[("version", &version(&answer))],
+                )
+            } else {
+                tf(
+                    "Wish Engine {version} was already here",
+                    &[("version", &version(&answer))],
+                )
+            }
+        })
     } else if let Some(folder) = remove {
-        wish_control::engines::remove(&config, &folder, false).map(|removed| {
-            tf(
-                "Wish Engine {version} removed",
-                &[("version", &removed.engine.version)],
-            )
+        act("remove", &folder).map(|answer| {
+            if answer["stale"] == true {
+                tf("{folder} was forgotten", &[("folder", &folder.display())])
+            } else {
+                tf(
+                    "Wish Engine {version} removed",
+                    &[("version", &version(&answer))],
+                )
+            }
         })
     } else {
         return String::new();
@@ -1881,6 +2041,7 @@ fn first_free_name(folder: &Path) -> String {
 
 impl Driven for Launcher {
     fn frame_canvas(&mut self, size: (u32, u32), seconds: f64, events: Vec<ShellEvent>) -> bool {
+        self.watch_hand_off();
         if self.app.is_some() {
             self.frame_app(size, seconds, events)
         } else {
@@ -1928,7 +2089,11 @@ impl Shell for Launcher {
 
     fn wants_exit(&self) -> bool {
         // A project handed to another engine opens in its window.
-        (self.handed_off.is_some() && self.options.hand_off)
+        (self
+            .handed_off
+            .as_ref()
+            .is_some_and(|hand_off| hand_off.settled)
+            && self.options.hand_off)
             || self.app.as_ref().is_some_and(|app| app.wants_exit())
     }
 

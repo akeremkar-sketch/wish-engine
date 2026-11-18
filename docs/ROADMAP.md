@@ -18,7 +18,7 @@ Sizes are relative (S < M < L < XL); they are not a promise about the calendar.
 | M8a | Editor foundation (manual editing) | Viewport, hierarchy, automatic inspector, handles, asset browser, play controls | L | Sonnet 5.5 · high |
 | M8b | AI cockpit | Chat panel, in-cockpit agent, "show and tell", activity feed, checkpoints | L | Sonnet 5.5 · high (Opus 5.5 · high for interaction design decisions) |
 | M9 | Productization → **1.0** | One-package install, export, first run, docs, Steam/web | L | Sonnet 5.5 · medium; release audit Opus 5.5 · high — **code side done** (17 November 2026, `m9-product`); what remains are user steps: [design §5](design/M9-productization.md) |
-| M10 | Hub, packages and modding (M10a and M10b in **1.0**, M10c–e after it) | Registries, command palette, themes, workspace documents (the AI mode as a template), data packages, `wish.lock`, the Hub with packages and engine versions | L | Opus 5.5 · xhigh (M10a, M10c), high (M10b, M10d, M10e) — **M10a done** (17 November 2026); M10b in progress on `m9-product` (the Hub, the offline package index, side-by-side engine versions done; downloading waits for the user): [design](design/M10-hub-and-packages.md) |
+| M10 | Hub, packages and modding (M10a and M10b in **1.0**, M10c–e after it) | Registries, command palette, themes, workspace documents (the AI mode as a template), data packages, `wish.lock`, the Hub with packages and engine versions | L | Opus 5.5 · xhigh (M10a, M10c), high (M10b, M10d, M10e) — **M10a done** (17 November 2026); M10b in progress on `m9-product` (the Hub, the offline package index, side-by-side engine versions and the closing review done; downloading waits for the user): [design](design/M10-hub-and-packages.md) |
 | M11 | After 1.0 | Advanced rendering, web target, second scripting language, multiplayer | open-ended | Fable 5.2 / Opus 5.5 · high–xhigh |
 | T1 | Interface design (parallel) | Mockups of the hybrid interface: manual-editing and cockpit flows, switching between the two, user testing | S | Opus 5.5 · high — starts together with M4 |
 
@@ -270,6 +270,7 @@ Exit criteria 2–5 are tested. Remaining: criterion 1 (with 3 users, with a rea
 - Linux and macOS packages
 - Interface languages outside Latin/Cyrillic/Greek: Chinese, Japanese, Korean, Arabic (right to left), Hindi — needs a font (Noto, SIL OFL-1.1: adding it to the allowed list is a user decision) and right-to-left text layout (user decision, 16 November 2026)
 - Translating the engine's diagnostic messages (`message`/`hint`): the editor interface is in 12 languages (M8a WP8), but the control plane's messages are in English (one language for agents and docs); translating a diagnostic into the person's language in the editor needs a translation file per code
+- Accessible names per row in the editor: buttons such as "Remove" repeated on every row are told apart only by their row (an M10b closing review finding)
 - In MCP Streamable HTTP, the stream started by the server (`GET` + SSE: progress notifications, requests from the server) and CORS for connecting directly from a browser (in M8a WP8 only `POST`/`DELETE`, responses are JSON)
 
 ---

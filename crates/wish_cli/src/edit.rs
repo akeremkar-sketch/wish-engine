@@ -27,12 +27,15 @@ pub fn edit(args: &EditArgs, as_json: bool) -> Result<String> {
         return welcome(args, as_json);
     }
     let root = Path::new(args.root.as_deref().unwrap_or(".")).to_path_buf();
-    let choice =
-        wish_control::engines::choose(&root, wish_control::crash::config_folder().as_deref());
+    // Which engine fits the project matters only for a window: a scripted
+    // picture depends only on its arguments, not on this computer's
+    // engines.
+    let choice = args.headless_frame.is_none().then(|| {
+        wish_control::engines::choose(&root, wish_control::crash::machine_folder().as_deref())
+    });
     let mut handoff_problem = None;
     if args.pick_engine
-        && args.headless_frame.is_none()
-        && let Some(engine) = choice.switch()
+        && let Some(engine) = choice.as_ref().and_then(|choice| choice.switch())
     {
         match hand_off(engine, &root, args) {
             Ok(result) => return result,
@@ -60,7 +63,7 @@ pub fn edit(args: &EditArgs, as_json: bool) -> Result<String> {
     }
     if let Some(note) = notice(args)
         .or(handoff_problem)
-        .or_else(|| wish_editor::welcome::engine_note(&choice))
+        .or_else(|| choice.as_ref().and_then(wish_editor::welcome::engine_note))
     {
         app.set_status(note);
     }
@@ -105,6 +108,12 @@ fn hand_off(
     if args.software {
         command.arg("--software");
     }
+    command
+        .arg("--size")
+        .arg(format!("{}x{}", args.size.0, args.size.1));
+    if let Some(frames) = args.exit_after {
+        command.arg("--exit-after").arg(frames.to_string());
+    }
     if let Some(code) = &args.lang {
         command.args(["--lang", code]);
     }
@@ -127,7 +136,7 @@ fn hand_off(
                 "Wish Engine {}, which this project was made with, ended with an error ({status}).",
                 engine.version
             ),
-            "Check that its folder is complete (wen, sdk, toolchain), or open the project with this engine: wen edit --root <project>.",
+            "What it said is above. To open the project with this engine instead: wen edit --root <project>.",
         ))
     })
 }

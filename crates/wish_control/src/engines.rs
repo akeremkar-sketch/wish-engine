@@ -160,52 +160,115 @@ pub fn read_engine(folder: &Path, source: Source) -> Result<Engine> {
     })
 }
 
-/// The same folder, however it is written.
-fn same_folder(a: &Path, b: &Path) -> bool {
-    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
-        (Ok(a), Ok(b)) => a == b,
-        _ => a == b,
-    }
+/// A folder as one key, however it is written (resolved once: through an
+/// offline drive every resolution waits).
+fn key(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn registry_invalid(why: &str) -> Diagnostic {
     Diagnostic::warning(
         "engine_registry_invalid",
         format!("The list of added engines ({REGISTRY_FILE}) {why}; it is read as empty."),
-        "Add the engines again (Hub, Engine versions, or `wen engines add <folder>`): that writes the list anew.",
+        format!(
+            "Adding or removing an engine writes it anew and keeps the old one as {REGISTRY_FILE}.bak; or fix the file."
+        ),
     )
+}
+
+/// The list of added engine folders, as read.
+struct Registry {
+    /// Every absolute folder in it.
+    folders: Vec<PathBuf>,
+    /// Why it could not be read.
+    problem: Option<Diagnostic>,
+    /// Its format, when that is newer than the one this engine writes.
+    newer: Option<u64>,
+}
+
+fn read_registry(config: &Path) -> Registry {
+    let empty = |problem: Diagnostic, newer: Option<u64>| Registry {
+        folders: Vec::new(),
+        problem: Some(problem),
+        newer,
+    };
+    let path = config.join(REGISTRY_FILE);
+    if !path.exists() {
+        return Registry {
+            folders: Vec::new(),
+            problem: None,
+            newer: None,
+        };
+    }
+    let Some(text) = read_small(&path) else {
+        return empty(registry_invalid("cannot be read"), None);
+    };
+    let Ok(value) = serde_json::from_str::<Value>(&text) else {
+        return empty(registry_invalid("is not JSON"), None);
+    };
+    match value["format"].as_u64() {
+        Some(1) => {}
+        Some(format) if format > 1 => {
+            return empty(
+                Diagnostic::warning(
+                    "engine_registry_invalid",
+                    format!(
+                        "The list of added engines ({REGISTRY_FILE}) was written by a newer engine (format {format}); this one does not read it."
+                    ),
+                    "Add or remove engines from the newest engine's Hub; this one leaves the list alone.",
+                ),
+                Some(format),
+            );
+        }
+        _ => return empty(registry_invalid("has another format"), None),
+    }
+    let Some(list) = value["folders"].as_array() else {
+        return empty(registry_invalid("has no \"folders\" list"), None);
+    };
+    Registry {
+        folders: list
+            .iter()
+            .filter_map(Value::as_str)
+            .map(PathBuf::from)
+            .filter(|folder| folder.is_absolute())
+            .collect(),
+        problem: None,
+        newer: None,
+    }
 }
 
 /// The folders the person added (`engines.json`), and a warning when the
 /// list cannot be read.
 pub fn added_folders(config: &Path) -> (Vec<PathBuf>, Option<Diagnostic>) {
-    let path = config.join(REGISTRY_FILE);
-    if !path.exists() {
-        return (Vec::new(), None);
+    let registry = read_registry(config);
+    (registry.folders, registry.problem)
+}
+
+/// The list as it may be written again: one a newer engine wrote is never
+/// overwritten; a broken one is kept beside it as `engines.json.bak`
+/// (not with `dry_run`).
+fn writable_registry(config: &Path, dry_run: bool) -> Result<Vec<PathBuf>> {
+    let registry = read_registry(config);
+    if let Some(format) = registry.newer {
+        return Err(Diagnostic::error(
+            "engine_registry_invalid",
+            format!(
+                "The list of added engines ({REGISTRY_FILE}) was written by a newer engine (format {format}); this engine would lose it."
+            ),
+            "Add or remove engines from the newest engine's Hub (or its `wen engines`).",
+        ));
     }
-    let Some(text) = read_small(&path) else {
-        return (Vec::new(), Some(registry_invalid("cannot be read")));
-    };
-    let Ok(value) = serde_json::from_str::<Value>(&text) else {
-        return (Vec::new(), Some(registry_invalid("is not JSON")));
-    };
-    if value["format"] != 1 {
-        return (Vec::new(), Some(registry_invalid("has another format")));
+    if registry.problem.is_some() && !dry_run {
+        let path = config.join(REGISTRY_FILE);
+        std::fs::rename(&path, config.join(format!("{REGISTRY_FILE}.bak"))).map_err(|error| {
+            Diagnostic::error(
+                "file_unwritable",
+                format!("Could not keep the broken list of added engines aside: {error}."),
+                "Check that the settings folder can be written to, or fix engines.json by hand.",
+            )
+        })?;
     }
-    let Some(list) = value["folders"].as_array() else {
-        return (
-            Vec::new(),
-            Some(registry_invalid("has no \"folders\" list")),
-        );
-    };
-    let folders = list
-        .iter()
-        .filter_map(Value::as_str)
-        .map(PathBuf::from)
-        .filter(|folder| folder.is_absolute())
-        .take(MAX_ENGINES)
-        .collect();
-    (folders, None)
+    Ok(registry.folders)
 }
 
 fn write_added(config: &Path, folders: &[PathBuf]) -> Result<()> {
@@ -226,45 +289,107 @@ fn write_added(config: &Path, folders: &[PathBuf]) -> Result<()> {
         })
 }
 
-/// Every engine on this computer: the running one, the installed ones and
-/// the added ones (newest first; the running one first among equals), and
-/// warnings about folders that are no longer engines.
-pub fn engines(config: Option<&Path>) -> (Vec<Engine>, Vec<Diagnostic>) {
-    let mut found = vec![running()];
+/// Forgets every listed folder that is `folder`.
+fn forget(config: &Path, folder: &Path, dry_run: bool) -> Result<()> {
+    let folders = writable_registry(config, dry_run)?;
+    if !dry_run {
+        let wanted = key(folder);
+        let rest: Vec<PathBuf> = folders.into_iter().filter(|f| key(f) != wanted).collect();
+        write_added(config, &rest)?;
+    }
+    Ok(())
+}
+
+fn installed_folders(config: &Path) -> Vec<PathBuf> {
+    let mut installed: Vec<PathBuf> = std::fs::read_dir(config.join(ENGINES_FOLDER))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .collect();
+    installed.sort();
+    installed
+}
+
+/// The engines on this computer, and what is wrong with their list.
+pub struct Listing {
+    /// Every engine: newest first, the running one first among equals.
+    pub engines: Vec<Engine>,
+    /// Warnings: a list that cannot be read, installed folders that are
+    /// not engines, engines past the limit.
+    pub warnings: Vec<Diagnostic>,
+    /// Added folders that are no longer engines, and why (removing one
+    /// forgets it).
+    pub stale: Vec<(PathBuf, Diagnostic)>,
+}
+
+impl Listing {
+    /// Every warning, the stale folders' too.
+    pub fn all_warnings(&self) -> Vec<Diagnostic> {
+        let mut all = self.warnings.clone();
+        all.extend(self.stale.iter().map(|(_, problem)| problem.clone()));
+        all
+    }
+}
+
+/// Every engine on this computer, with what is wrong with the list.
+pub fn listing(config: Option<&Path>) -> Listing {
+    let here = running();
+    let mut keys = vec![key(&here.folder)];
+    let mut found = vec![here];
     let mut warnings = Vec::new();
+    let mut stale = Vec::new();
     if let Some(config) = config {
-        let mut installed: Vec<PathBuf> = std::fs::read_dir(config.join(ENGINES_FOLDER))
-            .into_iter()
-            .flatten()
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| path.is_dir())
-            .collect();
-        installed.sort();
-        let (added, problem) = added_folders(config);
-        warnings.extend(problem);
-        let candidates = installed
+        let registry = read_registry(config);
+        warnings.extend(registry.problem);
+        let candidates = installed_folders(config)
             .into_iter()
             .map(|folder| (folder, Source::Installed))
-            .chain(added.into_iter().map(|folder| (folder, Source::Added)));
+            .chain(
+                registry
+                    .folders
+                    .into_iter()
+                    .map(|folder| (folder, Source::Added)),
+            );
+        let mut hidden = 0usize;
         for (folder, source) in candidates {
-            if found.len() >= MAX_ENGINES {
-                break;
+            let folder_key = key(&folder);
+            if keys.contains(&folder_key) {
+                continue;
             }
-            if found
-                .iter()
-                .any(|engine| same_folder(&engine.folder, &folder))
-            {
+            if found.len() >= MAX_ENGINES {
+                hidden += 1;
                 continue;
             }
             match read_engine(&folder, source) {
-                Ok(engine) => found.push(engine),
+                Ok(engine) => {
+                    found.push(engine);
+                    keys.push(folder_key);
+                }
+                Err(problem) if source == Source::Added => stale.push((
+                    folder,
+                    Diagnostic::warning(
+                        problem.code.clone(),
+                        problem.message.clone(),
+                        "Remove it from the list (Hub, Engine versions) if it is gone for good.",
+                    ),
+                )),
                 Err(problem) => warnings.push(Diagnostic::warning(
                     problem.code.clone(),
                     problem.message.clone(),
                     problem.hint.clone(),
                 )),
             }
+        }
+        if hidden > 0 {
+            warnings.push(Diagnostic::warning(
+                "engine_too_many",
+                format!(
+                    "{hidden} more engine folders are past the limit of {MAX_ENGINES} and are not used."
+                ),
+                "Remove the engines you no longer use.",
+            ));
         }
     }
     found.sort_by(|a, b| {
@@ -273,7 +398,20 @@ pub fn engines(config: Option<&Path>) -> (Vec<Engine>, Vec<Diagnostic>) {
             .then((a.source != Source::Running).cmp(&(b.source != Source::Running)))
             .then(a.folder.cmp(&b.folder))
     });
-    (found, warnings)
+    Listing {
+        engines: found,
+        warnings,
+        stale,
+    }
+}
+
+/// Every engine on this computer: the running one, the installed ones and
+/// the added ones (newest first; the running one first among equals), and
+/// warnings about folders that are no longer engines.
+pub fn engines(config: Option<&Path>) -> (Vec<Engine>, Vec<Diagnostic>) {
+    let listing = listing(config);
+    let warnings = listing.all_warnings();
+    (listing.engines, warnings)
 }
 
 /// Adds the engine in `folder` (absolute) where it is; answers it and
@@ -281,18 +419,21 @@ pub fn engines(config: Option<&Path>) -> (Vec<Engine>, Vec<Diagnostic>) {
 pub fn add(config: &Path, folder: &Path, dry_run: bool) -> Result<(Engine, bool)> {
     let engine = read_engine(folder, Source::Added)?;
     let (all, _) = engines(Some(config));
-    if let Some(known) = all.iter().find(|e| same_folder(&e.folder, folder)) {
+    let wanted = key(folder);
+    if let Some(known) = all.iter().find(|e| key(&e.folder) == wanted) {
         return Ok((known.clone(), false));
     }
-    if all.len() >= MAX_ENGINES {
+    let mut folders = writable_registry(config, dry_run)?;
+    // Every listed folder counts, also one that is not there now (a drive
+    // that is not plugged in).
+    if 1 + installed_folders(config).len() + folders.len() >= MAX_ENGINES {
         return Err(Diagnostic::error(
             "engine_too_many",
             format!("There are already {MAX_ENGINES} engines."),
-            "Remove the ones you no longer use first.",
+            "Remove the ones you no longer use first (folders that are no longer engines count too).",
         ));
     }
     if !dry_run {
-        let (mut folders, _) = added_folders(config);
         folders.push(folder.to_path_buf());
         write_added(config, &folders)?;
     }
@@ -302,26 +443,28 @@ pub fn add(config: &Path, folder: &Path, dry_run: bool) -> Result<(Engine, bool)
 /// What removing an engine did.
 #[derive(Clone, Debug)]
 pub struct Removed {
-    /// The engine.
+    /// The engine (version 0.0.0 for a folder that is no longer one).
     pub engine: Engine,
     /// Where an installed engine went (an added one is only forgotten).
     pub trash: Option<PathBuf>,
+    /// Whether the folder was no longer an engine (it was only forgotten).
+    pub stale: bool,
 }
 
 /// Removes the engine in `folder`: an added one is forgotten (its files
 /// stay), an installed one goes to `<config>/trash/engines/`. The running
-/// engine cannot be removed.
+/// engine cannot be removed (but a list entry naming it is forgotten).
 pub fn remove(config: &Path, folder: &Path, dry_run: bool) -> Result<Removed> {
+    let wanted = key(folder);
     let (all, _) = engines(Some(config));
-    let Some(engine) = all.iter().find(|e| same_folder(&e.folder, folder)).cloned() else {
-        let (added, _) = added_folders(config);
-        if let Some(gone) = added.iter().find(|f| same_folder(f, folder)) {
+    let listed = read_registry(config)
+        .folders
+        .iter()
+        .any(|f| key(f) == wanted);
+    let Some(engine) = all.iter().find(|e| key(&e.folder) == wanted).cloned() else {
+        if listed {
             // A folder that is no longer an engine is still forgotten.
-            let gone = gone.clone();
-            if !dry_run {
-                let rest: Vec<PathBuf> = added.into_iter().filter(|f| *f != gone).collect();
-                write_added(config, &rest)?;
-            }
+            forget(config, folder, dry_run)?;
             return Ok(Removed {
                 engine: Engine {
                     version: Version {
@@ -329,10 +472,11 @@ pub fn remove(config: &Path, folder: &Path, dry_run: bool) -> Result<Removed> {
                         minor: 0,
                         patch: 0,
                     },
-                    folder: gone,
+                    folder: folder.to_path_buf(),
                     source: Source::Added,
                 },
                 trash: None,
+                stale: true,
             });
         }
         let known: Vec<String> = all.iter().map(|e| e.folder.display().to_string()).collect();
@@ -343,6 +487,15 @@ pub fn remove(config: &Path, folder: &Path, dry_run: bool) -> Result<Removed> {
         ));
     };
     match engine.source {
+        Source::Running if listed => {
+            // The running engine's folder was added too: the entry goes.
+            forget(config, folder, dry_run)?;
+            Ok(Removed {
+                engine,
+                trash: None,
+                stale: false,
+            })
+        }
         Source::Running => Err(Diagnostic::error(
             "engine_running",
             format!(
@@ -352,20 +505,19 @@ pub fn remove(config: &Path, folder: &Path, dry_run: bool) -> Result<Removed> {
             "Remove it from another engine, or delete its folder yourself after closing it.",
         )),
         Source::Added => {
-            if !dry_run {
-                let (added, _) = added_folders(config);
-                let rest: Vec<PathBuf> = added
-                    .into_iter()
-                    .filter(|f| !same_folder(f, &engine.folder))
-                    .collect();
-                write_added(config, &rest)?;
-            }
+            forget(config, folder, dry_run)?;
             Ok(Removed {
                 engine,
                 trash: None,
+                stale: false,
             })
         }
         Source::Installed => {
+            if listed {
+                // Added by hand too: forget that, or it would stay as a
+                // folder that is gone.
+                forget(config, folder, dry_run)?;
+            }
             let trash = config.join("trash").join(ENGINES_FOLDER);
             let name = engine.folder.file_name().map_or_else(
                 || engine.version.to_string(),
@@ -392,6 +544,7 @@ pub fn remove(config: &Path, folder: &Path, dry_run: bool) -> Result<Removed> {
             Ok(Removed {
                 engine,
                 trash: Some(target),
+                stale: false,
             })
         }
     }

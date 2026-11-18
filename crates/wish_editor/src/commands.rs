@@ -179,10 +179,7 @@ pub(crate) fn bindings(
 ) -> Vec<(&'static str, KeyboardShortcut)> {
     let mut found = Vec::new();
     for command in COMMANDS {
-        let keys = overrides
-            .get(command.id)
-            .map_or(command.keys, String::as_str);
-        for text in keys
+        for text in keys_of(command, overrides)
             .split(',')
             .map(str::trim)
             .filter(|text| !text.is_empty())
@@ -197,6 +194,32 @@ pub(crate) fn bindings(
     };
     found.sort_by_key(|(_, shortcut)| std::cmp::Reverse(weight(shortcut)));
     found
+}
+
+/// The shortcuts of `command` as the person has them (their override, or
+/// the default).
+pub(crate) fn keys_of<'a>(
+    command: &'a Command,
+    overrides: &'a BTreeMap<String, String>,
+) -> &'a str {
+    overrides
+        .get(command.id)
+        .map_or(command.keys, String::as_str)
+}
+
+/// The `keys` preference: the person's shortcuts by command id.
+pub(crate) fn overrides_from(
+    prefs: &serde_json::Map<String, serde_json::Value>,
+) -> BTreeMap<String, String> {
+    prefs
+        .get("keys")
+        .and_then(serde_json::Value::as_object)
+        .map(|keys| {
+            keys.iter()
+                .filter_map(|(id, keys)| Some((id.clone(), keys.as_str()?.to_owned())))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The commands whose name has every word of `filter` (any case), in

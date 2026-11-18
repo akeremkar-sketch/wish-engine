@@ -627,8 +627,10 @@ pub fn pkg_text(answer: &Value) -> String {
                     row.push_str(&format!("  [{scope} {version}]"));
                 }
             }
-            if package["update"] == true {
-                row.push_str("  (update waiting)");
+            for scope in ["project", "user"] {
+                if package["update"][scope] == true {
+                    row.push_str(&format!("  ({scope} update waiting)"));
+                }
             }
             text.push_str(&row);
             text.push('\n');
@@ -1012,12 +1014,6 @@ pub fn package(out: Option<&str>, as_json: bool) -> wish_core::Result<String> {
     }
     std::fs::write(out.join("wish-engine.ico"), icon_file()?)
         .map_err(|e| failed("write the icon", e))?;
-    // What makes the folder an engine the Hub can list beside others.
-    std::fs::write(
-        out.join(wish_control::engines::ENGINE_FILE),
-        wish_control::engines::engine_file_text(wish_control::packages::Version::engine())?,
-    )
-    .map_err(|e| failed("write the engine file", e))?;
     // The engine's own packages (themes, workspaces...): `packages/` of the
     // repository, each copied as a package (hidden files left out).
     let engine_packages = std::path::Path::new(&manifest)
@@ -1103,6 +1099,13 @@ pub fn package(out: Option<&str>, as_json: bool) -> wish_core::Result<String> {
             "Build the packaged wen with the C runtime linked in: set RUSTFLAGS=-C target-feature=+crt-static, then cargo build -p wish_cli --release (into a separate --target-dir), and run that wen's `package`.",
         ));
     }
+    // What makes the folder an engine the Hub can list beside others:
+    // written last, so a package that stopped half way is not one.
+    std::fs::write(
+        out.join(wish_control::engines::ENGINE_FILE),
+        wish_control::engines::engine_file_text(wish_control::packages::Version::engine())?,
+    )
+    .map_err(|e| failed("write the engine file", e))?;
     let toolchain_mib = toolchain["bytes"].as_u64().unwrap_or(0) / (1024 * 1024);
     Ok(if as_json {
         serde_json::json!({

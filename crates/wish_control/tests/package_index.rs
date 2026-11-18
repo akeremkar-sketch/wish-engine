@@ -147,7 +147,8 @@ fn a_folder_of_packages_is_searched_added_and_updated() {
         seen["packages"][0]["installed"]["project"], "1.0.0",
         "{seen}"
     );
-    assert_eq!(seen["packages"][0]["update"], true, "{seen}");
+    assert_eq!(seen["packages"][0]["update"]["project"], true, "{seen}");
+    assert_eq!(seen["packages"][0]["update"]["user"], false, "{seen}");
 
     // Adding it again needs replace.
     let again = call(
@@ -354,6 +355,18 @@ fn an_index_file_names_versions_and_their_hashes() {
         &mut ws,
         "human",
         json!({ "action": "update", "index": index_arg }),
+    );
+    // Updating everything lists it as failed (the others would still go);
+    // asked for by id, it is the answer.
+    assert_eq!(
+        stale["failed"][0]["code"], "package_index_invalid",
+        "{stale}"
+    );
+    assert_eq!(stale["updated"], json!([]), "{stale}");
+    let stale = call(
+        &mut ws,
+        "human",
+        json!({ "action": "update", "id": "com.example.dusk", "index": index_arg }),
     );
     assert_eq!(stale["error"]["code"], "package_index_invalid", "{stale}");
 

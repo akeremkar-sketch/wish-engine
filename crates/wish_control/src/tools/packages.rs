@@ -8,7 +8,7 @@ use wish_core::{Diagnostic, Result};
 use wish_scene::Actor;
 
 use crate::package_index;
-use crate::packages::{self, Scope, Version, VersionReq};
+use crate::packages::{self, Scope, VersionReq};
 use crate::param::{Args, Kind, Param};
 use crate::tool::Tool;
 use crate::workspace::Workspace;
@@ -187,20 +187,12 @@ fn run(workspace: &mut Workspace, args: &Args, actor: &Actor) -> Result<Map<Stri
             let scope = scope_of(args);
             person_only(actor, scope)?;
             let folder = folder_arg(workspace, args, action)?;
-            let plan = packages::plan_install(&folder, scope, &root, args.flag("replace"))?;
-            out.insert("package".to_owned(), plan.manifest.to_value());
-            out.insert("scope".to_owned(), json!(scope.name()));
-            out.insert("replaces".to_owned(), json!(plan.replaces));
-            out.insert("diagnostics".to_owned(), diagnostics(&plan.warnings));
-            if dry_run {
-                out.insert("dry_run".to_owned(), json!(true));
-                return Ok(out);
-            }
-            packages::install(&folder, &plan, scope, &root)?;
-            if scope == Scope::Project {
+            let done =
+                packages::install_from(&folder, scope, &root, args.flag("replace"), dry_run)?;
+            if done.installed && scope == Scope::Project {
                 relock(workspace)?;
             }
-            out.insert("installed".to_owned(), json!(true));
+            out = done.answer;
         }
         "remove" => {
             let scope = scope_of(args);
@@ -243,27 +235,19 @@ fn run(workspace: &mut Workspace, args: &Args, actor: &Actor) -> Result<Map<Stri
             person_only(actor, scope)?;
             let id = id_arg(args, action)?;
             let index = index_of(workspace, args)?;
-            let (plan, folder) = package_index::plan_add(
+            let done = package_index::add(
                 &index,
                 id,
                 wanted(args)?.as_ref(),
                 scope,
                 &root,
                 args.flag("replace"),
+                dry_run,
             )?;
-            out.insert("package".to_owned(), plan.manifest.to_value());
-            out.insert("scope".to_owned(), json!(scope.name()));
-            out.insert("replaces".to_owned(), json!(plan.replaces));
-            out.insert("diagnostics".to_owned(), diagnostics(&plan.warnings));
-            if dry_run {
-                out.insert("dry_run".to_owned(), json!(true));
-                return Ok(out);
-            }
-            packages::install(&folder, &plan, scope, &root)?;
-            if scope == Scope::Project {
+            if done.installed && scope == Scope::Project {
                 relock(workspace)?;
             }
-            out.insert("installed".to_owned(), json!(true));
+            out = done.answer;
         }
         "update" => {
             let scope = scope_of(args);
@@ -279,73 +263,13 @@ fn run(workspace: &mut Workspace, args: &Args, actor: &Actor) -> Result<Map<Stri
                 .at_path("/id"));
             }
             let index = index_of(workspace, args)?;
-            let all = packages::installed(scope, &root);
-            if let Some(only) = only
-                && !all.iter().any(|package| package.id == only)
-            {
-                let known: Vec<&str> = all.iter().map(|package| package.id.as_str()).collect();
-                return Err(Diagnostic::error(
-                    "package_not_found",
-                    format!(
-                        "No package '{only}' is installed in the {} scope.",
-                        scope.name()
-                    ),
-                    wish_core::suggest::unknown_name_hint(only, &known),
-                )
-                .at_path("/id"));
-            }
-            let mut plans = Vec::new();
-            let mut current = Vec::new();
-            let mut missing = Vec::new();
-            for package in &all {
-                let Some(manifest) = &package.manifest else {
-                    continue;
-                };
-                if only.is_some_and(|only| only != manifest.id) {
-                    continue;
-                }
-                let had: Version = manifest.version;
-                let Some(entry) = index.get(&manifest.id) else {
-                    missing.push(manifest.id.clone());
-                    continue;
-                };
-                let chosen = match &given {
-                    Some(given) => entry
-                        .choose(Some(given))
-                        .filter(|chosen| chosen.version != had),
-                    None => package_index::update_for(entry, had),
-                };
-                let Some(chosen) = chosen else {
-                    current.push(manifest.id.clone());
-                    continue;
-                };
-                let plan = package_index::plan_from_index(entry, chosen, scope, &root, true)?;
-                plans.push((had.to_string(), chosen.folder.clone(), plan));
-            }
-            let updated: Vec<Value> = plans
-                .iter()
-                .map(|(had, _, plan)| {
-                    json!({
-                        "id": plan.manifest.id,
-                        "from": had,
-                        "to": plan.manifest.version.to_string(),
-                    })
-                })
-                .collect();
-            out.insert("scope".to_owned(), json!(scope.name()));
-            out.insert("updated".to_owned(), json!(updated));
-            out.insert("current".to_owned(), json!(current));
-            out.insert("not_in_index".to_owned(), json!(missing));
-            if dry_run {
-                out.insert("dry_run".to_owned(), json!(true));
-                return Ok(out);
-            }
-            for (_, folder, plan) in &plans {
-                packages::install(folder, plan, scope, &root)?;
-            }
-            if scope == Scope::Project && !plans.is_empty() {
+            let done = package_index::update(&index, only, given.as_ref(), scope, &root, dry_run)?;
+            // Whatever went into place is locked, even when another
+            // package failed.
+            if done.installed && scope == Scope::Project {
                 relock(workspace)?;
             }
+            out = done.answer;
         }
         "lock" => {
             let text = packages::lock_text(&root)?;

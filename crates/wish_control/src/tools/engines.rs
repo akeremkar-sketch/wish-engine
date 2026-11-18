@@ -68,14 +68,12 @@ fn path_arg(workspace: &Workspace, args: &Args, action: &str) -> Result<std::pat
     })
 }
 
-fn config() -> Result<std::path::PathBuf> {
-    crate::crash::config_folder().ok_or_else(|| {
-        Diagnostic::error(
-            "file_unwritable",
-            "There is no settings folder to keep the list of engines in.",
-            "Set WISH_CONFIG_DIR to a folder the engine may write to.",
-        )
-    })
+fn no_config() -> Diagnostic {
+    Diagnostic::error(
+        "file_unwritable",
+        "There is no settings folder to keep the list of engines in.",
+        "Set WISH_CONFIG_DIR to a folder the engine may write to.",
+    )
 }
 
 /// What the actions answer; `wen engines` (with no project) and the tool
@@ -86,10 +84,29 @@ pub fn act(
     project: Option<&std::path::Path>,
     dry_run: bool,
 ) -> Result<Map<String, Value>> {
+    act_in(
+        crate::crash::machine_folder().as_deref(),
+        action,
+        path,
+        project,
+        dry_run,
+    )
+}
+
+/// [`act`] with the engines kept in `config` (the Hub passes its own).
+pub fn act_in(
+    config: Option<&std::path::Path>,
+    action: &str,
+    path: Option<&std::path::Path>,
+    project: Option<&std::path::Path>,
+    dry_run: bool,
+) -> Result<Map<String, Value>> {
     let mut out = Map::new();
     match action {
         "add" | "remove" => {
-            let config = config()?;
+            let config = config
+                .map(std::path::Path::to_path_buf)
+                .ok_or_else(no_config)?;
             let Some(folder) = path else {
                 return Err(Diagnostic::error(
                     "missing_parameter",
@@ -109,6 +126,7 @@ pub fn act(
                 let removed = engines::remove(&config, folder, dry_run)?;
                 out.insert("engine".to_owned(), removed.engine.to_value());
                 out.insert("removed".to_owned(), json!(!dry_run));
+                out.insert("stale".to_owned(), json!(removed.stale));
                 out.insert(
                     "trash".to_owned(),
                     json!(removed.trash.map(|t| t.display().to_string())),
@@ -135,12 +153,11 @@ pub fn act(
                 )
                 .at_path("/path"));
             }
-            let config = crate::crash::config_folder();
-            out = engines::choose(root, config.as_deref()).to_value();
+            out = engines::choose(root, config).to_value();
         }
         _ => {
-            let config = crate::crash::config_folder();
-            let (all, warnings) = engines::engines(config.as_deref());
+            let listing = engines::listing(config);
+            let (all, warnings, stale) = (&listing.engines, listing.all_warnings(), &listing.stale);
             out.insert(
                 "running".to_owned(),
                 json!(engines::running().version.to_string()),
@@ -156,9 +173,18 @@ pub fn act(
             if let Some(project) = project {
                 out.insert(
                     "project".to_owned(),
-                    Value::Object(engines::choose(project, config.as_deref()).to_value()),
+                    Value::Object(engines::choose(project, config).to_value()),
                 );
             }
+            out.insert(
+                "stale".to_owned(),
+                json!(
+                    stale
+                        .iter()
+                        .map(|(f, _)| f.display().to_string())
+                        .collect::<Vec<_>>()
+                ),
+            );
             out.insert("diagnostics".to_owned(), diagnostics(&warnings));
         }
     }

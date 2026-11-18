@@ -134,7 +134,7 @@ pub(crate) fn index_section(
                             t("yours")
                         };
                         ui.weak(format!("{version} {place}"));
-                        if package["update"] == true
+                        if package["update"][scope] == true
                             && ui
                                 .button(t("Update"))
                                 .on_hover_text(t(
@@ -309,4 +309,38 @@ pub(crate) fn window(ui: &mut Ui, state: &PackagesState, actions: &mut PackagesA
     if !open {
         actions.close = true;
     }
+}
+
+/// The status line for an index `add` or `update` answer (the editor's
+/// window and the Hub say the same).
+pub(crate) fn index_status(answer: &Value, id: &str) -> String {
+    if let Some(change) = answer["updated"].as_array().and_then(|u| u.first()) {
+        return tf(
+            "{id} updated to {version}",
+            &[
+                ("id", &change["id"].as_str().unwrap_or(id)),
+                ("version", &change["to"].as_str().unwrap_or("?")),
+            ],
+        );
+    }
+    if let Some(failed) = answer["failed"].as_array().and_then(|f| f.first()) {
+        return format!(
+            "{} {}",
+            failed["message"].as_str().unwrap_or(""),
+            failed["hint"].as_str().unwrap_or("")
+        )
+        .trim()
+        .to_owned();
+    }
+    if answer.get("updated").is_some() {
+        return tf("{id} is up to date", &[("id", &id)]);
+    }
+    let package = &answer["package"];
+    tf(
+        "installed {name} {version}",
+        &[
+            ("name", &package["name"].as_str().unwrap_or(id)),
+            ("version", &package["version"].as_str().unwrap_or("?")),
+        ],
+    )
 }

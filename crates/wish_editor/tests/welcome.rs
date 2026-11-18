@@ -570,3 +570,74 @@ fn engines_are_added_and_removed_in_the_hub_and_a_project_opens_with_its_own() {
         launcher.status()
     );
 }
+
+/// The M10b closing review: a folder that stopped being an engine can be
+/// forgotten from the Hub; a package folder is written in full; the Learn
+/// tab shows the person's own shortcuts.
+#[test]
+fn the_hub_forgets_a_gone_engine_and_shows_the_persons_shortcuts() {
+    let (options, base) = options("hub-review");
+    let gone = base.join("unplugged/0.0.9");
+    std::fs::create_dir_all(base.join("config")).unwrap();
+    std::fs::write(
+        base.join("config/engines.json"),
+        json!({ "format": 1, "folders": [gone.display().to_string()] }).to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        base.join("prefs/editor.json"),
+        json!({ "language": "en", "keys": { "game.play": "Ctrl+Alt+P" } }).to_string(),
+    )
+    .unwrap();
+    let mut launcher = Launcher::new(options);
+    play(&mut launcher, json!([{ "idle": 2 }]));
+    let shows = |launcher: &Launcher, text: &str| {
+        launcher.widgets().iter().any(|w| {
+            w.label.as_deref().unwrap_or("").contains(text)
+                || w.value.as_deref().unwrap_or("").contains(text)
+        })
+    };
+
+    click(&mut launcher, "Learn");
+    assert!(shows(&launcher, "Ctrl+Alt+P"), "the person's shortcut");
+    assert!(!shows(&launcher, "Ctrl+P"), "not the default");
+
+    click(&mut launcher, "Engine versions");
+    assert!(shows(&launcher, "is no longer an engine"), "listed apart");
+    click(&mut launcher, "Remove");
+    assert!(
+        launcher.status().contains("was forgotten"),
+        "{}",
+        launcher.status()
+    );
+    assert!(!shows(&launcher, "is no longer an engine"));
+    let saved = std::fs::read_to_string(base.join("config/engines.json")).unwrap();
+    assert!(!saved.contains("unplugged"), "{saved}");
+
+    // A package folder is written in full (a relative one would be read
+    // from wherever the program was started).
+    click(&mut launcher, "Packages");
+    // The field just above the install button (the index has its own).
+    let install = named(&launcher, "Install for me");
+    let field = launcher
+        .widgets()
+        .iter()
+        .filter(|w| w.role == "TextInput" && w.rect.max.y <= install.min.y + 1.0)
+        .max_by(|a, b| a.rect.min.y.total_cmp(&b.rect.min.y))
+        .map(|w| w.rect)
+        .expect("the folder field");
+    play(
+        &mut launcher,
+        json!([
+            { "events": [{ "click": [field.center().x, field.center().y] }] },
+            { "events": [{ "text": "some/package" }] },
+            { "idle": 1 }
+        ]),
+    );
+    click(&mut launcher, "Install for me");
+    assert!(
+        launcher.status().contains("full path"),
+        "{}",
+        launcher.status()
+    );
+}

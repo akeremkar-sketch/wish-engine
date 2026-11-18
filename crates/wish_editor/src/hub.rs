@@ -4,6 +4,8 @@
 //! side, things to learn and the engine's own settings. What a tab changes is the person's (their preferences and
 //! their packages), never a project's.
 
+use std::path::PathBuf;
+
 use egui::{CornerRadius, RichText, Stroke, Ui};
 use serde_json::{Map, Value};
 
@@ -89,6 +91,10 @@ pub(crate) struct HubView<'a> {
     pub theme_key: &'a str,
     pub language: &'static str,
     pub themes: &'a [crate::themes::ThemeEntry],
+    /// Each theme read (once, when the packages were read).
+    pub theme_looks: &'a [Option<crate::style::Theme>],
+    /// The person's shortcuts (the `keys` preference).
+    pub keys: &'a std::collections::BTreeMap<String, String>,
     /// The person's packages and the engine's (from `packages::listing`).
     pub user_packages: &'a [Value],
     pub engine_packages: &'a [Value],
@@ -101,6 +107,8 @@ pub(crate) struct HubView<'a> {
     /// The engines on this computer, and what is wrong with the list.
     pub engines: &'a [wish_control::engines::Engine],
     pub engine_warnings: &'a [String],
+    /// Added folders that are no longer engines.
+    pub engine_stale: &'a [PathBuf],
 }
 
 /// The tabs, down the left side.
@@ -240,6 +248,24 @@ pub(crate) fn engines(ui: &mut Ui, view: &HubView, path: &mut String, asked: &mu
                 ui.weak(format!("{source} · {}", engine.folder.display()));
             });
         }
+        for folder in view.engine_stale {
+            ui.horizontal(|ui| {
+                if ui
+                    .small_button(t("Remove"))
+                    .on_hover_text(t("Forget this folder (nothing is deleted)"))
+                    .clicked()
+                {
+                    asked.remove_engine = Some(folder.clone());
+                }
+                ui.label(
+                    RichText::new(tf(
+                        "{folder} is no longer an engine",
+                        &[("folder", &folder.display())],
+                    ))
+                    .color(pal().amber),
+                );
+            });
+        }
         ui.add_space(8.0);
         ui.add(
             egui::TextEdit::singleline(path)
@@ -299,13 +325,13 @@ pub(crate) fn look(ui: &mut Ui, view: &HubView, asked: &mut HubAsked) {
     card(ui, |ui| {
         crate::style::panel_title(ui, t("Theme"));
         ui.horizontal_wrapped(|ui| {
-            for entry in view.themes {
-                let Ok(theme) = crate::themes::load(view.themes, &entry.key) else {
+            for (entry, look) in view.themes.iter().zip(view.theme_looks) {
+                let Some(theme) = look else {
                     continue;
                 };
                 let chosen = entry.key == view.theme_key;
                 ui.vertical(|ui| {
-                    swatch(ui, &theme);
+                    swatch(ui, theme);
                     let label = if chosen {
                         RichText::new(&entry.name).color(pal().select)
                     } else {
@@ -422,11 +448,12 @@ pub(crate) fn learn(ui: &mut Ui, view: &HubView, asked: &mut HubAsked) {
             .spacing([24.0, 4.0])
             .show(ui, |ui| {
                 for command in crate::commands::COMMANDS {
-                    if command.keys.is_empty() {
+                    let keys = crate::commands::keys_of(command, view.keys);
+                    if keys.is_empty() {
                         continue;
                     }
                     ui.label((command.name)());
-                    ui.weak(command.keys);
+                    ui.weak(keys);
                     ui.end_row();
                 }
             });

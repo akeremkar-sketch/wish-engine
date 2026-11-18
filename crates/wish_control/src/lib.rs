@@ -54,6 +54,6 @@ pub use script::PointerAt;
 pub use tool::{Tool, catalog};
 pub use tools::{
     BRIEF_FIELDS, CardField, DESIGN_FILE, IdPicture, Picture, PictureSource, card_fields,
-    design_summary, engines_act, read_design,
+    design_summary, engines_act, engines_act_in, read_design,
 };
 pub use workspace::{Workspace, WorkspaceOptions, envelope, find_tool, parse_actor};

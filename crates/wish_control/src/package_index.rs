@@ -26,6 +26,9 @@ pub const MAX_PACKAGES: usize = 10_000;
 pub const MAX_VERSIONS: usize = 1_000;
 /// The most results `search` gives.
 pub const MAX_RESULTS: usize = 200;
+/// The most folders a scanned index (one without an `index.json`) looks
+/// at.
+pub const MAX_SCANNED: usize = 20_000;
 
 /// One version of a package in the index.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -152,11 +155,14 @@ pub fn read_index(folder: &Path) -> Result<Index> {
 /// Every package folder in `folder` (or one level deeper) as entries.
 fn scan(folder: &Path) -> Vec<IndexEntry> {
     let mut found: BTreeMap<String, Vec<(packages::Manifest, PathBuf)>> = BTreeMap::new();
+    // A folder that is not an index (a whole disk, say) is looked at only
+    // so far.
     let children = |dir: &Path| -> Vec<PathBuf> {
         let mut list: Vec<PathBuf> = std::fs::read_dir(dir)
             .into_iter()
             .flatten()
             .flatten()
+            .take(MAX_SCANNED)
             .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
             .filter(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
             .map(|entry| entry.path())
@@ -164,7 +170,12 @@ fn scan(folder: &Path) -> Vec<IndexEntry> {
         list.sort();
         list
     };
+    let mut looked = 0usize;
     let mut add = |dir: PathBuf| {
+        looked += 1;
+        if looked > MAX_SCANNED {
+            return;
+        }
         if let Ok(manifest) = packages::read_manifest(&dir) {
             found
                 .entry(manifest.id.clone())
@@ -381,12 +392,30 @@ pub fn installed_version(id: &str, scope: Scope, project: &Path) -> Option<Versi
 /// Plans installing `chosen` of `entry` from the index (its manifest must
 /// be what the index says).
 pub fn plan_from_index(
+    index: &Index,
     entry: &IndexEntry,
     chosen: &IndexVersion,
     scope: Scope,
     root: &Path,
     replace: bool,
 ) -> Result<packages::Plan> {
+    // The folder must really be inside the index: a link or junction on
+    // the way must not lead somewhere else.
+    let real = |path: &Path| std::fs::canonicalize(path).ok();
+    // (A folder that is not there at all is explained by the install plan.)
+    let inside = real(&chosen.folder)
+        .is_none_or(|folder| real(&index.folder).is_some_and(|index| folder.starts_with(index)));
+    if !inside {
+        return Err(Diagnostic::error(
+            "package_index_invalid",
+            format!(
+                "The folder of '{}' {} is not inside the index.",
+                entry.id, chosen.version
+            ),
+            "An index names folders inside itself; a link or junction that leads out of it is not followed. Copy the package into the index.",
+        )
+        .at_file(INDEX_FILE));
+    }
     let mut plan = packages::plan_install(&chosen.folder, scope, root, replace)?;
     if plan.manifest.id != entry.id || plan.manifest.version != chosen.version {
         return Err(Diagnostic::error(
@@ -425,7 +454,7 @@ pub fn plan_add(
 ) -> Result<(packages::Plan, PathBuf)> {
     let entry = index.require(id)?;
     let chosen = pick(entry, wanted)?;
-    let plan = plan_from_index(entry, chosen, scope, project, replace)?;
+    let plan = plan_from_index(index, entry, chosen, scope, project, replace)?;
     Ok((plan, chosen.folder.clone()))
 }
 
@@ -473,7 +502,10 @@ pub fn search(index: &Index, query: &str, project: Option<&Path>) -> Vec<Value> 
                     "project": project_has.map(|v| v.to_string()),
                     "user": user_has.map(|v| v.to_string()),
                 },
-                "update": newer(project_has) || newer(user_has),
+                "update": {
+                    "project": newer(project_has),
+                    "user": newer(user_has),
+                },
             })
         })
         .collect()
@@ -505,4 +537,157 @@ pub fn pick<'a>(entry: &'a IndexEntry, wanted: Option<&VersionReq>) -> Result<&'
             format!("The index has: {}.", listed.join(", ")),
         )
     })
+}
+
+pub use crate::packages::Done;
+use crate::packages::warnings_value as warnings;
+
+fn failure(id: &str, problem: &Diagnostic) -> Value {
+    json!({
+        "id": id,
+        "code": problem.code,
+        "message": problem.message,
+        "hint": problem.hint,
+    })
+}
+
+/// Adds `id` from `index` into `scope` (the `packages` tool's `add`, and
+/// the Hub's): the newest version that fits the engine and `wanted`.
+pub fn add(
+    index: &Index,
+    id: &str,
+    wanted: Option<&VersionReq>,
+    scope: Scope,
+    project: &Path,
+    replace: bool,
+    dry_run: bool,
+) -> Result<Done> {
+    let (plan, folder) = plan_add(index, id, wanted, scope, project, replace)?;
+    let mut answer = serde_json::Map::new();
+    answer.insert("package".to_owned(), plan.manifest.to_value());
+    answer.insert("scope".to_owned(), json!(scope.name()));
+    answer.insert("replaces".to_owned(), json!(plan.replaces));
+    answer.insert("diagnostics".to_owned(), warnings(&plan.warnings));
+    if dry_run {
+        answer.insert("dry_run".to_owned(), json!(true));
+        return Ok(Done {
+            answer,
+            installed: false,
+        });
+    }
+    packages::install(&folder, &plan, scope, project)?;
+    answer.insert("installed".to_owned(), json!(true));
+    Ok(Done {
+        answer,
+        installed: true,
+    })
+}
+
+/// Brings the packages of `scope` (or only `only`) to their newest
+/// compatible version in `index`, or `only` to a version meeting `given`
+/// (the `packages` tool's `update`, and the Hub's). A package that cannot
+/// be updated is listed in `failed` and the others still are; with `only`,
+/// its problem is the answer.
+pub fn update(
+    index: &Index,
+    only: Option<&str>,
+    given: Option<&VersionReq>,
+    scope: Scope,
+    project: &Path,
+    dry_run: bool,
+) -> Result<Done> {
+    let all = packages::installed(scope, project);
+    if let Some(only) = only {
+        let Some(package) = all.iter().find(|package| package.id == only) else {
+            let known: Vec<&str> = all.iter().map(|package| package.id.as_str()).collect();
+            return Err(Diagnostic::error(
+                "package_not_found",
+                format!(
+                    "No package '{only}' is installed in the {} scope.",
+                    scope.name()
+                ),
+                wish_core::suggest::unknown_name_hint(only, &known),
+            )
+            .at_path("/id"));
+        };
+        if package.manifest.is_none() {
+            return Err(package.problem.clone().unwrap_or_else(|| {
+                Diagnostic::error(
+                    "package_invalid",
+                    format!("The manifest of '{only}' cannot be read."),
+                    "packages with action check shows what is wrong with it.",
+                )
+            }));
+        }
+    }
+    let mut plans = Vec::new();
+    let mut current = Vec::new();
+    let mut missing = Vec::new();
+    let mut failed = Vec::new();
+    for package in &all {
+        if only.is_some_and(|only| only != package.id) {
+            continue;
+        }
+        let Some(manifest) = &package.manifest else {
+            let problem = package.problem.clone().unwrap_or_else(|| {
+                Diagnostic::error(
+                    "package_invalid",
+                    format!("The manifest of '{}' cannot be read.", package.id),
+                    "packages with action check shows what is wrong with it.",
+                )
+            });
+            failed.push(failure(&package.id, &problem));
+            continue;
+        };
+        let had: Version = manifest.version;
+        let Some(entry) = index.get(&manifest.id) else {
+            missing.push(manifest.id.clone());
+            continue;
+        };
+        let chosen = match given {
+            Some(given) => entry
+                .choose(Some(given))
+                .filter(|chosen| chosen.version != had),
+            None => update_for(entry, had),
+        };
+        let Some(chosen) = chosen else {
+            current.push(manifest.id.clone());
+            continue;
+        };
+        match plan_from_index(index, entry, chosen, scope, project, true) {
+            Ok(plan) => plans.push((had.to_string(), chosen.folder.clone(), plan)),
+            Err(problem) if only.is_some() => return Err(problem),
+            Err(problem) => failed.push(failure(&manifest.id, &problem)),
+        }
+    }
+    let mut updated = Vec::new();
+    let mut installed = false;
+    for (had, folder, plan) in &plans {
+        let id = &plan.manifest.id;
+        if !dry_run {
+            match packages::install(folder, plan, scope, project) {
+                Ok(()) => installed = true,
+                Err(problem) if only.is_some() => return Err(problem),
+                Err(problem) => {
+                    failed.push(failure(id, &problem));
+                    continue;
+                }
+            }
+        }
+        updated.push(json!({
+            "id": id,
+            "from": had,
+            "to": plan.manifest.version.to_string(),
+        }));
+    }
+    let mut answer = serde_json::Map::new();
+    answer.insert("scope".to_owned(), json!(scope.name()));
+    answer.insert("updated".to_owned(), json!(updated));
+    answer.insert("current".to_owned(), json!(current));
+    answer.insert("not_in_index".to_owned(), json!(missing));
+    answer.insert("failed".to_owned(), json!(failed));
+    if dry_run {
+        answer.insert("dry_run".to_owned(), json!(true));
+    }
+    Ok(Done { answer, installed })
 }
