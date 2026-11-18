@@ -5,7 +5,8 @@
 //!
 //! - No arguments: the editor's welcome screen.
 //! - A project folder or its `wish.json` (dropped on the program, "Open
-//!   with"): the editor on that project.
+//!   with"): the editor on that project, with the engine version it was
+//!   made with when that one is installed beside this one (`--pick-engine`).
 //! - Anything else is handed to `wen edit` as it is.
 //!
 //! A launcher that cannot start the editor has no console to say why: it
@@ -35,6 +36,7 @@ fn wen_arguments(given: &[OsString]) -> Vec<OsString> {
             };
             match folder {
                 Some(folder) => {
+                    args.push("--pick-engine".into());
                     args.push("--root".into());
                     args.push(folder.into_os_string());
                 }
@@ -144,12 +146,12 @@ mod tests {
         let folder = dir.display().to_string();
         assert_eq!(
             words(wen_arguments(&[dir.clone().into_os_string()])),
-            ["edit", "--root", folder.as_str()]
+            ["edit", "--pick-engine", "--root", folder.as_str()]
         );
         let file = dir.join("wish.json");
         assert_eq!(
             words(wen_arguments(&[file.into_os_string()])),
-            ["edit", "--root", folder.as_str()]
+            ["edit", "--pick-engine", "--root", folder.as_str()]
         );
     }
 

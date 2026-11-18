@@ -224,6 +224,11 @@ pub const PARITY: &[Capability] = &[
         "packages::packages_are_installed_and_removed_by_hand",
     ),
     op(
+        "engines",
+        "Hub: Engine versions (add an engine's folder, remove one); a recent project opens with the engine version it was made with",
+        "welcome::engines_are_added_and_removed_in_the_hub_and_a_project_opens_with_its_own",
+    ),
+    op(
         "permissions",
         "Project menu: Permissions (Only suggest, Apply I review, Autonomous)",
         "parity_ops::an_agents_proposal_is_accepted_and_rejected_by_hand",

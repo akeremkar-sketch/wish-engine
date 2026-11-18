@@ -48,6 +48,12 @@ pub struct LaunchOptions {
     pub toolchain: Option<wish_script::build::Toolchain>,
     /// Open with the mark's short animation (a click or a key skips it).
     pub splash: bool,
+    /// The person's settings folder, where the list of engines is kept
+    /// (`None`: only the running engine is known).
+    pub engines: Option<PathBuf>,
+    /// Start another engine for a project made with its version (else that
+    /// is only noted: tests).
+    pub hand_off: bool,
 }
 
 impl LaunchOptions {
@@ -87,6 +93,8 @@ impl LaunchOptions {
             build: true,
             toolchain: None,
             splash: true,
+            engines: wish_control::crash::config_folder(),
+            hand_off: true,
         }
     }
 }
@@ -115,6 +123,9 @@ struct Welcome {
     frames: u64,
     language: &'static str,
     recent: Vec<String>,
+    /// The engine version each recent project was made with, when it is
+    /// not this engine's.
+    recent_made: Vec<Option<String>>,
     assistant: Assistant,
     /// The template chosen (`None`: an empty project).
     template: Option<usize>,
@@ -152,6 +163,13 @@ struct Welcome {
     index: crate::packages_window::IndexForm,
     /// A theme was chosen: the interface takes it before its next layout.
     restyle: bool,
+    /// The settings folder of the engines list.
+    engines_config: Option<PathBuf>,
+    /// The engines on this computer (Engine versions tab).
+    engines: Vec<wish_control::engines::Engine>,
+    engine_warnings: Vec<String>,
+    /// The folder typed on the Engine versions tab.
+    engine_path: String,
 }
 
 impl Welcome {
@@ -171,6 +189,17 @@ impl Welcome {
         self.engine_packages
             .sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
         self.themes = crate::themes::available(None);
+        self.read_engines();
+    }
+
+    /// Reads the engines on this computer for the Hub.
+    fn read_engines(&mut self) {
+        let (engines, warnings) = wish_control::engines::engines(self.engines_config.as_deref());
+        self.engines = engines;
+        self.engine_warnings = warnings
+            .iter()
+            .map(|w| format!("{} {}", w.message, w.hint))
+            .collect();
     }
 }
 
@@ -190,6 +219,8 @@ pub struct Launcher {
     options: LaunchOptions,
     welcome: Option<Box<Welcome>>,
     app: Option<Box<EditorApp>>,
+    /// The engine a project was handed to (this window then closes).
+    handed_off: Option<wish_control::engines::Engine>,
 }
 
 impl Launcher {
@@ -208,9 +239,18 @@ impl Launcher {
             .and_then(crate::i18n::find)
             .or_else(crate::i18n::from_environment)
             .map_or("en", |language| language.code);
-        let recent = crate::prefs::recent(&prefs)
+        let recent: Vec<String> = crate::prefs::recent(&prefs)
             .into_iter()
             .filter(|root| Path::new(root).join(wish_control::PROJECT_FILE).is_file())
+            .collect();
+        let here = wish_control::packages::Version::engine();
+        let recent_made = recent
+            .iter()
+            .map(|root| {
+                wish_control::engines::project_version(Path::new(root))
+                    .filter(|made| *made != here)
+                    .map(|made| made.to_string())
+            })
             .collect();
         let assistant = match (
             prefs.get("assistant").and_then(Value::as_str),
@@ -240,6 +280,7 @@ impl Launcher {
             frames: 0,
             language,
             recent,
+            recent_made,
             assistant,
             template,
             folder: options.projects_folder.display().to_string(),
@@ -271,11 +312,16 @@ impl Launcher {
             index: crate::packages_window::IndexForm::from_prefs(&prefs),
             restyle: false,
             splash: options.splash.then_some(0.0),
+            engines_config: options.engines.clone(),
+            engines: Vec::new(),
+            engine_warnings: Vec::new(),
+            engine_path: String::new(),
         };
         Self {
             options,
             welcome: Some(Box::new(welcome)),
             app: None,
+            handed_off: None,
         }
     }
 
@@ -339,6 +385,57 @@ impl Launcher {
         Some(Path::new(welcome.folder.trim()).join(slug(&welcome.name)))
     }
 
+    /// The engine a project was handed to: it opens the project in its own
+    /// window, and this one closes.
+    pub fn handed_off(&self) -> Option<&wish_control::engines::Engine> {
+        self.handed_off.as_ref()
+    }
+
+    /// Hands the project in `root` to the engine version it was made with
+    /// when that is another engine of this computer. `None`: this engine
+    /// opens it; `Some(Err)`: that engine could not be started (this one
+    /// opens it, saying so).
+    fn hand_off(&mut self, root: &Path) -> Option<Result<(), String>> {
+        let choice = wish_control::engines::choose(root, self.options.engines.as_deref());
+        let engine = choice.switch()?.clone();
+        if self.options.hand_off {
+            let mut command = std::process::Command::new(engine.wen());
+            command.arg("edit").arg("--root").arg(root);
+            if self.options.software {
+                command.arg("--software");
+            }
+            if let Some(welcome) = &self.welcome {
+                command.args(["--lang", welcome.language]);
+            }
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                /// The editor has its own window: no console behind it.
+                const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+                command.creation_flags(CREATE_NO_WINDOW);
+            }
+            if let Err(error) = command
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+            {
+                return Some(Err(tf(
+                    "Wish Engine {version} (the version this project was made with) could not be started: {error}. This engine opened it.",
+                    &[("version", &engine.version), ("error", &error)],
+                )));
+            }
+        }
+        if let Some(welcome) = &mut self.welcome {
+            welcome.status = tf(
+                "opening {root} with Wish Engine {version}...",
+                &[("root", &root.display()), ("version", &engine.version)],
+            );
+        }
+        self.handed_off = Some(engine);
+        Some(Ok(()))
+    }
+
     /// Opens the project in `root` in the editor.
     fn open(&mut self, root: &Path, after_create: bool) -> Result<(), String> {
         let mut workspace = Workspace::open(WorkspaceOptions {
@@ -370,7 +467,11 @@ impl Launcher {
                 Assistant::Nobody => t("Project created. Press Play to try it.").to_owned(),
             }
         } else {
-            tf("opened {root}", &[("root", &root.display())])
+            let choice = wish_control::engines::choose(root, self.options.engines.as_deref());
+            match engine_note(&choice) {
+                Some(note) => note,
+                None => tf("opened {root}", &[("root", &root.display())]),
+            }
         };
         if after_create && self.options.build && root.join("scripts/src/lib.rs").is_file() {
             let built = app.call("script_build", &json!({}));
@@ -478,7 +579,16 @@ impl Launcher {
             self.save_choices();
             let done = match pending {
                 Pending::Create => self.create(),
-                Pending::Open(root) => self.open(&root, false),
+                Pending::Open(root) => match self.hand_off(&root) {
+                    // Handed to another engine: the window closes.
+                    Some(Ok(())) => return true,
+                    Some(Err(problem)) => self.open(&root, false).map(|()| {
+                        if let Some(app) = &mut self.app {
+                            app.set_status(problem);
+                        }
+                    }),
+                    None => self.open(&root, false),
+                },
             };
             match done {
                 Ok(()) => {
@@ -701,6 +811,7 @@ fn layout(
     }
     if welcome.tab != crate::hub::Tab::Projects {
         let mut path = std::mem::take(&mut welcome.package_path);
+        let mut engine_path = std::mem::take(&mut welcome.engine_path);
         let config_folder = welcome.folder.clone();
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(crate::style::pal().panel_backdrop()))
@@ -725,6 +836,8 @@ fn layout(
                                     templates,
                                     projects_folder: &config_folder,
                                     index: &welcome.index,
+                                    engines: &welcome.engines,
+                                    engine_warnings: &welcome.engine_warnings,
                                 };
                                 match welcome.tab {
                                     crate::hub::Tab::Packages => {
@@ -736,6 +849,12 @@ fn layout(
                                     crate::hub::Tab::Ai => {
                                         crate::hub::ai(ui, &view, &mut asked.hub)
                                     }
+                                    crate::hub::Tab::Engines => crate::hub::engines(
+                                        ui,
+                                        &view,
+                                        &mut engine_path,
+                                        &mut asked.hub,
+                                    ),
                                     crate::hub::Tab::Learn => {
                                         crate::hub::learn(ui, &view, &mut asked.hub)
                                     }
@@ -746,6 +865,7 @@ fn layout(
                     });
             });
         welcome.package_path = path;
+        welcome.engine_path = engine_path;
         return asked;
     }
     egui::CentralPanel::default()
@@ -979,7 +1099,71 @@ fn hub_act(
         welcome.tab = crate::hub::Tab::Projects;
         acted = true;
     }
+    if hub.add_engine.is_some() || hub.remove_engine.is_some() {
+        welcome.status = engines_act(welcome, hub.add_engine, hub.remove_engine);
+        welcome.read_engines();
+        acted = true;
+    }
     acted
+}
+
+/// A line for the person when a project opens with an engine that does
+/// not fit it (in the interface's language); `None` when it fits.
+pub fn engine_note(choice: &wish_control::engines::Choice) -> Option<String> {
+    let project = choice.project?;
+    if choice.picked.is_some() {
+        return None;
+    }
+    let here = wish_control::packages::Version::engine();
+    Some(if project > here {
+        tf(
+            "This project was made with Wish Engine {project}, newer than this one ({here}): install {project} or newer and open it there.",
+            &[("project", &project), ("here", &here)],
+        )
+    } else {
+        tf(
+            "This project was made with Wish Engine {project}; no engine compatible with it is installed, so {here} opens it. Its files may change.",
+            &[("project", &project), ("here", &here)],
+        )
+    })
+}
+
+/// Adds or removes an engine (the Engine versions tab); the line to show.
+fn engines_act(welcome: &mut Welcome, add: Option<String>, remove: Option<PathBuf>) -> String {
+    let Some(config) = welcome.engines_config.clone() else {
+        return t("There is no settings folder to keep the list of engines in.").to_owned();
+    };
+    let done = if let Some(folder) = add {
+        let folder = PathBuf::from(folder.trim());
+        if folder.is_absolute() {
+            wish_control::engines::add(&config, &folder, false).map(|(engine, new)| {
+                welcome.engine_path.clear();
+                if new {
+                    tf(
+                        "Wish Engine {version} added",
+                        &[("version", &engine.version)],
+                    )
+                } else {
+                    tf(
+                        "Wish Engine {version} was already here",
+                        &[("version", &engine.version)],
+                    )
+                }
+            })
+        } else {
+            Ok(t("Write the engine folder's full path.").to_owned())
+        }
+    } else if let Some(folder) = remove {
+        wish_control::engines::remove(&config, &folder, false).map(|removed| {
+            tf(
+                "Wish Engine {version} removed",
+                &[("version", &removed.engine.version)],
+            )
+        })
+    } else {
+        return String::new();
+    };
+    done.unwrap_or_else(|problem| format!("{} {}", problem.message, problem.hint))
 }
 
 /// How long the opening animation lasts: the mark's animation, then a
@@ -1431,7 +1615,8 @@ fn open_game(ui: &mut Ui, welcome: &mut Welcome, asked: &mut Asked) {
         } else {
             ui.label(RichText::new(t("Recent projects")).color(crate::style::pal().weak));
             ui.add_space(2.0);
-            for root in &welcome.recent {
+            for (number, root) in welcome.recent.iter().enumerate() {
+                let made = welcome.recent_made.get(number).cloned().flatten();
                 let name = Path::new(root)
                     .file_name()
                     .map_or_else(|| root.clone(), |name| name.to_string_lossy().into_owned());
@@ -1458,8 +1643,16 @@ fn open_game(ui: &mut Ui, welcome: &mut Welcome, asked: &mut Asked) {
                         egui::FontId::proportional(14.0),
                         crate::style::pal().text,
                     );
+                    let line = match &made {
+                        Some(version) => format!(
+                            "{}  ·  {}",
+                            tf("made with Wish Engine {version}", &[("version", version)]),
+                            root
+                        ),
+                        None => root.clone(),
+                    };
                     let path = painter.layout_no_wrap(
-                        root.clone(),
+                        line,
                         egui::FontId::proportional(11.0),
                         crate::style::pal().weak,
                     );
@@ -1734,7 +1927,9 @@ impl Shell for Launcher {
     }
 
     fn wants_exit(&self) -> bool {
-        self.app.as_ref().is_some_and(|app| app.wants_exit())
+        // A project handed to another engine opens in its window.
+        (self.handed_off.is_some() && self.options.hand_off)
+            || self.app.as_ref().is_some_and(|app| app.wants_exit())
     }
 
     fn take_clipboard(&mut self) -> Option<String> {

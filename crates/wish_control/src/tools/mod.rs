@@ -7,6 +7,7 @@ mod activity;
 mod asset;
 mod checkpoint;
 mod design;
+mod engines;
 mod export;
 mod packages;
 mod permissions;
@@ -23,6 +24,7 @@ mod view;
 pub use design::{
     BRIEF_FIELDS, CardField, DESIGN_FILE, card_fields, read_design, summary as design_summary,
 };
+pub use engines::act as engines_act;
 pub(crate) use sim::parse_input;
 pub use view::{IdPicture, Picture, PictureSource};
 
@@ -69,4 +71,5 @@ pub(crate) const CATALOG: &[Tool] = &[
     export::PROJECT_EXPORT,
     design::GAME_DESIGN,
     packages::PACKAGES,
+    engines::ENGINES,
 ];

@@ -116,7 +116,7 @@ pub(crate) fn changes_project(tool: &str, args: &Value) -> bool {
         "test_run" => args["update_golden"] == true,
         "packages" => matches!(action, "install" | "remove" | "lock" | "add" | "update"),
         // Refused outright for agents (a person decides), never held.
-        "permissions" | "proposals" => false,
+        "permissions" | "proposals" | "engines" => false,
         _ => false,
     }
 }

@@ -1,7 +1,7 @@
 //! The Hub (M10b): the welcome screen's tabs. Projects is the welcome page
 //! itself; the others are the person's packages, the look (themes and
-//! languages), the AI assistant's settings, things to learn and the engine's
-//! own settings. What a tab changes is the person's (their preferences and
+//! languages), the AI assistant's settings, the engine versions side by
+//! side, things to learn and the engine's own settings. What a tab changes is the person's (their preferences and
 //! their packages), never a project's.
 
 use egui::{CornerRadius, RichText, Stroke, Ui};
@@ -18,16 +18,18 @@ pub(crate) enum Tab {
     Packages,
     Look,
     Ai,
+    Engines,
     Learn,
     Settings,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 6] = [
+    pub const ALL: [Tab; 7] = [
         Tab::Projects,
         Tab::Packages,
         Tab::Look,
         Tab::Ai,
+        Tab::Engines,
         Tab::Learn,
         Tab::Settings,
     ];
@@ -38,6 +40,7 @@ impl Tab {
             Tab::Packages => t("Packages"),
             Tab::Look => t("Look"),
             Tab::Ai => t("AI"),
+            Tab::Engines => t("Engine versions"),
             Tab::Learn => t("Learn"),
             Tab::Settings => t("Settings"),
         }
@@ -50,6 +53,7 @@ impl Tab {
             Tab::Packages => Icon::Prefab,
             Tab::Look => Icon::Image,
             Tab::Ai => Icon::Wish,
+            Tab::Engines => Icon::Cube,
             Tab::Learn => Icon::Text,
             Tab::Settings => Icon::Target,
         }
@@ -74,6 +78,10 @@ pub(crate) struct HubAsked {
     pub template: Option<String>,
     /// What the package index section asked for.
     pub index: Option<crate::packages_window::IndexAsk>,
+    /// Add the engine in this folder.
+    pub add_engine: Option<String>,
+    /// Remove (forget, or move to the trash) the engine in this folder.
+    pub remove_engine: Option<std::path::PathBuf>,
 }
 
 /// What the Hub pages show.
@@ -90,6 +98,9 @@ pub(crate) struct HubView<'a> {
     pub projects_folder: &'a str,
     /// The package index form.
     pub index: &'a crate::packages_window::IndexForm,
+    /// The engines on this computer, and what is wrong with the list.
+    pub engines: &'a [wish_control::engines::Engine],
+    pub engine_warnings: &'a [String],
 }
 
 /// The tabs, down the left side.
@@ -183,6 +194,65 @@ pub(crate) fn packages(ui: &mut Ui, view: &HubView, path: &mut String, asked: &m
                 ui.label(RichText::new(package["name"].as_str().unwrap_or("?")).strong());
                 ui.weak(package["description"].as_str().unwrap_or(""));
             });
+        }
+    });
+}
+
+/// The engine versions on this computer, side by side.
+pub(crate) fn engines(ui: &mut Ui, view: &HubView, path: &mut String, asked: &mut HubAsked) {
+    use wish_control::engines::Source;
+    title(
+        ui,
+        t("Engine versions"),
+        t(
+            "Engine versions live side by side. A project opens with the version it was made with; if that one is not here, with the newest compatible one.",
+        ),
+    );
+    card(ui, |ui| {
+        crate::style::panel_title(ui, t("On this computer"));
+        for warning in view.engine_warnings {
+            ui.add(egui::Label::new(RichText::new(warning).color(pal().amber)).wrap());
+        }
+        for engine in view.engines {
+            ui.horizontal(|ui| {
+                if engine.source != Source::Running
+                    && ui
+                        .small_button(t("Remove"))
+                        .on_hover_text(t(
+                            "An added engine is only forgotten (its files stay); an installed one goes to the trash",
+                        ))
+                        .clicked()
+                {
+                    asked.remove_engine = Some(engine.folder.clone());
+                }
+                ui.label(
+                    RichText::new(tf(
+                        "Wish Engine {version}",
+                        &[("version", &engine.version)],
+                    ))
+                    .strong(),
+                );
+                let source = match engine.source {
+                    Source::Running => t("this one"),
+                    Source::Installed => t("installed"),
+                    Source::Added => t("added"),
+                };
+                ui.weak(format!("{source} · {}", engine.folder.display()));
+            });
+        }
+        ui.add_space(8.0);
+        ui.add(
+            egui::TextEdit::singleline(path)
+                .desired_width(f32::INFINITY)
+                .hint_text(t("An engine's folder (with wen and wish-engine.json)")),
+        );
+        let given = path.trim().to_owned();
+        if ui
+            .add_enabled(!given.is_empty(), egui::Button::new(t("Add an engine")))
+            .on_hover_text(t("It stays where it is; nothing is copied"))
+            .clicked()
+        {
+            asked.add_engine = Some(given);
         }
     });
 }

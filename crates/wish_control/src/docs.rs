@@ -109,6 +109,34 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "An edit had no operations. Send at least one operation such as spawn, set or despawn.",
     ),
     (
+        "engine_folder_invalid",
+        "A folder given as an engine is not one: an engine folder has wen and wish-engine.json (a packaged engine; `wen package` writes both). In a listing, an added folder that is no longer an engine is a warning; remove it to forget it.",
+    ),
+    (
+        "engine_not_found",
+        "No engine of this computer is in the folder given. `engines` with action list (or the Hub's Engine versions tab) shows their folders.",
+    ),
+    (
+        "engine_registry_invalid",
+        "The person's list of added engines (engines.json in the settings folder) cannot be read, so it is read as empty. Adding an engine again writes it anew.",
+    ),
+    (
+        "engine_remove_failed",
+        "An installed engine could not be moved to the trash, usually because it is running or a file of it is open. Close it and try again.",
+    ),
+    (
+        "engine_running",
+        "The engine that is running cannot remove itself. Remove it from another engine, or delete its folder after closing it.",
+    ),
+    (
+        "engine_start_failed",
+        "The engine version a project was made with is installed, but could not be started. Check that its folder is complete (wen, sdk, toolchain), or open the project with this engine (`wen edit --root <project>`).",
+    ),
+    (
+        "engine_too_many",
+        "A person can keep at most 64 engines side by side. Remove the ones no longer used.",
+    ),
+    (
         "entity_exists",
         "An entity with that id already exists in the scene. Ids are unique: pick another id, or change the existing entity with set.",
     ),

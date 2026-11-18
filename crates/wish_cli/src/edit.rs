@@ -27,6 +27,19 @@ pub fn edit(args: &EditArgs, as_json: bool) -> Result<String> {
         return welcome(args, as_json);
     }
     let root = Path::new(args.root.as_deref().unwrap_or(".")).to_path_buf();
+    let choice =
+        wish_control::engines::choose(&root, wish_control::crash::config_folder().as_deref());
+    let mut handoff_problem = None;
+    if args.pick_engine
+        && args.headless_frame.is_none()
+        && let Some(engine) = choice.switch()
+    {
+        match hand_off(engine, &root, args) {
+            Ok(result) => return result,
+            // Opened here instead, saying why.
+            Err(problem) => handoff_problem = Some(problem),
+        }
+    }
     let mut workspace = Workspace::open(WorkspaceOptions {
         root,
         example: None,
@@ -45,7 +58,10 @@ pub fn edit(args: &EditArgs, as_json: bool) -> Result<String> {
     {
         return Err(unknown_language(code));
     }
-    if let Some(note) = notice(args) {
+    if let Some(note) = notice(args)
+        .or(handoff_problem)
+        .or_else(|| wish_editor::welcome::engine_note(&choice))
+    {
         app.set_status(note);
     }
     if let Some(script_path) = &args.headless_frame {
@@ -72,6 +88,47 @@ pub fn edit(args: &EditArgs, as_json: bool) -> Result<String> {
         json!({ "ok": true, "frames": report.frames }).to_string()
     } else {
         format!("Closed after {} frame(s).", report.frames)
+    })
+}
+
+/// Opens the project with another engine of this computer (the version it
+/// was made with) and waits for it: what it says on failing goes where this
+/// program's own words go (the launcher shows them). `Err` is a line for
+/// the person when it could not be started (the project then opens here).
+fn hand_off(
+    engine: &wish_control::engines::Engine,
+    root: &Path,
+    args: &EditArgs,
+) -> std::result::Result<Result<String>, String> {
+    let mut command = std::process::Command::new(engine.wen());
+    command.arg("edit").arg("--root").arg(root);
+    if args.software {
+        command.arg("--software");
+    }
+    if let Some(code) = &args.lang {
+        command.args(["--lang", code]);
+    }
+    let status = command.status().map_err(|error| {
+        format!(
+            "Wish Engine {} (the version this project was made with) could not be started: {error}. This engine opened it.",
+            engine.version
+        )
+    })?;
+    Ok(if status.success() {
+        Ok(format!(
+            "Opened with Wish Engine {} ({}).",
+            engine.version,
+            engine.folder.display()
+        ))
+    } else {
+        Err(Diagnostic::error(
+            "engine_start_failed",
+            format!(
+                "Wish Engine {}, which this project was made with, ended with an error ({status}).",
+                engine.version
+            ),
+            "Check that its folder is complete (wen, sdk, toolchain), or open the project with this engine: wen edit --root <project>.",
+        ))
     })
 }
 

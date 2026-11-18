@@ -164,6 +164,7 @@ fn examples() -> Vec<(&'static str, Value)> {
             json!({ "action": "remove", "id": "com.example.none" }),
         ),
         ("packages", json!({ "action": "lock", "dry_run": true })),
+        ("engines", json!({ "action": "add", "path": "nowhere" })),
         ("permissions", json!({})),
         ("permissions", json!({ "action": "set", "mode": "suggest" })),
         ("proposals", json!({})),

@@ -545,6 +545,61 @@ pub fn export_text(answer: &Value) -> String {
     )
 }
 
+/// Text for an `engines` answer (`wen engines`).
+pub fn engines_text(answer: &Value) -> String {
+    let mut text = String::new();
+    let dry = answer["dry_run"] == true;
+    let row = |engine: &Value| {
+        format!(
+            "{}  {}  ({})",
+            engine["version"].as_str().unwrap_or("?"),
+            engine["folder"].as_str().unwrap_or("?"),
+            engine["source"].as_str().unwrap_or("?"),
+        )
+    };
+    for entry in answer["diagnostics"].as_array().into_iter().flatten() {
+        if let Ok(problem) = serde_json::from_value::<Diagnostic>(entry.clone()) {
+            text.push_str(&format!("{problem}\n"));
+        }
+    }
+    if let Some(all) = answer["engines"].as_array() {
+        for engine in all {
+            text.push_str(&format!("  {}\n", row(engine)));
+        }
+    }
+    let choice = if answer["opens_with"].is_object() {
+        Some(answer)
+    } else {
+        answer.get("project").filter(|p| p.is_object())
+    };
+    if let Some(choice) = choice {
+        text.push_str(&format!(
+            "The project was made with {}; it opens with {} ({}).\n",
+            choice["project_engine"]
+                .as_str()
+                .unwrap_or("an unknown version"),
+            row(&choice["opens_with"]),
+            choice["fit"].as_str().unwrap_or("?"),
+        ));
+    }
+    if answer["engine"].is_object() {
+        let verb = if answer.get("trash").is_some() {
+            if dry { "Would remove" } else { "Removed" }
+        } else if answer["known"] == true {
+            "Already known:"
+        } else if dry {
+            "Would add"
+        } else {
+            "Added"
+        };
+        text.push_str(&format!("{verb} {}\n", row(&answer["engine"])));
+        if let Some(trash) = answer["trash"].as_str() {
+            text.push_str(&format!("  (moved to {trash})\n"));
+        }
+    }
+    text
+}
+
 /// Text for a `packages` answer (`wen pkg`).
 pub fn pkg_text(answer: &Value) -> String {
     let mut text = String::new();
@@ -908,6 +963,7 @@ pub fn package(out: Option<&str>, as_json: bool) -> wish_core::Result<String> {
             "wish-engine.exe",
             "wish-engine",
             "wish-engine.ico",
+            wish_control::engines::ENGINE_FILE,
             "packages",
             "sdk",
             "toolchain",
@@ -956,6 +1012,12 @@ pub fn package(out: Option<&str>, as_json: bool) -> wish_core::Result<String> {
     }
     std::fs::write(out.join("wish-engine.ico"), icon_file()?)
         .map_err(|e| failed("write the icon", e))?;
+    // What makes the folder an engine the Hub can list beside others.
+    std::fs::write(
+        out.join(wish_control::engines::ENGINE_FILE),
+        wish_control::engines::engine_file_text(wish_control::packages::Version::engine())?,
+    )
+    .map_err(|e| failed("write the engine file", e))?;
     // The engine's own packages (themes, workspaces...): `packages/` of the
     // repository, each copied as a package (hidden files left out).
     let engine_packages = std::path::Path::new(&manifest)

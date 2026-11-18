@@ -231,6 +231,8 @@ The engine is complete without any AI. An assistant is a faster way to do the sa
 - **The package index:** under *From the package index*, name the index folder (a folder of packages; it is remembered), type a few words and press *Search*. Each package shows its newest version that works with this engine: *Add to the project*, *Add for me*, or *Update* when a newer compatible version is there. The Hub's *Packages* tab has the same search for your own packages.
 - On the command line: `wen pkg search dark theme --index <folder>`, `wen pkg add <id>`, `wen pkg update`, `wen pkg remove <id>`, `wen pkg lock` (`--user` for your own packages; `WISH_PACKAGE_INDEX` saves typing `--index`).
 
+**Engine versions:** several versions of the engine can live side by side. The Hub's *Engine versions* tab lists them; *Add an engine* remembers another engine's folder where it is (the folder with `wen` and `wish-engine.json`; nothing is copied), *Remove* forgets one. A project opens with the version it was made with (its `wish.json` says which); if that one is not on the computer, with the newest compatible one; otherwise this engine opens it and says so. The recent projects list shows when a project was made with another version. On the command line: `wen engines`, `wen engines add <folder>`, `wen engines pick <project>`.
+
 **Themes:** *Project menu → Theme* switches the editor's look at once: Atelier (the default), Midnight, High contrast, and any theme a package brings.
 
 **Workspaces:** in the AI mode, the *Workspace* box above the game card picks what the card is for. *Story game* asks for the setting, characters, tone, choices and endings, and brings its own ready requests; *Default* is the engine's card for any game. Nothing you wrote is lost when you switch.

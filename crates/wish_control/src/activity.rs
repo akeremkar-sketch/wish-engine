@@ -178,6 +178,7 @@ pub(crate) fn worth_noting(tool: &str, args: &Value, mutates: bool, actor: &Acto
     let action = args["action"].as_str().unwrap_or("");
     let looks = action == "list"
         || (tool == "packages" && matches!(action, "check" | "search"))
+        || (tool == "engines" && action == "pick")
         || action == "get"
         || (action.is_empty()
             && matches!(
@@ -188,6 +189,7 @@ pub(crate) fn worth_noting(tool: &str, args: &Value, mutates: bool, actor: &Acto
                     | "permissions"
                     | "game_design"
                     | "packages"
+                    | "engines"
             ));
     tool != "activity_get" && ((mutates && !looks) || !matches!(actor, Actor::Human))
 }

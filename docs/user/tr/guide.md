@@ -231,6 +231,8 @@ Motor hiçbir yapay zekâ olmadan eksiksizdir. Yardımcı, aynı işleri yapman�
 - **Paket dizini:** *Paket dizininden* bölümünde dizin klasörünü yazın (paketlerden oluşan bir klasör; hatırlanır), birkaç sözcük yazıp *Ara*'ya basın. Her paket, bu motorla çalışan en yeni sürümünü gösterir: *Projeye ekle*, *Benim için ekle* ya da daha yeni uyumlu bir sürüm varsa *Güncelle*. Hub'ın *Paketler* sekmesinde kendi paketleriniz için aynı arama vardır.
 - Komut satırında: `wen pkg search dark theme --index <klasör>`, `wen pkg add <id>`, `wen pkg update`, `wen pkg remove <id>`, `wen pkg lock` (kendi paketleriniz için `--user`; `WISH_PACKAGE_INDEX` her seferinde `--index` yazmaktan kurtarır).
 
+**Motor sürümleri:** motorun birden çok sürümü yan yana durabilir. Hub'ın *Motor sürümleri* sekmesi onları listeler; *Motor ekle* başka bir motorun klasörünü olduğu yerde hatırlar (`wen` ve `wish-engine.json` içeren klasör; hiçbir şey kopyalanmaz), *Kaldır* birini unutur. Bir proje, yapıldığı sürümle açılır (`wish.json` hangisi olduğunu söyler); o sürüm bilgisayarda yoksa en yeni uyumlu sürümle; o da yoksa bu motor açar ve bunu söyler. Son projeler listesi, başka bir sürümle yapılmış projeyi gösterir. Komut satırında: `wen engines`, `wen engines add <klasör>`, `wen engines pick <proje>`.
+
 **Temalar:** *Proje menüsü → Tema* editörün görünümünü hemen değiştirir: Atelier (varsayılan), Midnight, High contrast ve paketlerin getirdiği her tema.
 
 **Çalışma alanları:** yapay zekâ modunda oyun kartının üstündeki *Çalışma alanı* kutusu kartın ne için olduğunu seçer. *Hikâye oyunu* mekânı, karakterleri, tonu, seçimleri ve sonları sorar ve kendi hazır isteklerini getirir; *Varsayılan* motorun her oyun için kartıdır. Geçiş yaptığınızda yazdığınız hiçbir şey kaybolmaz.

@@ -63,6 +63,8 @@ USAGE:
     wen pkg [list | search [words...] | add <id> | remove <id> | update [id] | lock | check <folder>
             | install <folder>] [--index <folder>] [--version <requirement>] [--user] [--replace]
             [--dry-run] [--root <folder>] [--json]
+    wen engines [list | pick [project] | add <folder> | remove <folder>] [--root <folder>]
+            [--dry-run] [--json]
     wen sdk [--out <folder>] [--json]
     wen package [--out <folder>] [--json]
     wen mcp [--root <folder>] [--software] [--http <port or address>]
@@ -135,6 +137,12 @@ COMMANDS:
                one to the trash; lock writes wish.lock again; check and install take a package
                folder. --user works on your own packages instead of the project's. Same as the
                packages tool.
+    engines    Engine versions side by side. list shows the engines on this computer (this one,
+               the installed ones and folders you added) and which one opens the project here;
+               pick says it for another project; add remembers an engine folder where it is (a
+               folder with wen and wish-engine.json); remove forgets it (an installed one goes to
+               the trash). A project opens with the version it was made with, else the newest
+               compatible one. Same as the engines tool.
     sdk        Engine development: build the game SDK pack from the engine's sources (needs cargo).
                Packaged engines ship it; game builds look for it next to wen or in WISH_SDK.
     package    Engine development: a folder with wen, the game SDK and the packed compiler (no cargo,
@@ -335,6 +343,43 @@ fn execute_any(args: Args) -> Result<Outcome> {
                 tool_cmds::pkg_text,
             ))
         }
+        Command::Engines {
+            action,
+            folder,
+            root,
+            dry_run,
+        } => {
+            // Folders on the command line are relative to where wen runs.
+            let here = |path: &str| {
+                std::env::current_dir()
+                    .map(|dir| dir.join(path))
+                    .unwrap_or_else(|_| std::path::PathBuf::from(path))
+            };
+            let project = root
+                .as_deref()
+                .map(here)
+                .or_else(|| std::env::current_dir().ok())
+                .filter(|dir| dir.join(wish_control::PROJECT_FILE).is_file());
+            let folder = folder.as_deref().map(here);
+            let value = wish_control::envelope(wish_control::engines_act(
+                action,
+                folder.as_deref(),
+                project.as_deref(),
+                *dry_run,
+            ));
+            let success = value["ok"] == true;
+            let text = if args.json {
+                value.to_string()
+            } else if success {
+                tool_cmds::engines_text(&value)
+            } else {
+                match serde_json::from_value::<Diagnostic>(value["error"].clone()) {
+                    Ok(problem) => problem.to_string(),
+                    Err(_) => value.to_string(),
+                }
+            };
+            Ok(project_cmds::Outcome { text, success })
+        }
         Command::Export {
             root,
             name,
@@ -457,6 +502,7 @@ fn execute(args: Args) -> Result<String> {
         | Command::Build { .. }
         | Command::Export { .. }
         | Command::Pkg { .. }
+        | Command::Engines { .. }
         | Command::Replay { .. }
         | Command::Test { .. }
         | Command::Sdk { .. }

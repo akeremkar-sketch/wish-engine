@@ -800,3 +800,67 @@ fn pkg_searches_adds_updates_and_removes_from_a_folder_index() {
     assert!(!ok, "{wrong}");
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// M10b: `wen engines` adds, lists, picks and removes engine versions; the
+/// list is the person's (WISH_CONFIG_DIR here).
+#[test]
+fn wen_engines_adds_lists_picks_and_removes() {
+    let base = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("wen-engines");
+    let _ = std::fs::remove_dir_all(&base);
+    let engine = base.join("old-engine");
+    std::fs::create_dir_all(&engine).unwrap();
+    std::fs::write(
+        engine.join("wish-engine.json"),
+        r#"{ "format": 1, "version": "0.0.5" }"#,
+    )
+    .unwrap();
+    std::fs::write(engine.join(wish_control::engines::WEN), "").unwrap();
+    let game = base.join("game");
+    std::fs::create_dir_all(&game).unwrap();
+    std::fs::write(
+        game.join("wish.json"),
+        r#"{ "engine": "0.0.5", "format": 1, "name": "Old", "scene": "scenes/main.scene.json" }"#,
+    )
+    .unwrap();
+    let wen = |args: &[&str]| -> Value {
+        let output = Command::new(env!("CARGO_BIN_EXE_wen"))
+            .args(args)
+            .arg("--json")
+            .env("WISH_CONFIG_DIR", base.join("config"))
+            .current_dir(&base)
+            .output()
+            .unwrap();
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|_| {
+            panic!(
+                "{} {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            )
+        })
+    };
+    // Folders are relative to where wen runs.
+    let added = wen(&["engines", "add", "old-engine"]);
+    assert_eq!(added["ok"], true, "{added}");
+    assert_eq!(added["engine"]["version"], "0.0.5");
+    assert_eq!(added["added"], true);
+    let listed = wen(&["engines"]);
+    let versions: Vec<&str> = listed["engines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|e| e["version"].as_str())
+        .collect();
+    assert!(versions.contains(&"0.0.5"), "{listed}");
+    let picked = wen(&["engines", "pick", "game"]);
+    assert_eq!(picked["fit"], "exact", "{picked}");
+    assert_eq!(picked["switch"], true);
+    assert_eq!(picked["opens_with"]["version"], "0.0.5");
+    let removed = wen(&["engines", "remove", "old-engine", "--dry-run"]);
+    assert_eq!(removed["dry_run"], true, "{removed}");
+    let removed = wen(&["engines", "remove", "old-engine"]);
+    assert_eq!(removed["removed"], true, "{removed}");
+    assert!(engine.join("wish-engine.json").is_file(), "only forgotten");
+    let wrong = wen(&["engines", "add", "game"]);
+    assert_eq!(wrong["error"]["code"], "engine_folder_invalid", "{wrong}");
+    let _ = std::fs::remove_dir_all(&base);
+}

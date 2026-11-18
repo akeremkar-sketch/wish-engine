@@ -54,6 +54,8 @@ fn options(name: &str) -> (LaunchOptions, PathBuf) {
         build: true,
         toolchain: Some(toolchain().clone()),
         splash: false,
+        engines: Some(base.join("config")),
+        hand_off: false,
     };
     (options, base)
 }
@@ -187,6 +189,8 @@ fn launcher_options_like(prefs: &Path, base: &Path) -> LaunchOptions {
         build: true,
         toolchain: Some(toolchain().clone()),
         splash: false,
+        engines: Some(base.join("config")),
+        hand_off: false,
     }
 }
 
@@ -460,5 +464,109 @@ fn the_hub_searches_the_package_index() {
             .contains("does not exist")
             || w.value.as_deref().unwrap_or("").contains("does not exist")),
         "the problem is shown"
+    );
+}
+
+/// A folder that is an engine of version `version` (its `wen` is a stand-in:
+/// nothing is started in these tests).
+fn fake_engine(folder: &Path, version: &str) {
+    std::fs::create_dir_all(folder).unwrap();
+    std::fs::write(
+        folder.join("wish-engine.json"),
+        json!({ "format": 1, "version": version }).to_string(),
+    )
+    .unwrap();
+    std::fs::write(folder.join(wish_control::engines::WEN), "").unwrap();
+}
+
+#[test]
+fn engines_are_added_and_removed_in_the_hub_and_a_project_opens_with_its_own() {
+    let (options, base) = options("hub-engines");
+    let engine = base.join("engines/0.0.5");
+    fake_engine(&engine, "0.0.5");
+    // A recent project made with 0.0.5.
+    let old = base.join("projects/old-game");
+    std::fs::create_dir_all(&old).unwrap();
+    std::fs::write(
+        old.join("wish.json"),
+        r#"{ "engine": "0.0.5", "format": 1, "name": "Old", "scene": "scenes/main.scene.json" }"#,
+    )
+    .unwrap();
+    std::fs::write(
+        base.join("prefs/editor.json"),
+        json!({ "language": "en", "recent": [old.display().to_string()] }).to_string(),
+    )
+    .unwrap();
+    let mut launcher = Launcher::new(options);
+    play(&mut launcher, json!([{ "idle": 2 }]));
+    click(&mut launcher, "Engine versions");
+    let field = launcher
+        .widgets()
+        .iter()
+        .find(|w| w.role == "TextInput")
+        .map(|w| w.rect)
+        .expect("the folder field");
+    play(
+        &mut launcher,
+        json!([
+            { "events": [{ "click": [field.center().x, field.center().y] }] },
+            { "events": [{ "text": engine.display().to_string() }] },
+            { "idle": 1 }
+        ]),
+    );
+    click(&mut launcher, "Add an engine");
+    assert!(
+        launcher.status().contains("0.0.5 added"),
+        "{}",
+        launcher.status()
+    );
+    let has = |launcher: &Launcher, text: &str| {
+        launcher
+            .widgets()
+            .iter()
+            .any(|w| w.label.as_deref() == Some(text) || w.value.as_deref() == Some(text))
+    };
+    assert!(has(&launcher, "Wish Engine 0.0.5"), "listed");
+    let saved = std::fs::read_to_string(base.join("config/engines.json")).unwrap();
+    assert!(saved.contains("0.0.5"), "{saved}");
+    // The project made with 0.0.5 goes to that engine; this one does not
+    // open it.
+    click(&mut launcher, "Projects");
+    click(&mut launcher, "old-game");
+    assert_eq!(
+        launcher.handed_off().map(|e| e.version.to_string()),
+        Some("0.0.5".to_owned())
+    );
+    assert!(launcher.app().is_none());
+    assert!(
+        launcher.status().contains("Wish Engine 0.0.5"),
+        "{}",
+        launcher.status()
+    );
+    // Removed by hand: only forgotten, its files stay.
+    click(&mut launcher, "Engine versions");
+    click(&mut launcher, "Remove");
+    assert!(!has(&launcher, "Wish Engine 0.0.5"), "gone from the list");
+    assert!(engine.join("wish-engine.json").is_file(), "its files stay");
+    // A folder that is not an engine is explained.
+    let field = launcher
+        .widgets()
+        .iter()
+        .find(|w| w.role == "TextInput")
+        .map(|w| w.rect)
+        .unwrap();
+    play(
+        &mut launcher,
+        json!([
+            { "events": [{ "click": [field.center().x, field.center().y] }] },
+            { "events": [{ "text": base.join("projects").display().to_string() }] },
+            { "idle": 1 }
+        ]),
+    );
+    click(&mut launcher, "Add an engine");
+    assert!(
+        launcher.status().contains("is not an engine folder"),
+        "{}",
+        launcher.status()
     );
 }

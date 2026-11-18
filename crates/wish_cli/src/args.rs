@@ -11,7 +11,7 @@ use wish_core::{Diagnostic, Result};
 pub const COMMANDS: &[&str] = &[
     "run", "bench", "schema", "mv", "check", "fmt", "migrate", "watch", "capture", "describe",
     "shaders", "view", "edit", "call", "do", "new", "build", "export", "play", "replay", "test",
-    "pkg", "sdk", "package", "mcp", "examples", "help", "version",
+    "pkg", "engines", "sdk", "package", "mcp", "examples", "help", "version",
 ];
 
 /// A parsed command line.
@@ -161,6 +161,17 @@ pub enum Command {
         /// Say what would happen without doing it.
         dry_run: bool,
     },
+    /// The engine versions on this computer (the `engines` tool).
+    Engines {
+        /// list, pick, add or remove.
+        action: String,
+        /// The engine's folder (add, remove) or a project's (pick).
+        folder: Option<String>,
+        /// The project folder (list: which engine opens it).
+        root: Option<String>,
+        /// Say what would happen without doing it.
+        dry_run: bool,
+    },
     /// Build a package for machines without developer tools (engine development).
     Package {
         /// Where to put it (default: `package` next to wen).
@@ -252,6 +263,9 @@ pub struct EditArgs {
     /// The interface's language (`tr`, `de`...); else the saved choice,
     /// `WISH_LANG` or the system's.
     pub lang: Option<String>,
+    /// Open the project with the engine version it was made with, if
+    /// another engine of this computer is that one (the launcher asks).
+    pub pick_engine: bool,
 }
 
 /// The options of `wen play`.
@@ -561,9 +575,11 @@ fn flags_of(command: &str) -> &'static [(&'static str, bool)] {
             ("--headless-frame", true),
             ("--out", true),
             ("--lang", true),
+            ("--pick-engine", false),
             ("--json", false),
         ],
         "sdk" => &[("--out", true), ("--json", false)],
+        "engines" => &[("--root", true), ("--dry-run", false), ("--json", false)],
         "pkg" => &[
             ("--root", true),
             ("--index", true),
@@ -653,7 +669,7 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
         index += 1;
         if matches!(
             command,
-            "mv" | "check" | "fmt" | "migrate" | "new" | "test" | "replay" | "pkg"
+            "mv" | "check" | "fmt" | "migrate" | "new" | "test" | "replay" | "pkg" | "engines"
         ) && !argument.starts_with('-')
         {
             positional.push(argument);
@@ -846,6 +862,7 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
             headless_frame: value_of("--headless-frame").map(str::to_owned),
             out: value_of("--out").map(str::to_owned),
             lang: value_of("--lang").map(str::to_owned),
+            pick_engine: values.iter().any(|(flag, _)| *flag == "--pick-engine"),
         }),
         "play" => Command::Play(PlayArgs {
             root: value_of("--root").map(str::to_owned),
@@ -917,6 +934,35 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
                 version: value_of("--version").map(str::to_owned),
                 user: values.iter().any(|(flag, _)| *flag == "--user"),
                 replace: values.iter().any(|(flag, _)| *flag == "--replace"),
+                dry_run: values.iter().any(|(flag, _)| *flag == "--dry-run"),
+            }
+        }
+        "engines" => {
+            const ACTIONS: &[&str] = &["list", "pick", "add", "remove"];
+            let action = positional.first().copied().unwrap_or("list");
+            if !ACTIONS.contains(&action) {
+                return Err(usage_error(
+                    format!("'{action}' is not a wen engines action."),
+                    unknown_name_hint(action, ACTIONS),
+                )
+                .with_candidates(ACTIONS.iter().copied()));
+            }
+            let rest: Vec<&str> = positional.iter().skip(1).copied().collect();
+            let most = if action == "list" { 0 } else { 1 };
+            if rest.len() > most || (matches!(action, "add" | "remove") && rest.is_empty()) {
+                return Err(usage_error(
+                    format!("'wen engines {action}' takes {}.", match action {
+                        "list" => "no more words",
+                        "pick" => "at most a project's folder",
+                        _ => "one engine folder",
+                    }),
+                    "Write it like: wen engines add C:/Wish/0.2.0, wen engines remove <folder>, wen engines pick <project>.".to_owned(),
+                ));
+            }
+            Command::Engines {
+                action: action.to_owned(),
+                folder: rest.first().map(|w| (*w).to_owned()),
+                root: value_of("--root").map(str::to_owned),
                 dry_run: values.iter().any(|(flag, _)| *flag == "--dry-run"),
             }
         }
@@ -1129,5 +1175,32 @@ mod tests {
 
         let valued_switch = parse(&args("run --json=yes")).unwrap_err();
         assert_eq!(valued_switch.message, "--json does not take a value.");
+    }
+
+    #[test]
+    fn parses_engines_actions() {
+        let Command::Engines { action, folder, .. } =
+            parse(&args("engines add C:/Wish/0.2.0 --dry-run"))
+                .unwrap()
+                .command
+        else {
+            panic!("engines");
+        };
+        assert_eq!(action, "add");
+        assert_eq!(folder.as_deref(), Some("C:/Wish/0.2.0"));
+        let Command::Engines { action, .. } = parse(&args("engines")).unwrap().command else {
+            panic!("engines");
+        };
+        assert_eq!(action, "list");
+        assert!(parse(&args("engines remove")).is_err());
+        assert!(parse(&args("engines list extra")).is_err());
+        assert!(parse(&args("engines adopt")).is_err());
+        let Command::Edit(edit) = parse(&args("edit --pick-engine --root game"))
+            .unwrap()
+            .command
+        else {
+            panic!("edit");
+        };
+        assert!(edit.pick_engine);
     }
 }
