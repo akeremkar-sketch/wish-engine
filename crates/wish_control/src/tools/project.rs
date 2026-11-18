@@ -220,7 +220,12 @@ fn schema_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<S
     let selected = all.iter().filter(|found| {
         let named = names.is_empty() || names.iter().any(|name| name == found.info.name());
         let matched = search.as_deref().is_none_or(|words| {
-            let mut haystack = format!("{} {}", found.info.name(), found.info.schema().doc);
+            let mut haystack = format!(
+                "{} {} {}",
+                found.info.name(),
+                found.info.schema().doc,
+                search_words(found.info.name())
+            );
             for (field, detail) in fields_of(&found.schema) {
                 haystack.push(' ');
                 haystack.push_str(&field);
@@ -438,4 +443,39 @@ fn docs_search(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<
     }
     out.insert("results".to_owned(), json!(hits));
     Ok(out)
+}
+
+/// Words people (and agents) use for a type that its name and docs do not
+/// say, so that a search for them finds it (M10b efficiency work: an agent
+/// searched "mesh" and found nothing).
+const SEARCH_WORDS: &[(&str, &str)] = &[
+    (
+        "Transform",
+        "position location place move moved rotate rotation orientation scale size resize",
+    ),
+    (
+        "Primitive",
+        "mesh shape geometry cube box sphere ball plane quad",
+    ),
+    ("Model", "mesh gltf glb 3d model asset import"),
+    ("Material", "color colour paint texture surface appearance"),
+    (
+        "RigidBody",
+        "physics gravity fall falling dynamic static fixed kinematic mass",
+    ),
+    ("Collider", "collision hitbox physics shape trigger sensor"),
+    ("PointLight", "lamp bulb light omni"),
+    ("SpotLight", "spotlight flashlight torch cone light"),
+    ("DirectionalLight", "sun sunlight light"),
+    ("Camera", "view viewpoint eye lens fov"),
+    ("Sprite", "2d image picture texture"),
+    ("AudioSource", "sound music sfx"),
+    ("ParticleEmitter", "particles fire smoke sparks effect vfx"),
+];
+
+fn search_words(name: &str) -> &'static str {
+    SEARCH_WORDS
+        .iter()
+        .find(|(type_name, _)| *type_name == name)
+        .map_or("", |(_, words)| words)
 }

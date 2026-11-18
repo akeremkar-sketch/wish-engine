@@ -1,0 +1,8 @@
+{"engine": "wish", "task": "place_cube", "passed": true, "why": "position", "turns": 5, "input_tokens": 137991, "output_tokens": 629, "cost_usd": 0.0682965, "tool_errors": 0, "tool_calls": 4}
+{"engine": "wish", "task": "paint_red", "passed": true, "why": "colour [1.0, 0.0, 0.0, 1.0]", "turns": 6, "input_tokens": 177127, "output_tokens": 635, "cost_usd": 0.0767238, "tool_errors": 1, "tool_calls": 5}
+{"engine": "wish", "task": "falling_box", "passed": true, "why": "box at y = 0.50 after 2.5 s", "turns": 11, "input_tokens": 366245, "output_tokens": 1163, "cost_usd": 0.1234572, "tool_errors": 0, "tool_calls": 10}
+{"engine": "wish", "task": "point_light", "passed": true, "why": "position", "turns": 7, "input_tokens": 214126, "output_tokens": 772, "cost_usd": 0.08313129999999999, "tool_errors": 1, "tool_calls": 6}
+{"engine": "wish", "task": "camera_view", "passed": true, "why": "target on screen", "turns": 6, "input_tokens": 142391, "output_tokens": 707, "cost_usd": 0.0762206, "tool_errors": 0, "tool_calls": 5}
+{"engine": "wish", "task": "reparent", "passed": true, "why": "world position kept", "turns": 5, "input_tokens": 138857, "output_tokens": 718, "cost_usd": 0.0711373, "tool_errors": 0, "tool_calls": 4}
+{"engine": "wish", "task": "delete", "passed": true, "why": "missing: []", "turns": 4, "input_tokens": 136841, "output_tokens": 430, "cost_usd": 0.0642805, "tool_errors": 0, "tool_calls": 3}
+{"engine": "wish", "task": "scale_floor", "passed": true, "why": "scale [40.0, 0.2, 40.0]", "turns": 4, "input_tokens": 137559, "output_tokens": 498, "cost_usd": 0.0653833, "tool_errors": 0, "tool_calls": 3}

@@ -28,7 +28,7 @@ Every MCP tool has an exact command-line counterpart (`wen entity query …`, `w
 | Tool | Purpose | Notable parameters |
 |---|---|---|
 | `project_info` | Project summary: scenes, script status, open sessions, engine version, pending diagnostics | — |
-| `schema_get` | Component/resource/event schemas: fields, types, units, ranges, doc comments | `names`, `search`, `detail` |
+| `schema_get` | Component/resource/event schemas: fields, types, units, ranges, doc comments; `search` also knows the words people use ("mesh" finds `Primitive`, "position" `Transform`) | `names`, `search`, `detail` |
 | `docs_search` | Search the engine guide (the docs are also served as `wish://docs/…` resources) | `query` |
 | `check` | Validate the whole project: scenes, references, schemas, script build | `paths` |
 
@@ -37,9 +37,9 @@ Every MCP tool has an exact command-line counterpart (`wen entity query …`, `w
 | Tool | Purpose | Notable parameters |
 |---|---|---|
 | `scene_get` | Scene outline: hierarchy tree, entity names, component names | `scene`, `root`, `depth`, `detail` |
-| `entity_query` | Find entities: by component, name, expression, spatial proximity | `with`, `where`, `near`, `limit`, `cursor` |
+| `entity_query` | Find entities: by component, name, expression, spatial proximity; an unknown name among `components` (to show) is left out with a warning, an unknown name in `with` fails | `with`, `where`, `near`, `limit`, `cursor` |
 | `entity_get` | Component values of entities; values of resources (M7) | `ids`, `components`, `resources`, `session` |
-| `edit_apply` | **Atomic transaction**: a list of `spawn`, `despawn`, `set` (merge), `replace`, `remove`, `reparent`, `rename`, `set_notes`, `set_resource` / `replace_resource` / `remove_resource`, `instantiate`, `set_override` / `replace_override` / `remove_override` operations (implemented in M2 as `wish_scene::EditOp`) | `ops`, `base_revision`, `dry_run` |
+| `edit_apply` | **Atomic transaction**: a list of `spawn`, `despawn`, `set` (merge), `replace`, `remove`, `reparent`, `rename`, `set_notes`, `set_resource` / `replace_resource` / `remove_resource`, `instantiate`, `set_override` / `replace_override` / `remove_override` operations (implemented in M2 as `wish_scene::EditOp`); answers `now`: the changed entities as they are after the change (touched components, `world_position`), so an agent need not read them back | `ops`, `base_revision`, `dry_run` |
 | `edit_history` | Undo / redo / list the history | `action`, `steps` |
 | `asset_list` | Asset files and import status | `kind`, `search` |
 | `asset_info` | A report for one asset: triangle count, bounds, materials, sub-objects, scale warnings | `path` |
@@ -51,7 +51,7 @@ Every MCP tool has an exact command-line counterpart (`wen entity query …`, `w
 | Tool | Purpose | Notable parameters |
 |---|---|---|
 | `sim_start` | Start a session from a scene | `scene`, `seed`, `headless` |
-| `sim_step` | Advance: N ticks or until a condition holds; inject input | `session`, `frames`, `until`, `input`, `max_frames` |
+| `sim_step` | Advance: N ticks or until a condition holds; inject input; `watch` reports up to 20 entities' world position and physics velocity at the end | `session`, `frames`, `until`, `input`, `max_frames`, `watch` |
 | `sim_snapshot` | Save / list a moment | `session`, `label` |
 | `sim_restore` | Return to a saved moment or fork a new session from it | `snapshot`, `fork` |
 | `sim_stop` | Close the session | `session` |

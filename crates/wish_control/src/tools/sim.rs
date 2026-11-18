@@ -44,7 +44,7 @@ pub(crate) const SIM_START: Tool = Tool {
 pub(crate) const SIM_STEP: Tool = Tool {
     name: "sim_step",
     title: "Run the simulation",
-    description: "Runs the session for `frames` ticks (60 per simulated second), or until `until` becomes true (at most max_frames). `until` is a condition like \"Transform.translation.y < 0\" or \"Stats.bounces >= 10\"; it holds when it is true for any entity or for the world's resources, and the run stops right after that tick. Answers the tick reached, the world hash (equal hashes mean identical worlds), the events that happened by type, and what looks wrong: systems that failed, entities with NaN transforms or far out of the world.",
+    description: "Runs the session for `frames` ticks (60 per simulated second), or until `until` becomes true (at most max_frames). `until` is a condition like \"Transform.translation.y < 0\" or \"Stats.bounces >= 10\"; it holds when it is true for any entity or for the world's resources, and the run stops right after that tick. Answers the tick reached, the world hash (equal hashes mean identical worlds), the events that happened by type, and what looks wrong: systems that failed, entities with NaN transforms or far out of the world. With watch, also where those entities are at the end (world position, and velocity for physics bodies), so there is no need to read them afterwards.",
     params: &[
         SESSION,
         Param::optional(
@@ -69,6 +69,11 @@ pub(crate) const SIM_STEP: Tool = Tool {
             "The most ticks to run when stopping on until.",
         )
         .or("10000"),
+        Param::optional(
+            "watch",
+            Kind::StringList,
+            "Entity ids to report at the end of the run: world position, and linear velocity for a physics body (at most 20).",
+        ),
         Param::optional(
             "input",
             Kind::Object,
@@ -213,6 +218,8 @@ fn sim_step(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<Str
     };
     let frames = u64::try_from(frames).unwrap_or(1);
     let input = parse_input(workspace, &id, args.value("input"))?;
+    let watch = args.strings("watch");
+    check_watch(workspace, &id, &watch)?;
     let (stepped, tick, hash, entities) =
         workspace.step_session(&id, frames, until.as_ref(), &input)?;
     let mut out = Map::new();
@@ -226,10 +233,74 @@ fn sim_step(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<Str
     if !stepped.matched.is_empty() {
         out.insert("matched".to_owned(), json!(stepped.matched));
     }
+    if !watch.is_empty() {
+        let world = workspace.session(&id)?.app.world();
+        let names = crate::sessions::entity_names(world);
+        let mut watched = Map::new();
+        for name in &watch {
+            let Some(&entity) = names.get(name) else {
+                // Despawned during the run.
+                watched.insert(name.clone(), Value::Null);
+                continue;
+            };
+            let mut item = Map::new();
+            if let Ok(global) = world.get_json(entity, "GlobalTransform")
+                && let Some(matrix) = global.get("matrix").and_then(Value::as_array)
+            {
+                let at: Vec<Value> = [12, 13, 14]
+                    .iter()
+                    .filter_map(|&i| matrix.get(i).cloned())
+                    .collect();
+                item.insert("world_position".to_owned(), Value::Array(at));
+            }
+            if let Ok(velocity) = world.get_json(entity, "BodyVelocity")
+                && let Some(linear) = velocity.get("linear")
+            {
+                item.insert("velocity".to_owned(), linear.clone());
+            }
+            watched.insert(name.clone(), Value::Object(item));
+        }
+        out.insert("watched".to_owned(), Value::Object(watched));
+    }
     if !stepped.diagnostics.is_empty() {
         out.insert("diagnostics".to_owned(), json!(stepped.diagnostics));
     }
     Ok(out)
+}
+
+/// The most entities a run reports at its end.
+const MAX_WATCHED: usize = 20;
+
+/// Every watched id must name an entity of the session's world, before
+/// anything runs.
+fn check_watch(workspace: &Workspace, id: &str, watch: &[String]) -> Result<()> {
+    if watch.len() > MAX_WATCHED {
+        return Err(Diagnostic::error(
+            "invalid_parameter",
+            format!(
+                "watch names {} entities; at most {MAX_WATCHED}.",
+                watch.len()
+            ),
+            "Watch the few entities the run is about; entity_query reads many at once.",
+        )
+        .at_path("/watch"));
+    }
+    if watch.is_empty() {
+        return Ok(());
+    }
+    let names = crate::sessions::entity_names(workspace.session(id)?.app.world());
+    let known: Vec<&str> = names.keys().map(String::as_str).collect();
+    for (index, name) in watch.iter().enumerate() {
+        if !names.contains_key(name) {
+            return Err(Diagnostic::error(
+                "unknown_entity",
+                format!("The session has no entity '{name}'."),
+                wish_core::suggest::unknown_name_hint(name, &known),
+            )
+            .at_path(format!("/watch/{index}")));
+        }
+    }
+    Ok(())
 }
 
 fn sim_snapshot(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<String, Value>> {

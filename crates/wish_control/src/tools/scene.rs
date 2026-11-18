@@ -129,7 +129,7 @@ pub(crate) const ENTITY_GET: Tool = Tool {
 pub(crate) const EDIT_APPLY: Tool = Tool {
     name: "edit_apply",
     title: "Change the scene",
-    description: "Applies a list of operations to a scene, all or nothing, and writes the file. Operations: spawn {id, parent?, order?, components?, notes?}, instantiate {id, prefab, ...}, despawn {id}, set {id, component, value} (merges fields), replace {id, component, value}, remove {id, component}, reparent {id, parent, order?}, rename {id, to}, set_notes {id, notes}, set_resource / replace_resource {name, value}, remove_resource {name}, set_override / replace_override / remove_override {id, entity, component, value?}. In Transform values, \"euler_deg\": [x, y, z] may stand for rotation. Siblings keep the order of their \"order\" (then by id): give order where it matters, as in an interface column. A failed operation changes nothing and says which one (location.op). Answers the new revision, what changed, and what others changed since you last looked. With session, the operations change that running game's world instead (not the file, not its history; it lasts while the session runs): spawn, despawn, set, replace, remove, reparent, rename and the resource operations.",
+    description: "Applies a list of operations to a scene, all or nothing, and writes the file. Operations: spawn {id, parent?, order?, components?, notes?}, instantiate {id, prefab, ...}, despawn {id}, set {id, component, value} (merges fields), replace {id, component, value}, remove {id, component}, reparent {id, parent, order?}, rename {id, to}, set_notes {id, notes}, set_resource / replace_resource {name, value}, remove_resource {name}, set_override / replace_override / remove_override {id, entity, component, value?}. In Transform values, \"euler_deg\": [x, y, z] may stand for rotation. Siblings keep the order of their \"order\" (then by id): give order where it matters, as in an interface column. A failed operation changes nothing and says which one (location.op). Answers the new revision, what changed, the changed entities as they are now (now: the touched components' values and world_position; no need to read them back), and what others changed since you last looked. The file is saved by this call. With session, the operations change that running game's world instead (not the file, not its history; it lasts while the session runs): spawn, despawn, set, replace, remove, reparent, rename and the resource operations.",
     params: &[
         SCENE,
         Param::optional(
@@ -337,6 +337,32 @@ fn finish(
     }
 }
 
+/// Component names asked to be shown (not to filter by): an unknown one
+/// is left out with a warning instead of failing the whole call, so the
+/// rest of the answer still comes (M10b efficiency work).
+fn shown_components(
+    workspace: &Workspace,
+    names: Vec<String>,
+    param: &str,
+    notes: &mut Vec<Diagnostic>,
+) -> Vec<String> {
+    let mut kept = Vec::new();
+    for (index, name) in names.into_iter().enumerate() {
+        match check_component_names(workspace, std::slice::from_ref(&name), param) {
+            Ok(()) => kept.push(name),
+            Err(mut problem) => {
+                problem.severity = wish_core::Severity::Warning;
+                // The hint names the closest one; the whole list would only
+                // lengthen every answer.
+                problem.candidates.clear();
+                problem.message = format!("{} It was left out of the answer.", problem.message);
+                notes.push(problem.at_path(format!("/{param}/{index}")));
+            }
+        }
+    }
+    kept
+}
+
 // --------------------------------------------------------------------------
 
 fn outline(doc: &SceneDocument, id: &str, depth: i64, detail: &str, budget: &mut usize) -> Value {
@@ -452,8 +478,12 @@ fn entity_query(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map
     }
     let with = args.strings("with");
     check_component_names(workspace, &with, "with")?;
-    let include = args.strings("components");
-    check_component_names(workspace, &include, "components")?;
+    let include = shown_components(
+        workspace,
+        args.strings("components"),
+        "components",
+        &mut notes,
+    );
     let condition = match args.str("where") {
         Some(text) => Some(
             Expr::compile(text, workspace.registry()).map_err(|problem| {
@@ -650,8 +680,12 @@ fn entity_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<S
         )
         .at_path("/ids"));
     }
-    let only = args.strings("components");
-    check_component_names(workspace, &only, "components")?;
+    let asked_only = args.strings("components");
+    let only = shown_components(workspace, asked_only.clone(), "components", &mut notes);
+    if !asked_only.is_empty() && only.is_empty() {
+        // Every name was wrong: nothing to show is not an answer.
+        check_component_names(workspace, &asked_only, "components")?;
+    }
     let revision = match &session_id {
         Some(id) => workspace.session(id)?.app.tick(),
         None => workspace.document(&path)?.doc.revision(),
@@ -782,6 +816,74 @@ fn entity_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<S
 }
 
 const MAX_CHANGES_SHOWN: usize = 50;
+/// At most this many changed entities are shown as they are now.
+const MAX_NOW_SHOWN: usize = 10;
+
+/// The changed entities as they are after the change, so an agent need not
+/// read them back (M10b efficiency work): the values of the components the
+/// change touched (all of a spawned one's), and the world position when
+/// where it is may have changed. Despawned entities are left out.
+fn now_json(workspace: &mut Workspace, path: &str, changes: &[String]) -> Option<Value> {
+    // id -> (every component?, named components, place may have changed)
+    let mut touched: BTreeMap<String, (bool, Vec<String>, bool)> = BTreeMap::new();
+    for change in changes {
+        let Some(rest) = change.strip_prefix("/entities/") else {
+            continue;
+        };
+        let mut parts = rest.splitn(3, '/');
+        let Some(id) = parts.next() else { continue };
+        let entry = touched.entry(id.to_owned()).or_default();
+        match (parts.next(), parts.next()) {
+            (None, _) => {
+                entry.0 = true;
+                entry.2 = true;
+            }
+            (Some("components"), Some(component)) => {
+                let component = component.split('/').next().unwrap_or(component);
+                if component == "Transform" {
+                    entry.2 = true;
+                }
+                if !entry.1.iter().any(|c| c == component) {
+                    entry.1.push(component.to_owned());
+                }
+            }
+            (Some("parent"), _) => entry.2 = true,
+            _ => {}
+        }
+    }
+    let view = workspace.view(path).ok()?;
+    let mut now = Map::new();
+    for (id, (all, components, moved)) in touched {
+        if now.len() >= MAX_NOW_SHOWN {
+            break;
+        }
+        let Some(&entity) = view.ids.get(&id) else {
+            continue;
+        };
+        let mut item = Map::new();
+        if let Ok(Value::Object(values)) = view.world.entity_json(entity) {
+            let mut shown = Map::new();
+            for (name, value) in values {
+                let wanted = if all {
+                    !INTERNAL.contains(&name.as_str())
+                } else {
+                    components.contains(&name)
+                };
+                if wanted {
+                    shown.insert(name, value);
+                }
+            }
+            if !shown.is_empty() {
+                item.insert("components".to_owned(), Value::Object(shown));
+            }
+        }
+        if moved && let Some(at) = world_position(&view.world, entity) {
+            item.insert("world_position".to_owned(), json!(at));
+        }
+        now.insert(id, Value::Object(item));
+    }
+    (!now.is_empty()).then_some(Value::Object(now))
+}
 
 fn changes_json(changes: &[String]) -> Value {
     let entities: Vec<String> = touched(changes).into_iter().collect();
@@ -835,6 +937,7 @@ fn edit_apply(workspace: &mut Workspace, args: &Args, actor: &Actor) -> Result<M
     let registry = workspace.registry().clone();
     let dry_run = args.flag("dry_run");
     let mut working = workspace.document(&path)?.doc.clone();
+    let mut now = None;
     let applied = if dry_run {
         if let Some(base) = transaction.base_revision
             && base != working.revision()
@@ -850,11 +953,15 @@ fn edit_apply(workspace: &mut Workspace, args: &Args, actor: &Actor) -> Result<M
         // Written first, kept only if the write worked.
         workspace.commit_document(&path, working)?;
         workspace.mark_seen(&path, actor);
+        now = now_json(workspace, &path, &applied.changes);
     }
     let mut out = Map::new();
     out.insert("scene".to_owned(), json!(path));
     out.insert("revision".to_owned(), json!(applied.revision));
     out.insert("changes".to_owned(), changes_json(&applied.changes));
+    if let Some(now) = now {
+        out.insert("now".to_owned(), now);
+    }
     if dry_run {
         out.insert("dry_run".to_owned(), json!(true));
     }
