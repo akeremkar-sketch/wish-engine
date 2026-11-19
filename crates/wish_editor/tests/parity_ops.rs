@@ -440,6 +440,33 @@ fn a_material_file_is_made_and_changed_by_hand() {
 }
 "
     );
+    // The file's colour, its first number typed where the browser shows it.
+    let red = browser_box(&mut app, "base_color", Pick::First);
+    play(
+        &mut app,
+        json!([
+            { "events": [{ "click": [red.center().x, red.center().y] }] },
+            { "idle": 1 },
+            { "events": [{ "key": "A", "ctrl": true }] },
+            { "events": [{ "text": "0.5" }] },
+            { "events": [{ "key": "Enter" }] },
+            { "idle": 2 }
+        ]),
+    );
+    assert_eq!(app.status(), format!("set base_color in {path}"));
+    let written: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join(path)).unwrap()).unwrap();
+    let colour: Vec<f64> = written["material"]["base_color"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c.as_f64().unwrap())
+        .collect();
+    assert_eq!(colour, [0.5, 1.0, 1.0, 1.0], "{written}");
+    assert_eq!(
+        written["material"]["roughness"], 0.8,
+        "the agent's change is kept"
+    );
     let activity = app.call("activity_get", &json!({}));
     let made: Vec<&Value> = activity["entries"]
         .as_array()
@@ -447,7 +474,7 @@ fn a_material_file_is_made_and_changed_by_hand() {
         .iter()
         .filter(|entry| entry["tool"] == "asset_create")
         .collect();
-    assert_eq!(made.len(), 3, "{activity}");
+    assert_eq!(made.len(), 4, "{activity}");
     assert!(made.iter().all(|entry| entry["actor"] == "human"));
     // A material file cannot name another one: no such field is offered.
     assert!(
@@ -805,6 +832,70 @@ fn add_resource(app: &mut EditorApp, name: &str) {
     click(app, choice);
 }
 
+/// Which number box of a row.
+#[derive(Clone, Copy)]
+enum Pick {
+    First,
+    Last,
+}
+
+/// A number box on the row of the material file's field `label` in the
+/// asset browser, after scrolling the row into view. The browser's label
+/// column is left of the inspector's, which can show a field of the same
+/// name. The asset panel shows a few rows at a time, between its tabs and
+/// the status bar (at 1280x720 about 90 pixels): a row below that band is
+/// under the status bar and takes no click, one above it is under the tabs,
+/// so the panel is scrolled until the row is inside, as a person would.
+fn browser_box(app: &mut EditorApp, label: &str, pick: Pick) -> Rect {
+    let row_of = |app: &EditorApp| {
+        let widgets = app.widgets();
+        let row = widgets
+            .iter()
+            .filter(|w| w.role == "Label" && w.value.as_deref() == Some(label))
+            .min_by(|a, b| a.rect.min.x.total_cmp(&b.rect.min.x))
+            .map(|w| w.rect)
+            .unwrap_or_else(|| panic!("no '{label}' row in the browser"));
+        let boxes = widgets
+            .iter()
+            .filter(|w| w.role == "SpinButton")
+            .filter(|w| {
+                (w.rect.center().y - row.center().y).abs() < 8.0 && w.rect.min.x > row.max.x
+            });
+        let field = match pick {
+            Pick::First => boxes.min_by(|a, b| a.rect.min.x.total_cmp(&b.rect.min.x)),
+            Pick::Last => boxes.max_by(|a, b| a.rect.min.x.total_cmp(&b.rect.min.x)),
+        }
+        .map(|w| w.rect)
+        .unwrap_or_else(|| panic!("no number box on the '{label}' row"));
+        (row, field)
+    };
+    let panel = app
+        .widgets()
+        .iter()
+        .find(|w| w.role == "ScrollBar" && w.rect.min.y > 500.0)
+        .map(|w| w.rect)
+        .expect("the asset panel's scroll bar");
+    for _ in 0..40 {
+        let (row, _) = row_of(app);
+        let y = row.center().y;
+        if y > panel.min.y + 12.0 && y < panel.max.y - 12.0 {
+            break;
+        }
+        let step = if y >= panel.max.y - 12.0 { -10.0 } else { 10.0 };
+        play(
+            app,
+            json!([{ "events": [{ "pointer": [row.min.x + 20.0, panel.center().y] }, { "scroll": [0, step] }] },
+                   { "seconds": 0.2 }, { "idle": 2 }]),
+        );
+    }
+    let (row, field) = row_of(app);
+    assert!(
+        row.center().y > panel.min.y && row.center().y < panel.max.y,
+        "the '{label}' row is in view: {row:?} in {panel:?}"
+    );
+    field
+}
+
 /// The widget of `role` on the row of the inspector's field `label`.
 fn field_of(app: &EditorApp, label: &str, role: &str) -> Rect {
     let widgets = app.widgets();
@@ -1008,4 +1099,145 @@ fn cascaded_shadows_are_set_by_hand() {
         find(&app, "Shaded").is_none(),
         "and no longer the shaded view"
     );
+}
+
+/// See-through surfaces (M12 package 8) are asked for by hand both ways: a
+/// plain `Material`'s alpha typed in the inspector (the fourth box of its
+/// `base_color`), and a material file whose `alpha_mode` is set to `Blend`
+/// in the browser, put on the entity through the inspector's `file` field.
+/// The file's own alpha is then typed in the browser. Each step is one call
+/// by a human, and the count of see-through surfaces and the picture follow
+/// each one (invariant 9).
+#[test]
+fn a_surface_is_made_see_through_by_hand() {
+    let dir = project("see-through");
+    let mut app = open(&dir);
+    let size = json!({ "width": 96, "height": 54 });
+    let before = app.call("capture_frame", &size);
+    assert_eq!(before["stats"]["blended_surfaces"], 0, "{before}");
+
+    // 1. The ground's own Material at half alpha: see-through. Its alpha is
+    // the last number box of base_color.
+    let ground = named(&app, "ground");
+    click(&mut app, ground);
+    let widgets = app.widgets();
+    let row = widgets
+        .iter()
+        .find(|w| w.role == "Label" && w.value.as_deref() == Some("base_color"))
+        .map(|w| w.rect)
+        .expect("the base_color row");
+    let alpha = widgets
+        .iter()
+        .filter(|w| w.role == "SpinButton")
+        .filter(|w| (w.rect.center().y - row.center().y).abs() < 8.0 && w.rect.min.x > row.max.x)
+        .max_by(|a, b| a.rect.min.x.total_cmp(&b.rect.min.x))
+        .map(|w| w.rect)
+        .expect("the alpha box");
+    play(
+        &mut app,
+        json!([
+            { "events": [{ "click": [alpha.center().x, alpha.center().y] }] },
+            { "idle": 1 },
+            { "events": [{ "key": "A", "ctrl": true }] },
+            { "events": [{ "text": "0.5" }] },
+            { "events": [{ "key": "Enter" }] },
+            { "idle": 2 }
+        ]),
+    );
+    assert_eq!(app.status(), "set Material.base_color");
+    assert_eq!(
+        scene_file(&dir)["entities"]["ground"]["components"]["Material"]["base_color"][3],
+        0.5
+    );
+    let plain = app.call("capture_frame", &size);
+    assert_eq!(plain["stats"]["blended_surfaces"], 1, "{plain}");
+    assert_ne!(plain["image"]["data"], before["image"]["data"]);
+
+    // 2. A new material file (solid by default) named in the ground's
+    // Material by hand: the file is the whole look, so the ground is solid
+    // again.
+    let new = named(&app, "New...");
+    click(&mut app, new);
+    let material = named(&app, "Material file");
+    click(&mut app, material);
+    let path = "assets/materials/material.mat.json";
+    let ground = named(&app, "ground");
+    click(&mut app, ground);
+    let file = field_of(&app, "file", "TextInput");
+    play(
+        &mut app,
+        json!([
+            { "events": [{ "click": [file.center().x, file.center().y] }] },
+            { "idle": 1 },
+            { "events": [{ "text": path }] },
+            { "events": [{ "key": "Enter" }] },
+            { "idle": 2 }
+        ]),
+    );
+    assert_eq!(app.status(), "set Material.file");
+    let solid = app.call("capture_frame", &size);
+    assert_eq!(solid["stats"]["blended_surfaces"], 0, "{solid}");
+    assert_ne!(solid["image"]["data"], plain["image"]["data"]);
+
+    // 3. The file's alpha mode chosen from the list in the browser: the
+    // ground is see-through again, through the file.
+    choose(&mut app, "alpha_mode", "Blend");
+    assert_eq!(app.status(), format!("set alpha_mode in {path}"));
+    assert_eq!(
+        std::fs::read_to_string(dir.join(path)).unwrap(),
+        "{
+  \"format\": 1,
+  \"material\": {
+    \"alpha_mode\": \"Blend\"
+  }
+}
+"
+    );
+    let blended = app.call("capture_frame", &size);
+    assert_eq!(blended["stats"]["blended_surfaces"], 1, "{blended}");
+
+    // 4. The file's own alpha, typed in the browser: the last box of its
+    // base_color row (the browser's label column is left of the
+    // inspector's). The asset panel shows a few rows at a time between its
+    // tabs and the status bar, so the row is scrolled into that band first,
+    // as a person would.
+    let field = browser_box(&mut app, "base_color", Pick::Last);
+    play(
+        &mut app,
+        json!([
+            { "events": [{ "click": [field.center().x, field.center().y] }] },
+            { "idle": 1 },
+            { "events": [{ "key": "A", "ctrl": true }] },
+            { "events": [{ "text": "0.3" }] },
+            { "events": [{ "key": "Enter" }] },
+            { "idle": 2 }
+        ]),
+    );
+    assert_eq!(app.status(), format!("set base_color in {path}"));
+    let written: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join(path)).unwrap()).unwrap();
+    assert_eq!(written["material"]["alpha_mode"], "Blend", "{written}");
+    assert_eq!(written["material"]["base_color"][3], 0.3, "{written}");
+    let fainter = app.call("capture_frame", &size);
+    assert_eq!(fainter["stats"]["blended_surfaces"], 1, "{fainter}");
+    assert_ne!(fainter["image"]["data"], blended["image"]["data"]);
+
+    // 5. Back to solid by hand: with `Opaque` the file's alpha does
+    // nothing, and the picture is the solid one to the byte.
+    choose(&mut app, "alpha_mode", "Opaque");
+    let again = app.call("capture_frame", &size);
+    assert_eq!(again["stats"]["blended_surfaces"], 0, "{again}");
+    assert_eq!(again["image"]["data"], solid["image"]["data"]);
+
+    // Every step was one call by a human: the ground's alpha, the file
+    // made and named, its mode set twice and its alpha once.
+    let activity = app.call("activity_get", &json!({}));
+    let by_hand: Vec<&Value> = activity["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|entry| entry["tool"] == "asset_create" || entry["tool"] == "edit_apply")
+        .collect();
+    assert_eq!(by_hand.len(), 6, "{activity}");
+    assert!(by_hand.iter().all(|entry| entry["actor"] == "human"));
 }

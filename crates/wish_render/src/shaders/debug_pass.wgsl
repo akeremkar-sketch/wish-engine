@@ -44,8 +44,9 @@ fn vs_main(
     return out;
 }
 
-// Pixels below the material's alpha cutoff are not drawn (alpha mode MASK),
-// the same test as in the lit pass.
+// Pixels below the material's alpha cutoff are not drawn (alpha mode MASK,
+// and a see-through surface's pixels with almost no alpha), the same test as
+// in the lit pass.
 fn cut_out(uv: vec2<f32>) {
     let alpha = textureSample(base_color_texture, material_sampler, uv).a * draw.base_color.a;
     if (draw.params2.z > 0.0 && alpha < draw.params2.z) {

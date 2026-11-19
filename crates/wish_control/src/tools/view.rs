@@ -37,7 +37,7 @@ const SHADERS: Param = Param::optional(
 pub(crate) const CAPTURE_FRAME: Tool = Tool {
     name: "capture_frame",
     title: "Take a picture",
-    description: "Draws the scene (or a session's live world) from a camera and returns the picture as a PNG (image content over MCP; image.data is base64 on the command line unless out is given). The default 512x288 keeps it cheap; ask for more only to inspect detail. view picks what is drawn: lit (the real picture), ids (each entity its own color), depth (white near, black far), normals (surface direction as color), wireframe (triangle edges), colliders (the wireframe with every physics collider over it: fixed green, moving cyan, sensors yellow), lights (the wireframe with how far each point and spot light reaches), shadow_cascades (each surface in the color of the shadow map its shadow is read from: red, green, blue, yellow from the cascade nearest the camera, mixed where two blend; white with one shadow map; gray where there is no shadow, as beyond RenderSettings.shadow_distance). stats says what drawing the picture took, in counts that are the same on every machine: draw_calls, triangles, shadow_casters (draws into the shadow maps), shadow_cascades (how many shadow maps: 0 none, 1 the one map around everything, 2 to 4 cascades, set with RenderSettings.shadow_cascades; the shadow_cascades view answers the number of the lit picture whose maps it shows, every other debug view 0), point_lights, spot_lights, and effects, the optional look effects the picture used (sky_light, sun_disc, fog, bloom, color_grading, fxaa; they are set with the Ambient, Sky, Fog, Bloom, ColorGrading and RenderSettings resources and are off by default). Use describe_view to ask what is visible instead of reading pixels.",
+    description: "Draws the scene (or a session's live world) from a camera and returns the picture as a PNG (image content over MCP; image.data is base64 on the command line unless out is given). The default 512x288 keeps it cheap; ask for more only to inspect detail. view picks what is drawn: lit (the real picture), ids (each entity its own color), depth (white near, black far), normals (surface direction as color), wireframe (triangle edges), colliders (the wireframe with every physics collider over it: fixed green, moving cyan, sensors yellow), lights (the wireframe with how far each point and spot light reaches), shadow_cascades (each surface in the color of the shadow map its shadow is read from: red, green, blue, yellow from the cascade nearest the camera, mixed where two blend; white with one shadow map; gray where there is no shadow, as beyond RenderSettings.shadow_distance). stats says what drawing the picture took, in counts that are the same on every machine: draw_calls, triangles, shadow_casters (draws into the shadow maps), shadow_cascades (how many shadow maps: 0 none, 1 the one map around everything, 2 to 4 cascades, set with RenderSettings.shadow_cascades; the shadow_cascades view answers the number of the lit picture whose maps it shows, every other debug view 0), point_lights, spot_lights, blended_surfaces (see-through surfaces: a Material with base_color alpha below 1, or a material file or glTF material with alpha_mode Blend; drawn back to front over the rest, casting no shadow; the debug views draw them as any surface), and effects, the optional look effects the picture used (sky_light, sun_disc, fog, bloom, color_grading, fxaa; they are set with the Ambient, Sky, Fog, Bloom, ColorGrading and RenderSettings resources and are off by default). Use describe_view to ask what is visible instead of reading pixels.",
     params: &[
         SCENE,
         SESSION,
@@ -84,7 +84,7 @@ pub(crate) const CAPTURE_FRAME: Tool = Tool {
 pub(crate) const DESCRIBE_VIEW: Tool = Tool {
     name: "describe_view",
     title: "What the camera sees",
-    description: "Says what a camera sees without a picture: for each visible entity its pixel count, how much of it is not hidden by other things (visible_percent), its box on screen [left, top, right, bottom] and its distance in meters; and the entities that are drawn but not visible (hidden behind something, or outside the picture); the sprites (their box in the picture and layer) and particle emitters (the box their particles cover, how many are alive); and the in-game interface (interface: each box that shows something, its box in the picture, its text, whether it is a button and if the pointer is over it); and stats, what drawing the lit picture of this view takes (draw_calls, triangles, shadow_casters, shadow_cascades, point_lights, spot_lights: counts, the same on every machine; effects: which of sky_light, sun_disc, fog, bloom, color_grading and fxaa it uses). Use it to check that what you built is on screen and not blocked, what the interface says, and what makes a scene heavy.",
+    description: "Says what a camera sees without a picture: for each visible entity its pixel count, how much of it is not hidden by other things (visible_percent), its box on screen [left, top, right, bottom] and its distance in meters; and the entities that are drawn but not visible (hidden behind something, or outside the picture); the sprites (their box in the picture and layer) and particle emitters (the box their particles cover, how many are alive); and the in-game interface (interface: each box that shows something, its box in the picture, its text, whether it is a button and if the pointer is over it); and stats, what drawing the lit picture of this view takes (draw_calls, triangles, shadow_casters, shadow_cascades, point_lights, spot_lights: counts, the same on every machine; effects: which of sky_light, sun_disc, fog, bloom, color_grading and fxaa it uses). A see-through entity is marked blended: true, and what shows through it counts as visible too; stats.blended_surfaces counts them. Use it to check that what you built is on screen and not blocked, what the interface says, and what makes a scene heavy.",
     params: &[
         SCENE,
         SESSION,
@@ -440,6 +440,7 @@ fn stats_json(stats: &wish_render::RenderStats) -> Value {
         "shadow_cascades": stats.shadow_cascades,
         "point_lights": stats.point_lights,
         "spot_lights": stats.spot_lights,
+        "blended_surfaces": stats.blended_surfaces,
         "effects": stats.effects.names(),
     })
 }
@@ -549,13 +550,19 @@ fn describe_view(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
         .into_iter()
         .take(limit)
         .map(|entry| {
-            json!({
+            let mut listed = json!({
                 "entity": name(entry.entity),
                 "pixels": entry.pixels,
                 "visible_percent": entry.visible_fraction.map(|f| (f * 1000.0).round() / 10.0),
                 "bounding_box": entry.bounding_box,
                 "distance": round(entry.distance),
-            })
+            });
+            // Only see-through entities say so: other answers are as they
+            // were.
+            if entry.blended {
+                listed["blended"] = json!(true);
+            }
+            listed
         })
         .collect();
     let hidden: Vec<String> = description

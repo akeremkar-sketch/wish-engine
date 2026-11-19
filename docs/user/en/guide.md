@@ -112,7 +112,11 @@ The language is chosen at the top right of the welcome screen, and later in the 
     file*), select it, and set its fields where the browser shows the file: `base_color_texture`
     takes a PNG of the project (type its path, pick it from the list beside the box, or drag the
     file onto it), `uv_scale` repeats the picture, `alpha_mode` *Mask* cuts holes where the
-    picture is transparent, `double_sided` shows a surface's back.
+    picture is transparent, *Blend* makes the surface see-through by its alpha (glass, water),
+    `double_sided` shows a surface's back.
+  - A plain `Material` is see-through when the alpha of its `base_color` (the last box, `w`, or
+    the colour picker) is below 1: 0.5 is half, 0 is invisible. See-through surfaces cast no
+    shadow.
   - Then name the file in the `file` field of an entity's `Material`. Every entity that names it
     shares the look and changes with it; the colour and numbers of such an entity's own
     `Material` are then not used.

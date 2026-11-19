@@ -293,6 +293,32 @@ fn every_recipe_builds_and_applies() {
             );
             drawn += 1;
         }
+        // The see-through ones are drawn see-through, and said to be.
+        if title.starts_with("A glass window") {
+            ws.set_software(true);
+            assert_eq!(checked["warnings"], 0, "'{title}': {checked}");
+            let shot = ws.call(
+                "capture_frame",
+                &json!({ "width": 160, "height": 90 }),
+                &agent,
+            );
+            assert_eq!(shot["ok"], true, "'{title}': {shot}");
+            assert!(shot.get("diagnostics").is_none(), "'{title}': {shot}");
+            assert_eq!(shot["stats"]["blended_surfaces"], 2, "'{title}': {shot}");
+            let seen = ws.call(
+                "describe_view",
+                &json!({ "width": 160, "height": 90 }),
+                &agent,
+            );
+            let window = seen["visible"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|entry| entry["entity"] == "window")
+                .unwrap_or_else(|| panic!("'{title}': the window is not visible: {seen}"));
+            assert_eq!(window["blended"], true, "'{title}': {seen}");
+            drawn += 1;
+        }
         // And it does what it says.
         if let Some((ops, test)) = behaviour(title) {
             if ops.as_array().is_some_and(|o| !o.is_empty()) {
@@ -310,7 +336,7 @@ fn every_recipe_builds_and_applies() {
         }
     }
     assert!(
-        built >= 6 && applied >= 8 && tests >= 1 && played >= 7 && called >= 1 && drawn == 1,
+        built >= 6 && applied >= 9 && tests >= 1 && played >= 7 && called >= 2 && drawn == 2,
         "{built} {applied} {tests} {played} {called} {drawn}"
     );
 }

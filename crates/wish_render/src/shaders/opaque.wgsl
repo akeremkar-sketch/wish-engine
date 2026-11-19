@@ -5,10 +5,11 @@
 #import lights
 #import fog
 
-// Opaque surfaces, lit by one directional light, the point and spot lights
-// of their cluster, the ambient light (one colour, or the sky's own light),
-// and the sky's reflection, seen through the fog when there is one. Output
-// is already multiplied by the exposure.
+// Surfaces, lit by one directional light, the point and spot lights of their
+// cluster, the ambient light (one colour, or the sky's own light), and the
+// sky's reflection, seen through the fog when there is one. Output is
+// already multiplied by the exposure. The opaque pass and the blended pass
+// (see-through surfaces) both draw with these functions.
 
 // The material's textures. A slot without a texture holds a 1x1 default, so
 // the factors alone decide.
@@ -145,5 +146,8 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
                 to_surface.y / max(away, 1e-6), away);
         }
     }
-    return vec4<f32>(colour * frame.exposure.x, 1.0);
+    // The alpha is the surface's: the blended pass mixes a see-through
+    // surface by it (its draw's alpha is cleaned to 0..1 on the CPU). In the
+    // opaque pass it lands in the HDR picture's alpha, which nothing reads.
+    return vec4<f32>(colour * frame.exposure.x, albedo.a);
 }

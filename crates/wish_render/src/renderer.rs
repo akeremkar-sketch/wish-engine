@@ -779,6 +779,23 @@ impl Renderer {
                     draws: &plan.draws,
                 },
             );
+            // See-through surfaces, back to front over the rest, before
+            // bloom and tone mapping: only a frame that has some.
+            if !plan.blended.is_empty() {
+                passes::blended(
+                    &mut encoder,
+                    &passes::Blended {
+                        hdr: &resources.hdr,
+                        depth: &resources.depth,
+                        front_faces: &self.pipelines.blended_front,
+                        back_faces: &self.pipelines.blended_back,
+                        frame: &resources.frame_group,
+                        draw_uniforms: &resources.draw_group,
+                        draws: &plan.draws,
+                        order: &plan.blended,
+                    },
+                );
+            }
             // Bloom, for a frame that asks for it: tone mapping then reads
             // the picture these passes write (the frame's tone mapping group
             // binds it).

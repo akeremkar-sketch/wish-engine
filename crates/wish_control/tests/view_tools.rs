@@ -249,6 +249,7 @@ fn the_cost_of_a_picture_is_reported_in_counts_and_render_settings_change_it() {
             "draw_calls": 6, "triangles": 2 * (2 + 960) + 2,
             "shadow_casters": 2, "shadow_cascades": 1,
             "point_lights": 0, "spot_lights": 0,
+            "blended_surfaces": 0,
             "effects": [],
         })
     );

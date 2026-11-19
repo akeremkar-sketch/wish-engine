@@ -56,6 +56,13 @@ pub struct RenderStats {
     pub point_lights: u32,
     /// Spot lights that light some part of the view.
     pub spot_lights: u32,
+    /// See-through surfaces (a material that blends: a material file or a
+    /// glTF material with alpha mode `Blend`, or a plain `Material` with
+    /// alpha below 1); a model counts each such part. The same number in
+    /// every view: the lit picture draws them back to front over the rest
+    /// (a double-sided one as two draw calls, back faces first), the debug
+    /// views like any surface.
+    pub blended_surfaces: u32,
     /// Which optional effects the lit picture used: the sky's light, the
     /// sun's disc, fog, bloom, colour grading, FXAA.
     pub effects: Effects,
@@ -67,6 +74,9 @@ pub(super) struct FramePlan<'a> {
     pub size: (u32, u32),
     /// The surfaces, in scene order.
     pub draws: DrawList<'a>,
+    /// The see-through surfaces of `draws`, as positions in it, in the order
+    /// the blended pass draws them (farthest first).
+    pub blended: Vec<u32>,
     /// The shadow maps to draw, if any: one, or cascades.
     pub shadow: Option<ShadowPlan>,
     /// The frame uniform (`Frame` in `common.wgsl`).
@@ -202,13 +212,30 @@ fn lit_stats(
     overlay: Option<&crate::sprites::Overlay>,
     interface: Option<&crate::ui::Batch>,
 ) -> RenderStats {
-    let surfaces = u32::try_from(draws.items.len()).unwrap_or(u32::MAX);
-    let surface_triangles = draws.triangles();
-    // The single map holds every surface; a cascade the ones that can
-    // shadow it.
+    // The opaque pass draws the solid surfaces once each; the blended pass
+    // draws each see-through one once, or twice when it is double-sided
+    // (its back faces, then its front faces).
+    let solid = || draws.items.iter().filter(|item| !item.blended);
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    let solid_count = count(solid().count());
+    let solid_triangles: u64 = solid().map(|item| item.mesh.triangles()).sum();
+    let (blended_calls, blended_triangles) = draws.items.iter().filter(|item| item.blended).fold(
+        (0u32, 0u64),
+        |(calls, triangles), item| {
+            let times = 1 + u32::from(item.double_sided);
+            (
+                calls.saturating_add(times),
+                triangles + item.mesh.triangles() * u64::from(times),
+            )
+        },
+    );
+    let surfaces = solid_count.saturating_add(blended_calls);
+    let surface_triangles = solid_triangles + blended_triangles;
+    // The single map holds every solid surface; a cascade the solid ones
+    // that can shadow it. See-through surfaces cast no shadow.
     let (shadow_casters, shadow_triangles) = match shadow {
         None => (0, 0),
-        Some(ShadowPlan::Single { .. }) => (surfaces, surface_triangles),
+        Some(ShadowPlan::Single { .. }) => (solid_count, solid_triangles),
         Some(ShadowPlan::Cascades(cascades)) => {
             let drawn = || {
                 cascades
@@ -216,6 +243,7 @@ fn lit_stats(
                     .iter()
                     .flat_map(|cascade| cascade.draws.iter())
                     .filter_map(|index| draws.items.get(*index as usize))
+                    .filter(|item| !item.blended)
             };
             (
                 u32::try_from(drawn().count()).unwrap_or(u32::MAX),
@@ -245,6 +273,7 @@ fn lit_stats(
         shadow_cascades: shadow.map_or(0, ShadowPlan::maps),
         point_lights: lights.0,
         spot_lights: lights.1,
+        blended_surfaces: draws.blended(),
         effects,
     }
 }
@@ -307,7 +336,13 @@ impl Renderer {
         let shadow::Planned {
             plan: shadow,
             warning: shadow_warning,
-        } = shadow::plan(scene, view, aspect, &draws.casters, device_limit);
+        } = shadow::plan(
+            scene,
+            view,
+            aspect,
+            (&draws.casters, &draws.casts()),
+            device_limit,
+        );
         warnings.extend(shadow_warning);
         let (fit, map_size) = match &shadow {
             Some(ShadowPlan::Single { fit, map_size }) => (Some(*fit), *map_size),
@@ -403,9 +438,11 @@ impl Renderer {
             overlay.as_ref(),
             interface.as_ref(),
         );
+        let blended = draws.back_to_front(&view.view);
         FramePlan {
             size: (width, height),
             draws,
+            blended,
             shadow,
             frame_uniform: frame.0,
             light_uniform,

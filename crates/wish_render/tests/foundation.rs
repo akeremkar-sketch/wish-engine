@@ -134,6 +134,8 @@ fn the_statistics_of_a_known_scene_are_its_counts() {
             shadow_cascades: 1,
             point_lights: 0,
             spot_lights: 0,
+            // Nothing is see-through.
+            blended_surfaces: 0,
             // The scene asks for none of the optional effects.
             effects: wish_render::Effects::default(),
         }

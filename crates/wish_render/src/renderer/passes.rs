@@ -4,7 +4,8 @@
 //! |---|---|---|
 //! | [`shadow`] | the draw list, the light's matrix for each map | the shadow map, or the atlas of the cascades (all of it) |
 //! | [`sky`] | the frame uniform | the HDR picture (all of it) |
-//! | [`opaque`] | the draw list, the frame uniform, the shadow map, the light lists | the HDR picture, the depth buffer |
+//! | [`opaque`] | the draw list (its solid surfaces), the frame uniform, the shadow map, the light lists | the HDR picture, the depth buffer |
+//! | [`blended`] (only when the frame has see-through surfaces) | the draw list's see-through surfaces back to front, the frame uniform, the shadow map, the light lists, the depth buffer | the HDR picture |
 //! | the bloom's passes (only when asked for; `bloom.rs`) | the HDR picture | the bloom's levels, the bloomed picture (all of it) |
 //! | [`tone_map`] | the HDR picture (with bloom: the bloomed picture), the colour grading | the picture, or with FXAA the tone-mapped picture (all of it) |
 //! | [`fxaa`] (only when asked for) | the tone-mapped picture | the picture (all of it) |
@@ -151,11 +152,18 @@ pub(super) fn shadow(encoder: &mut wgpu::CommandEncoder, inputs: &Shadow<'_>) {
             pass.set_index_buffer(item.mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
             pass.draw_indexed(0..item.mesh.index_count, 0, 0..1);
         };
+        // See-through surfaces cast no shadow.
         match map.draws {
-            None => inputs.casters.items.iter().for_each(&mut draw),
+            None => inputs
+                .casters
+                .items
+                .iter()
+                .filter(|item| !item.blended)
+                .for_each(&mut draw),
             Some(draws) => draws
                 .iter()
                 .filter_map(|index| inputs.casters.items.get(*index as usize))
+                .filter(|item| !item.blended)
                 .for_each(&mut draw),
         }
     }
@@ -201,7 +209,8 @@ pub(super) struct Opaque<'a> {
     pub draws: &'a DrawList<'a>,
 }
 
-/// The opaque pass: every surface, lit, with a depth buffer.
+/// The opaque pass: every solid surface, lit, with a depth buffer. The
+/// see-through ones are left to [`blended`].
 pub(super) fn opaque(encoder: &mut wgpu::CommandEncoder, inputs: &Opaque<'_>) {
     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some("opaque"),
@@ -220,7 +229,7 @@ pub(super) fn opaque(encoder: &mut wgpu::CommandEncoder, inputs: &Opaque<'_>) {
         multiview_mask: None,
     });
     pass.set_bind_group(0, inputs.frame, &[]);
-    for item in &inputs.draws.items {
+    for item in inputs.draws.items.iter().filter(|item| !item.blended) {
         pass.set_pipeline(if item.double_sided {
             inputs.double_sided
         } else {
@@ -230,6 +239,69 @@ pub(super) fn opaque(encoder: &mut wgpu::CommandEncoder, inputs: &Opaque<'_>) {
         pass.set_bind_group(2, item.textures.as_ref(), &[]);
         pass.set_vertex_buffer(0, item.mesh.vertices.slice(..));
         pass.set_index_buffer(item.mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+        pass.draw_indexed(0..item.mesh.index_count, 0, 0..1);
+    }
+}
+
+/// What the blended pass reads and writes.
+pub(super) struct Blended<'a> {
+    /// Blended over: the sky and the solid surfaces.
+    pub hdr: &'a wgpu::TextureView,
+    /// The solid surfaces' depth: tested, never written, and kept for the
+    /// sprites and particles.
+    pub depth: &'a wgpu::TextureView,
+    /// The pipeline of front faces (back faces culled).
+    pub front_faces: &'a wgpu::RenderPipeline,
+    /// The pipeline of back faces (front faces culled), for double-sided
+    /// surfaces.
+    pub back_faces: &'a wgpu::RenderPipeline,
+    /// The frame uniform, the shadow map and the light lists (group 0).
+    pub frame: &'a wgpu::BindGroup,
+    /// The draws' uniform data (group 1, by offset).
+    pub draw_uniforms: &'a wgpu::BindGroup,
+    /// The draw list.
+    pub draws: &'a DrawList<'a>,
+    /// Its see-through surfaces, farthest first.
+    pub order: &'a [u32],
+}
+
+/// The blended pass: the see-through surfaces, lit exactly as solid ones
+/// are (the same shader functions), each blended over what is already in
+/// the HDR picture by its alpha, farthest first. A double-sided surface is
+/// drawn twice, its back faces first, so a closed see-through shape shows
+/// its far side behind its near side. Run only when the frame has such a
+/// surface.
+pub(super) fn blended(encoder: &mut wgpu::CommandEncoder, inputs: &Blended<'_>) {
+    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("blended"),
+        color_attachments: &[colour(inputs.hdr, wgpu::LoadOp::Load)],
+        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+            view: inputs.depth,
+            depth_ops: Some(wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: wgpu::StoreOp::Store,
+            }),
+            stencil_ops: None,
+        }),
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    });
+    pass.set_bind_group(0, inputs.frame, &[]);
+    for item in inputs
+        .order
+        .iter()
+        .filter_map(|index| inputs.draws.items.get(*index as usize))
+    {
+        pass.set_bind_group(1, inputs.draw_uniforms, &[item.offset]);
+        pass.set_bind_group(2, item.textures.as_ref(), &[]);
+        pass.set_vertex_buffer(0, item.mesh.vertices.slice(..));
+        pass.set_index_buffer(item.mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+        if item.double_sided {
+            pass.set_pipeline(inputs.back_faces);
+            pass.draw_indexed(0..item.mesh.index_count, 0, 0..1);
+        }
+        pass.set_pipeline(inputs.front_faces);
         pass.draw_indexed(0..item.mesh.index_count, 0, 0..1);
     }
 }

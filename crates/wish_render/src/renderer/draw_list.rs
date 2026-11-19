@@ -1,9 +1,10 @@
 //! The draw list: a scene's draws turned into draw calls, once per frame.
 //!
-//! Every pass that draws meshes (shadow, opaque, and each debug view) walks
-//! the same list, so what one of them draws is what the others draw. A draw
-//! call is resolved here, once: its mesh, its material's textures, whether
-//! back faces are culled and whether alpha cuts pixels out.
+//! Every pass that draws meshes (shadow, opaque, blended, and each debug
+//! view) walks the same list, so what one of them draws is what the others
+//! draw. A draw call is resolved here, once: its mesh, its material's
+//! textures, whether back faces are culled, whether alpha cuts pixels out and
+//! whether the surface is see-through (blended).
 
 use std::borrow::Cow;
 use std::collections::BTreeSet;
@@ -30,8 +31,34 @@ pub(super) struct DrawItem<'a> {
     /// Whether the material cuts pixels out by alpha (alpha mode MASK): its
     /// shadow has the same holes.
     pub masked: bool,
+    /// Whether the surface is see-through (alpha mode BLEND, or a plain
+    /// `Material` with alpha below 1): drawn by the blended pass, back to
+    /// front, and casting no shadow.
+    pub blended: bool,
     /// Where its uniform data starts in [`DrawList::bytes`].
     pub offset: u32,
+}
+
+/// The least alpha a see-through pixel is drawn with: below it (a fully
+/// transparent texel, a surface faded to nothing) nothing is drawn, in the
+/// lit picture and in the debug views alike. Half a step of an 8-bit
+/// alpha, so a picture's 1/255 still shows.
+pub(super) const BLEND_FLOOR: f32 = 1.0 / 512.0;
+
+/// A see-through surface's alpha as the shaders get it: 0 to 1, and 1 when
+/// it is not a number.
+pub(super) fn see_through_alpha(alpha: f32) -> f32 {
+    if alpha.is_nan() {
+        1.0
+    } else {
+        alpha.clamp(0.0, 1.0)
+    }
+}
+
+/// Whether a plain `Material` (no material file) is see-through: its alpha
+/// is a number below 1. Every other alpha draws it solid, as it always was.
+pub(super) fn plain_is_see_through(material: &MaterialData) -> bool {
+    material.base_color[3] < 1.0
 }
 
 /// The draw calls of a frame and their uniform data.
@@ -57,6 +84,8 @@ struct Surface<'a> {
     occlusion_strength: f32,
     /// 0 unless alpha masks.
     alpha_cutoff: f32,
+    /// Whether the surface is see-through.
+    blend: bool,
     /// How the textures are laid on the surface: scale along u and v, then
     /// offset along u and v.
     uv: [f32; 4],
@@ -78,15 +107,24 @@ impl<'a> DrawList<'a> {
             normal_scale,
             occlusion_strength,
             alpha_cutoff,
+            blend,
             uv,
             id,
         } = surface;
+        // A see-through surface: its alpha cleaned, and pixels with almost
+        // none of it left out (the shaders' cutoff test).
+        let (base_color, alpha_cutoff) = if blend {
+            let [r, g, b, a] = material.base_color;
+            ([r, g, b, see_through_alpha(a)], BLEND_FLOOR)
+        } else {
+            (material.base_color, alpha_cutoff)
+        };
         self.casters.push((*world, bounds.0, bounds.1, id));
         let start = self.items.len() as u64 * DRAW_UNIFORM_STRIDE;
         self.bytes.pad_to(start);
         self.bytes.mat4(world);
         self.bytes.mat4(&world.inverse().transpose());
-        self.bytes.floats(&material.base_color);
+        self.bytes.floats(&base_color);
         self.bytes
             .floats(&[material.metallic, material.roughness, 0.0, 0.0]);
         self.bytes.vec4(material.emissive, 0.0);
@@ -97,7 +135,8 @@ impl<'a> DrawList<'a> {
             mesh,
             textures,
             double_sided,
-            masked: alpha_cutoff > 0.0,
+            masked: !blend && alpha_cutoff > 0.0,
+            blended: blend,
             offset: u32::try_from(start).unwrap_or(u32::MAX),
         });
     }
@@ -105,6 +144,41 @@ impl<'a> DrawList<'a> {
     /// How many triangles the draw calls submit.
     pub(super) fn triangles(&self) -> u64 {
         self.items.iter().map(|item| item.mesh.triangles()).sum()
+    }
+
+    /// For each draw, whether it casts a shadow: every one but the
+    /// see-through ones.
+    pub(super) fn casts(&self) -> Vec<bool> {
+        self.items.iter().map(|item| !item.blended).collect()
+    }
+
+    /// How many of the draws are see-through.
+    pub(super) fn blended(&self) -> u32 {
+        u32::try_from(self.items.iter().filter(|item| item.blended).count()).unwrap_or(u32::MAX)
+    }
+
+    /// The see-through draws, as positions in the list, in the order the
+    /// blended pass draws them: farthest first by the depth of the centre of
+    /// each draw's bounding box along the view (`view` is world to camera
+    /// space, which looks down -Z), and on equal depth in list order, which
+    /// is entity order. A function of the scene and the camera only, worked
+    /// out on the CPU, so the same in every process.
+    pub(super) fn back_to_front(&self, view: &Mat4) -> Vec<u32> {
+        let mut keyed: Vec<(f32, u32)> = self
+            .items
+            .iter()
+            .zip(&self.casters)
+            .enumerate()
+            .filter(|(_, (item, _))| item.blended)
+            .map(|(index, (_, (world, low, high, _)))| {
+                let centre = world.transform_point3((*low + *high) * 0.5);
+                let depth = -view.transform_point3(centre).z;
+                let depth = if depth.is_nan() { 0.0 } else { depth };
+                (depth, u32::try_from(index).unwrap_or(u32::MAX))
+            })
+            .collect();
+        keyed.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+        keyed.into_iter().map(|(_, index)| index).collect()
     }
 
     /// Puts the uniform data into the pooled buffer (the lit passes and the
@@ -150,7 +224,6 @@ impl Renderer {
     ) -> Collected<'a> {
         let mut warnings = Vec::new();
         let mut draw_list = DrawList::default();
-        let mut blended_models: Vec<&str> = Vec::new();
         // What has been said already, so that a file a hundred entities
         // share is one warning.
         let mut said = Said::default();
@@ -228,13 +301,19 @@ impl Renderer {
                             let Some(mesh) = self.shapes.get(shape_index(shape)) else {
                                 continue;
                             };
-                            let (material, double_sided, alpha_cutoff) = match from_file {
+                            let (material, double_sided, alpha_cutoff, blend) = match from_file {
                                 Some(look) => (
                                     &look.material,
                                     look.surface.double_sided,
                                     look.surface.alpha_cutoff,
+                                    look.surface.blend,
                                 ),
-                                None => (&draw.material, false, 0.0),
+                                None => (
+                                    &draw.material,
+                                    false,
+                                    0.0,
+                                    plain_is_see_through(&draw.material),
+                                ),
                             };
                             draw_list.push(
                                 (mesh, Cow::Borrowed(&self.default_textures), double_sided),
@@ -245,6 +324,7 @@ impl Renderer {
                                     normal_scale: 1.0,
                                     occlusion_strength: 1.0,
                                     alpha_cutoff,
+                                    blend,
                                     uv: [1.0, 1.0, 0.0, 0.0],
                                     id,
                                 },
@@ -271,9 +351,6 @@ impl Renderer {
                         .at_file(file));
                         continue;
                     };
-                    if model.blended > 0 && !blended_models.contains(&key.as_str()) {
-                        blended_models.push(key.as_str());
-                    }
                     let primitives = posed.get(&index).unwrap_or(&model.primitives);
                     // A material file on a model replaces every material of
                     // the model: each part keeps its mesh and takes the
@@ -348,6 +425,7 @@ impl Renderer {
                                     normal_scale: primitive.normal_scale,
                                     occlusion_strength: primitive.occlusion_strength,
                                     alpha_cutoff: primitive.alpha_cutoff,
+                                    blend: primitive.blend,
                                     uv: [1.0, 1.0, 0.0, 0.0],
                                     id,
                                 },
@@ -358,13 +436,6 @@ impl Renderer {
             }
         }
         warnings.extend(said.summary());
-        for key in blended_models {
-            warnings.push(Diagnostic::warning(
-                "alpha_blend_not_blended",
-                format!("The model '{key}' has materials that blend alpha; they are drawn opaque."),
-                "Blended transparency is not drawn yet. For cut-outs such as leaves or fences, set the material's alpha mode to MASK in the modelling tool; glass and smoke stay solid for now.",
-            ));
-        }
         // Always something to bind, even with nothing to draw.
         draw_list
             .bytes
@@ -481,6 +552,7 @@ fn textured_surface<'a>(
         },
         occlusion_strength: surface.occlusion_strength,
         alpha_cutoff: surface.alpha_cutoff,
+        blend: surface.blend,
         uv: [
             surface.uv_scale[0],
             surface.uv_scale[1],

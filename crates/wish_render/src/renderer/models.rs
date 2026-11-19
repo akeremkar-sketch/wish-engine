@@ -87,6 +87,8 @@ pub(super) struct GpuPrimitive {
     /// 0 unless the material masks by alpha.
     pub alpha_cutoff: f32,
     pub double_sided: bool,
+    /// Whether the material blends (glTF `BLEND`): the part is see-through.
+    pub blend: bool,
     /// Primitive space to the model's space.
     pub matrix: Mat4,
     /// The primitive's bounding box in its own space.
@@ -107,8 +109,6 @@ pub(super) struct GpuModel {
     /// The model's CPU data, kept when it has skins or clips: posing needs
     /// the node tree, the keyframes and the bind-pose vertices.
     pub animated: Option<std::sync::Arc<wish_import::Model>>,
-    /// How many of its materials blend alpha, which is not drawn blended yet.
-    pub blended: usize,
 }
 
 impl Renderer {
@@ -197,7 +197,6 @@ impl Renderer {
                 ));
             }
             let mut primitives = Vec::new();
-            let mut blended = 0;
             for placed in model.placed() {
                 let Some(source) = model
                     .meshes
@@ -212,9 +211,6 @@ impl Renderer {
                 let material = index
                     .and_then(|index| model.materials.get(index))
                     .unwrap_or(&default_material);
-                if material.alpha_mode == wish_import::AlphaMode::Blend {
-                    blended += 1;
-                }
                 let group_index = index.unwrap_or(model.materials.len());
                 let Some(textures) = groups.get(group_index) else {
                     continue;
@@ -236,6 +232,7 @@ impl Renderer {
                         0.0
                     },
                     double_sided: material.double_sided,
+                    blend: material.alpha_mode == wish_import::AlphaMode::Blend,
                     matrix: placed.matrix,
                     bounds: bounds_of(&source.positions),
                     placed,
@@ -249,7 +246,6 @@ impl Renderer {
                 .then(|| std::sync::Arc::new(model.clone()));
             GpuModel {
                 primitives,
-                blended,
                 animated,
             }
         })?;

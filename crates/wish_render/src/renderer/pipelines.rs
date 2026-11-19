@@ -47,6 +47,13 @@ pub(super) struct Pipelines {
     pub opaque: wgpu::RenderPipeline,
     /// The same, without back-face culling, for double-sided materials.
     pub opaque_double: wgpu::RenderPipeline,
+    /// See-through surfaces: the opaque pass's own shader functions,
+    /// blended over the HDR picture by their alpha, depth tested and
+    /// writing no depth. This one draws front faces (back faces culled).
+    pub blended_front: wgpu::RenderPipeline,
+    /// The same for the back faces of a double-sided see-through surface
+    /// (front faces culled), drawn before its front faces.
+    pub blended_back: wgpu::RenderPipeline,
     /// The shadow pass: depth only, from the light.
     pub shadow: wgpu::RenderPipeline,
     /// The shadow pass for alpha-masked materials: the same depth, with a
@@ -374,48 +381,66 @@ impl Pipelines {
                 },
             ];
             let opaque_layout = layout(&[&frame_layout, &draw_layout, &material_layout]);
-            let opaque_pipeline = |name: &str, cull_mode: Option<wgpu::Face>| {
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some(name),
-                    layout: Some(&opaque_layout),
-                    vertex: wgpu::VertexState {
-                        module: &opaque_shader,
-                        entry_point: Some("vs_main"),
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                        buffers: &[Some(wgpu::VertexBufferLayout {
-                            array_stride: VERTEX_STRIDE,
-                            step_mode: wgpu::VertexStepMode::Vertex,
-                            attributes: &attributes,
-                        })],
-                    },
-                    primitive: wgpu::PrimitiveState {
-                        cull_mode,
-                        ..wgpu::PrimitiveState::default()
-                    },
-                    depth_stencil: Some(wgpu::DepthStencilState {
-                        format: DEPTH_FORMAT,
-                        depth_write_enabled: Some(true),
-                        depth_compare: Some(wgpu::CompareFunction::Less),
-                        stencil: wgpu::StencilState::default(),
-                        bias: wgpu::DepthBiasState::default(),
-                    }),
-                    multisample: wgpu::MultisampleState::default(),
-                    fragment: Some(wgpu::FragmentState {
-                        module: &opaque_shader,
-                        entry_point: Some("fs_main"),
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: HDR_FORMAT,
-                            blend: None,
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                    }),
-                    multiview_mask: None,
-                    cache: None,
-                })
+            // Straight alpha, "over": the surface's colour times its alpha
+            // plus what is behind times the rest. (The HDR picture's own
+            // alpha is read by nothing.)
+            let over = wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::SrcAlpha,
+                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                operation: wgpu::BlendOperation::Add,
             };
-            let opaque = opaque_pipeline("opaque", Some(wgpu::Face::Back));
-            let opaque_double = opaque_pipeline("opaque double-sided", None);
+            let surface_pipeline =
+                |name: &str, cull_mode: Option<wgpu::Face>, blend: Option<wgpu::BlendState>| {
+                    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                        label: Some(name),
+                        layout: Some(&opaque_layout),
+                        vertex: wgpu::VertexState {
+                            module: &opaque_shader,
+                            entry_point: Some("vs_main"),
+                            compilation_options: wgpu::PipelineCompilationOptions::default(),
+                            buffers: &[Some(wgpu::VertexBufferLayout {
+                                array_stride: VERTEX_STRIDE,
+                                step_mode: wgpu::VertexStepMode::Vertex,
+                                attributes: &attributes,
+                            })],
+                        },
+                        primitive: wgpu::PrimitiveState {
+                            cull_mode,
+                            ..wgpu::PrimitiveState::default()
+                        },
+                        depth_stencil: Some(wgpu::DepthStencilState {
+                            format: DEPTH_FORMAT,
+                            // A see-through surface hides nothing behind it.
+                            depth_write_enabled: Some(blend.is_none()),
+                            depth_compare: Some(wgpu::CompareFunction::Less),
+                            stencil: wgpu::StencilState::default(),
+                            bias: wgpu::DepthBiasState::default(),
+                        }),
+                        multisample: wgpu::MultisampleState::default(),
+                        fragment: Some(wgpu::FragmentState {
+                            module: &opaque_shader,
+                            entry_point: Some("fs_main"),
+                            compilation_options: wgpu::PipelineCompilationOptions::default(),
+                            targets: &[Some(wgpu::ColorTargetState {
+                                format: HDR_FORMAT,
+                                blend,
+                                write_mask: wgpu::ColorWrites::ALL,
+                            })],
+                        }),
+                        multiview_mask: None,
+                        cache: None,
+                    })
+                };
+            let opaque = surface_pipeline("opaque", Some(wgpu::Face::Back), None);
+            let opaque_double = surface_pipeline("opaque double-sided", None, None);
+            let see_through = Some(wgpu::BlendState {
+                color: over,
+                alpha: over,
+            });
+            let blended_front =
+                surface_pipeline("blended front faces", Some(wgpu::Face::Back), see_through);
+            let blended_back =
+                surface_pipeline("blended back faces", Some(wgpu::Face::Front), see_through);
             let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("material"),
                 address_mode_u: wgpu::AddressMode::Repeat,
@@ -531,6 +556,8 @@ impl Pipelines {
                 sky_look,
                 opaque,
                 opaque_double,
+                blended_front,
+                blended_back,
                 shadow,
                 shadow_masked,
                 tonemap,

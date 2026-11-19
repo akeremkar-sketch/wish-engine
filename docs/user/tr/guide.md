@@ -111,7 +111,10 @@ Dil, karşılama ekranının sağ üstünden, sonra da proje menüsünden (*Dil*
     *Malzeme dosyası*), seçin ve alanlarını tarayıcının dosyayı gösterdiği yerde ayarlayın:
     `base_color_texture` projenin bir PNG dosyasını alır (yolunu yazın, kutunun yanındaki
     listeden seçin ya da dosyayı üstüne sürükleyin), `uv_scale` resmi yineler, `alpha_mode`
-    *Mask* resmin saydam olduğu yerlerde delik açar, `double_sided` yüzeyin arkasını da gösterir.
+    *Mask* resmin saydam olduğu yerlerde delik açar, *Blend* yüzeyi alfasına göre saydam yapar
+    (cam, su), `double_sided` yüzeyin arkasını da gösterir.
+  - Düz bir `Material` da `base_color` alfası (son kutu, `w`, ya da renk seçici) 1'in altındaysa
+    saydamdır: 0,5 yarı saydam, 0 görünmez. Saydam yüzeyler gölge düşürmez.
   - Sonra dosyayı bir nesnenin `Material` bileşenindeki `file` alanına yazın. Dosyayı kullanan
     her nesne aynı görünüşü paylaşır ve onunla birlikte değişir; böyle bir nesnenin kendi
     `Material` bileşenindeki renk ve sayılar artık kullanılmaz.

@@ -13,10 +13,6 @@ use crate::tool::catalog;
 /// sorted by code. A test checks that every code the source creates is here.
 pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
-        "alpha_blend_not_blended",
-        "A model has materials that blend alpha (glass, smoke); blending is not drawn yet, so they are drawn opaque. Use alpha mode MASK for cut-outs.",
-    ),
-    (
         "already_reverted",
         "That change was taken back already (edit_history revert). Undo the revert to bring it back.",
     ),
@@ -455,6 +451,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "material_file_too_large",
         "A *.mat.json file is larger than 256 KiB and was not read. A material file holds a few numbers and the paths of its textures; pictures stay in their own PNG files.",
+    ),
+    (
+        "material_invisible",
+        "Check warning: a scene or prefab gives an entity's plain Material (no file) a base_color alpha of 0 or below, so nothing of it is drawn: an alpha below 1 makes a surface see-through. Set the alpha to 1 (solid) or between 0 and 1 (see-through); to hide an entity on purpose remove its Primitive or Model, and to fade it let game code lower the alpha while the game runs.",
     ),
     (
         "material_needs_uvs",

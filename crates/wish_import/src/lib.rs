@@ -105,7 +105,8 @@ pub enum AlphaMode {
     Opaque,
     /// Pixels with alpha below the cutoff are not drawn.
     Mask,
-    /// Alpha blends with what is behind (not drawn blended yet).
+    /// Alpha blends with what is behind (drawn see-through, casting no
+    /// shadow).
     Blend,
 }
 

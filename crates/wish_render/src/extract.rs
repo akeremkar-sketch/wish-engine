@@ -88,6 +88,9 @@ pub struct SurfaceData {
     pub alpha_cutoff: f32,
     /// Whether back faces are drawn too.
     pub double_sided: bool,
+    /// Whether the surface is see-through: blended over what is behind it
+    /// by its alpha (`AlphaMode::Blend`).
+    pub blend: bool,
 }
 
 impl Default for SurfaceData {
@@ -100,6 +103,7 @@ impl Default for SurfaceData {
             uv_offset: [0.0, 0.0],
             alpha_cutoff: 0.0,
             double_sided: false,
+            blend: false,
         }
     }
 }
@@ -152,12 +156,19 @@ impl Look {
                 1.0
             }
         };
+        let blend = material.alpha_mode == AlphaMode::Blend;
+        let mut base_color = material
+            .base_color
+            .to_array()
+            .map(|c| clean(c, 0.0, 1.0e4, 1.0));
+        // A blended surface's alpha is how much of it covers what is
+        // behind: at most all of it.
+        if blend {
+            base_color[3] = base_color[3].min(1.0);
+        }
         Self {
             material: MaterialData {
-                base_color: material
-                    .base_color
-                    .to_array()
-                    .map(|c| clean(c, 0.0, 1.0e4, 1.0)),
+                base_color,
                 metallic: clean(material.metallic, 0.0, 1.0, 0.0),
                 roughness: clean(material.roughness, 0.0, 1.0, 0.5),
                 emissive: material
@@ -178,11 +189,12 @@ impl Look {
                 uv_scale: material.uv_scale.map(scale),
                 uv_offset: material.uv_offset.map(|v| clean(v, -4096.0, 4096.0, 0.0)),
                 alpha_cutoff: match material.alpha_mode {
-                    AlphaMode::Opaque => 0.0,
+                    AlphaMode::Opaque | AlphaMode::Blend => 0.0,
                     // Never 0, which means "no cutoff" to the shaders.
                     AlphaMode::Mask => clean(material.alpha_cutoff, 1e-4, 1.0, 0.5),
                 },
                 double_sided: material.double_sided,
+                blend,
             },
         }
     }

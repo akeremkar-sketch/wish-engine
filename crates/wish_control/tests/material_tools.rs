@@ -149,7 +149,7 @@ fn a_material_that_is_not_one_is_refused_with_a_place_and_a_hint() {
             "/material/roughness",
         ),
         (
-            json!({ "path": "assets/m.mat.json", "material": { "alpha_mode": "Blend" } }),
+            json!({ "path": "assets/m.mat.json", "material": { "alpha_mode": "Glass" } }),
             "unknown_variant",
             "/material/alpha_mode",
         ),

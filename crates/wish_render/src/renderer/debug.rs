@@ -432,6 +432,9 @@ pub struct VisibleEntity {
     /// Distance from the camera to the centre of the entity's bounding box,
     /// meters.
     pub distance: f32,
+    /// Whether some part of it is see-through (blended): what is behind it
+    /// shows through, and counts as visible there too.
+    pub blended: bool,
 }
 
 /// What is on screen.
@@ -463,6 +466,9 @@ struct Overlay<'a> {
     lines: &'a [crate::gizmo::LineVertex],
     /// For the cascades view: the shadow maps of the lit picture.
     shadow: Option<&'a ShadowPlan>,
+    /// Leave the see-through surfaces out (what shows through them, for
+    /// `describe`); every view draws them like any surface otherwise.
+    solid_only: bool,
 }
 
 /// What a debug view's own pass takes to draw: its surfaces, their edges
@@ -486,6 +492,7 @@ fn view_stats(
             .saturating_add(u32::from(lines)),
         triangles: draws.triangles(),
         shadow_cascades,
+        blended_surfaces: draws.blended(),
         ..RenderStats::default()
     }
 }
@@ -520,12 +527,12 @@ impl Renderer {
                     scene,
                     camera_view,
                     width as f32 / height as f32,
-                    &draws.casters,
+                    (&draws.casters, &draws.casts()),
                     gpu.device.limits().max_texture_dimension_2d,
                 )
             });
             let (image, lines) = if view == View::Ids {
-                let ids = self.id_pixels(gpu, pool, camera_view, draws, size)?;
+                let ids = self.id_pixels(gpu, pool, camera_view, draws, size, false)?;
                 let image = IdBuffer {
                     width,
                     height,
@@ -544,6 +551,7 @@ impl Renderer {
                 let overlay = Overlay {
                     lines: &lines,
                     shadow: shadow.as_ref().and_then(|planned| planned.plan.as_ref()),
+                    solid_only: false,
                 };
                 let mut raw =
                     self.debug_pass(gpu, pool, camera_view, draws, size, view, &overlay)?;
@@ -596,6 +604,7 @@ impl Renderer {
                 camera_view,
                 &collected.draw_list,
                 (width, height),
+                false,
             )?;
             Ok(IdBuffer {
                 width,
@@ -635,24 +644,48 @@ impl Renderer {
         // the identity passes draw, and its statistics and warnings are what
         // the description says about the picture.
         let plan = self.plan(gpu, scene, camera_view, (width, height), &posed);
-        let ids = self.id_pixels(gpu, pool, camera_view, &plan.draws, (width, height))?;
+        let ids = self.id_pixels(gpu, pool, camera_view, &plan.draws, (width, height), false)?;
+        // With see-through surfaces, what shows through them: the nearest
+        // solid surface at each pixel. An entity is visible at a pixel when
+        // it is the nearest surface there or the nearest solid one. Without
+        // them the two are the same and only one pass is drawn.
+        let behind = if plan.blended.is_empty() {
+            None
+        } else {
+            Some(self.id_pixels(gpu, pool, camera_view, &plan.draws, (width, height), true)?)
+        };
+        let blended: std::collections::BTreeSet<u32> = plan
+            .draws
+            .items
+            .iter()
+            .zip(&plan.draws.casters)
+            .filter(|(item, _)| item.blended)
+            .map(|(_, (_, _, _, id))| *id)
+            .collect();
 
         // Per identity: pixel count and box.
         let mut stats: std::collections::BTreeMap<u32, (u32, [u32; 4])> =
             std::collections::BTreeMap::new();
         for (index, id) in ids.iter().enumerate() {
-            if *id == 0 {
-                continue;
+            let solid = behind
+                .as_ref()
+                .and_then(|behind| behind.get(index))
+                .copied()
+                .filter(|solid| *solid != *id && *solid != 0);
+            for id in std::iter::once(*id).chain(solid) {
+                if id == 0 {
+                    continue;
+                }
+                let (x, y) = (index as u32 % width, index as u32 / width);
+                let entry = stats.entry(id).or_insert((0, [x, y, x, y]));
+                entry.0 += 1;
+                entry.1 = [
+                    entry.1[0].min(x),
+                    entry.1[1].min(y),
+                    entry.1[2].max(x),
+                    entry.1[3].max(y),
+                ];
             }
-            let (x, y) = (index as u32 % width, index as u32 / width);
-            let entry = stats.entry(*id).or_insert((0, [x, y, x, y]));
-            entry.0 += 1;
-            entry.1 = [
-                entry.1[0].min(x),
-                entry.1[1].min(y),
-                entry.1[2].max(x),
-                entry.1[3].max(y),
-            ];
         }
 
         // Distance to the centre of each entity's world-space bounding box.
@@ -682,7 +715,14 @@ impl Renderer {
                 measured += 1;
                 let alone = self.collect(gpu, scene, Some(*id as usize - 1), &posed);
                 let full = self
-                    .id_pixels(gpu, pool, camera_view, &alone.draw_list, (width, height))?
+                    .id_pixels(
+                        gpu,
+                        pool,
+                        camera_view,
+                        &alone.draw_list,
+                        (width, height),
+                        false,
+                    )?
                     .iter()
                     .filter(|other| **other != 0)
                     .count();
@@ -699,6 +739,7 @@ impl Renderer {
                 visible_fraction,
                 bounding_box: *bounding_box,
                 distance,
+                blended: blended.contains(id),
             });
         }
         let hidden = drawn
@@ -717,7 +758,9 @@ impl Renderer {
         })
     }
 
-    /// The identity of what is drawn at each pixel, as `u32`s.
+    /// The identity of what is drawn at each pixel, as `u32`s. With
+    /// `solid_only`, of the nearest solid surface (see-through ones left
+    /// out): what shows through them.
     fn id_pixels(
         &self,
         gpu: &Gpu,
@@ -725,6 +768,7 @@ impl Renderer {
         camera: &CameraView,
         draws: &DrawList<'_>,
         size: (u32, u32),
+        solid_only: bool,
     ) -> Result<Vec<u32>> {
         let raw = self.debug_pass(
             gpu,
@@ -733,7 +777,10 @@ impl Renderer {
             draws,
             size,
             View::Ids,
-            &Overlay::default(),
+            &Overlay {
+                solid_only,
+                ..Overlay::default()
+            },
         )?;
         Ok(raw
             .pixels
@@ -852,7 +899,11 @@ impl Renderer {
                     View::ShadowCascades => &self.debug.cascades,
                     _ => &self.debug.fill,
                 };
-                for item in &draws.items {
+                for item in draws
+                    .items
+                    .iter()
+                    .filter(|item| !(overlay.solid_only && item.blended))
+                {
                     pass.set_pipeline(&triangles[usize::from(item.double_sided)]);
                     pass.set_bind_group(1, &draw_group, &[item.offset]);
                     pass.set_bind_group(2, item.textures.as_ref(), &[]);

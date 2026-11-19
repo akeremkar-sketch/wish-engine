@@ -483,6 +483,41 @@ is a placeholder made by `asset_create`; any PNG of the project works.)
 - `capture_frame` warns (`texture_not_loaded`, `material_not_loaded`) when a file is missing or broken and draws
   the surface without it.
 
+## A glass window
+
+A surface is see-through when its material blends: a material file with `alpha_mode: "Blend"`, or a plain `Material`
+whose `base_color` alpha is below 1. Its alpha is how much of it covers what is behind: 1 solid, 0.5 half, 0 nothing.
+
+```json calls
+[
+  { "tool": "asset_create", "args": { "path": "assets/materials/glass.mat.json",
+    "material": { "base_color": [0.7, 0.85, 0.95, 0.25], "roughness": 0.05, "alpha_mode": "Blend", "double_sided": true } } }
+]
+```
+
+```json ops
+[
+  { "op": "spawn", "id": "window", "components": {
+    "Primitive": { "shape": "Cube" },
+    "Transform": { "translation": [0, 1, 0], "scale": [2, 1.5, 0.05] },
+    "Material": { "file": "assets/materials/glass.mat.json" } } },
+  { "op": "spawn", "id": "ghost", "components": {
+    "Primitive": { "shape": "Sphere" },
+    "Transform": { "translation": [1.8, 0.6, 1] },
+    "Material": { "base_color": [0.85, 0.9, 1, 0.4], "emissive": [0.1, 0.1, 0.15] } } }
+]
+```
+
+- To fade something out, game code lowers `Material.base_color` alpha each tick; at 0 it is not drawn, not picked
+  and `describe_view` lists it as hidden.
+- See-through surfaces are lit, shadowed and fogged like any surface and bloom shows through them, but they cast no
+  shadow. They are drawn farthest first, one object at a time (by the middle of each one): two that cut through
+  each other are not sorted inside, and a small one over a large one (a bottle over water) can be drawn under it;
+  split the large one if it is.
+- A material file's alpha does nothing unless `alpha_mode` is `"Blend"`; glTF materials with `BLEND` are see-through.
+- `capture_frame` and `describe_view` count them in `stats.blended_surfaces`; `describe_view` marks each one
+  `"blended": true` and still lists what is seen through it as visible.
+
 ## Proving it: scenario tests and replays
 
 A scenario test plays the game from a scene with inputs and checks values; `test_run` says which step failed, at which

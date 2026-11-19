@@ -131,7 +131,11 @@ pub struct Primitive {
 /// `Material` without `file` does nothing on a model.
 #[component]
 pub struct Material {
-    /// The colour of the surface (for metals, of its reflection).
+    /// The colour of the surface (for metals, of its reflection). Its alpha
+    /// is how solid the surface is: 1 (the default) is solid; below 1 the
+    /// surface is see-through, blended over what is behind it (0.5 half,
+    /// 0 invisible): glass, water, a ghost, something fading out. A
+    /// see-through surface casts no shadow.
     pub base_color: Color,
     /// 0 for plastic, wood and stone; 1 for bare metal.
     #[schema(range = 0.0..=1.0, default = 0.0)]
@@ -160,6 +164,11 @@ pub enum AlphaMode {
     /// no shadow is cast), everywhere else the surface is solid. For
     /// leaves, fences, grates.
     Mask,
+    /// See-through: the surface is blended over what is behind it by its
+    /// alpha (1 solid, 0.5 half, 0 invisible). For glass, water, smoke,
+    /// ghosts. It casts no shadow; it is lit, shadowed and fogged like any
+    /// surface. Overlapping see-through surfaces are drawn farthest first.
+    Blend,
 }
 
 /// What a material file (`*.mat.json`) holds: one look, for every entity
@@ -228,7 +237,8 @@ pub struct MaterialFile {
     /// Slides the textures across the surface, in picture widths and
     /// heights (after `uv_scale`): [0.5, 0] moves them by half a picture.
     pub uv_offset: [f32; 2],
-    /// Whether the base colour's alpha cuts holes in the surface.
+    /// What the base colour's alpha does: nothing (`Opaque`), cut holes
+    /// (`Mask`) or make the surface see-through (`Blend`).
     pub alpha_mode: AlphaMode,
     /// With `alpha_mode: Mask`: alpha below this is a hole.
     #[schema(range = 0.0..=1.0, default = 0.5)]

@@ -176,7 +176,7 @@ fn hostile_material_files_are_diagnostics_with_a_place_and_a_hint() {
             Some("/material/uv_scale"),
         ),
         (
-            "{ \"format\": 1, \"material\": { \"alpha_mode\": \"Blend\" } }",
+            "{ \"format\": 1, \"material\": { \"alpha_mode\": \"Glass\" } }",
             "unknown_variant",
             Some("/material/alpha_mode"),
         ),
@@ -453,6 +453,8 @@ fn a_material_that_says_what_is_not_used_is_a_warning() {
       "Material": { "file": "assets/materials/brick.mat.json", "base_color": [1, 0, 0, 1], "roughness": 1 } } },
     "crate": { "components": { "Model": { "asset": "assets/models/crate.glb" },
       "Material": { "base_color": [1, 0, 0, 1] } } },
+    "faded": { "components": { "Primitive": {}, "Material": { "base_color": [1, 0, 0, 0.5] } } },
+    "ghost": { "components": { "Primitive": {}, "Material": { "base_color": [1, 0, 0, 0] } } },
     "skinned": { "components": { "Model": { "asset": "assets/models/crate.glb" },
       "Material": { "file": "assets/materials/brick.mat.json" } } }
   }
@@ -477,6 +479,12 @@ fn a_material_that_says_what_is_not_used_is_a_warning() {
             (
                 "material_unused_on_model",
                 Some("/entities/crate/components/Material"),
+                false
+            ),
+            // Alpha 0 hides the whole entity; 0.5 is a see-through one.
+            (
+                "material_invisible",
+                Some("/entities/ghost/components/Material/base_color/3"),
                 false
             ),
         ]

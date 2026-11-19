@@ -463,11 +463,11 @@ const SEARCH_WORDS: &[(&str, &str)] = &[
     ("Model", "mesh gltf glb 3d model asset import"),
     (
         "Material",
-        "color colour paint texture textures textured skin surface appearance look shiny metal rough glow",
+        "color colour paint texture textures textured skin surface appearance look shiny metal rough glow glass transparent transparency see-through translucent opacity alpha fade fading invisible ghost water window",
     ),
     (
         "MaterialFile",
-        "color colour paint texture textures textured image picture skin tile tiles tiling repeat uv bump bumps normal map cutout cut-out transparent hole holes alpha mask leaves fence shared mat.json look surface appearance shiny metal rough glow",
+        "color colour paint texture textures textured image picture skin tile tiles tiling repeat uv bump bumps normal map cutout cut-out transparent transparency hole holes alpha mask leaves fence shared mat.json look surface appearance shiny metal rough glow glass see-through translucent blend blended opacity fade water window",
     ),
     (
         "RigidBody",

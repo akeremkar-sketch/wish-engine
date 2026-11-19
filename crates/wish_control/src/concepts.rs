@@ -82,6 +82,10 @@ pub fn explain(name: &str) -> Option<&'static str> {
         | "shadermaterial" => {
             "Surface looks are the Material component: base_color [r, g, b, a], metallic, roughness, emissive for a plain look. Textures are in a material file: asset_create with a .mat.json path and material { base_color_texture: a PNG of the project, normal_texture, uv_scale (tiling), alpha_mode Mask (cut-outs), double_sided, ... } (schema_get MaterialFile), then name the file in the entity's Material.file. Every entity that names it shares the look; on a Model it replaces the model's materials. There are no custom shaders. wish://docs/recipes has \"A texture on a box\"."
         }
+        "transparency" | "transparent" | "opacity" | "alpha" | "glass" | "translucent"
+        | "translucency" | "seethrough" | "fade" | "fader" | "canvasgroup" | "blend" => {
+            "See-through surfaces are the Material component: a base_color alpha below 1 blends the surface over what is behind it (0.5 half, 0 invisible; game code can change it every tick to fade something). In a material file it is alpha_mode Blend (glTF BLEND materials are see-through too). They are lit and fogged like any surface, cast no shadow and are drawn farthest first. wish://docs/recipes has \"A glass window\"."
+        }
         "script" | "behaviour" | "behavior" | "monobehaviour" | "component" | "controller" => {
             "Behaviour is game code: Rust systems in scripts/src/lib.rs built with script_build (see wish://docs/sdk). Scenes hold data only."
         }

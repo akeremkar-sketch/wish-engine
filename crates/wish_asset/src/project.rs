@@ -92,6 +92,11 @@ fn read(path: &Path, name: &str, diagnostics: &mut Vec<Diagnostic>) -> Option<St
 /// - `material_unused_on_model`: the entity has a `Model` and its
 ///   `Material` names no file. A model is drawn with its own materials;
 ///   only a material file replaces them.
+/// - `material_invisible`: a plain `Material` (no file) whose `base_color`
+///   alpha is 0 or below. An alpha below 1 makes a surface see-through, and
+///   at 0 nothing of it is drawn: written in a file, that is almost always a
+///   mistake (game code that fades something out changes the value in the
+///   world, not in the file).
 ///
 /// Entities are looked at as they are written. What a prefab instance
 /// inherits or overrides is not followed.
@@ -142,6 +147,25 @@ fn material_notes(source: &str, file: &str) -> Vec<Diagnostic> {
             None
         };
         if let Some(mut note) = note {
+            if let Some(located) = root.locate(&pointer) {
+                let span = located.key.unwrap_or(located.value);
+                note = note.at_line(span.line, Some(span.column));
+            }
+            notes.push(note.at_path(pointer.clone()).at_file(file));
+        }
+        let alpha = material
+            .get("base_color")
+            .and_then(|colour| colour.get(3))
+            .and_then(serde_json::Value::as_f64);
+        if let Some(alpha) = alpha.filter(|alpha| !named && *alpha <= 0.0) {
+            let pointer = format!("{pointer}/base_color/3");
+            let mut note = Diagnostic::warning(
+                "material_invisible",
+                format!(
+                    "Entity '{id}' is invisible: the alpha of its Material.base_color is {alpha}, and a surface is see-through by its alpha (1 solid, 0.5 half, 0 or below nothing)."
+                ),
+                "Set the fourth number of base_color to 1 for a solid surface, or between 0 and 1 for a see-through one. To hide an entity on purpose, remove its Primitive or Model; to fade it, let game code lower the alpha while the game runs.",
+            );
             if let Some(located) = root.locate(&pointer) {
                 let span = located.key.unwrap_or(located.value);
                 note = note.at_line(span.line, Some(span.column));

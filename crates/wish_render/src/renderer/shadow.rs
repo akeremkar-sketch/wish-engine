@@ -289,15 +289,25 @@ pub(super) struct Planned {
     pub warning: Option<Diagnostic>,
 }
 
+/// One draw as the shadow maps see it: its matrix, the corners of its local
+/// bounding box and its identity.
+pub(super) type Caster = (Mat4, Vec3, Vec3, u32);
+
 /// The shadow maps to draw for `scene` seen through `view` in a picture of
 /// `aspect` (width over height): none when shadows are switched off in the
-/// settings, when there is no directional light or it casts none, or when
-/// there is nothing to cover. Only the first directional light casts.
+/// settings, when there is no directional light or it casts none, when
+/// there is nothing to cover, or when nothing drawn casts a shadow. Only the
+/// first directional light casts.
+///
+/// `casters` are every draw's matrix, box and identity: the maps are fitted
+/// around all of them, so that everything drawn can receive a shadow.
+/// `casts` says which of them cast one (a see-through surface does not); a
+/// position past its end casts. A cascade draws only casters that cast.
 pub(super) fn plan(
     scene: &RenderScene,
     view: &CameraView,
     aspect: f32,
-    casters: &[(Mat4, Vec3, Vec3, u32)],
+    (casters, casts): (&[Caster], &[bool]),
     device_limit: u32,
 ) -> Planned {
     let none = Planned {
@@ -311,6 +321,12 @@ pub(super) fn plan(
     let Some(light) = scene.lights.first().filter(|light| light.shadows) else {
         return none;
     };
+    let casting = |index: usize| casts.get(index).copied().unwrap_or(true);
+    // Nothing that is drawn casts a shadow (only see-through surfaces):
+    // no map, and an empty shadow pass is not drawn.
+    if !(0..casters.len()).any(casting) {
+        return none;
+    }
     let count = count(scene);
     if count < 2 {
         return Planned {
@@ -321,7 +337,7 @@ pub(super) fn plan(
     }
     let distance = distance(scene, view);
     let lens = Lens::of(view, aspect);
-    let Some(cascades) = fit_cascades(
+    let Some(mut cascades) = fit_cascades(
         light.direction,
         &lens,
         (count, distance),
@@ -330,6 +346,9 @@ pub(super) fn plan(
     ) else {
         return none;
     };
+    for cascade in &mut cascades.cascades {
+        cascade.draws.retain(|index| casting(*index as usize));
+    }
     if cascades
         .cascades
         .iter()
@@ -351,7 +370,9 @@ pub(super) fn plan(
         // contradiction ("nothing within 20 m: the nearest is 15 m away").
         let nearest = casters
             .iter()
-            .map(|(matrix, low, high, _)| {
+            .enumerate()
+            .filter(|(index, _)| casting(*index))
+            .map(|(_, (matrix, low, high, _))| {
                 lens.forward
                     .dot(matrix.transform_point3((*low + *high) * 0.5) - lens.position)
             })
@@ -801,7 +822,7 @@ mod tests {
         let view = camera(Vec3::new(0.0, 1.0, 5.0), Vec3::NEG_Z, None);
         scene.lights.push(sun(Vec3::NEG_Y));
         scene.settings.shadow_map_size = 512;
-        let planned = plan(&scene, &view, 1.5, &boxes, 16384);
+        let planned = plan(&scene, &view, 1.5, (&boxes, &[]), 16384);
         assert!(
             matches!(planned.plan, Some(ShadowPlan::Single { map_size: 512, .. })),
             "{:?}",
@@ -809,7 +830,11 @@ mod tests {
         );
         assert!(planned.warning.is_none());
         scene.settings.shadows = false;
-        assert!(plan(&scene, &view, 1.5, &boxes, 16384).plan.is_none());
+        assert!(
+            plan(&scene, &view, 1.5, (&boxes, &[]), 16384)
+                .plan
+                .is_none()
+        );
     }
 
     #[test]
@@ -1197,7 +1222,7 @@ mod tests {
         view: &CameraView,
         casters: &[(Mat4, Vec3, Vec3, u32)],
     ) -> Planned {
-        plan(scene, view, 1.5, casters, 16384)
+        plan(scene, view, 1.5, (casters, &[]), 16384)
     }
 
     #[test]
