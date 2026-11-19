@@ -1157,6 +1157,11 @@ impl EditorApp {
 
     /// The inspector's changes to the scene's resources.
     fn resource_act(&mut self, asked: InspectorActions) {
+        if let Some(look) = asked.look {
+            let op = json!({ "op": "apply_look", "look": look });
+            let name = inspector::look_name(&look, &look);
+            self.edit(&tf("applied the look {look}", &[("look", &name)]), vec![op]);
+        }
         if let Some((name, field, value)) = asked.set {
             let op =
                 json!({ "op": "set_resource", "name": name, "value": { field.clone(): value } });

@@ -40,7 +40,7 @@ fn write(root: &Path, relative: &str, text: &str, written: &mut Vec<String>) -> 
 /// The scene a new project starts with.
 fn starting_scene() -> Result<String> {
     wish_scene::json::to_canonical(&json!({
-        "format": 1,
+        "format": wish_scene::FORMAT,
         "entities": {
             "camera": { "components": {
                 "Camera": { "fov_y_deg": 50 },

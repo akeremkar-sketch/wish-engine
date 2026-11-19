@@ -15,6 +15,11 @@
 //! degrees, turned into the `rotation` quaternion before the edit is made
 //! (yaw about Y first, then pitch about X, then roll about Z), so files stay
 //! canonical and hold only quaternions.
+//!
+//! `apply_look` is a convenience of the same kind: `{ "op": "apply_look",
+//! "look": "natural" }` is read as one `set_resource` per look resource with
+//! every value of that look written out ([`crate::looks`]). A problem in one
+//! of them is reported at the `apply_look`'s own index ([`Parsed::origin`]).
 
 use std::collections::BTreeMap;
 
@@ -41,6 +46,7 @@ pub const OPS: &[&str] = &[
     "set_resource",
     "replace_resource",
     "remove_resource",
+    "apply_look",
 ];
 
 /// The keys each operation takes (besides `op`); the first ones listed are
@@ -62,6 +68,7 @@ fn keys_of(op: &str) -> (&'static [&'static str], &'static [&'static str]) {
         "set_notes" => (&["id"], &["notes"]),
         "set_resource" | "replace_resource" => (&["name", "value"], &[]),
         "remove_resource" => (&["name"], &[]),
+        "apply_look" => (&["look"], &[]),
         _ => (&[], &[]),
     }
 }
@@ -240,8 +247,8 @@ impl Reader<'_> {
     }
 }
 
-/// Reads one operation.
-pub fn parse_op(index: usize, value: &Value) -> Result<EditOp> {
+/// Reads one operation: one scene edit, or several for `apply_look`.
+pub fn parse_op(index: usize, value: &Value) -> Result<Vec<EditOp>> {
     let Some(object) = value.as_object() else {
         return Err(op_error(
             index,
@@ -297,8 +304,16 @@ pub fn parse_op(index: usize, value: &Value) -> Result<EditOp> {
         }
     }
     let read = Reader { index, op, object };
+    if op == "apply_look" {
+        let look = crate::looks::find(&read.text("look")?).map_err(|problem| {
+            problem
+                .at_op(u32::try_from(index).unwrap_or(u32::MAX))
+                .at_path(read.pointer("look"))
+        })?;
+        return Ok(crate::looks::ops_for(&look));
+    }
     let id = || read.text("id");
-    Ok(match op {
+    Ok(vec![match op {
         "spawn" => EditOp::Spawn {
             id: id()?,
             parent: read.optional_text("parent")?,
@@ -387,11 +402,39 @@ pub fn parse_op(index: usize, value: &Value) -> Result<EditOp> {
         _ => EditOp::RemoveResource {
             name: read.text("name")?,
         },
-    })
+    }])
 }
 
-/// Reads a list of operations.
-pub fn parse_ops(value: &Value) -> Result<Vec<EditOp>> {
+/// A list of operations as scene edits, and where each came from.
+#[derive(Debug)]
+pub struct Parsed {
+    /// The scene edits, in order.
+    pub ops: Vec<EditOp>,
+    /// For each edit, the index of the operation it was read from (an
+    /// `apply_look` is several edits).
+    pub origin: Vec<usize>,
+}
+
+impl Parsed {
+    /// `problem` with its operation index (`location.op`, which counts the
+    /// edits) turned back into the index of the operation the caller wrote.
+    pub fn locate(&self, problem: Diagnostic) -> Diagnostic {
+        locate(&self.origin, problem)
+    }
+}
+
+/// [`Parsed::locate`] with the `origin` list alone.
+pub fn locate(origin: &[usize], mut problem: Diagnostic) -> Diagnostic {
+    if let Some(op) = problem.location.op
+        && let Some(&from) = usize::try_from(op).ok().and_then(|op| origin.get(op))
+    {
+        problem.location.op = Some(u32::try_from(from).unwrap_or(u32::MAX));
+    }
+    problem
+}
+
+/// Reads a list of operations, keeping where each edit came from.
+pub fn parse_ops_traced(value: &Value) -> Result<Parsed> {
     let Some(items) = value.as_array() else {
         return Err(Diagnostic::error(
             "invalid_parameter",
@@ -408,11 +451,22 @@ pub fn parse_ops(value: &Value) -> Result<Vec<EditOp>> {
         )
         .at_path("/ops"));
     }
-    items
-        .iter()
-        .enumerate()
-        .map(|(index, item)| parse_op(index, item))
-        .collect()
+    let mut parsed = Parsed {
+        ops: Vec::with_capacity(items.len()),
+        origin: Vec::with_capacity(items.len()),
+    };
+    for (index, item) in items.iter().enumerate() {
+        for op in parse_op(index, item)? {
+            parsed.ops.push(op);
+            parsed.origin.push(index);
+        }
+    }
+    Ok(parsed)
+}
+
+/// Reads a list of operations.
+pub fn parse_ops(value: &Value) -> Result<Vec<EditOp>> {
+    parse_ops_traced(value).map(|parsed| parsed.ops)
 }
 
 #[cfg(test)]
@@ -437,10 +491,12 @@ mod tests {
             { "op": "set_notes", "id": "a" },
             { "op": "set_resource", "name": "Sky", "value": { "luminance": 1 } },
             { "op": "replace_resource", "name": "Sky", "value": {} },
-            { "op": "remove_resource", "name": "Sky" }
+            { "op": "remove_resource", "name": "Sky" },
+            { "op": "apply_look", "look": "natural" }
         ]))
         .unwrap();
-        assert_eq!(ops.len(), OPS.len());
+        // apply_look is one set_resource per look resource (six).
+        assert_eq!(ops.len(), OPS.len() - 1 + 6);
         assert!(matches!(
             &ops[6],
             EditOp::Reparent {
@@ -449,6 +505,49 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn a_look_is_read_as_its_resources_and_problems_point_at_it() {
+        let parsed = parse_ops_traced(&json!([
+            { "op": "despawn", "id": "x" },
+            { "op": "apply_look", "look": "vivid" },
+            { "op": "despawn", "id": "y" }
+        ]))
+        .unwrap();
+        assert_eq!(parsed.origin, [0, 1, 1, 1, 1, 1, 1, 2]);
+        let names: Vec<&str> = parsed.ops[1..7]
+            .iter()
+            .map(|op| match op {
+                EditOp::SetResource { name, .. } => name.as_str(),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "Ambient",
+                "Bloom",
+                "ColorGrading",
+                "Fog",
+                "RenderSettings",
+                "Sky"
+            ]
+        );
+        // A problem with the fifth edit is the second operation's.
+        let problem = parsed.locate(Diagnostic::error("x", "x", "x").at_op(4));
+        assert_eq!(problem.location.op, Some(1));
+        let problem = parsed.locate(Diagnostic::error("x", "x", "x").at_op(7));
+        assert_eq!(problem.location.op, Some(2));
+        // An unknown look is refused with the names there are, at its index.
+        let problem = parse_ops(&json!([
+            { "op": "despawn", "id": "x" },
+            { "op": "apply_look", "look": "vivd" }
+        ]))
+        .unwrap_err();
+        assert_eq!(problem.code, "unknown_look");
+        assert_eq!(problem.location.op, Some(1));
+        assert_eq!(problem.hint, "Did you mean 'vivid'?");
     }
 
     #[test]

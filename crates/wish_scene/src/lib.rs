@@ -13,6 +13,8 @@
 //!   and the activity log of who changed what.
 //! - [`instantiate`]: creating a document's entities in a world, each with a
 //!   [`SceneId`].
+//! - [`migrate`]: keeping a file's meaning when defaults change (the
+//!   recorded defaults of each format, and the values a file relied on).
 //! - [`prefab`]: the [`PrefabLibrary`], [`load_prefab`], and expanding a
 //!   scene's prefab instances into plain entities.
 //!
@@ -26,6 +28,7 @@ pub mod document;
 pub mod edit;
 pub mod instantiate;
 pub mod json;
+pub mod migrate;
 pub mod prefab;
 mod schema_check;
 

@@ -89,6 +89,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "The project's default scene was moved, and wish.json was updated to name its new path (a note, not a problem).",
     ),
     (
+        "defaults_record_invalid",
+        "The engine's record of the defaults an older file format was written against could not be read, so the file cannot be migrated. It is part of the engine: reinstall it.",
+    ),
+    (
         "degenerate_transform",
         "An entity was not drawn because its scale is zero or not a finite number. Give its Transform (and its parents') a non-zero, finite scale.",
     ),
@@ -441,6 +445,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "wish.lock, the exact packages the project uses, is not valid. Write it again from what is installed: packages with action lock.",
     ),
     (
+        "looks_invalid",
+        "The engine's own list of looks (for apply_look) could not be read. It is part of the engine: reinstall it.",
+    ),
+    (
         "managed_component",
         "The engine keeps this component itself (such as GlobalTransform or Hierarchy). Change the component it is derived from instead, such as Transform or the parent.",
     ),
@@ -477,8 +485,16 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "A mesh has more vertex data than the GPU allows in one buffer. Split it or reduce its detail in the modelling tool.",
     ),
     (
+        "migration_prefab_unresolved",
+        "wen migrate could not tell what a prefab gives an instance (the prefab is missing, or nested too deep), so it wrote the old default into the instance as if the prefab gave none. Check the result; migrating the whole project with the prefab present avoids it.",
+    ),
+    (
+        "migration_refused",
+        "wen migrate does not migrate a file whose entities or resources are not a JSON object: fix the file first (wen check), then migrate it.",
+    ),
+    (
         "missing_format",
-        "A document has no \"format\" number. Add \"format\": 1.",
+        "A document has no \"format\" number. Add the number the hint gives (a scene: the engine's scene format, wish_scene::FORMAT).",
     ),
     (
         "missing_parameter",
@@ -1118,6 +1134,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "The editor has no interface language with that code (wen edit --lang). The hint lists the codes.",
     ),
     (
+        "unknown_look",
+        "edit_apply's apply_look names a look the engine does not have. The hint gives the closest; the candidates are plain, natural and vivid.",
+    ),
+    (
         "unknown_parameter",
         "A tool has no parameter with that name. The hint gives the closest; the candidates list them all.",
     ),
@@ -1375,7 +1395,7 @@ colours, `Sky` `sun_size_deg` draws the sun's disc, `Fog` (`density`, `height_fa
 `Bloom` (`strength`) makes what is brighter than white glow (an emissive `Material`, the sun's disc), `ColorGrading` sets\n\
 contrast, saturation, white balance and a vignette, `RenderSettings` `antialiasing: \"Fxaa\"` smooths edges. In a level\n\
 larger than a room, `RenderSettings` `shadow_cascades: 4` keeps shadows near the camera sharp (up to `shadow_distance`\n\
-meters; `capture_frame` `view: \"shadow_cascades\"` shows which shadow map each surface uses).\n\
+meters; `view: \"shadow_cascades\"` shows them). All at once: `edit_apply` `apply_look`.\n\
 **`wish://docs/recipes` has working pieces of games** (a platformer character, a follow camera, pickups with a score,\n\
 checkpoints, moving platforms, a win screen and a button, a 2D scene, a texture on a box, tests): start from them.\n\
 \n\

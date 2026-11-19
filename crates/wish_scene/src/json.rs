@@ -585,7 +585,10 @@ pub fn parse(source: &str, file: &str) -> Result<Node> {
         return Err(parser.error(
             "json_syntax",
             "The file is empty; it needs a JSON value.".to_owned(),
-            "A scene file contains at least {\"format\": 1}.",
+            format!(
+                "A scene file contains at least {{\"format\": {}}}.",
+                crate::FORMAT
+            ),
         ));
     }
     let node = parser.parse_value(0)?;

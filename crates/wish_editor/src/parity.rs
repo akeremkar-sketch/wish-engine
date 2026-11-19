@@ -120,6 +120,11 @@ pub const PARITY: &[Capability] = &[
         "Scene resources: Remove resource",
         "parity_ops::scene_resources_are_edited_added_reset_and_removed",
     ),
+    op(
+        "edit_apply:apply_look",
+        "Inspector with nothing selected (scene resources): Add resource..., then Apply a look: Plain, Natural or Vivid",
+        "parity_ops::a_look_is_applied_by_hand",
+    ),
     // The scene's history.
     op(
         "edit_history:undo",

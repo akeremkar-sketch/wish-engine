@@ -501,7 +501,8 @@ impl<'a> Validator<'a> {
 
     fn run(&mut self) -> Option<SceneDocument> {
         let root = self.root;
-        let members = self.members(root, "", "a scene file", "{ \"format\": 1 }")?;
+        let example = format!("{{ \"format\": {FORMAT} }}");
+        let members = self.members(root, "", "a scene file", &example)?;
 
         self.check_format(root, members);
         let mut entities = BTreeMap::new();

@@ -2,7 +2,7 @@
 //! `edit_history`.
 
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Map, Value, json};
 use wish_core::{Diagnostic, Entity, Result};
@@ -129,7 +129,7 @@ pub(crate) const ENTITY_GET: Tool = Tool {
 pub(crate) const EDIT_APPLY: Tool = Tool {
     name: "edit_apply",
     title: "Change the scene",
-    description: "Applies a list of operations to a scene, all or nothing, and writes the file. Operations: spawn {id, parent?, order?, components?, notes?}, instantiate {id, prefab, ...}, despawn {id}, set {id, component, value} (merges fields), replace {id, component, value}, remove {id, component}, reparent {id, parent, order?}, rename {id, to}, set_notes {id, notes}, set_resource / replace_resource {name, value}, remove_resource {name}, set_override / replace_override / remove_override {id, entity, component, value?}. In Transform values, \"euler_deg\": [x, y, z] may stand for rotation. Siblings keep the order of their \"order\" (then by id): give order where it matters, as in an interface column. A failed operation changes nothing and says which one (location.op). Answers the new revision, what changed, the changed entities as they are now (now: the touched components' values and world_position; no need to read them back), and what others changed since you last looked. The file is saved by this call. With session, the operations change that running game's world instead (not the file, not its history; it lasts while the session runs): spawn, despawn, set, replace, remove, reparent, rename and the resource operations.",
+    description: "Applies a list of operations to a scene, all or nothing, and writes the file. Operations: spawn {id, parent?, order?, components?, notes?}, instantiate {id, prefab, ...}, despawn {id}, set {id, component, value} (merges fields), replace {id, component, value}, remove {id, component}, reparent {id, parent, order?}, rename {id, to}, set_notes {id, notes}, set_resource / replace_resource {name, value}, remove_resource {name}, set_override / replace_override / remove_override {id, entity, component, value?}, apply_look {look} (a whole look in one step: plain = no effects, natural = sky light, sun disc, light haze, soft bloom, gentle grading, FXAA, four shadow cascades; vivid = the same, stronger; it writes every value of Ambient source/sky_strength, Sky sun_size_deg, Fog, ColorGrading, Bloom and RenderSettings antialiasing/shadow_cascades/shadow_distance, and leaves the sky's colours, the exposure and the rest as they are). In Transform values, \"euler_deg\": [x, y, z] may stand for rotation. Siblings keep the order of their \"order\" (then by id): give order where it matters, as in an interface column. A failed operation changes nothing and says which one (location.op). Answers the new revision, what changed, the changed entities as they are now (now: the touched components' values and world_position; no need to read them back), the changed resources as they are now (now_resources: every field; one over 4 KiB is only named, in now_resources_omitted), and what others changed since you last looked. The file is saved by this call. With session, the operations change that running game's world instead (not the file, not its history; it lasts while the session runs): spawn, despawn, set, replace, remove, reparent, rename and the resource operations.",
     params: &[
         SCENE,
         Param::optional(
@@ -885,6 +885,62 @@ fn now_json(workspace: &mut Workspace, path: &str, changes: &[String]) -> Option
     (!now.is_empty()).then_some(Value::Object(now))
 }
 
+/// The resources a change touched, as they are after it (every field, the
+/// defaults filled in), so that an agent need not read them back: after an
+/// `apply_look` this is the whole look. A resource the change removed reads
+/// as its defaults, which is what the engine then uses.
+fn now_resources_json(workspace: &mut Workspace, path: &str, changes: &[String]) -> Option<Value> {
+    let names: BTreeSet<&str> = changes
+        .iter()
+        .filter_map(|change| change.strip_prefix("/resources/"))
+        .map(|rest| rest.split('/').next().unwrap_or(rest))
+        .collect();
+    if names.is_empty() {
+        return None;
+    }
+    let view = workspace.view(path).ok()?;
+    let world = &view.world;
+    let mut now = Map::new();
+    let mut omitted = Vec::new();
+    for name in names {
+        let value = match world.resource_json(name) {
+            Ok(value) => value,
+            Err(_) => {
+                let Some(value) = world
+                    .registry()
+                    .resource_id(name)
+                    .and_then(|id| world.registry().resource(id))
+                    .and_then(|info| {
+                        wish_schema::to_json(info.schema(), info.default_bytes(), world.texts())
+                            .ok()
+                    })
+                else {
+                    continue;
+                };
+                value
+            }
+        };
+        // A large resource (a game's table) is named, not echoed.
+        if value.to_string().len() > MAX_NOW_RESOURCE_BYTES {
+            omitted.push(name);
+            continue;
+        }
+        now.insert(name.to_owned(), value);
+    }
+    let mut out = Map::new();
+    if !now.is_empty() {
+        out.insert("values".to_owned(), Value::Object(now));
+    }
+    if !omitted.is_empty() {
+        out.insert("omitted".to_owned(), json!(omitted));
+    }
+    (!out.is_empty()).then_some(Value::Object(out))
+}
+
+/// A touched resource whose JSON is longer than this is listed in
+/// `now_resources_omitted` instead of shown.
+const MAX_NOW_RESOURCE_BYTES: usize = 4096;
+
 fn changes_json(changes: &[String]) -> Value {
     let entities: Vec<String> = touched(changes).into_iter().collect();
     let mut out = json!({
@@ -912,13 +968,17 @@ fn refuse_if_file_invalid(workspace: &Workspace, path: &str) -> Result<()> {
 fn edit_apply(workspace: &mut Workspace, args: &Args, actor: &Actor) -> Result<Map<String, Value>> {
     if let Some(session) = args.str("session") {
         let id = workspace.session_id(Some(session))?;
-        let ops = crate::ops::parse_ops(args.value("ops").unwrap_or(&Value::Null))?;
-        return workspace.edit_session(&id, &ops, actor, args.flag("dry_run"));
+        let parsed = crate::ops::parse_ops_traced(args.value("ops").unwrap_or(&Value::Null))?;
+        return workspace
+            .edit_session(&id, &parsed.ops, actor, args.flag("dry_run"))
+            .map_err(|problem| parsed.locate(problem));
     }
     let create = args.flag("create");
     let (path, notes) = open(workspace, args, create)?;
     refuse_if_file_invalid(workspace, &path)?;
-    let ops = crate::ops::parse_ops(args.value("ops").unwrap_or(&Value::Null))?;
+    let crate::ops::Parsed { ops, origin } =
+        crate::ops::parse_ops_traced(args.value("ops").unwrap_or(&Value::Null))?;
+    let locate = |problem| crate::ops::locate(&origin, problem);
     let transaction = Transaction {
         actor: actor.clone(),
         reason: args
@@ -943,17 +1003,19 @@ fn edit_apply(workspace: &mut Workspace, args: &Args, actor: &Actor) -> Result<M
             && base != working.revision()
         {
             // Same refusal as a real apply.
-            working.apply(&transaction, &registry)?;
+            working.apply(&transaction, &registry).map_err(locate)?;
         }
-        working.preview(&transaction, &registry)?
+        working.preview(&transaction, &registry).map_err(locate)?
     } else {
-        working.apply(&transaction, &registry)?
+        working.apply(&transaction, &registry).map_err(locate)?
     };
+    let mut now_resources = None;
     if !dry_run {
         // Written first, kept only if the write worked.
         workspace.commit_document(&path, working)?;
         workspace.mark_seen(&path, actor);
         now = now_json(workspace, &path, &applied.changes);
+        now_resources = now_resources_json(workspace, &path, &applied.changes);
     }
     let mut out = Map::new();
     out.insert("scene".to_owned(), json!(path));
@@ -961,6 +1023,14 @@ fn edit_apply(workspace: &mut Workspace, args: &Args, actor: &Actor) -> Result<M
     out.insert("changes".to_owned(), changes_json(&applied.changes));
     if let Some(now) = now {
         out.insert("now".to_owned(), now);
+    }
+    if let Some(Value::Object(mut now)) = now_resources {
+        if let Some(values) = now.remove("values") {
+            out.insert("now_resources".to_owned(), values);
+        }
+        if let Some(omitted) = now.remove("omitted") {
+            out.insert("now_resources_omitted".to_owned(), omitted);
+        }
     }
     if dry_run {
         out.insert("dry_run".to_owned(), json!(true));

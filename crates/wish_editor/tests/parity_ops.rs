@@ -847,6 +847,11 @@ enum Pick {
 /// under the status bar and takes no click, one above it is under the tabs,
 /// so the panel is scrolled until the row is inside, as a person would.
 fn browser_box(app: &mut EditorApp, label: &str, pick: Pick) -> Rect {
+    browser_widget(app, label, "SpinButton", pick)
+}
+
+/// [`browser_box`] for a widget of any role (`TextInput` for a texture).
+fn browser_widget(app: &mut EditorApp, label: &str, role: &str, pick: Pick) -> Rect {
     let row_of = |app: &EditorApp| {
         let widgets = app.widgets();
         let row = widgets
@@ -855,18 +860,15 @@ fn browser_box(app: &mut EditorApp, label: &str, pick: Pick) -> Rect {
             .min_by(|a, b| a.rect.min.x.total_cmp(&b.rect.min.x))
             .map(|w| w.rect)
             .unwrap_or_else(|| panic!("no '{label}' row in the browser"));
-        let boxes = widgets
-            .iter()
-            .filter(|w| w.role == "SpinButton")
-            .filter(|w| {
-                (w.rect.center().y - row.center().y).abs() < 8.0 && w.rect.min.x > row.max.x
-            });
+        let boxes = widgets.iter().filter(|w| w.role == role).filter(|w| {
+            (w.rect.center().y - row.center().y).abs() < 8.0 && w.rect.min.x > row.max.x
+        });
         let field = match pick {
             Pick::First => boxes.min_by(|a, b| a.rect.min.x.total_cmp(&b.rect.min.x)),
             Pick::Last => boxes.max_by(|a, b| a.rect.min.x.total_cmp(&b.rect.min.x)),
         }
         .map(|w| w.rect)
-        .unwrap_or_else(|| panic!("no number box on the '{label}' row"));
+        .unwrap_or_else(|| panic!("no {role} on the '{label}' row"));
         (row, field)
     };
     let panel = app
@@ -1005,6 +1007,166 @@ fn the_look_of_a_scene_is_set_by_hand() {
             .iter()
             .all(|entry| entry.to_string().contains("human")),
         "{history}"
+    );
+}
+
+/// A named look (M12 package 9, the look lock) is applied by hand from the
+/// scene resources: one change by a human that writes every value of the
+/// look into the scene, and the picture uses all of it. Plain gives the
+/// first picture back, to the byte (invariant 9).
+#[test]
+fn a_look_is_applied_by_hand() {
+    let dir = project("apply-look");
+    let mut app = open(&dir);
+    let size = json!({ "width": 96, "height": 54 });
+    let before = app.call("capture_frame", &size);
+    assert_eq!(before["stats"]["effects"], json!([]), "{before}");
+
+    let menu = named(&app, "Add resource...");
+    click(&mut app, menu);
+    let natural = named(&app, "Natural");
+    click(&mut app, natural);
+    assert_eq!(app.status(), "applied the look Natural");
+    let written = scene_file(&dir);
+    let look = wish_control::looks::find("natural").unwrap();
+    for (name, fields) in &look.resources {
+        for (field, value) in fields {
+            assert_eq!(
+                &written["resources"][name][field], value,
+                "{name}.{field} in {written}"
+            );
+        }
+    }
+    let after = app.call("capture_frame", &size);
+    assert_eq!(
+        after["stats"]["effects"],
+        json!([
+            "sky_light",
+            "sun_disc",
+            "fog",
+            "bloom",
+            "color_grading",
+            "fxaa"
+        ]),
+        "{after}"
+    );
+    assert_eq!(after["stats"]["shadow_cascades"], 4, "{after}");
+
+    // Plain, by hand too: the picture of the defaults again, to the byte.
+    let menu = named(&app, "Add resource...");
+    click(&mut app, menu);
+    let plain = named(&app, "Plain");
+    click(&mut app, plain);
+    assert_eq!(app.status(), "applied the look Plain");
+    let again = app.call("capture_frame", &size);
+    assert_eq!(again["stats"]["effects"], json!([]), "{again}");
+    assert_eq!(again["image"]["data"], before["image"]["data"]);
+
+    // Each look was one change by a human.
+    let history = app.call("edit_history", &json!({ "action": "list", "limit": 50 }));
+    let entries = history["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 2, "{history}");
+    assert!(
+        entries
+            .iter()
+            .all(|entry| entry.to_string().contains("human")),
+        "{history}"
+    );
+}
+
+/// The look lock's audit of invariant 9 (M12 package 9): the look fields no
+/// other by-hand test types are set by hand too. In the scene resources,
+/// `Fog`'s colour, height, start and opacity, `ColorGrading`'s tint, and
+/// whether and how finely shadows are drawn; in the browser, a material
+/// file's texture, tiling and bump strength. Each is one call by a human.
+#[test]
+fn the_other_look_fields_are_set_by_hand() {
+    let dir = project("look-rest");
+    let mut app = open(&dir);
+    let fold = |app: &mut EditorApp, name: &str| {
+        let header = named(app, name);
+        click(app, header);
+    };
+    add_resource(&mut app, "Fog");
+    type_number(&mut app, "tint", "0.5");
+    type_number(&mut app, "base_height", "2");
+    type_number(&mut app, "start", "5");
+    type_number(&mut app, "max_opacity", "0.8");
+    fold(&mut app, "Fog");
+    add_resource(&mut app, "RenderSettings");
+    let shadows = field_of(&app, "shadows", "CheckBox");
+    click(&mut app, shadows);
+    type_number(&mut app, "shadow_map_size", "1024");
+    fold(&mut app, "RenderSettings");
+    add_resource(&mut app, "ColorGrading");
+    type_number(&mut app, "tint", "0.3");
+    assert_eq!(
+        scene_file(&dir)["resources"],
+        json!({
+            "ColorGrading": { "tint": 0.3 },
+            "Fog": { "base_height": 2.0, "max_opacity": 0.8, "start": 5.0, "tint": [0.5, 1.0, 1.0, 1.0] },
+            "RenderSettings": { "shadow_map_size": 1024, "shadows": false }
+        }),
+        "{}",
+        scene_file(&dir)
+    );
+
+    // A picture, a material file, and the file's texture, tiling and bumps
+    // typed where the browser shows the file.
+    let new = named(&app, "New...");
+    click(&mut app, new);
+    let circle = named(&app, "Circle picture");
+    click(&mut app, circle);
+    let new = named(&app, "New...");
+    click(&mut app, new);
+    let material = named(&app, "Material file");
+    click(&mut app, material);
+    let path = "assets/materials/material.mat.json";
+    let texture = browser_widget(&mut app, "base_color_texture", "TextInput", Pick::First);
+    play(
+        &mut app,
+        json!([
+            { "events": [{ "click": [texture.center().x, texture.center().y] }] },
+            { "idle": 1 },
+            { "events": [{ "text": "assets/images/picture.png" }] },
+            { "events": [{ "key": "Enter" }] },
+            { "idle": 2 }
+        ]),
+    );
+    assert_eq!(app.status(), format!("set base_color_texture in {path}"));
+    for (label, text) in [("uv_scale", "4"), ("normal_scale", "2")] {
+        let field = browser_box(&mut app, label, Pick::First);
+        play(
+            &mut app,
+            json!([
+                { "events": [{ "click": [field.center().x, field.center().y] }] },
+                { "idle": 1 },
+                { "events": [{ "key": "A", "ctrl": true }] },
+                { "events": [{ "text": text }] },
+                { "events": [{ "key": "Enter" }] },
+                { "idle": 2 }
+            ]),
+        );
+        assert_eq!(app.status(), format!("set {label} in {path}"));
+    }
+    let written: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join(path)).unwrap()).unwrap();
+    assert_eq!(
+        written["material"],
+        json!({
+            "base_color_texture": "assets/images/picture.png",
+            "normal_scale": 2.0,
+            "uv_scale": [4.0, 1.0]
+        }),
+        "{written}"
+    );
+    // Every change was a human's.
+    let activity = app.call("activity_get", &json!({ "limit": 50 }));
+    let entries = activity["entries"].as_array().unwrap();
+    assert!(entries.len() >= 12, "{activity}");
+    assert!(
+        entries.iter().all(|entry| entry["actor"] == "human"),
+        "{activity}"
     );
 }
 

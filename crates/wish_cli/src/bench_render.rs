@@ -97,7 +97,8 @@ fn scene_source(draws: u32) -> String {
         ));
     }
     format!(
-        "{{ \"format\": 1, \"entities\": {{\n{}\n}} }}",
+        "{{ \"format\": {}, \"entities\": {{\n{}\n}} }}",
+        wish_scene::FORMAT,
         entities.join(",\n")
     )
 }

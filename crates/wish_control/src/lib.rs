@@ -29,6 +29,8 @@ pub mod engines;
 pub mod expr;
 pub mod licenses;
 mod live;
+pub mod looks;
+pub mod migrate;
 pub mod ops;
 pub mod package_index;
 pub mod packages;
@@ -58,4 +60,7 @@ pub use tools::{
     BRIEF_FIELDS, CardField, DESIGN_FILE, IdPicture, Picture, PictureSource, card_fields,
     design_summary, engines_act, engines_act_in, read_design,
 };
+/// The scene and prefab file format this build writes (`wish_scene::FORMAT`),
+/// for clients that write scene files themselves.
+pub use wish_scene::FORMAT as SCENE_FORMAT;
 pub use workspace::{Workspace, WorkspaceOptions, envelope, find_tool, parse_actor};

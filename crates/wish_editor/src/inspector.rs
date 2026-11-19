@@ -77,11 +77,14 @@ pub(crate) struct InspectorActions {
     pub revert: Option<String>,
     /// New notes for an entity (its id, the text; empty: none).
     pub notes: Option<(String, String)>,
+    /// Apply a named look to the scene (its id: `natural`).
+    pub look: Option<String>,
 }
 
 impl InspectorActions {
     pub fn any(&self) -> bool {
-        self.set.is_some()
+        self.look.is_some()
+            || self.set.is_some()
             || self.add.is_some()
             || self.remove.is_some()
             || self.copy.is_some()
@@ -124,6 +127,55 @@ fn common(inspected: &[Inspected]) -> Vec<String> {
         })
         .cloned()
         .collect()
+}
+
+/// A look's name in the interface's language (the engine's own looks), or
+/// as the look's data gives it.
+pub(crate) fn look_name(id: &str, english: &str) -> String {
+    match id {
+        "plain" => t("Plain").to_owned(),
+        "natural" => t("Natural").to_owned(),
+        "vivid" => t("Vivid").to_owned(),
+        _ => english.to_owned(),
+    }
+}
+
+/// What a look looks like, for the hover text.
+fn look_description(id: &str, english: &str) -> String {
+    match id {
+        "plain" => t("No effects: the picture as the engine drew it before the look settings existed.").to_owned(),
+        "natural" => t("Daylight: the sky lights the scene, a sun disc, a light haze, a soft glow, gentle colours, smooth edges and sharp shadows near the camera.").to_owned(),
+        "vivid" => t("Natural, stronger: thicker haze, a clear glow, punchier and warmer colours, darker corners.").to_owned(),
+        _ => english.to_owned(),
+    }
+}
+
+/// "Apply a look" at the top of the scene resources' "Add resource..."
+/// menu: the engine's named looks (`edit_apply` `apply_look`), each one
+/// change of the scene's resources. In the menu rather than beside it, so
+/// that the panel looks as it did until it is opened.
+fn looks_section(ui: &mut Ui, actions: &mut InspectorActions) {
+    let Ok(looks) = wish_control::looks::looks() else {
+        return;
+    };
+    ui.strong(t("Apply a look..."))
+        .on_hover_text(t(
+            "Sets the sky light, sun disc, fog, bloom, grading, anti-aliasing and shadow cascades at once.",
+        ));
+    ui.horizontal(|ui| {
+        for look in &looks {
+            let name = look_name(&look.id, &look.name);
+            if ui
+                .button(name)
+                .on_hover_text(look_description(&look.id, &look.description))
+                .clicked()
+            {
+                actions.look = Some(look.id.clone());
+                ui.close();
+            }
+        }
+    });
+    ui.separator();
 }
 
 /// The inspector panel.
@@ -171,6 +223,9 @@ pub(crate) fn panel(ui: &mut Ui, view: &InspectorView<'_>, actions: &mut Inspect
             t("Add component...")
         };
         ui.menu_button(add, |ui| {
+            if view.resources {
+                looks_section(ui, actions);
+            }
             let mut filter = view.state.borrow().add_filter.clone();
             let search = ui.add(
                 egui::TextEdit::singleline(&mut filter)

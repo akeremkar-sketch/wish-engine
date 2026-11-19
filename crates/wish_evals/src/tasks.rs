@@ -282,7 +282,10 @@ fn crate_setup(dir: &Path) -> Result<(), String> {
     std::fs::create_dir_all(dir.join("prefabs")).map_err(|e| e.to_string())?;
     std::fs::write(
         dir.join(CRATE_PREFAB),
-        "{\n  \"entities\": {\n    \"root\": {\n      \"components\": {\n        \"Material\": {\n          \"base_color\": [0.6, 0.4, 0.2, 1]\n        },\n        \"Primitive\": {\n          \"shape\": \"Cube\"\n        },\n        \"Transform\": {}\n      }\n    }\n  },\n  \"format\": 1\n}\n",
+        format!(
+            "{{\n  \"entities\": {{\n    \"root\": {{\n      \"components\": {{\n        \"Material\": {{\n          \"base_color\": [0.6, 0.4, 0.2, 1]\n        }},\n        \"Primitive\": {{\n          \"shape\": \"Cube\"\n        }},\n        \"Transform\": {{}}\n      }}\n    }}\n  }},\n  \"format\": {}\n}}\n",
+            wish_control::SCENE_FORMAT
+        ),
     )
     .map_err(|e| e.to_string())
 }

@@ -89,6 +89,10 @@ pub fn explain(name: &str) -> Option<&'static str> {
         "script" | "behaviour" | "behavior" | "monobehaviour" | "component" | "controller" => {
             "Behaviour is game code: Rust systems in scripts/src/lib.rs built with script_build (see wish://docs/sdk). Scenes hold data only."
         }
+        "postprocess" | "postprocessing" | "postprocessvolume" | "globalvolume"
+        | "worldenvironment" | "lookpreset" | "lightingpreset" => {
+            "The look of a scene is resources, not a component: Ambient (source Sky), Sky (sun_size_deg), Fog, Bloom, ColorGrading and RenderSettings (antialiasing, shadow_cascades), each set with set_resource. edit_apply's { \"op\": \"apply_look\", \"look\": \"natural\" } (or plain, vivid) sets all of them at once."
+        }
         "sky" | "skybox" | "environment" | "fog" => {
             "The sky is the Sky resource (zenith, horizon, ground colors and luminance), set with set_resource; there is no skybox component."
         }
