@@ -5,7 +5,9 @@
 //!
 //! Going back never loses anything: each scene and prefab is brought back
 //! by one transaction in its history (the operations that turn it back),
-//! so the return can itself be undone, or taken back on its own.
+//! so the return can itself be undone, or taken back on its own. Material
+//! and meta files, which have no history of their own, are kept and brought
+//! back as their text.
 
 use std::path::{Path, PathBuf};
 
@@ -41,6 +43,13 @@ fn checked_name(name: &str) -> Result<()> {
         "Use 1 to 40 of a-z, 0-9, _ and -, such as \"before_agent\".",
     )
     .at_path("/name"))
+}
+
+/// Whether a kept document is a scene or a prefab: one brought back by
+/// operations in its history. Every other document (material and meta
+/// files) is brought back as text.
+fn is_scene_document(path: &str) -> bool {
+    path.ends_with(".scene.json") || path.ends_with(".prefab.json")
 }
 
 fn unreadable(path: &Path, error: &std::io::Error) -> Diagnostic {
@@ -213,6 +222,20 @@ impl Workspace {
         for path in &kept {
             let text = std::fs::read_to_string(dir.join(path))
                 .map_err(|error| unreadable(&dir.join(path), &error))?;
+            if !is_scene_document(path) {
+                // A material or meta file has no operations and no history
+                // of its own: it comes back as the text it was.
+                let current = std::fs::read_to_string(self.root().join(path)).ok();
+                if current.as_deref() == Some(text.as_str()) {
+                    unchanged.push(json!(path));
+                    continue;
+                }
+                if !dry_run {
+                    crate::documents::write_project_file(self.root(), path, &text)?;
+                }
+                restored.push(json!({ "path": path, "written_back": true }));
+                continue;
+            }
             let target = self.load_detached(&text, path)?;
             let exists = self.root().join(path).is_file();
             if !exists && !dry_run {

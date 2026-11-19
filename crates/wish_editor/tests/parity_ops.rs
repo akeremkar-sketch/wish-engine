@@ -228,7 +228,7 @@ fn notes_are_written_and_cleared() {
 fn app_widgets_multiline(app: &EditorApp) -> Vec<Rect> {
     app.widgets()
         .iter()
-        .filter(|w| w.role == "MultilineTextInput" || w.role == "TextInput")
+        .filter(|w| w.role == "MultilineTextInput")
         .filter(|w| w.rect.min.x > 880.0)
         .map(|w| w.rect)
         .collect()
@@ -373,6 +373,108 @@ fn a_placeholder_sound_and_picture_are_made() {
         dir.join("assets/sounds/sound_2.wav").exists(),
         "{}",
         app.status()
+    );
+}
+
+#[test]
+fn a_material_file_is_made_and_changed_by_hand() {
+    let dir = project("material");
+    let mut app = open(&dir);
+    let new = named(&app, "New...");
+    click(&mut app, new);
+    let material = named(&app, "Material file");
+    click(&mut app, material);
+    let path = "assets/materials/material.mat.json";
+    assert_eq!(app.status(), format!("made {path}"));
+    assert_eq!(
+        std::fs::read_to_string(dir.join(path)).unwrap(),
+        "{
+  \"format\": 1
+}
+",
+        "the default look"
+    );
+    // The new file is selected, and its fields are where the browser shows
+    // it: a number is typed, a box is ticked. Each is one call by a human
+    // that writes the file again, the earlier change kept.
+    type_number(&mut app, "alpha_cutoff", "0.25");
+    assert_eq!(app.status(), format!("set alpha_cutoff in {path}"));
+    // The fields are a column under the file's name: scrolled to the box.
+    let first = field_of(&app, "alpha_cutoff", "SpinButton");
+    for _ in 0..20 {
+        if field_of(&app, "double_sided", "CheckBox").center().y < 680.0 {
+            break;
+        }
+        play(
+            &mut app,
+            json!([{ "events": [{ "pointer": [first.center().x, first.center().y] }, { "scroll": [0, -40] }] },
+                   { "seconds": 0.2 }, { "idle": 2 }]),
+        );
+    }
+    // Meanwhile someone else changes the file (an agent, a text editor):
+    // the next change by hand keeps what they wrote.
+    std::fs::write(
+        dir.join(path),
+        "{
+  \"format\": 1,
+  \"material\": {
+    \"alpha_cutoff\": 0.25,
+    \"roughness\": 0.8
+  }
+}
+",
+    )
+    .unwrap();
+    let tick = field_of(&app, "double_sided", "CheckBox");
+    click(&mut app, tick);
+    assert_eq!(app.status(), format!("set double_sided in {path}"));
+    assert_eq!(
+        std::fs::read_to_string(dir.join(path)).unwrap(),
+        "{
+  \"format\": 1,
+  \"material\": {
+    \"alpha_cutoff\": 0.25,
+    \"double_sided\": true,
+    \"roughness\": 0.8
+  }
+}
+"
+    );
+    let activity = app.call("activity_get", &json!({}));
+    let made: Vec<&Value> = activity["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|entry| entry["tool"] == "asset_create")
+        .collect();
+    assert_eq!(made.len(), 3, "{activity}");
+    assert!(made.iter().all(|entry| entry["actor"] == "human"));
+    // A material file cannot name another one: no such field is offered.
+    assert!(
+        !app.widgets()
+            .iter()
+            .any(|w| w.role == "Label" && w.value.as_deref() == Some("file")),
+        "no 'file' among a material file's fields"
+    );
+    // An entity takes the look by naming the file in its Material: the
+    // inspector's field, as any other.
+    let ground = named(&app, "ground");
+    click(&mut app, ground);
+    let file = field_of(&app, "file", "TextInput");
+    play(
+        &mut app,
+        json!([
+            { "events": [{ "click": [file.center().x, file.center().y] }] },
+            { "idle": 1 },
+            { "events": [{ "text": path }] },
+            { "events": [{ "key": "Enter" }] },
+            { "idle": 2 }
+        ]),
+    );
+    assert_eq!(app.status(), "set Material.file");
+    assert_eq!(
+        scene_file(&dir)["entities"]["ground"]["components"]["Material"]["file"],
+        path
     );
 }
 

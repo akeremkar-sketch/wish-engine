@@ -33,6 +33,8 @@
 //!
 //! - `pipelines.rs`: layouts and pipelines, built once per renderer;
 //! - `models.rs`: uploaded meshes and models, posing animated models;
+//! - `materials.rs`: textures and material files outside models, and their
+//!   bind groups;
 //! - `draw_list.rs`: a scene's draws as draw calls, shared by every pass
 //!   that draws meshes, the debug views included;
 //! - `shadow.rs`: the shadow maps (one, or cascades), their sizes and the
@@ -61,15 +63,14 @@ use crate::components::Shape;
 use crate::extract::{CameraView, RenderScene};
 use crate::gpu::Gpu;
 use crate::image::RgbaImage;
-use crate::mesh::primitive;
+use crate::mesh::{primitive, primitive_textured};
 use crate::shader::ShaderLibrary;
-use crate::texture;
-
 mod bloom;
 mod debug;
 mod draw_list;
 mod frame;
 mod look;
+mod materials;
 mod models;
 mod passes;
 mod pipelines;
@@ -98,8 +99,8 @@ const FRAME_UNIFORM_SIZE: u64 = 528 + shadow::CASCADES_UNIFORM_SIZE;
 /// Bytes of one point or spot light in the light buffer: four vectors.
 const LIGHT_STRIDE: usize = 64;
 const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-/// Bytes of one draw's uniform data: two matrices and four vectors.
-const DRAW_UNIFORM_SIZE: u64 = 192;
+/// Bytes of one draw's uniform data: two matrices and five vectors.
+const DRAW_UNIFORM_SIZE: u64 = 208;
 /// Distance between draws in the draw uniform buffer. 256 is a multiple of
 /// every adapter's uniform offset alignment.
 const DRAW_UNIFORM_STRIDE: u64 = 256;
@@ -468,8 +469,20 @@ pub struct Renderer {
     pipelines: Pipelines,
     /// Textures of a material that has none: white, flat normal.
     default_textures: wgpu::BindGroup,
+    /// The 1x1 textures themselves, for slots a material leaves empty.
+    default_views: materials::DefaultTextures,
     /// Cube, sphere, plane, in `shape_index` order.
     shapes: Vec<GpuMesh>,
+    /// The same shapes for materials with textures: the same triangles,
+    /// with texture coordinates that show a picture the right way round and
+    /// tangents for normal maps (`mesh::primitive_textured`). Surfaces
+    /// without textures are drawn from `shapes`, as they always were.
+    textured_shapes: Vec<GpuMesh>,
+    /// Textures and material files outside models, by project path.
+    materials: materials::MaterialStore,
+    /// The bind group of each set of textures drawn so far (emptied when a
+    /// texture changes). Taken after the pool's lock and before the GPU's.
+    material_groups: Mutex<BTreeMap<[Option<String>; 5], materials::TextureSet>>,
     /// Uploaded models, by project path.
     models: BTreeMap<String, GpuModel>,
     /// The pipelines of the debug views.
@@ -523,23 +536,40 @@ impl Renderer {
                 .unwrap_or_default()
         };
         let pipelines = Pipelines::build(gpu, &source_of)?;
-        let default_textures = gpu.checked("create the default textures", |gpu| {
-            let white = texture::solid(gpu, [255; 4], true, "white");
-            let white_linear = texture::solid(gpu, [255; 4], false, "white data");
-            let flat_normal = texture::solid(gpu, [128, 128, 255, 255], false, "flat normal");
-            material_group(
-                gpu,
-                &pipelines.material_layout,
-                &pipelines.sampler,
-                [&white, &white_linear, &flat_normal, &white_linear, &white],
-            )
-        })?;
+        let (default_views, default_textures) =
+            gpu.checked("create the default textures", |gpu| {
+                let views = materials::DefaultTextures::new(gpu);
+                let group = material_group(
+                    gpu,
+                    &pipelines.material_layout,
+                    &pipelines.sampler,
+                    [
+                        &views.white,
+                        &views.white_data,
+                        &views.flat_normal,
+                        &views.white_data,
+                        &views.white,
+                    ],
+                );
+                (views, group)
+            })?;
         // Separately, so that a broken device stops here with a diagnostic
         // instead of failing somewhere inside the next step.
-        let shapes = gpu.checked("upload the built-in shapes", |gpu| {
+        let shapes: Vec<GpuMesh> = gpu.checked("upload the built-in shapes", |gpu| {
             [Shape::Cube, Shape::Sphere, Shape::Plane]
                 .into_iter()
                 .map(|shape| GpuMesh::new(gpu, &primitive(shape), "primitive"))
+                .collect()
+        })?;
+        // The shapes again for textured materials: other vertices over the
+        // same triangles and edges.
+        let textured_shapes = gpu.checked("upload the textured shapes", |gpu| {
+            [Shape::Cube, Shape::Sphere, Shape::Plane]
+                .into_iter()
+                .zip(&shapes)
+                .map(|(shape, plain)| {
+                    plain.with_vertices(gpu, &primitive_textured(shape), "textured primitive")
+                })
                 .collect()
         })?;
         let debug = debug::DebugPipelines::new(
@@ -558,7 +588,11 @@ impl Renderer {
         Ok(Self {
             pipelines,
             default_textures,
+            default_views,
             shapes,
+            textured_shapes,
+            materials: materials::MaterialStore::default(),
+            material_groups: Mutex::new(BTreeMap::new()),
             models: BTreeMap::new(),
             debug,
             ui,
@@ -569,16 +603,18 @@ impl Renderer {
     }
 
     /// Rebuilds every pipeline from `library` and swaps them in; uploaded
-    /// models stay. If a shader has a mistake the error is returned and the
+    /// models, textures and material files stay. If a shader has a mistake the error is returned and the
     /// renderer keeps drawing with the shaders it had.
     pub fn reload_shaders(&mut self, gpu: &Gpu, library: &ShaderLibrary) -> Result<()> {
         let fresh = Self::with_shaders(gpu, library)?;
         let models = std::mem::take(&mut self.models);
+        let materials = std::mem::take(&mut self.materials);
         let pictures = std::mem::take(&mut self.ui_pictures);
         // The pool goes with the old pipelines: its bind groups were made
         // for their layouts.
         *self = fresh;
         self.models = models;
+        self.materials = materials;
         self.ui_pictures = pictures;
         Ok(())
     }

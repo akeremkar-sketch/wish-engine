@@ -305,6 +305,8 @@ pub struct EditorApp {
     play: Option<Play>,
     /// Component schemas from `schema_get`, by name.
     schemas: BTreeMap<String, Value>,
+    /// The schema a material file's fields are edited with (`MaterialFile`).
+    material_schema: Option<Value>,
     /// The project's files, for asset fields.
     assets: Vec<String>,
     /// The selection as the inspector shows it, and what it was read for.
@@ -572,6 +574,7 @@ impl EditorApp {
             drag: None,
             play: None,
             schemas: BTreeMap::new(),
+            material_schema: None,
             assets: Vec::new(),
             inspected: Vec::new(),
             inspected_for: (Vec::new(), u64::MAX),
@@ -680,6 +683,13 @@ impl EditorApp {
             .flatten()
             .filter_map(|t| Some((t["name"].as_str()?.to_owned(), t["schema"].clone())))
             .collect();
+        let look = self.call(
+            "schema_get",
+            &json!({ "names": ["MaterialFile"], "detail": "full" }),
+        );
+        self.material_schema = look["types"][0]["schema"]
+            .is_object()
+            .then(|| look["types"][0]["schema"].clone());
         // Resources a scene may hold: not the ones the engine writes every
         // tick (time, input, the pointer).
         let resources: Vec<String> = listed["types"]
@@ -3530,6 +3540,35 @@ impl EditorApp {
             self.load_assets();
             self.select_asset(&path);
         }
+        if let Some((path, field, value)) = actions.browser.material.take() {
+            // The file is made again with every field it writes and this
+            // one: one call by a human, as an agent would change it. What
+            // it writes is read again first, not taken from the panel, so
+            // a change an agent made meanwhile is kept.
+            let now = self.call("asset_info", &json!({ "path": path }));
+            let mut written = now["written"].as_object().cloned().unwrap_or_default();
+            written.insert(field.clone(), value);
+            let made = self.call(
+                "asset_create",
+                &json!({ "path": path, "material": written, "overwrite": true }),
+            );
+            self.status = if made["ok"] == true {
+                tf(
+                    "set {field} in {path}",
+                    &[("field", &field), ("path", &path)],
+                )
+            } else {
+                let message = made["error"]["message"]
+                    .as_str()
+                    .unwrap_or(t("it did not work"));
+                tf(
+                    "could not make {path}: {message}",
+                    &[("path", &path), ("message", &message)],
+                )
+            };
+            self.select_asset(&path);
+            self.picture_stale = true;
+        }
         if let Some(code) = actions.language {
             self.set_language(code);
             self.save_preferences();
@@ -4818,12 +4857,27 @@ impl EditorApp {
                 ui.separator();
                 match self.tab {
                     Tab::Assets => {
+                        // A selected material file is edited with the
+                        // inspector's widgets, over the MaterialFile schema.
+                        let widgets = InspectorView {
+                            inspected: &[],
+                            schemas: &self.schemas,
+                            resources: false,
+                            entities: Vec::new(),
+                            assets: &self.assets,
+                            copied: None,
+                            state: &self.inspector_state,
+                        };
                         let view = BrowserView {
                             assets: &self.files,
                             selected: self.asset_selected.as_deref(),
                             detail: self.asset_detail.as_ref(),
                             root: self.workspace.root(),
                             state: &self.browser_state,
+                            material: self
+                                .material_schema
+                                .as_ref()
+                                .map(|schema| (schema, &widgets)),
                         };
                         crate::browser::panel(ui, &view, &mut actions.browser);
                     }

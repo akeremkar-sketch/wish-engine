@@ -41,10 +41,10 @@ Every MCP tool has an exact command-line counterpart (`wen entity query …`, `w
 | `entity_get` | Component values of entities; values of resources (M7) | `ids`, `components`, `resources`, `session` |
 | `edit_apply` | **Atomic transaction**: a list of `spawn`, `despawn`, `set` (merge), `replace`, `remove`, `reparent`, `rename`, `set_notes`, `set_resource` / `replace_resource` / `remove_resource`, `instantiate`, `set_override` / `replace_override` / `remove_override` operations (implemented in M2 as `wish_scene::EditOp`); answers `now`: the changed entities as they are after the change (touched components, `world_position`), so an agent need not read them back | `ops`, `base_revision`, `dry_run` |
 | `edit_history` | Undo / redo / list the history | `action`, `steps` |
-| `asset_list` | Asset files and import status | `kind`, `search` |
-| `asset_info` | A report for one asset: triangle count, bounds, materials, sub-objects, scale warnings | `path` |
-| `asset_move` | Move an asset file/folder and update all scene and prefab references in the same transaction (`wen mv`) | `from`, `to`, `dry_run` |
-| `asset_create` | Produce a placeholder asset (M7): a `.wav` sound or a `.png` picture from a few numbers; no download needed | `path`, `sound`, `picture`, `overwrite`, `dry_run` |
+| `asset_list` | Asset files and import status (kinds: model, image, material, other) | `kind`, `search` |
+| `asset_info` | A report for one asset: triangle count, bounds, materials, sub-objects, scale warnings; for a material file (M12) the look it holds and its textures | `path` |
+| `asset_move` | Move an asset file/folder and update all scene, prefab and material file references in the same transaction (`wen mv`) | `from`, `to`, `dry_run` |
+| `asset_create` | Produce an asset from a few values, no download needed: a placeholder `.wav` sound or `.png` picture (M7), or a material file `*.mat.json` from the fields of a `MaterialFile` (M12; made again with `overwrite` to change it; an entity uses it through `Material.file`) | `path`, `sound`, `picture`, `material`, `overwrite`, `dry_run` |
 
 ### Simulation (play session)
 

@@ -864,3 +864,185 @@ fn wen_engines_adds_lists_picks_and_removes() {
     assert_eq!(wrong["error"]["code"], "engine_folder_invalid", "{wrong}");
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// A project with a red picture, a material file that uses it (written
+/// loosely), and a scene whose box takes its look from the file.
+fn material_project(name: &str) -> Dir {
+    let dir = Dir::new(name);
+    let red = wish_render::RgbaImage {
+        width: 8,
+        height: 8,
+        pixels: [255, 0, 0, 255].repeat(64),
+    };
+    std::fs::write(dir.0.join("assets/red.png"), red.to_png().unwrap()).unwrap();
+    dir.write(
+        "assets/wall.mat.json",
+        r#"{ "material": { "roughness": 1, "base_color_texture": "assets/red.png" }, "format": 1 }"#,
+    );
+    dir.write(
+        "main.scene.json",
+        r#"{ "format": 1, "entities": {
+            "cam": { "components": { "Camera": {}, "Transform": { "translation": [0, 0, 3] } } },
+            "box": { "components": { "Primitive": { "shape": "Cube" }, "Material": { "file": "assets/wall.mat.json" } } },
+            "sun": { "components": { "DirectionalLight": {}, "Transform": { "rotation": [-0.38, 0, 0, 0.92] } } }
+        } }"#,
+    );
+    dir
+}
+
+const WALL: &str = "{\n  \"format\": 1,\n  \"material\": {\n    \"base_color_texture\": \"assets/red.png\",\n    \"roughness\": 1\n  }\n}\n";
+
+#[test]
+fn material_files_are_formatted_checked_migrated_and_drawn() {
+    let dir = material_project("materials");
+    // fmt: listed by --check, rewritten without it, byte for byte canonical;
+    // a material file can be named on its own.
+    let fmt = ["fmt", "--example", "stress", "--root", dir.arg(), "--json"];
+    let mut check_only = fmt.to_vec();
+    check_only.push("--check");
+    let (ok, report) = wen_json(&check_only);
+    assert!(!ok, "{report}");
+    assert_eq!(
+        report["changed"],
+        serde_json::json!(["assets/wall.mat.json", "main.scene.json"])
+    );
+    let mut one = fmt.to_vec();
+    one.push("assets/wall.mat.json");
+    let (ok, report) = wen_json(&one);
+    assert!(ok, "{report}");
+    assert_eq!(
+        report["changed"],
+        serde_json::json!(["assets/wall.mat.json"])
+    );
+    assert_eq!(dir.read("assets/wall.mat.json"), WALL);
+    let (ok, _) = wen_json(&fmt);
+    assert!(ok);
+    let (ok, report) = wen_json(&check_only);
+    assert!(ok, "formatting is stable: {report}");
+    assert_eq!(dir.read("assets/wall.mat.json"), WALL);
+
+    // check: clean; migrate: both documents are current.
+    let check = [
+        "check",
+        "--example",
+        "stress",
+        "--root",
+        dir.arg(),
+        "--json",
+    ];
+    let (ok, report) = wen_json(&check);
+    assert!(ok, "{report}");
+    assert_eq!(report["diagnostics"], serde_json::json!([]), "{report}");
+    let (ok, report) = wen_json(&["migrate", "--root", dir.arg(), "--json"]);
+    assert!(ok, "{report}");
+    assert_eq!(report["up_to_date"], 2);
+
+    // The box is drawn with the file's picture.
+    let out = dir.0.join("shot.png");
+    let capture = [
+        "capture",
+        "--example",
+        "stress",
+        "--scene",
+        "main.scene.json",
+        "--root",
+        dir.arg(),
+        "--software",
+        "--size",
+        "160x120",
+        "--out",
+        out.to_str().unwrap(),
+        "--json",
+    ];
+    let (ok, report) = wen_json(&capture);
+    assert!(ok, "{report}");
+    assert!(
+        report
+            .get("diagnostics")
+            .is_none_or(|d| d == &serde_json::json!([])),
+        "{report}"
+    );
+    let picture = wish_render::RgbaImage::from_png(&std::fs::read(&out).unwrap()).unwrap();
+    let [r, g, b, _] = picture.pixel(80, 60).unwrap();
+    assert!(
+        r > 80 && r > 3 * g && r > 3 * b,
+        "the box is red: {r} {g} {b}"
+    );
+
+    // A mistake in the material file: check fails with the file and the
+    // line, fmt leaves the file alone, the picture is still drawn (the box
+    // without the file's look) and says why.
+    let broken = WALL.replace("\"roughness\": 1", "\"roughness\": 11");
+    dir.write("assets/wall.mat.json", &broken);
+    let (ok, report) = wen_json(&check);
+    assert!(!ok, "{report}");
+    let problem = &report["diagnostics"][0];
+    assert_eq!(problem["code"], "value_out_of_range", "{report}");
+    assert_eq!(problem["location"]["file"], "assets/wall.mat.json");
+    assert_eq!(problem["location"]["line"], 5);
+    let (ok, report) = wen_json(&fmt);
+    assert!(!ok, "{report}");
+    assert_eq!(
+        report["skipped"],
+        serde_json::json!(["assets/wall.mat.json"])
+    );
+    assert_eq!(dir.read("assets/wall.mat.json"), broken);
+    let (ok, report) = wen_json(&capture);
+    assert!(ok, "{report}");
+    assert!(
+        report.to_string().contains("material_not_loaded"),
+        "{report}"
+    );
+    // A format this engine does not know.
+    dir.write("assets/wall.mat.json", "{ \"format\": 9 }");
+    let (ok, report) = wen_json(&["migrate", "--root", dir.arg(), "--json"]);
+    assert!(!ok);
+    assert_eq!(report["diagnostics"][0]["code"], "unsupported_format");
+}
+
+#[test]
+fn watch_follows_material_files() {
+    let dir = material_project("watch-materials");
+    dir.write("assets/wall.mat.json", WALL);
+    let mut child = Command::new(env!("CARGO_BIN_EXE_wen"))
+        .args([
+            "watch",
+            "--example",
+            "stress",
+            "--scene",
+            "main.scene.json",
+            "--root",
+            dir.arg(),
+            "--seconds",
+            "3",
+            "--json",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("wen runs");
+    let mut reader = std::io::BufReader::new(child.stdout.take().unwrap());
+    let mut stdout = String::new();
+    reader.read_line(&mut stdout).unwrap();
+    std::thread::sleep(Duration::from_millis(600));
+    // A good change to the material file is a reload; a bad one is refused
+    // with the reason, and the last good scene stays.
+    dir.write("assets/wall.mat.json", &WALL.replace("1\n", "0.5\n"));
+    std::thread::sleep(Duration::from_millis(700));
+    dir.write(
+        "assets/wall.mat.json",
+        "{ \"format\": 1, \"material\": { \"shiny\": true } }",
+    );
+    reader.read_to_string(&mut stdout).unwrap();
+    assert!(child.wait().unwrap().success(), "{stdout}");
+    let events: Vec<Value> = stdout
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let names: Vec<&str> = events.iter().filter_map(|e| e["event"].as_str()).collect();
+    assert_eq!(names, ["loaded", "reloaded", "rejected"], "{stdout}");
+    assert_eq!(events[2]["diagnostics"][0]["code"], "unknown_field");
+    assert_eq!(
+        events[2]["diagnostics"][0]["location"]["file"],
+        "assets/wall.mat.json"
+    );
+}

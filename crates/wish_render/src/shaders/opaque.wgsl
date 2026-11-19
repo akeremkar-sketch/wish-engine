@@ -44,7 +44,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
     out.clip = frame.view_proj * world;
     out.world_position = world.xyz;
     out.normal = (draw.normal_matrix * vec4<f32>(in.normal, 0.0)).xyz;
-    out.uv = in.uv;
+    out.uv = in.uv * draw.uv_transform.xy + draw.uv_transform.zw;
     out.tangent = (draw.model * vec4<f32>(in.tangent.xyz, 0.0)).xyz;
     out.tangent_sign = in.tangent.w;
     out.view_depth = -(frame.view * world).z;

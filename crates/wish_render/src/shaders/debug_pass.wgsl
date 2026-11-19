@@ -40,7 +40,7 @@ fn vs_main(
     out.clip = debug.view_proj * world;
     out.world_position = world.xyz;
     out.normal = (draw.normal_matrix * vec4<f32>(normal, 0.0)).xyz;
-    out.uv = uv;
+    out.uv = uv * draw.uv_transform.xy + draw.uv_transform.zw;
     return out;
 }
 

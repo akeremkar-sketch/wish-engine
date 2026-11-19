@@ -30,7 +30,7 @@ struct MaskedOut {
 fn vs_masked(@location(0) position: vec3<f32>, @location(1) uv: vec2<f32>) -> MaskedOut {
     var out: MaskedOut;
     out.clip = light.view_proj * draw.model * vec4<f32>(position, 1.0);
-    out.uv = uv;
+    out.uv = uv * draw.uv_transform.xy + draw.uv_transform.zw;
     return out;
 }
 

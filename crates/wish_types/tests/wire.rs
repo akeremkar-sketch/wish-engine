@@ -87,6 +87,8 @@ fn every_engine_type_round_trips() {
         DirectionalLight::schema(),
         Primitive::schema(),
         Material::schema(),
+        MaterialFile::schema(),
+        AlphaMode::schema(),
         Model::schema(),
         Sky::schema(),
         Ambient::schema(),

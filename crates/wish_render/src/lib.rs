@@ -34,12 +34,13 @@ pub mod ui;
 
 pub use capture::{MAX_CAPTURE_SIZE, draw_probe};
 pub use components::{
-    Ambient, AmbientSource, Antialiasing, Bloom, Camera, ColorGrading, DirectionalLight, Exposure,
-    Fog, Material, Model, Primitive, RenderSettings, Shape, Sky,
+    AlphaMode, Ambient, AmbientSource, Antialiasing, Bloom, Camera, ColorGrading, DirectionalLight,
+    Exposure, Fog, Material, MaterialFile, Model, Primitive, RenderSettings, Shape, Sky,
 };
 pub use extract::{
-    CameraView, ColliderView, Draw, EmitterView, LightView, LocalLightView, MaterialData, Mesh,
-    RenderScene, SkyData, SpriteView, UiBoxView, UiTextView, extract,
+    CameraView, ColliderView, Draw, EmitterView, LightView, LocalLightView, Look, MaterialData,
+    Mesh, RenderScene, SkyData, SpriteView, SurfaceData, TEXTURE_SLOTS, UiBoxView, UiTextView,
+    extract, slot_is_colour,
 };
 pub use gpu::{AdapterSummary, Created, Gpu, GpuOptions};
 pub use image::{ImageDiff, RgbaImage, Tolerance};

@@ -7,8 +7,8 @@
 use wish_core::Result;
 use wish_ecs::World;
 pub use wish_types::render::{
-    Ambient, AmbientSource, Antialiasing, Bloom, Camera, ColorGrading, DirectionalLight,
-    EMISSIVE_NITS, Exposure, Fog, Material, Model, PointLight, Primitive, Projection,
+    AlphaMode, Ambient, AmbientSource, Antialiasing, Bloom, Camera, ColorGrading, DirectionalLight,
+    EMISSIVE_NITS, Exposure, Fog, Material, MaterialFile, Model, PointLight, Primitive, Projection,
     RenderSettings, Shape, Sky, SpotLight,
 };
 

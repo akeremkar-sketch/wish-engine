@@ -115,8 +115,20 @@ pub struct Primitive {
     pub shape: Shape,
 }
 
-/// How a surface looks: the glTF metallic-roughness model. Without this
-/// component an entity is drawn as plain white, rough plastic.
+/// How a surface looks: the glTF metallic-roughness model. On a `Primitive`
+/// it is the shape's look; without this component a shape is plain white,
+/// rough plastic.
+///
+/// The four numbers here are a plain look, one colour all over. For
+/// textures, cut-outs and the rest, `file` names a material file
+/// (`*.mat.json`, see `MaterialFile`): the file is then the whole look, the
+/// numbers here are not used, and every entity that names the file changes
+/// when the file does.
+///
+/// On a `Model` entity only `file` counts: a model is drawn with the
+/// materials of its own file unless its entity's `Material` names a
+/// material file, which then replaces every material of the model. A
+/// `Material` without `file` does nothing on a model.
 #[component]
 pub struct Material {
     /// The colour of the surface (for metals, of its reflection).
@@ -131,6 +143,100 @@ pub struct Material {
     /// bright as a white surface in full default sunlight
     /// ([`EMISSIVE_NITS`] cd/m²).
     pub emissive: Vec3,
+    /// A material file (`*.mat.json`, for example
+    /// `assets/materials/brick.mat.json`) to take the whole look from:
+    /// textures, tiling, cut-outs. Empty (the default): the look is the
+    /// numbers above.
+    pub file: AssetRef,
+}
+
+/// How a material uses the alpha of its base colour (`base_color` times
+/// `base_color_texture`).
+#[schema]
+pub enum AlphaMode {
+    /// Alpha is not used: the surface is solid.
+    Opaque,
+    /// A cut-out: where alpha is below `alpha_cutoff` nothing is drawn (and
+    /// no shadow is cast), everywhere else the surface is solid. For
+    /// leaves, fences, grates.
+    Mask,
+}
+
+/// What a material file (`*.mat.json`) holds: one look, for every entity
+/// that names the file in its `Material.file`. The file is
+/// `{ "format": 1, "material": { ... } }` with any of these fields; the
+/// others keep their defaults. `asset_create` with a `.mat.json` path makes
+/// one.
+///
+/// It is the glTF metallic-roughness model: four numbers, and textures that
+/// multiply them. Textures are PNG files of the project; picture
+/// coordinates start at the picture's top left corner, and the picture
+/// repeats outside 0 to 1. On a cube every face shows the whole picture
+/// upright; on a plane the picture's top is at -Z and its left at -X;
+/// around a sphere it wraps once (its top at the north pole); a model uses
+/// its own texture coordinates.
+#[schema]
+pub struct MaterialFile {
+    /// The colour of the surface (for metals, of its reflection).
+    pub base_color: Color,
+    /// 0 for plastic, wood and stone; 1 for bare metal.
+    #[schema(range = 0.0..=1.0, default = 0.0)]
+    pub metallic: f32,
+    /// 0 is a mirror, 1 is completely rough.
+    #[schema(range = 0.0..=1.0, default = 0.5)]
+    pub roughness: f32,
+    /// Light the surface gives off by itself, linear RGB. 1 is about as
+    /// bright as a white surface in full default sunlight
+    /// ([`EMISSIVE_NITS`] cd/m²).
+    pub emissive: Vec3,
+    /// A picture of the surface's colour (PNG, sRGB), multiplied by
+    /// `base_color`. Its alpha is the surface's alpha (see `alpha_mode`).
+    /// Empty for none.
+    pub base_color_texture: AssetRef,
+    /// A picture of where the surface is metal and how rough it is (PNG,
+    /// read as numbers, not colours): its blue is multiplied by `metallic`,
+    /// its green by `roughness`. Set `metallic` to 1 for the picture's metal
+    /// to show. Empty for none.
+    pub metallic_roughness_texture: AssetRef,
+    /// A normal map: a picture of small bumps (PNG, tangent space, green
+    /// up, as glTF and Blender write it). The surface is lit as if it had
+    /// the bumps; its outline stays flat. On a model it needs tangents in
+    /// the model file. Empty for none.
+    pub normal_texture: AssetRef,
+    /// How strong the bumps of `normal_texture` are: 1 as the picture says,
+    /// 0 flat, 2 twice as steep.
+    #[schema(range = 0.0..=8.0, default = 1.0)]
+    pub normal_scale: f32,
+    /// A picture of how much ambient light reaches each point (PNG, its
+    /// red: white is open, black is a crevice). It darkens only ambient
+    /// light and the sky's reflection, never the light of a lamp or the
+    /// sun. Empty for none.
+    pub occlusion_texture: AssetRef,
+    /// How much `occlusion_texture` darkens: 1 as the picture says, 0 not
+    /// at all.
+    #[schema(range = 0.0..=1.0, default = 1.0)]
+    pub occlusion_strength: f32,
+    /// A picture of the light the surface gives off (PNG, sRGB), multiplied
+    /// by `emissive`: with `emissive` at its default of 0 it shows nothing,
+    /// so set `emissive` to [1, 1, 1] or more. Empty for none.
+    pub emissive_texture: AssetRef,
+    /// How many times the textures repeat across the surface, along the
+    /// picture's width and height: [4, 4] tiles a picture 4 by 4 on each
+    /// face of a cube. Applies to every texture of the material.
+    #[schema(default = [1.0, 1.0])]
+    pub uv_scale: [f32; 2],
+    /// Slides the textures across the surface, in picture widths and
+    /// heights (after `uv_scale`): [0.5, 0] moves them by half a picture.
+    pub uv_offset: [f32; 2],
+    /// Whether the base colour's alpha cuts holes in the surface.
+    pub alpha_mode: AlphaMode,
+    /// With `alpha_mode: Mask`: alpha below this is a hole.
+    #[schema(range = 0.0..=1.0, default = 0.5)]
+    pub alpha_cutoff: f32,
+    /// Whether the surface's back is drawn too. Off (the default), a
+    /// surface seen from behind is not there: right for closed shapes,
+    /// wrong for a plane seen from below or a cut-out seen from inside.
+    pub double_sided: bool,
 }
 
 /// A model from a glTF or GLB file. The whole model, including its internal

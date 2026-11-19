@@ -509,7 +509,7 @@ impl Renderer {
         let size = (width, height);
         self.pooled(|pool| {
             let posed = self.pose(gpu, scene)?;
-            let collected = self.collect(scene, None, &posed);
+            let collected = self.collect(gpu, scene, None, &posed);
             let draws = &collected.draw_list;
             let drawn = draws.items.len();
             let wire = matches!(view, View::Wireframe | View::Colliders | View::Lights);
@@ -589,7 +589,7 @@ impl Renderer {
         check_size(width, height)?;
         self.pooled(|pool| {
             let posed = self.pose(gpu, scene)?;
-            let collected = self.collect(scene, None, &posed);
+            let collected = self.collect(gpu, scene, None, &posed);
             let ids = self.id_pixels(
                 gpu,
                 pool,
@@ -680,7 +680,7 @@ impl Renderer {
             };
             let visible_fraction = if measured < MAX_VISIBILITY_MEASUREMENTS {
                 measured += 1;
-                let alone = self.collect(scene, Some(*id as usize - 1), &posed);
+                let alone = self.collect(gpu, scene, Some(*id as usize - 1), &posed);
                 let full = self
                     .id_pixels(gpu, pool, camera_view, &alone.draw_list, (width, height))?
                     .iter()
@@ -855,7 +855,7 @@ impl Renderer {
                 for item in &draws.items {
                     pass.set_pipeline(&triangles[usize::from(item.double_sided)]);
                     pass.set_bind_group(1, &draw_group, &[item.offset]);
-                    pass.set_bind_group(2, item.textures, &[]);
+                    pass.set_bind_group(2, item.textures.as_ref(), &[]);
                     pass.set_vertex_buffer(0, item.mesh.vertices.slice(..));
                     pass.set_index_buffer(item.mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..item.mesh.index_count, 0, 0..1);
@@ -864,7 +864,7 @@ impl Renderer {
                     pass.set_pipeline(&self.debug.lines);
                     for item in &draws.items {
                         pass.set_bind_group(1, &draw_group, &[item.offset]);
-                        pass.set_bind_group(2, item.textures, &[]);
+                        pass.set_bind_group(2, item.textures.as_ref(), &[]);
                         pass.set_vertex_buffer(0, item.mesh.vertices.slice(..));
                         pass.set_index_buffer(item.mesh.edges.slice(..), wgpu::IndexFormat::Uint32);
                         pass.draw_indexed(0..item.mesh.edge_index_count, 0, 0..1);

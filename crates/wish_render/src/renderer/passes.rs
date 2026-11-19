@@ -145,7 +145,7 @@ pub(super) fn shadow(encoder: &mut wgpu::CommandEncoder, inputs: &Shadow<'_>) {
             }
             pass.set_bind_group(1, inputs.draw_uniforms, &[item.offset]);
             if item.masked {
-                pass.set_bind_group(2, item.textures, &[]);
+                pass.set_bind_group(2, item.textures.as_ref(), &[]);
             }
             pass.set_vertex_buffer(0, item.mesh.vertices.slice(..));
             pass.set_index_buffer(item.mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
@@ -227,7 +227,7 @@ pub(super) fn opaque(encoder: &mut wgpu::CommandEncoder, inputs: &Opaque<'_>) {
             inputs.single_sided
         });
         pass.set_bind_group(1, inputs.draw_uniforms, &[item.offset]);
-        pass.set_bind_group(2, item.textures, &[]);
+        pass.set_bind_group(2, item.textures.as_ref(), &[]);
         pass.set_vertex_buffer(0, item.mesh.vertices.slice(..));
         pass.set_index_buffer(item.mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
         pass.draw_indexed(0..item.mesh.index_count, 0, 0..1);

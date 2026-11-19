@@ -149,7 +149,7 @@ pub const PARITY: &[Capability] = &[
     ),
     op(
         "asset_create",
-        "Browser: New... (a placeholder sound or picture)",
+        "Browser: New... (a placeholder sound or picture, a material file); a material file's fields are changed where the browser shows the file (parity_ops::a_material_file_is_made_and_changed_by_hand)",
         "parity_ops::a_placeholder_sound_and_picture_are_made",
     ),
     op(

@@ -45,13 +45,35 @@ pub struct PlayOptions {
 }
 
 /// Loads every model the scene's Model entities name from the project and
-/// uploads it. A model that cannot be loaded is reported as a warning and not
-/// drawn (the rest of the scene still is); its import warnings are passed on.
+/// uploads it, and with them the pictures, material files and textures the
+/// scene uses. A model that cannot be loaded is reported as a warning and
+/// not drawn (the rest of the scene still is); its import warnings are
+/// passed on.
 pub fn load_models(
     scene: &RenderScene,
     root: &Path,
     gpu: &Gpu,
     renderer: &mut Renderer,
+) -> Vec<Diagnostic> {
+    load_assets(
+        scene,
+        root,
+        gpu,
+        renderer,
+        &mut std::collections::BTreeMap::new(),
+        &mut wish_control::render::MaterialStamps::default(),
+    )
+}
+
+/// [`load_models`], remembering when pictures, material files and textures
+/// were read, so that a later call reads only what changed.
+fn load_assets(
+    scene: &RenderScene,
+    root: &Path,
+    gpu: &Gpu,
+    renderer: &mut Renderer,
+    pictures: &mut std::collections::BTreeMap<String, wish_control::render::Stamp>,
+    materials: &mut wish_control::render::MaterialStamps,
 ) -> Vec<Diagnostic> {
     let mut warnings = Vec::new();
     let mut paths: Vec<&str> = scene
@@ -78,10 +100,10 @@ pub fn load_models(
         }
     }
     warnings.extend(wish_control::render::load_ui_pictures(
-        renderer,
-        scene,
-        root,
-        &mut std::collections::BTreeMap::new(),
+        renderer, scene, root, pictures,
+    ));
+    warnings.extend(wish_control::render::load_materials(
+        gpu, renderer, scene, root, materials,
     ));
     warnings
 }
@@ -102,6 +124,8 @@ pub struct Game {
     pub messages: Vec<String>,
     /// The pictures loaded so far, and when their files were read.
     pictures: std::collections::BTreeMap<String, wish_control::render::Stamp>,
+    /// The same for material files and the textures of materials.
+    materials: wish_control::render::MaterialStamps,
     /// What could not be loaded, said once.
     reported: BTreeSet<String>,
 }
@@ -125,6 +149,7 @@ impl Game {
             owed: 0.0,
             messages: Vec::new(),
             pictures: std::collections::BTreeMap::new(),
+            materials: wish_control::render::MaterialStamps::default(),
             reported: BTreeSet::new(),
         })
     }
@@ -218,12 +243,13 @@ impl Content for Game {
             self.start()?;
         }
         let scene = self.scene_now()?;
-        warnings.extend(load_models(&scene, &self.root, gpu, renderer));
-        warnings.extend(wish_control::render::load_ui_pictures(
-            renderer,
+        warnings.extend(load_assets(
             &scene,
             &self.root,
+            gpu,
+            renderer,
             &mut self.pictures,
+            &mut self.materials,
         ));
         Ok(Loaded { scene, warnings })
     }
@@ -260,7 +286,16 @@ impl Content for Game {
         }
         let pictures =
             wish_control::render::load_ui_pictures(renderer, scene, &self.root, &mut self.pictures);
-        for problem in pictures {
+        // Material files and textures: the ones the game started using, and
+        // the ones whose files were saved since the last picture.
+        let materials = wish_control::render::load_materials(
+            gpu,
+            renderer,
+            scene,
+            &self.root,
+            &mut self.materials,
+        );
+        for problem in pictures.into_iter().chain(materials) {
             let key = problem.location.file.clone().unwrap_or_default();
             if self.reported.insert(key) {
                 problems.push(problem);

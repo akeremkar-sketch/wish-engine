@@ -10,6 +10,8 @@
 //!   reference points at one.
 //! - [`meta`]: the `<asset>.meta.json` file next to an asset, which holds
 //!   its import settings.
+//! - [`material`]: material files (`*.mat.json`), which are both: a
+//!   checked, canonical document, and an asset other files refer to.
 //! - [`refs`]: finding asset references in scene and prefab files, and
 //!   checking that their files exist, with positions.
 //! - [`moves`]: moving an asset (or a folder) and updating every reference
@@ -22,6 +24,7 @@
 
 pub mod hot;
 pub mod index;
+pub mod material;
 pub mod meta;
 pub mod moves;
 pub mod project;
@@ -31,6 +34,10 @@ pub use hot::{HotScene, Reload, Watcher};
 pub use project::{FileKind, Project, ProjectFile, load_project};
 
 pub use index::{AssetIndex, is_document};
+pub use material::{
+    MATERIAL_FORMAT, MATERIAL_SUFFIX, MAX_MATERIAL_BYTES, MaterialDocument, check_material,
+    is_material, material_schema, parse_material,
+};
 pub use meta::{AssetMeta, META_FORMAT, meta_path, parse_meta, read_meta, write_meta};
 pub use moves::{DocumentEdit, MovePlan, apply_move, plan_move};
-pub use refs::{RefUse, check_source, refs_in_value};
+pub use refs::{RefUse, check_source, refs_in_material, refs_in_value};

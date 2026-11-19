@@ -869,7 +869,8 @@ pub(crate) fn normalize_output_path(path: &str) -> Result<String> {
 }
 
 /// The same rule for any of `extensions` (lowercase, without the dot): what
-/// `asset_create` may write (`.png`, `.wav`). Never a document's extension.
+/// `asset_create` may write (`.png`, `.wav`, `.mat.json`). Never the
+/// extension of a scene, a prefab or a meta file.
 pub(crate) fn normalize_asset_output(path: &str, extensions: &[&str]) -> Result<String> {
     let mut path = path.trim().replace('\\', "/");
     while let Some(rest) = path.strip_prefix("./") {

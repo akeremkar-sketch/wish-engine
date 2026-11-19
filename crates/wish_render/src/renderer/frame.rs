@@ -288,7 +288,7 @@ impl Renderer {
         let Collected {
             draw_list: draws,
             mut warnings,
-        } = self.collect(scene, None, posed);
+        } = self.collect(gpu, scene, None, posed);
         // Sprites and particles, then the interface, are prepared on the CPU
         // and drawn over the finished picture.
         let overlay = crate::sprites::build(scene, view, aspect, &self.ui_pictures);

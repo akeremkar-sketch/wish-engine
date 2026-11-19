@@ -101,9 +101,27 @@ Dil, karşılama ekranının sağ üstünden, sonra da proje menüsünden (*Dil*
 - **Varlıklar** (alt sekme; projenin dosyaları):
   - Projenin modelleri, resimleri ve sesleri, türe göre süzülür.
   - Görünüme sürükleyince sahneye yerleşir.
-  - *Yeni...* yer tutucu bir ses ya da resim yapar.
+  - *Yeni...* yer tutucu bir ses ya da resim, ya da bir *Malzeme dosyası* yapar.
   - *Yeniden adlandır / taşı...* dosyayı taşır ve ona yapılan bütün başvuruları günceller.
   - *Dışarıda aç* sisteminizin kullandığı programla açar.
+- **Görünüşler (malzemeler ve dokular):**
+  - Bir şeklin görünüşü, denetçideki `Material` bileşenidir: düz bir görünüş için renk, metal,
+    pürüzlülük ve ışıma.
+  - Yüzeydeki resim bir *Malzeme dosyası*'ndan gelir. Bir tane yapın (*Varlıklar*, *Yeni...*,
+    *Malzeme dosyası*), seçin ve alanlarını tarayıcının dosyayı gösterdiği yerde ayarlayın:
+    `base_color_texture` projenin bir PNG dosyasını alır (yolunu yazın, kutunun yanındaki
+    listeden seçin ya da dosyayı üstüne sürükleyin), `uv_scale` resmi yineler, `alpha_mode`
+    *Mask* resmin saydam olduğu yerlerde delik açar, `double_sided` yüzeyin arkasını da gösterir.
+  - Sonra dosyayı bir nesnenin `Material` bileşenindeki `file` alanına yazın. Dosyayı kullanan
+    her nesne aynı görünüşü paylaşır ve onunla birlikte değişir; böyle bir nesnenin kendi
+    `Material` bileşenindeki renk ve sayılar artık kullanılmaz.
+  - Bir modelde malzeme dosyası, modelin kendi malzemelerinin hepsinin yerine geçer. `file`
+    yoksa model kendi malzemelerini korur.
+  - Bir nesneye dosya yazmak geçmişe girer ve geri alınabilir. Malzeme dosyasının kendisindeki
+    değişiklik, kimin yaptığıyla birlikte kaydedilir (*Etkinlik*), ama henüz kendi geri alması
+    yoktur: büyük bir değişiklikten önce bir denetim noktası kaydedin.
+  - Dokular, kenarı en çok 4096 piksel olan PNG dosyalarıdır. Eksik ya da bozuk bir doku
+    bildirilir ve yüzey onsuz çizilir.
 - **Prefab'lar:**
   - *Prefab yap* seçimi yeniden kullanılabilir bir parçaya çevirir.
   - Örnekler *{prefab} örneği* diye görünür; değiştirilmiş alanları işaretlidir.
@@ -318,7 +336,8 @@ dilinizdedir.
 ```text
 wish.json             proje: ad, varsayılan sahne
 scenes/               sahneler (*.scene.json) ve prefab'lar (*.prefab.json)
-assets/               modeller (.glb/.gltf), resimler (.png), sesler (.wav/.ogg)
+assets/               modeller (.glb/.gltf), resimler (.png), sesler (.wav/.ogg),
+                      malzeme dosyaları (*.mat.json)
 scripts/src/lib.rs    oyun kodu
 input.json            eylemler ve tuşları
 tests/                senaryo testleri (*.test.json) ve altın resimler

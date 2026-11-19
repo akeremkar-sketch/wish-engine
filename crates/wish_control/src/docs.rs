@@ -449,6 +449,30 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "The engine keeps this component itself (such as GlobalTransform or Hierarchy). Change the component it is derived from instead, such as Transform or the parent.",
     ),
     (
+        "material_fields_unused",
+        "Check warning: an entity's Material names a material file (file) and also writes its numbers. With a file the file is the whole look; the numbers do nothing. Remove them, change them in the material file instead (every entity that uses it changes), or clear file for a plain look of the entity's own.",
+    ),
+    (
+        "material_file_too_large",
+        "A *.mat.json file is larger than 256 KiB and was not read. A material file holds a few numbers and the paths of its textures; pictures stay in their own PNG files.",
+    ),
+    (
+        "material_needs_uvs",
+        "Render warning: a material file with textures is on a Model that has parts without texture coordinates (UVs), so its textures show as one flat colour there. Export the model with UVs, or use a material file without textures on it.",
+    ),
+    (
+        "material_not_loaded",
+        "Render warning: an entity's Material.file names a material file that could not be used (it does not exist, is not a *.mat.json, or has a mistake: the message says which). The entity is drawn with the numbers of its own Material (a model: with its own materials). Fix the file or the path; check lists everything wrong with the project's material files.",
+    ),
+    (
+        "material_unused_on_model",
+        "Check warning: an entity has a Model and a Material without a file. A model is drawn with the materials of its own file; only a material file (Material.file) replaces them, all of them. Remove the Material, or save the look as a material file (asset_create with a .mat.json path) and name it in Material.file.",
+    ),
+    (
+        "material_uv_unusable",
+        "Check warning: a material file's uv_scale has a 0 (the whole picture would shrink to one point, so it is drawn as 1), or a uv_scale or uv_offset number is beyond 4096 either way (it is drawn as 4096). Use a number other than 0 between -4096 and 4096: [4, 4] tiles the picture 4 by 4, a negative number mirrors it.",
+    ),
+    (
         "mesh_too_large_for_gpu",
         "A mesh has more vertex data than the GPU allows in one buffer. Split it or reduce its detail in the modelling tool.",
     ),
@@ -503,6 +527,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "not_a_camera",
         "The entity named as the camera has no Camera component. Name one that does, or leave camera out to use the first one.",
+    ),
+    (
+        "not_a_material_file",
+        "Material.file names a file that is not a material file (*.mat.json). To put a picture on a surface, make a material file whose base_color_texture names the picture (asset_create with a .mat.json path) and name that file here.",
     ),
     (
         "not_an_instance",
@@ -981,6 +1009,14 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "A text value could not be stored or found.",
     ),
     (
+        "texture_not_loaded",
+        "Render warning: a texture a material names could not be drawn (the file is missing, is not a PNG, is damaged, is larger than 4096 pixels a side, or the scene's material textures together pass the budget of 2^28 pixels). The message names the file and the texture slots that wanted it; those slots are drawn as if they were empty and the rest of the picture is unharmed.",
+    ),
+    (
+        "texture_not_png",
+        "Check warning: a texture field of a material file names a file that is not a PNG. Textures outside models are read from PNG files only (models bring their own PNG or JPEG textures), so it will not be drawn. Convert the picture to an 8-bit PNG.",
+    ),
+    (
         "texture_too_large_for_gpu",
         "A texture is larger than this GPU accepts per side. Scale it down in the modelling tool.",
     ),
@@ -1159,6 +1195,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "A number is outside its field's allowed range (shown with the unit). schema_get shows the ranges.",
     ),
     (
+        "warnings_cut_short",
+        "Render warning: one picture had more warnings about materials and textures than are listed (32); this one counts the rest. Fix the listed ones first: one missing file often stands behind many.",
+    ),
+    (
         "window_failed",
         "A window could not be opened (no desktop session). Use capture_frame or wen capture instead.",
     ),
@@ -1181,6 +1221,13 @@ pub fn diagnostic_page(code: &str) -> Option<String> {
         })
 }
 
+/// The schema types that say what a kind of file holds: they are in no
+/// world, so not in a registry, but `schema_get`, the type pages and the
+/// search know them like any other type (kind `file`).
+pub fn file_types() -> Vec<wish_schema::TypeSchema> {
+    vec![wish_asset::material_schema()]
+}
+
 fn type_kind<'a>(registry: &'a Registry, name: &str) -> Option<(&'static str, &'a TypeInfo)> {
     registry
         .components()
@@ -1200,12 +1247,22 @@ fn type_kind<'a>(registry: &'a Registry, name: &str) -> Option<(&'static str, &'
         })
 }
 
-/// The page of a component, resource or event type, made from its schema.
+/// The page of a component, resource or event type, or of the type a kind
+/// of file holds, made from its schema.
 pub fn type_page(registry: &Registry, name: &str) -> Option<String> {
-    let (kind, info) = type_kind(registry, name)?;
-    let schema = wish_schema::json_schema::json_schema(info.schema());
-    let mut page = format!("# {name} ({kind})\n\n{}\n", info.schema().doc.trim());
-    if info.is_managed() {
+    let (kind, type_schema, managed) = match type_kind(registry, name) {
+        Some((kind, info)) => (kind, info.schema().clone(), info.is_managed()),
+        None => (
+            "file",
+            file_types()
+                .into_iter()
+                .find(|schema| schema.name == name)?,
+            false,
+        ),
+    };
+    let schema = wish_schema::json_schema::json_schema(&type_schema);
+    let mut page = format!("# {name} ({kind})\n\n{}\n", type_schema.doc.trim());
+    if managed {
         page.push_str("\nThe engine keeps this one itself: it cannot be written.\n");
     }
     if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
@@ -1237,9 +1294,15 @@ pub fn type_page(registry: &Registry, name: &str) -> Option<String> {
             ));
         }
     }
-    page.push_str(&format!(
-        "\nIn a scene file: `\"{name}\": {{ ... }}` with any of these fields; the others keep their defaults.\n"
-    ));
+    if kind == "file" {
+        page.push_str(
+            "\nIn its file: `{ \"format\": 1, \"material\": { ... } }` with any of these fields; the others keep their defaults.\n",
+        );
+    } else {
+        page.push_str(&format!(
+            "\nIn a scene file: `\"{name}\": {{ ... }}` with any of these fields; the others keep their defaults.\n"
+        ));
+    }
     Some(page)
 }
 
@@ -1303,7 +1366,8 @@ Tests: `tests/*.test.json` (`{{ \"format\": 1, \"scene\": ..., \"seed\": 1, \"st
 Physics (`Collider`, `RigidBody`, `CharacterController`, `CollisionStarted`, `physics_query`), sound (`AudioSource`,\n\
 `PlaySound`; `logs_get` kinds [\"audio\"]), lights (`PointLight`, `SpotLight`), animation (`AnimationPlayer`), the in-game\n\
 interface (`UiNode`, `UiText`, `UiButton`; `describe_view` lists it; `sim_step` input `pointer` and `click`), particles\n\
-(`ParticleEmitter`), 2D (orthographic `Camera`, `Sprite`). `asset_create` makes placeholder sounds and pictures.\n\
+(`ParticleEmitter`), 2D (orthographic `Camera`, `Sprite`). `asset_create` makes placeholder sounds and pictures, and\n\
+material files (`*.mat.json`, type `MaterialFile`: textures, tiling, cut-outs) that a `Material` names in its `file`.\n\
 Picture quality is the `RenderSettings` resource (shadows on or off, the shadow map's size, `antialiasing`); `capture_frame`\n\
 and `describe_view` give `stats`: what the picture costs in draw calls, triangles and lights, and which effects it used.\n\
 The look is data too, all of it off until a scene asks: `Ambient` `source: \"Sky\"` lights surfaces from the sky's own\n\
@@ -1313,7 +1377,7 @@ contrast, saturation, white balance and a vignette, `RenderSettings` `antialiasi
 larger than a room, `RenderSettings` `shadow_cascades: 4` keeps shadows near the camera sharp (up to `shadow_distance`\n\
 meters; `capture_frame` `view: \"shadow_cascades\"` shows which shadow map each surface uses).\n\
 **`wish://docs/recipes` has working pieces of games** (a platformer character, a follow camera, pickups with a score,\n\
-checkpoints, moving platforms, a win screen and a button, a 2D scene, tests): start from them.\n\
+checkpoints, moving platforms, a win screen and a button, a 2D scene, a texture on a box, tests): start from them.\n\
 \n\
 ## Rules\n\
 \n\
@@ -1453,6 +1517,7 @@ pub fn search_with(
         .map(|(_, info)| info.name().to_owned())
         .chain(registry.resources().map(|(_, info)| info.name().to_owned()))
         .chain(registry.events().map(|(_, info)| info.name().to_owned()))
+        .chain(file_types().into_iter().map(|schema| schema.name))
         .collect();
     for name in names {
         if let Some(page) = type_page(registry, &name) {

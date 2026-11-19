@@ -263,3 +263,93 @@ fn a_camera_that_cannot_be_inverted_is_explained() {
     assert_eq!(problem.code, "invalid_camera");
     assert!(problem.hint.contains("scale"), "{}", problem.hint);
 }
+
+#[test]
+fn a_material_file_is_extracted_beside_the_numbers() {
+    let (world, scene, entities) = extracted(
+        r#"{ "format": 1, "entities": {
+            "shared": { "components": { "Primitive": {}, "Material": {
+                "base_color": [1, 0, 0, 1], "file": "assets/wall.mat.json" } } },
+            "plain": { "components": { "Primitive": {}, "Material": { "base_color": [0, 1, 0, 1] } } },
+            "bare": { "components": { "Primitive": {} } }
+        } }"#,
+    );
+    let draw = |id: &str| {
+        scene
+            .draws
+            .iter()
+            .find(|d| d.entity == entities[id])
+            .unwrap()
+    };
+    // A file is named, not followed here: the numbers of the entity stay
+    // beside it (what the renderer falls back to).
+    let shared = draw("shared");
+    assert_eq!(
+        shared.material_file.as_deref(),
+        Some("assets/wall.mat.json")
+    );
+    assert_eq!(shared.material.base_color, [1.0, 0.0, 0.0, 1.0]);
+    assert!(draw("plain").material_file.is_none());
+    assert!(draw("bare").material_file.is_none());
+    assert_eq!(draw("bare").material, wish_render::MaterialData::default());
+    assert_eq!(world.entities().count(), 3);
+    // The component is its four numbers and the handle of the file.
+    assert_eq!(size_of::<wish_render::Material>(), 40);
+}
+
+#[test]
+fn numbers_that_are_not_numbers_never_reach_a_shader_from_a_look() {
+    use wish_render::{AlphaMode, Look, MaterialFile};
+    // A look can be built by code as well as read from a checked file.
+    let wild = MaterialFile {
+        base_color: wish_core::Color::rgba(f32::NAN, -1.0, f32::INFINITY, 0.5),
+        metallic: f32::NAN,
+        roughness: 7.0,
+        emissive: Vec3::new(f32::NEG_INFINITY, f32::NAN, 2.0),
+        normal_scale: f32::INFINITY,
+        occlusion_strength: f32::NAN,
+        uv_scale: [f32::NAN, 0.0],
+        uv_offset: [f32::INFINITY, f32::NAN],
+        alpha_mode: AlphaMode::Mask,
+        alpha_cutoff: f32::NAN,
+        ..MaterialFile::default()
+    };
+    let look = Look::of(&wild, &|_| None);
+    let numbers = look
+        .material
+        .base_color
+        .iter()
+        .chain(&look.material.emissive)
+        .chain(&look.surface.uv_scale)
+        .chain(&look.surface.uv_offset)
+        .chain([
+            &look.material.metallic,
+            &look.material.roughness,
+            &look.surface.normal_scale,
+            &look.surface.occlusion_strength,
+            &look.surface.alpha_cutoff,
+        ]);
+    for number in numbers {
+        assert!(number.is_finite(), "{look:?}");
+    }
+    assert_eq!(look.material.base_color[1], 0.0, "no negative colour");
+    assert_eq!(look.surface.uv_scale, [1.0, 1.0], "a picture is drawn once");
+    assert_eq!(look.surface.uv_offset[1], 0.0);
+    assert_eq!(
+        (look.material.roughness, look.surface.normal_scale),
+        (1.0, 8.0)
+    );
+    assert!(look.surface.alpha_cutoff > 0.0, "a mask stays a mask");
+    assert!(!look.surface.textured());
+    // An opaque look never cuts, whatever its cutoff says; the defaults are
+    // the plain white plastic of an entity without a Material.
+    let opaque = MaterialFile {
+        alpha_cutoff: 0.9,
+        ..MaterialFile::default()
+    };
+    assert_eq!(Look::of(&opaque, &|_| None).surface.alpha_cutoff, 0.0);
+    assert_eq!(
+        Look::of(&MaterialFile::default(), &|_| None),
+        Look::default()
+    );
+}

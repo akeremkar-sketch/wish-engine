@@ -76,8 +76,11 @@ pub fn explain(name: &str) -> Option<&'static str> {
         | "worldtransform" | "transform3d" | "node3d" => {
             "Placement is the Transform component: translation (meters), rotation (a quaternion; in edits also \"euler_deg\": [x, y, z]) and scale. GlobalTransform is the derived world placement."
         }
-        "color" | "colour" | "albedo" | "texture" | "shader" => {
-            "Surface looks are the Material component: base_color [r, g, b, a], metallic, roughness, emissive; textures come with Model assets."
+        "color" | "colour" | "albedo" | "texture" | "texture2d" | "textures" | "skin" | "tile"
+        | "tiling" | "uv" | "normalmap" | "bumpmap" | "decal" | "standardmaterial"
+        | "standardmaterial3d" | "meshmaterial" | "materialoverride" | "shader"
+        | "shadermaterial" => {
+            "Surface looks are the Material component: base_color [r, g, b, a], metallic, roughness, emissive for a plain look. Textures are in a material file: asset_create with a .mat.json path and material { base_color_texture: a PNG of the project, normal_texture, uv_scale (tiling), alpha_mode Mask (cut-outs), double_sided, ... } (schema_get MaterialFile), then name the file in the entity's Material.file. Every entity that names it shares the look; on a Model it replaces the model's materials. There are no custom shaders. wish://docs/recipes has \"A texture on a box\"."
         }
         "script" | "behaviour" | "behavior" | "monobehaviour" | "component" | "controller" => {
             "Behaviour is game code: Rust systems in scripts/src/lib.rs built with script_build (see wish://docs/sdk). Scenes hold data only."
@@ -104,6 +107,9 @@ mod tests {
         assert!(explain("BoxCollider").unwrap().starts_with("Physics"));
         assert!(explain("NAME").unwrap().contains("id"));
         assert!(explain("MeshRenderer").unwrap().contains("Primitive"));
+        assert!(explain("Texture").unwrap().contains("base_color_texture"));
+        assert!(explain("Skin").unwrap().contains("Material.file"));
+        assert!(explain("Tiling").unwrap().contains("uv_scale"));
         assert!(explain("Banana").is_none());
         assert_eq!(
             quoted_names("There is no component called 'Collider'."),

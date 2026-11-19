@@ -44,7 +44,7 @@ The code examples show the **intended way of use**; exact signatures become fina
 | `wish_app` | Main loop, fixed step, plugin registration, session management | M1 |
 | `wish_cli` | The `wen` binary | M1 → ongoing |
 | `wish_scene` | Positioned strict JSON + canonical writer, scene/prefab document and its validation, transactions + undo/redo + `actor` log, prefab expansion, document → world (`SceneId`) | M2 |
-| `wish_asset` | Asset index, `*.meta.json`, finding/checking `AssetRef` by schema, `wen mv`, whole-project loading (`wen check/fmt`), polling watcher + hot reload. Importers and cache in M3 | M2 (+M3) |
+| `wish_asset` | Asset index, `*.meta.json`, material files (`*.mat.json`: one look, a `MaterialFile`, that entities name in `Material.file`; both a checked canonical document and an asset; M12), finding/checking `AssetRef` by schema, `wen mv`, whole-project loading (`wen check/fmt`), polling watcher + hot reload. Importers and cache in M3 | M2 (+M3, M12) |
 | `wish_render` | wgpu, render graph, materials, headless capture, debug views | M3 |
 | `wish_window`, `wish_input` | Window, devices, action maps, injection/recording | M3 / M5 |
 | `wish_control` | Control plane API | M4 |

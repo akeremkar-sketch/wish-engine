@@ -53,11 +53,11 @@ fn resolve(paths: &[String], root: &Path) -> Result<Vec<String>> {
                 documents.iter().map(String::as_str),
             ) {
                 Some(closest) => format!("Did you mean '{closest}'?"),
-                None => "Give a scene, prefab or meta file path relative to the project folder (--root).".to_owned(),
+                None => "Give a scene, prefab, meta or material file path relative to the project folder (--root).".to_owned(),
             };
             Err(Diagnostic::error(
                 "file_not_found",
-                format!("'{path}' is not a scene, prefab or meta file of the project."),
+                format!("'{path}' is not a scene, prefab, meta or material file of the project."),
                 hint,
             ))
         })
@@ -183,6 +183,7 @@ pub fn migrate(paths: &[String], root: &Path, as_json: bool) -> Result<Outcome> 
     let paths = &resolve(paths, root)?;
     let current = u64::from(wish_scene::FORMAT);
     debug_assert_eq!(current, u64::from(META_FORMAT));
+    debug_assert_eq!(current, u64::from(wish_asset::MATERIAL_FORMAT));
     let mut up_to_date = 0;
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
     for (name, path) in wish_asset::index::documents(root)? {

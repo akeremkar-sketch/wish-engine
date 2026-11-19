@@ -102,9 +102,27 @@ The language is chosen at the top right of the welcome screen, and later in the 
 - **Assets** (bottom tab):
   - Models, images and sounds of the project, filtered by kind.
   - Drag one into the view to place it.
-  - *New...* makes a placeholder sound or picture.
+  - *New...* makes a placeholder sound or picture, or a *Material file*.
   - *Rename / move...* moves a file and updates every reference to it.
   - *Open outside* opens it in the program your system uses.
+- **Looks (materials and textures):**
+  - A shape's look is its `Material` component in the inspector: colour, metal, roughness and
+    glow, for a plain look.
+  - A picture on a surface comes from a *Material file*. Make one (*Assets*, *New...*, *Material
+    file*), select it, and set its fields where the browser shows the file: `base_color_texture`
+    takes a PNG of the project (type its path, pick it from the list beside the box, or drag the
+    file onto it), `uv_scale` repeats the picture, `alpha_mode` *Mask* cuts holes where the
+    picture is transparent, `double_sided` shows a surface's back.
+  - Then name the file in the `file` field of an entity's `Material`. Every entity that names it
+    shares the look and changes with it; the colour and numbers of such an entity's own
+    `Material` are then not used.
+  - On a model, a material file replaces all of the model's own materials. Without `file`, a
+    model keeps its own.
+  - Naming a file on an entity is in the history and can be undone. A change to the material
+    file itself is recorded with who made it (*Activity*), but has no undo of its own yet: save
+    a checkpoint before a large change.
+  - Textures are PNG files of at most 4096 pixels a side. A missing or broken one is reported and
+    the surface is drawn without it.
 - **Prefabs:**
   - *Make prefab* turns the selection into a reusable piece.
   - Instances show *Instance of {prefab}*; their changed fields are marked.
@@ -315,7 +333,8 @@ explains a code.
 ```text
 wish.json             the project: name, default scene
 scenes/               scenes (*.scene.json) and prefabs (*.prefab.json)
-assets/               models (.glb/.gltf), images (.png), sounds (.wav/.ogg)
+assets/               models (.glb/.gltf), images (.png), sounds (.wav/.ogg),
+                      material files (*.mat.json)
 scripts/src/lib.rs    game code
 input.json            actions and their keys
 tests/                scenario tests (*.test.json) and golden pictures

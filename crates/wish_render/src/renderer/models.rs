@@ -93,6 +93,9 @@ pub(super) struct GpuPrimitive {
     pub bounds: (Vec3, Vec3),
     /// Where it is in the model file (for posing animated models).
     pub placed: wish_import::Placed,
+    /// Whether the file gives it texture coordinates (a material file with
+    /// textures needs them).
+    pub has_uvs: bool,
 }
 
 /// Posed primitives of animated draws, by draw index.
@@ -236,6 +239,10 @@ impl Renderer {
                     matrix: placed.matrix,
                     bounds: bounds_of(&source.positions),
                     placed,
+                    has_uvs: source
+                        .uvs
+                        .iter()
+                        .any(|uv| *uv != wish_core::math::Vec2::ZERO),
                 });
             }
             let animated = (!model.skins.is_empty() || !model.animations.is_empty())

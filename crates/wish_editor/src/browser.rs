@@ -24,7 +24,7 @@ pub(crate) struct AssetDrag(pub String);
 pub(crate) struct Asset {
     /// Project-relative path.
     pub path: String,
-    /// `image`, `model`, `sound`, `prefab` or `other`.
+    /// `image`, `model`, `sound`, `prefab`, `material` or `other`.
     pub kind: &'static str,
     /// Size in bytes (0 for a prefab).
     pub bytes: u64,
@@ -36,6 +36,8 @@ impl Asset {
         let lower = path.to_ascii_lowercase();
         if lower.ends_with(".prefab.json") {
             "prefab"
+        } else if lower.ends_with(".mat.json") {
+            "material"
         } else if lower.ends_with(".glb") || lower.ends_with(".gltf") {
             "model"
         } else if lower.ends_with(".png") || lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
@@ -72,6 +74,9 @@ pub(crate) struct BrowserView<'a> {
     pub detail: Option<&'a Value>,
     pub root: &'a Path,
     pub state: &'a RefCell<BrowserState>,
+    /// What the fields of a selected material file are edited with: the
+    /// `MaterialFile` schema and the inspector's widgets.
+    pub material: Option<(&'a Value, &'a crate::inspector::InspectorView<'a>)>,
 }
 
 /// What the panel asked for.
@@ -86,6 +91,9 @@ pub(crate) struct BrowserActions {
     pub open: Option<String>,
     /// Make a placeholder file (`asset_create`): its path and arguments.
     pub create: Option<(String, Value)>,
+    /// Change one field of a material file: the file, the field, its new
+    /// value (`asset_create` over the file, with every field it writes).
+    pub material: Option<(String, String, Value)>,
 }
 
 impl BrowserActions {
@@ -95,6 +103,7 @@ impl BrowserActions {
             || self.rename.is_some()
             || self.open.is_some()
             || self.create.is_some()
+            || self.material.is_some()
     }
 }
 
@@ -202,8 +211,9 @@ fn free_name(view: &BrowserView<'_>, folder: &str, base: &str, ext: &str) -> Str
         .unwrap_or_else(|| format!("{folder}/{base}_new.{ext}"))
 }
 
-/// "New...": a placeholder sound or picture, made from a few numbers (the
-/// `asset_create` tool, as an agent makes them).
+/// "New...": a placeholder sound or picture, made from a few numbers, or a
+/// material file with the default look (the `asset_create` tool, as an
+/// agent makes them).
 fn create_menu(ui: &mut Ui, view: &BrowserView<'_>, actions: &mut BrowserActions) {
     ui.menu_button(t("New..."), |ui| {
         ui.weak(t("A placeholder until the real file exists:"));
@@ -232,6 +242,14 @@ fn create_menu(ui: &mut Ui, view: &BrowserView<'_>, actions: &mut BrowserActions
                 actions.create = Some((path, json!({ "picture": picture })));
                 ui.close();
             }
+        }
+        ui.separator();
+        // One look for many entities: its fields are edited where the file
+        // is shown, and entities name it in their Material's `file`.
+        if ui.button(t("Material file")).clicked() {
+            let path = free_name(view, "assets/materials", "material", "mat.json");
+            actions.create = Some((path, json!({ "material": {} })));
+            ui.close();
         }
     });
 }
@@ -285,7 +303,12 @@ pub(crate) fn panel(ui: &mut Ui, view: &BrowserView<'_>, actions: &mut BrowserAc
                 });
             });
         ui.separator();
-        ui.vertical(|ui| detail(ui, view));
+        // The scroll area lays its contents out as its parent does (side by
+        // side here): the detail is a column.
+        egui::ScrollArea::vertical()
+            .id_salt("asset_detail")
+            .auto_shrink([false, false])
+            .show(ui, |ui| ui.vertical(|ui| detail(ui, view, actions)));
     });
 }
 
@@ -375,8 +398,9 @@ fn row(ui: &mut Ui, view: &BrowserView<'_>, asset: &Asset, actions: &mut Browser
     });
 }
 
-/// What `asset_info` says about the selected file.
-fn detail(ui: &mut Ui, view: &BrowserView<'_>) {
+/// What `asset_info` says about the selected file. A material file's
+/// fields are shown first, and can be changed.
+fn detail(ui: &mut Ui, view: &BrowserView<'_>, actions: &mut BrowserActions) {
     let Some(path) = view.selected else {
         ui.weak(t("Select a file to see what it is and who uses it."));
         return;
@@ -385,8 +409,27 @@ fn detail(ui: &mut Ui, view: &BrowserView<'_>) {
     let Some(info) = view.detail else {
         return;
     };
+    let look = info["material"]
+        .is_object()
+        .then_some(view.material)
+        .flatten();
+    if let Some((schema, inspector)) = look {
+        ui.weak(t(
+            "A change here is written to the file: everything that uses it changes.",
+        ));
+        if let Some((field, new)) =
+            crate::inspector::material_fields(ui, inspector, path, schema, &info["material"])
+        {
+            actions.material = Some((path.to_owned(), field, new));
+        }
+        ui.separator();
+    }
     for (key, value) in info.as_object().into_iter().flatten() {
         if matches!(key.as_str(), "ok" | "path") {
+            continue;
+        }
+        // Shown as fields above.
+        if look.is_some() && matches!(key.as_str(), "material" | "written") {
             continue;
         }
         let text = match value {

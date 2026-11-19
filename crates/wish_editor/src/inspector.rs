@@ -352,6 +352,20 @@ fn fields(
     changed
 }
 
+/// The fields of a material file (`path`), edited with the widgets a
+/// component's fields have: `schema` is the `MaterialFile` schema and
+/// `value` the file's look with every field. Returns the field that changed and its
+/// whole new value.
+pub(crate) fn material_fields(
+    ui: &mut Ui,
+    view: &InspectorView<'_>,
+    path: &str,
+    schema: &Value,
+    value: &Value,
+) -> Option<(String, Value)> {
+    fields(ui, view, &format!("material:{path}"), schema, value)
+}
+
 /// Sends `new` when the change is finished; keeps a drag's value shown
 /// meanwhile.
 fn finish(
