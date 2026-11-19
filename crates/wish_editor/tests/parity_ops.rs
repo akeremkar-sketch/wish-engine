@@ -853,3 +853,57 @@ fn bloom_is_set_by_hand() {
         "{history}"
     );
 }
+
+/// Cascaded shadows (M12, the third look package) are two fields of
+/// `RenderSettings`, so a person sets them in the inspector, and the view
+/// that shows the cascades is in the view list beside the others
+/// (invariant 9).
+#[test]
+fn cascaded_shadows_are_set_by_hand() {
+    let dir = project("cascades");
+    let mut app = open(&dir);
+    let size = json!({ "width": 96, "height": 54 });
+    let before = app.call("capture_frame", &size);
+    assert_eq!(before["stats"]["shadow_cascades"], 1, "{before}");
+
+    add_resource(&mut app, "RenderSettings");
+    type_number(&mut app, "shadow_cascades", "4");
+    type_number(&mut app, "shadow_distance", "60");
+
+    assert_eq!(
+        scene_file(&dir)["resources"],
+        json!({ "RenderSettings": { "shadow_cascades": 4, "shadow_distance": 60.0 } }),
+        "{}",
+        scene_file(&dir)
+    );
+    // The picture uses them.
+    let after = app.call("capture_frame", &size);
+    assert_eq!(after["stats"]["shadow_cascades"], 4, "{after}");
+    // Every step was one change by a human: the resource added, two fields
+    // set.
+    let history = app.call("edit_history", &json!({ "action": "list", "limit": 50 }));
+    let entries = history["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 3, "{history}");
+    assert!(
+        entries
+            .iter()
+            .all(|entry| entry.to_string().contains("human")),
+        "{history}"
+    );
+
+    // The view of the cascades is picked from the view list in the top bar,
+    // under its own name.
+    let views = named(&app, "Shaded");
+    click(&mut app, views);
+    let cascades = named(&app, "Shadow cascades");
+    click(&mut app, cascades);
+    play(&mut app, json!([{ "idle": 2 }]));
+    assert!(
+        find(&app, "Shadow cascades").is_some(),
+        "the view list shows it"
+    );
+    assert!(
+        find(&app, "Shaded").is_none(),
+        "and no longer the shaded view"
+    );
+}

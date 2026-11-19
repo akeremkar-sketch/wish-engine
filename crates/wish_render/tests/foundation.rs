@@ -130,6 +130,8 @@ fn the_statistics_of_a_known_scene_are_its_counts() {
             draw_calls: 4 + 4 + 2,
             triangles: 2 * surfaces + 2,
             shadow_casters: 4,
+            // One shadow map, around everything.
+            shadow_cascades: 1,
             point_lights: 0,
             spot_lights: 0,
             // The scene asks for none of the optional effects.

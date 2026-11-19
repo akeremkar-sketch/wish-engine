@@ -528,6 +528,9 @@ impl App<'_> {
             KeyCode::Digit3 => self.set_view(View::Depth),
             KeyCode::Digit4 => self.set_view(View::Normals),
             KeyCode::Digit5 => self.set_view(View::Wireframe),
+            KeyCode::Digit6 => self.set_view(View::Colliders),
+            KeyCode::Digit7 => self.set_view(View::Lights),
+            KeyCode::Digit8 => self.set_view(View::ShadowCascades),
             KeyCode::KeyF => self.reset_camera(),
             KeyCode::Escape => event_loop.exit(),
             _ => {}

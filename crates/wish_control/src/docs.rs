@@ -941,6 +941,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "A shader is valid WGSL syntax but breaks a rule (a type mismatch, a wrong binding).",
     ),
     (
+        "shadows_out_of_range",
+        "RenderSettings.shadow_cascades is 2 or more, so shadows are drawn only up to shadow_distance in front of the camera (depth along the direction it looks), and nothing that is drawn can cast a shadow into that part of the scene: the picture has no shadows and no shadow map is drawn. Raise shadow_distance, or set shadow_cascades to 1 (one map covers the whole scene). To see where shadows end in any picture, use capture_frame with view shadow_cascades: gray has no shadow.",
+    ),
+    (
         "snapshot_exists",
         "A snapshot with that label already exists; snapshots are not overwritten.",
     ),
@@ -1124,7 +1128,7 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     ),
     (
         "unknown_view",
-        "No view has that name: use lit, ids, depth, normals or wireframe.",
+        "No view has that name: use lit, ids, depth, normals, wireframe, colliders, lights or shadow_cascades.",
     ),
     (
         "unsupported_animation",
@@ -1305,7 +1309,9 @@ and `describe_view` give `stats`: what the picture costs in draw calls, triangle
 The look is data too, all of it off until a scene asks: `Ambient` `source: \"Sky\"` lights surfaces from the sky's own\n\
 colours, `Sky` `sun_size_deg` draws the sun's disc, `Fog` (`density`, `height_falloff`) fades far things into the horizon,\n\
 `Bloom` (`strength`) makes what is brighter than white glow (an emissive `Material`, the sun's disc), `ColorGrading` sets\n\
-contrast, saturation, white balance and a vignette, `RenderSettings` `antialiasing: \"Fxaa\"` smooths edges.\n\
+contrast, saturation, white balance and a vignette, `RenderSettings` `antialiasing: \"Fxaa\"` smooths edges. In a level\n\
+larger than a room, `RenderSettings` `shadow_cascades: 4` keeps shadows near the camera sharp (up to `shadow_distance`\n\
+meters; `capture_frame` `view: \"shadow_cascades\"` shows which shadow map each surface uses).\n\
 **`wish://docs/recipes` has working pieces of games** (a platformer character, a follow camera, pickups with a score,\n\
 checkpoints, moving platforms, a win screen and a button, a 2D scene, tests): start from them.\n\
 \n\

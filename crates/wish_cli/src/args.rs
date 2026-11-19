@@ -240,7 +240,8 @@ pub struct CaptureArgs {
     pub camera: Option<String>,
     /// Image width and height in pixels.
     pub size: (u32, u32),
-    /// What to draw: `lit`, `ids`, `depth`, `normals` or `wireframe`.
+    /// What to draw: `lit`, `ids`, `depth`, `normals`, `wireframe`,
+    /// `colliders`, `lights` or `shadow_cascades`.
     pub view: String,
     /// Use the software adapter.
     pub software: bool,

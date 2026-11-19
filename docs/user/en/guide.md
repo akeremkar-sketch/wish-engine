@@ -83,6 +83,7 @@ The language is chosen at the top right of the welcome screen, and later in the 
 - *Depth*, *Normals*, *Wireframe*.
 - *Colliders*: physics shapes.
 - *Lights*: light ranges.
+- *Shadow cascades*: which shadow map each surface uses (grey: no shadow).
 
 ## 3. Editing by hand
 

@@ -100,7 +100,13 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
                 * visibility_smith(n_dot_v, n_dot_l, alpha) * f;
             let diffuse = (vec3<f32>(1.0) - f) * diffuse_colour / PI;
             // Shadows only dim the direct light; sampled at the geometric normal.
-            let visibility = shadow_visibility(in.world_position, normalize(in.normal));
+            // A frame has either one shadow map or cascades.
+            var visibility = 1.0;
+            if (frame.cascades.info.x > 0.5) {
+                visibility = cascaded_visibility(in.world_position, normalize(in.normal));
+            } else {
+                visibility = shadow_visibility(in.world_position, normalize(in.normal));
+            }
             colour += (diffuse + specular) * frame.light_radiance.rgb * n_dot_l * visibility;
         }
     }

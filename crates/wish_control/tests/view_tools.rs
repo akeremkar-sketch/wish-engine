@@ -247,7 +247,8 @@ fn the_cost_of_a_picture_is_reported_in_counts_and_render_settings_change_it() {
         json!({
             "width": 160, "height": 90,
             "draw_calls": 6, "triangles": 2 * (2 + 960) + 2,
-            "shadow_casters": 2, "point_lights": 0, "spot_lights": 0,
+            "shadow_casters": 2, "shadow_cascades": 1,
+            "point_lights": 0, "spot_lights": 0,
             "effects": [],
         })
     );
@@ -908,4 +909,266 @@ fn bloom_is_documented_set_with_an_edit_and_reported() {
     assert_eq!(back["image"]["data"], plain["image"]["data"]);
 
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The diagnostic of `code` in an answer, if it has one.
+fn diagnostic<'a>(answer: &'a Value, code: &str) -> Option<&'a Value> {
+    answer["diagnostics"]
+        .as_array()
+        .and_then(|all| all.iter().find(|entry| entry["code"] == code))
+}
+
+#[test]
+fn cascaded_shadows_are_documented_set_with_an_edit_seen_and_reported() {
+    let (dir, mut ws) = project("cascades");
+    let me = parse_actor("claude-code");
+    ok(&ws.call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "spawn", "id": "ball", "components": {
+            "Primitive": { "shape": "Sphere" }, "Transform": { "translation": [0, 1, 0] } } }] }),
+        &me,
+    ));
+    let size = json!({ "width": 160, "height": 90 });
+    let plain = ok(&ws.call("capture_frame", &size, &me)).clone();
+    assert_eq!(plain["stats"]["shadow_cascades"], 1, "one map by default");
+    assert_eq!(plain["stats"]["shadow_casters"], 2);
+
+    // The two fields are in the schema with their documentation, ranges and
+    // defaults, and the defaults are "one map".
+    let schema = ok(&ws.call(
+        "schema_get",
+        &json!({ "names": ["RenderSettings"], "detail": "full" }),
+        &me,
+    ))
+    .clone();
+    let properties = &schema["types"][0]["schema"]["properties"];
+    for (field, default, low, high) in [
+        ("shadow_cascades", 1.0, 1.0, 4.0),
+        ("shadow_distance", 100.0, 0.1, 10000.0),
+    ] {
+        let property = &properties[field];
+        let number = |key: &str| {
+            property[key]
+                .as_f64()
+                .map(|value| (value * 10.0).round() / 10.0)
+        };
+        assert_eq!(number("default"), Some(default), "{field}: {property}");
+        assert_eq!(number("minimum"), Some(low), "{field}: {property}");
+        assert_eq!(number("maximum"), Some(high), "{field}: {property}");
+        assert!(
+            property["description"]
+                .as_str()
+                .is_some_and(|text| text.len() > 40),
+            "RenderSettings.{field} says what it is: {property}"
+        );
+    }
+    // The words people use find the type.
+    for words in [
+        "cascades",
+        "blurry shadows",
+        "shadow distance",
+        "sharper shadows",
+    ] {
+        let found = ok(&ws.call("schema_get", &json!({ "search": words }), &me)).clone();
+        assert!(
+            found["types"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|t| t["name"] == "RenderSettings"),
+            "a search for '{words}' finds RenderSettings: {found}"
+        );
+    }
+
+    // Set with one edit; the scene file holds what was said and nothing
+    // else.
+    ok(&ws.call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "set_resource", "name": "RenderSettings",
+            "value": { "shadow_cascades": 4, "shadow_distance": 40, "shadow_map_size": 256 } }] }),
+        &me,
+    ));
+    let file: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("scenes/main.scene.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        file["resources"],
+        json!({ "RenderSettings": { "shadow_cascades": 4, "shadow_distance": 40, "shadow_map_size": 256 } })
+    );
+    let shot = ok(&ws.call("capture_frame", &size, &me)).clone();
+    assert_eq!(shot["stats"]["shadow_cascades"], 4, "{shot}");
+    assert!(shot["diagnostics"].is_null(), "{shot}");
+    assert_ne!(shot["image"]["data"], plain["image"]["data"]);
+    let seen = ok(&ws.call("describe_view", &size, &me)).clone();
+    assert_eq!(seen["stats"], shot["stats"]);
+
+    // The view that shows the cascades comes through the tool, by name, and
+    // is a picture of its own: the ground near the camera is in the first
+    // cascade's red, the sky is nothing.
+    let view = ok(&ws.call(
+        "capture_frame",
+        &json!({ "width": 160, "height": 90, "view": "shadow_cascades", "out": "captures/cascades.png" }),
+        &me,
+    ))
+    .clone();
+    assert_eq!(view["view"], "shadow_cascades");
+    assert_eq!(view["stats"]["draw_calls"], 2);
+    // The view draws no shadow map itself and says how many it shows: the
+    // number of the lit picture. Another debug view shows none.
+    assert_eq!(view["stats"]["shadow_casters"], 0);
+    assert_eq!(view["stats"]["shadow_cascades"], 4, "{view}");
+    let wire = ok(&ws.call(
+        "capture_frame",
+        &json!({ "width": 160, "height": 90, "view": "wireframe" }),
+        &me,
+    ))
+    .clone();
+    assert_eq!(wire["stats"]["shadow_cascades"], 0);
+    let picture = wish_render::RgbaImage::from_png(
+        &std::fs::read(dir.join("captures/cascades.png")).unwrap(),
+    )
+    .unwrap();
+    let [r, g, b, _] = picture.pixel(80, 86).unwrap();
+    assert!(
+        r > 150 && g < 100 && b < 100,
+        "red near the camera: {r} {g} {b}"
+    );
+    assert_eq!(picture.pixel(80, 2), Some([0, 0, 0, 255]), "the sky");
+    // A name that is no view lists the ones there are.
+    let wrong = ws.call("capture_frame", &json!({ "view": "cascades" }), &me);
+    assert_eq!(wrong["ok"], false);
+    assert!(wrong.to_string().contains("shadow_cascades"), "{wrong}");
+
+    // Out of range is refused when it is set, with the range.
+    for value in [
+        json!({ "shadow_cascades": 9 }),
+        json!({ "shadow_cascades": 0 }),
+        json!({ "shadow_distance": 0 }),
+    ] {
+        let refused = ws.call(
+            "edit_apply",
+            &json!({ "ops": [{ "op": "set_resource", "name": "RenderSettings", "value": value }] }),
+            &me,
+        );
+        assert_eq!(refused["ok"], false, "{value}: {refused}");
+        assert!(
+            !refused["error"]["hint"]
+                .as_str()
+                .unwrap_or_default()
+                .is_empty()
+        );
+    }
+
+    // Shadows only up to half a meter, in a scene whose ground does not
+    // reach under the camera: nothing is in reach, no shadow map is drawn,
+    // and every way of looking at shadows says why and what to do.
+    ok(&ws.call(
+        "edit_apply",
+        &json!({ "ops": [
+            { "op": "set", "id": "ground", "component": "Transform", "value": { "scale": [4, 1, 4] } },
+            { "op": "set_resource", "name": "RenderSettings",
+              "value": { "shadow_cascades": 2, "shadow_distance": 0.5 } } ] }),
+        &me,
+    ));
+    let lit = ok(&ws.call("capture_frame", &size, &me)).clone();
+    assert_eq!(lit["stats"]["shadow_cascades"], 0, "{lit}");
+    let warning = diagnostic(&lit, "shadows_out_of_range")
+        .unwrap_or_else(|| panic!("the reason is given: {lit}"))
+        .clone();
+    assert_eq!(warning["severity"], "warning");
+    assert!(
+        warning["hint"].as_str().is_some_and(
+            |hint| hint.contains("shadow_distance") && hint.contains("shadow_cascades")
+        ),
+        "{warning}"
+    );
+    // It speaks in the measure the distance uses, and does not contradict
+    // itself with a number.
+    assert!(
+        warning["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("(0.5 m) in front of the camera")),
+        "{warning}"
+    );
+    // Its place is the field of the scene file that mends it (review of
+    // package 6).
+    assert_eq!(
+        warning["location"]["path"],
+        "/resources/RenderSettings/shadow_distance"
+    );
+    assert_eq!(warning["location"]["file"], "scenes/main.scene.json");
+    let described = ok(&ws.call("describe_view", &size, &me)).clone();
+    assert_eq!(
+        diagnostic(&described, "shadows_out_of_range"),
+        Some(&warning),
+        "{described}"
+    );
+    let view = ok(&ws.call(
+        "capture_frame",
+        &json!({ "width": 160, "height": 90, "view": "shadow_cascades" }),
+        &me,
+    ))
+    .clone();
+    assert_eq!(
+        diagnostic(&view, "shadows_out_of_range"),
+        Some(&warning),
+        "{view}"
+    );
+    assert_eq!(view["stats"]["shadow_cascades"], 0, "it shows no map");
+    // A running game says it too, without a place in the scene file: its
+    // world is its own.
+    ok(&ws.call("sim_start", &json!({}), &me));
+    let live = ok(&ws.call(
+        "capture_frame",
+        &json!({ "session": "s1", "width": 160, "height": 90 }),
+        &me,
+    ))
+    .clone();
+    let said = diagnostic(&live, "shadows_out_of_range")
+        .unwrap_or_else(|| panic!("the reason is given: {live}"));
+    assert_eq!(said["message"], warning["message"]);
+    assert!(said.get("location").is_none(), "{live}");
+    ok(&ws.call("sim_stop", &json!({ "session": "s1" }), &me));
+    // The code is in the catalogue the docs are made of.
+    let docs = ok(&ws.call(
+        "docs_search",
+        &json!({ "query": "shadows_out_of_range" }),
+        &me,
+    ))
+    .clone();
+    assert!(docs.to_string().contains("shadows_out_of_range"), "{docs}");
+    // Following the hint mends it.
+    ok(&ws.call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "set_resource", "name": "RenderSettings",
+            "value": { "shadow_cascades": 2, "shadow_distance": 30 } }] }),
+        &me,
+    ));
+    let mended = ok(&ws.call("capture_frame", &size, &me)).clone();
+    assert_eq!(mended["stats"]["shadow_cascades"], 2);
+    assert!(mended["diagnostics"].is_null(), "{mended}");
+
+    // Removing the resource is the first picture again... of the smaller
+    // ground: the same bytes as a project that never had cascades.
+    ok(&ws.call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "remove_resource", "name": "RenderSettings" }] }),
+        &me,
+    ));
+    let back = ok(&ws.call("capture_frame", &size, &me)).clone();
+    assert_eq!(back["stats"]["shadow_cascades"], 1);
+    let (other_dir, mut other) = project("cascades-never");
+    ok(&other.call(
+        "edit_apply",
+        &json!({ "ops": [
+            { "op": "spawn", "id": "ball", "components": {
+                "Primitive": { "shape": "Sphere" }, "Transform": { "translation": [0, 1, 0] } } },
+            { "op": "set", "id": "ground", "component": "Transform", "value": { "scale": [4, 1, 4] } } ] }),
+        &me,
+    ));
+    let never = ok(&other.call("capture_frame", &size, &me)).clone();
+    assert_eq!(back["image"]["data"], never["image"]["data"]);
+
+    std::fs::remove_dir_all(&dir).unwrap();
+    std::fs::remove_dir_all(&other_dir).unwrap();
 }

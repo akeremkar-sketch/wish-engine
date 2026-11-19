@@ -11,6 +11,9 @@
 //!   (fixed green, moving cyan, sensors yellow).
 //! - **lights:** the wireframe, with where each point and spot light reaches
 //!   (its range sphere or cone, in its colour).
+//! - **shadow_cascades:** every surface in the colour of the shadow map its
+//!   shadow is read from in the lit picture (red, green, blue, yellow from
+//!   the nearest cascade; white for the single map; grey for no shadow).
 //!
 //! [`Renderer::describe`] turns the identity buffer into a list of what is
 //! on screen: for each entity how many pixels, how much of it is visible, a
@@ -23,6 +26,7 @@ use wish_core::{Diagnostic, Entity, Result};
 use super::draw_list::DrawList;
 use super::frame::{depth_key, light_warnings};
 use super::pool::Pool;
+use super::shadow::{self, CASCADES_UNIFORM_SIZE, ShadowPlan};
 use super::{Bytes, DEPTH_FORMAT, Frame, RenderStats, Renderer, choose_camera};
 use crate::capture::check_size;
 use crate::extract::{CameraView, RenderScene};
@@ -34,7 +38,9 @@ use crate::mesh::VERTEX_STRIDE;
 /// byte in the image is exactly the value the shader computed.
 const COLOUR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const ID_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
-const DEBUG_UNIFORM_SIZE: u64 = 96;
+/// Bytes of `Debug` in `debug_pass.wgsl`: a matrix, two vectors and the
+/// shadow cascades.
+const DEBUG_UNIFORM_SIZE: u64 = 96 + CASCADES_UNIFORM_SIZE;
 
 /// The most entities [`Renderer::describe`] measures a visibility fraction
 /// for (each needs a render of its own).
@@ -57,6 +63,9 @@ pub enum View {
     Colliders,
     /// The wireframe and where the point and spot lights reach.
     Lights,
+    /// Which shadow map each surface's shadow is read from: the cascades in
+    /// their colours, the single map white, no shadow grey.
+    ShadowCascades,
 }
 
 impl View {
@@ -69,6 +78,7 @@ impl View {
         "wireframe",
         "colliders",
         "lights",
+        "shadow_cascades",
     ];
 
     /// The view's name.
@@ -81,6 +91,7 @@ impl View {
             Self::Wireframe => "wireframe",
             Self::Colliders => "colliders",
             Self::Lights => "lights",
+            Self::ShadowCascades => "shadow_cascades",
         }
     }
 
@@ -94,6 +105,7 @@ impl View {
             "wireframe" => Self::Wireframe,
             "colliders" => Self::Colliders,
             "lights" => Self::Lights,
+            "shadow_cascades" => Self::ShadowCascades,
             _ => {
                 return Err(Diagnostic::error(
                     "unknown_view",
@@ -114,6 +126,7 @@ pub(super) struct DebugPipelines {
     depth: [wgpu::RenderPipeline; 2],
     normals: [wgpu::RenderPipeline; 2],
     fill: [wgpu::RenderPipeline; 2],
+    cascades: [wgpu::RenderPipeline; 2],
     lines: wgpu::RenderPipeline,
     /// World-space coloured lines drawn over everything (colliders, lights).
     gizmo: wgpu::RenderPipeline,
@@ -317,6 +330,7 @@ impl DebugPipelines {
                 depth: both("depth", "fs_depth", COLOUR_FORMAT, none),
                 normals: both("normals", "fs_normals", COLOUR_FORMAT, none),
                 fill: both("wire fill", "fs_fill", COLOUR_FORMAT, pushed_back),
+                cascades: both("shadow cascades", "fs_cascades", COLOUR_FORMAT, none),
                 lines: pipeline(
                     "wire lines",
                     "fs_line",
@@ -442,10 +456,27 @@ pub struct Description {
     pub warnings: Vec<Diagnostic>,
 }
 
+/// What a debug view draws beside the scene's surfaces.
+#[derive(Clone, Copy, Default)]
+struct Overlay<'a> {
+    /// Coloured lines over everything (colliders, where lights reach).
+    lines: &'a [crate::gizmo::LineVertex],
+    /// For the cascades view: the shadow maps of the lit picture.
+    shadow: Option<&'a ShadowPlan>,
+}
+
 /// What a debug view's own pass takes to draw: its surfaces, their edges
 /// again in the wireframe views, and the lines drawn over them. No shadow
-/// map is drawn and no light lights anything.
-fn view_stats(size: (u32, u32), draws: &DrawList<'_>, wire: bool, lines: bool) -> RenderStats {
+/// map is drawn and no light lights anything. `shadow_cascades` is how many
+/// shadow maps the view shows: the lit picture's in the `shadow_cascades`
+/// view (it draws none of them itself, so `shadow_casters` stays 0), none
+/// in every other view.
+fn view_stats(
+    size: (u32, u32),
+    draws: &DrawList<'_>,
+    (wire, lines): (bool, bool),
+    shadow_cascades: u32,
+) -> RenderStats {
     let surfaces = u32::try_from(draws.items.len()).unwrap_or(u32::MAX);
     RenderStats {
         width: size.0,
@@ -454,6 +485,7 @@ fn view_stats(size: (u32, u32), draws: &DrawList<'_>, wire: bool, lines: bool) -
             .saturating_mul(if wire { 2 } else { 1 })
             .saturating_add(u32::from(lines)),
         triangles: draws.triangles(),
+        shadow_cascades,
         ..RenderStats::default()
     }
 }
@@ -481,6 +513,17 @@ impl Renderer {
             let draws = &collected.draw_list;
             let drawn = draws.items.len();
             let wire = matches!(view, View::Wireframe | View::Colliders | View::Lights);
+            // The cascades view shows the shadow maps of the lit picture
+            // of this very view, planned the way that picture plans them.
+            let shadow = (view == View::ShadowCascades).then(|| {
+                shadow::plan(
+                    scene,
+                    camera_view,
+                    width as f32 / height as f32,
+                    &draws.casters,
+                    gpu.device.limits().max_texture_dimension_2d,
+                )
+            });
             let (image, lines) = if view == View::Ids {
                 let ids = self.id_pixels(gpu, pool, camera_view, draws, size)?;
                 let image = IdBuffer {
@@ -498,7 +541,12 @@ impl Renderer {
                     View::Lights => crate::gizmo::lights(scene),
                     _ => Vec::new(),
                 };
-                let mut raw = self.debug_pass(gpu, pool, camera_view, draws, size, view, &lines)?;
+                let overlay = Overlay {
+                    lines: &lines,
+                    shadow: shadow.as_ref().and_then(|planned| planned.plan.as_ref()),
+                };
+                let mut raw =
+                    self.debug_pass(gpu, pool, camera_view, draws, size, view, &overlay)?;
                 // The target has no alpha of its own that means anything.
                 for pixel in raw.pixels.as_chunks_mut::<4>().0 {
                     pixel[3] = 255;
@@ -510,11 +558,19 @@ impl Renderer {
             // through the `lights` view must still hear about a second sun).
             let mut warnings = collected.warnings;
             warnings.extend(light_warnings(scene));
+            // The view of the shadow maps says how many it shows (the
+            // number the lit picture of this view reports), and why there
+            // are none.
+            let shown = shadow
+                .as_ref()
+                .and_then(|planned| planned.plan.as_ref())
+                .map_or(0, ShadowPlan::maps);
+            warnings.extend(shadow.and_then(|planned| planned.warning));
             Ok(Frame {
                 image,
                 camera: camera_view.entity,
                 drawn,
-                stats: view_stats(size, draws, wire, lines),
+                stats: view_stats(size, draws, (wire, lines), shown),
                 warnings,
             })
         })
@@ -670,7 +726,15 @@ impl Renderer {
         draws: &DrawList<'_>,
         size: (u32, u32),
     ) -> Result<Vec<u32>> {
-        let raw = self.debug_pass(gpu, pool, camera, draws, size, View::Ids, &[])?;
+        let raw = self.debug_pass(
+            gpu,
+            pool,
+            camera,
+            draws,
+            size,
+            View::Ids,
+            &Overlay::default(),
+        )?;
         Ok(raw
             .pixels
             .as_chunks::<4>()
@@ -692,8 +756,9 @@ impl Renderer {
         draws: &DrawList<'_>,
         (width, height): (u32, u32),
         view: View,
-        lines: &[crate::gizmo::LineVertex],
+        overlay: &Overlay<'_>,
     ) -> Result<RgbaImage> {
+        let lines = overlay.lines;
         let wire = matches!(view, View::Wireframe | View::Colliders | View::Lights);
         let line_bytes: Vec<u8> = lines
             .iter()
@@ -714,6 +779,7 @@ impl Renderer {
         uniform.mat4(&view_proj);
         uniform.vec4(camera.position.to_array(), 1.0);
         uniform.vec4([camera.near, camera.far, 0.0], 0.0);
+        shadow::write_described(overlay.shadow, &mut uniform);
 
         gpu.checked("draw a debug view", |gpu| {
             let device = &gpu.device;
@@ -783,6 +849,7 @@ impl Renderer {
                     View::Ids => &self.debug.ids,
                     View::Depth => &self.debug.depth,
                     View::Normals => &self.debug.normals,
+                    View::ShadowCascades => &self.debug.cascades,
                     _ => &self.debug.fill,
                 };
                 for item in &draws.items {

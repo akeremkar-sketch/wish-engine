@@ -82,6 +82,7 @@ Dil, karşılama ekranının sağ üstünden, sonra da proje menüsünden (*Dil*
 - *Derinlik*, *Normaller*, *Tel kafes*.
 - *Çarpışma şekilleri*: fizik şekilleri.
 - *Işıklar*: ışıkların erimi.
+- *Gölge kademeleri*: her yüzeyin hangi gölge haritasını kullandığı (gri: gölge yok).
 
 ## 3. Elle düzenleme
 

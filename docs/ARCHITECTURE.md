@@ -196,7 +196,7 @@ Cheap heuristic rules that run after every play step and every edit. They say in
 Scene extraction (ECS → render world)
    → culling → light clustering → shadow passes → opaque (PBR) → sky → transparent
    → post-processing (tone mapping …) → present | capture (PNG)
-   side outputs (on request): entity ID · depth · normals · wireframe · colliders
+   side outputs (on request): entity ID · depth · normals · wireframe · colliders · lights · shadow cascades
 ```
 
 `describe_view` reads the ID buffer: for every visible entity, its screen box, visibility percentage and distance to the camera.

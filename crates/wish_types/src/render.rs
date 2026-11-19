@@ -222,11 +222,32 @@ pub struct RenderSettings {
     #[schema(default = true)]
     pub shadows: bool,
     /// The side of the directional light's shadow map. A larger map gives
-    /// sharper shadow edges and costs more to draw; the map covers
-    /// everything drawn, so a large scene needs a larger map for the same
-    /// sharpness.
+    /// sharper shadow edges and costs more to draw. With one map
+    /// (`shadow_cascades` 1) it covers everything drawn, so a large scene
+    /// needs a larger map for the same sharpness; with cascades each of
+    /// them is a map of this size.
     #[schema(unit = "px", range = 64..=4096, default = 2048)]
     pub shadow_map_size: u32,
+    /// How many shadow maps the directional light has. 1 (the default) is
+    /// one map fitted around everything that is drawn: fine for a room,
+    /// blurry in a large level, where one far object makes every shadow
+    /// coarse. 2 to 4 are cascades: maps fitted to slices of what the
+    /// camera sees, a small sharp one for what is near and larger ones for
+    /// what is farther, up to `shadow_distance`. Shadows near the camera
+    /// are then sharp whatever the scene's size. Each cascade is drawn as
+    /// a map of its own, so more of them cost more; 4 suits an open level
+    /// seen from the ground, 2 a small level or a camera that looks down
+    /// from above.
+    #[schema(range = 1..=4, default = 1)]
+    pub shadow_cascades: u32,
+    /// With `shadow_cascades` 2 or more: how far from the camera shadows
+    /// are drawn, measured along the direction the camera looks. They fade
+    /// out over the last tenth of it; beyond it everything is lit. A
+    /// shorter distance gives sharper shadows (the same maps cover less),
+    /// a longer one shadows on far things. Never more than the camera's
+    /// `far`. Not used with one map, which covers everything.
+    #[schema(unit = "m", range = 0.1..=10000.0, default = 100.0)]
+    pub shadow_distance: f32,
     /// How jagged edges are smoothed in the lit picture. The in-game
     /// interface, sprites and particles are drawn afterwards and stay as
     /// sharp as they were made.

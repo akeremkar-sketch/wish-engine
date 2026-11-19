@@ -469,7 +469,7 @@ const SEARCH_WORDS: &[(&str, &str)] = &[
     ("DirectionalLight", "sun sunlight light"),
     (
         "RenderSettings",
-        "graphics quality performance shadow shadows resolution settings options antialiasing anti-aliasing aa fxaa jagged jaggies edges smooth",
+        "graphics quality performance shadow shadows resolution settings options antialiasing anti-aliasing aa fxaa jagged jaggies edges smooth cascade cascades cascaded csm blurry blocky sharp sharper distance",
     ),
     (
         "Ambient",

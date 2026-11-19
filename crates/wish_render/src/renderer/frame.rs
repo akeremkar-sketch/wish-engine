@@ -42,8 +42,16 @@ pub struct RenderStats {
     pub draw_calls: u32,
     /// Triangles those draw calls hand to the GPU (before it culls any).
     pub triangles: u64,
-    /// Surfaces drawn into the shadow map; 0 when no shadow map is drawn.
+    /// Draws into the shadow maps, all of them together; 0 when no shadow
+    /// map is drawn. A cascade draws only the surfaces that can shadow it,
+    /// so a surface counts once for each cascade it is drawn into.
     pub shadow_casters: u32,
+    /// How many shadow maps the picture has: 0 without shadows, 1 for the
+    /// one map around everything, 2 to 4 for cascades
+    /// (`RenderSettings.shadow_cascades`). The `shadow_cascades` view
+    /// reports the number of the lit picture it shows the maps of; every
+    /// other debug view reports 0 (it draws and shows none).
+    pub shadow_cascades: u32,
     /// Point lights that light some part of the view.
     pub point_lights: u32,
     /// Spot lights that light some part of the view.
@@ -59,11 +67,11 @@ pub(super) struct FramePlan<'a> {
     pub size: (u32, u32),
     /// The surfaces, in scene order.
     pub draws: DrawList<'a>,
-    /// The shadow map to draw, if any.
+    /// The shadow maps to draw, if any: one, or cascades.
     pub shadow: Option<ShadowPlan>,
     /// The frame uniform (`Frame` in `common.wgsl`).
     pub frame_uniform: Vec<u8>,
-    /// The light's matrix, for the shadow pass.
+    /// The light's matrix for each shadow map, for the shadow pass.
     pub light_uniform: Vec<u8>,
     /// Whether the sky pass draws a sun disc or fog with the gradient.
     pub sky_look: bool,
@@ -196,10 +204,24 @@ fn lit_stats(
 ) -> RenderStats {
     let surfaces = u32::try_from(draws.items.len()).unwrap_or(u32::MAX);
     let surface_triangles = draws.triangles();
-    let (shadow_casters, shadow_triangles) = if shadow.is_some() {
-        (surfaces, surface_triangles)
-    } else {
-        (0, 0)
+    // The single map holds every surface; a cascade the ones that can
+    // shadow it.
+    let (shadow_casters, shadow_triangles) = match shadow {
+        None => (0, 0),
+        Some(ShadowPlan::Single { .. }) => (surfaces, surface_triangles),
+        Some(ShadowPlan::Cascades(cascades)) => {
+            let drawn = || {
+                cascades
+                    .cascades
+                    .iter()
+                    .flat_map(|cascade| cascade.draws.iter())
+                    .filter_map(|index| draws.items.get(*index as usize))
+            };
+            (
+                u32::try_from(drawn().count()).unwrap_or(u32::MAX),
+                drawn().map(|item| item.mesh.triangles()).sum(),
+            )
+        }
     };
     let (overlay_draws, overlay_triangles) = overlay.map_or((0, 0), |overlay| overlay.counts());
     let (interface_draws, interface_triangles) = interface.map_or((0, 0), |batch| batch.counts());
@@ -220,6 +242,7 @@ fn lit_stats(
             + overlay_triangles
             + interface_triangles,
         shadow_casters,
+        shadow_cascades: shadow.map_or(0, ShadowPlan::maps),
         point_lights: lights.0,
         spot_lights: lights.1,
         effects,
@@ -275,16 +298,21 @@ impl Renderer {
             warnings.extend(batch.warnings.iter().cloned());
         }
 
-        // The shadow map is fitted around everything drawn. Without one
-        // (shadows off, no light, nothing to cover) the shader is told so and
-        // lights everything.
+        // One shadow map is fitted around everything drawn; cascades are
+        // fitted to slices of this view. Without either (shadows off, no
+        // light, nothing to cover) the shader is told so and lights
+        // everything. With cascades the single map's numbers say "no map":
+        // the shader asks the cascades instead (the end of the uniform).
         let device_limit = gpu.device.limits().max_texture_dimension_2d;
-        let shadow = shadow::plan(scene, &draws.casters, device_limit);
-        let fit = shadow.map(|shadow| shadow.fit);
-        let map_size = shadow.map_or_else(
-            || shadow::map_size(scene, device_limit),
-            |shadow| shadow.map_size,
-        );
+        let shadow::Planned {
+            plan: shadow,
+            warning: shadow_warning,
+        } = shadow::plan(scene, view, aspect, &draws.casters, device_limit);
+        warnings.extend(shadow_warning);
+        let (fit, map_size) = match &shadow {
+            Some(ShadowPlan::Single { fit, map_size }) => (Some(*fit), *map_size),
+            _ => (None, shadow::map_size(scene, device_limit)),
+        };
         let light_view_proj = fit.map_or(Mat4::IDENTITY, |fit| fit.view_proj);
         frame.mat4(&light_view_proj);
         frame.floats(&[
@@ -328,6 +356,7 @@ impl Renderer {
         ]);
         let look = Look::of(scene, exposure);
         look.write_frame(&mut frame, view.ortho_height.is_some());
+        shadow::write_cascades(shadow.as_ref(), &mut frame);
         frame.pad_to(FRAME_UNIFORM_SIZE);
         let sun_size = scene.sky.sun_size_deg;
         if scene.lights.is_empty() && sun_size.is_finite() && sun_size > 0.0 {
@@ -355,8 +384,14 @@ impl Renderer {
                 .flat_map(|i| i.to_le_bytes())
                 .collect()
         };
-        let mut light_uniform = Bytes::default();
-        light_uniform.mat4(&light_view_proj);
+        let light_uniform = match &shadow {
+            Some(shadow) => shadow.light_uniform(),
+            None => {
+                let mut none = Bytes::default();
+                none.mat4(&Mat4::IDENTITY);
+                none.0
+            }
+        };
 
         let bloom = look.bloom_plan((width, height));
         let stats = lit_stats(
@@ -373,7 +408,7 @@ impl Renderer {
             draws,
             shadow,
             frame_uniform: frame.0,
-            light_uniform: light_uniform.0,
+            light_uniform,
             sky_look: look.sky(),
             bloom,
             grade_uniform: look.grade_uniform((width, height)),
@@ -397,7 +432,8 @@ pub(super) struct FrameResources {
     pub hdr: wgpu::TextureView,
     /// The picture's depth buffer.
     pub depth: wgpu::TextureView,
-    /// The light's depth picture (1x1 when no shadow map is drawn).
+    /// The light's depth picture: the one shadow map, the atlas of the
+    /// cascades, or a 1x1 map when no shadow map is drawn.
     pub shadow_map: wgpu::TextureView,
     /// Group 0 of the sky and opaque passes.
     pub frame_group: wgpu::BindGroup,
@@ -450,17 +486,18 @@ impl FrameResources {
         );
         let depth = pool.texture(gpu, depth_key(width, height));
         // A frame without shadows binds a 1x1 map of its own, so that it
-        // does not make the real map come and go.
-        let (name, side) = match &plan.shadow {
-            Some(shadow) => ("shadow map", shadow.map_size),
-            None => ("no shadow", 1),
+        // does not make the real map come and go; the one map and the
+        // cascades' atlas have names of their own for the same reason.
+        let (name, map_width, map_height) = match &plan.shadow {
+            Some(shadow) => shadow.texture(),
+            None => ("no shadow", 1, 1),
         };
         let shadow_map = pool.texture(
             gpu,
             TextureKey {
                 name,
-                width: side,
-                height: side,
+                width: map_width,
+                height: map_height,
                 format: SHADOW_FORMAT,
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                     | wgpu::TextureUsages::TEXTURE_BINDING,

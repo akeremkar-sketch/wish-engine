@@ -37,7 +37,7 @@ const SHADERS: Param = Param::optional(
 pub(crate) const CAPTURE_FRAME: Tool = Tool {
     name: "capture_frame",
     title: "Take a picture",
-    description: "Draws the scene (or a session's live world) from a camera and returns the picture as a PNG (image content over MCP; image.data is base64 on the command line unless out is given). The default 512x288 keeps it cheap; ask for more only to inspect detail. view picks what is drawn: lit (the real picture), ids (each entity its own color), depth (white near, black far), normals (surface direction as color), wireframe (triangle edges), colliders (the wireframe with every physics collider over it: fixed green, moving cyan, sensors yellow), lights (the wireframe with how far each point and spot light reaches). stats says what drawing the picture took, in counts that are the same on every machine: draw_calls, triangles, shadow_casters, point_lights, spot_lights, and effects, the optional look effects the picture used (sky_light, sun_disc, fog, bloom, color_grading, fxaa; they are set with the Ambient, Sky, Fog, Bloom, ColorGrading and RenderSettings resources and are off by default). Use describe_view to ask what is visible instead of reading pixels.",
+    description: "Draws the scene (or a session's live world) from a camera and returns the picture as a PNG (image content over MCP; image.data is base64 on the command line unless out is given). The default 512x288 keeps it cheap; ask for more only to inspect detail. view picks what is drawn: lit (the real picture), ids (each entity its own color), depth (white near, black far), normals (surface direction as color), wireframe (triangle edges), colliders (the wireframe with every physics collider over it: fixed green, moving cyan, sensors yellow), lights (the wireframe with how far each point and spot light reaches), shadow_cascades (each surface in the color of the shadow map its shadow is read from: red, green, blue, yellow from the cascade nearest the camera, mixed where two blend; white with one shadow map; gray where there is no shadow, as beyond RenderSettings.shadow_distance). stats says what drawing the picture took, in counts that are the same on every machine: draw_calls, triangles, shadow_casters (draws into the shadow maps), shadow_cascades (how many shadow maps: 0 none, 1 the one map around everything, 2 to 4 cascades, set with RenderSettings.shadow_cascades; the shadow_cascades view answers the number of the lit picture whose maps it shows, every other debug view 0), point_lights, spot_lights, and effects, the optional look effects the picture used (sky_light, sun_disc, fog, bloom, color_grading, fxaa; they are set with the Ambient, Sky, Fog, Bloom, ColorGrading and RenderSettings resources and are off by default). Use describe_view to ask what is visible instead of reading pixels.",
     params: &[
         SCENE,
         SESSION,
@@ -57,7 +57,7 @@ pub(crate) const CAPTURE_FRAME: Tool = Tool {
         Param::optional(
             "view",
             Kind::Choice(View::NAMES),
-            "lit, ids, depth, normals, wireframe, colliders or lights.",
+            "lit, ids, depth, normals, wireframe, colliders, lights or shadow_cascades.",
         )
         .or("\"lit\""),
         Param::optional(
@@ -84,7 +84,7 @@ pub(crate) const CAPTURE_FRAME: Tool = Tool {
 pub(crate) const DESCRIBE_VIEW: Tool = Tool {
     name: "describe_view",
     title: "What the camera sees",
-    description: "Says what a camera sees without a picture: for each visible entity its pixel count, how much of it is not hidden by other things (visible_percent), its box on screen [left, top, right, bottom] and its distance in meters; and the entities that are drawn but not visible (hidden behind something, or outside the picture); the sprites (their box in the picture and layer) and particle emitters (the box their particles cover, how many are alive); and the in-game interface (interface: each box that shows something, its box in the picture, its text, whether it is a button and if the pointer is over it); and stats, what drawing the lit picture of this view takes (draw_calls, triangles, shadow_casters, point_lights, spot_lights: counts, the same on every machine; effects: which of sky_light, sun_disc, fog, bloom, color_grading and fxaa it uses). Use it to check that what you built is on screen and not blocked, what the interface says, and what makes a scene heavy.",
+    description: "Says what a camera sees without a picture: for each visible entity its pixel count, how much of it is not hidden by other things (visible_percent), its box on screen [left, top, right, bottom] and its distance in meters; and the entities that are drawn but not visible (hidden behind something, or outside the picture); the sprites (their box in the picture and layer) and particle emitters (the box their particles cover, how many are alive); and the in-game interface (interface: each box that shows something, its box in the picture, its text, whether it is a button and if the pointer is over it); and stats, what drawing the lit picture of this view takes (draw_calls, triangles, shadow_casters, shadow_cascades, point_lights, spot_lights: counts, the same on every machine; effects: which of sky_light, sun_disc, fog, bloom, color_grading and fxaa it uses). Use it to check that what you built is on screen and not blocked, what the interface says, and what makes a scene heavy.",
     params: &[
         SCENE,
         SESSION,
@@ -163,8 +163,9 @@ impl Prepared {
     /// the scene file where there is one: the first light that is not
     /// drawn, when the picture is of the scene file as it is now (not a
     /// checkpoint's copy, not a preview) and the light is an entity of
-    /// that file (not one a prefab brought in); and the sky's sun size,
-    /// when a disc is asked for and there is no light to give it a place.
+    /// that file (not one a prefab brought in); the sky's sun size, when a
+    /// disc is asked for and there is no light to give it a place; and the
+    /// shadow distance, when cascades are asked for and it reaches nothing.
     /// The place names the file, because a path without a file points
     /// into the call's arguments.
     fn locate(&self, mut warnings: Vec<Diagnostic>) -> Vec<Diagnostic> {
@@ -190,12 +191,19 @@ impl Prepared {
                 }
             }
         }
-        // Only a scene file's own `Sky` resource can ask for a disc there.
+        // Only a scene file's own `Sky` resource can ask for a disc there,
+        // and only its own `RenderSettings` for cascades: the field to
+        // change is the distance (the field the hint names first).
         if let Some(file) = file {
             for warning in &mut warnings {
-                if warning.code == "sun_disc_without_light" && warning.location.path.is_none() {
+                let field = match &*warning.code {
+                    "sun_disc_without_light" => "/resources/Sky/sun_size_deg",
+                    "shadows_out_of_range" => "/resources/RenderSettings/shadow_distance",
+                    _ => continue,
+                };
+                if warning.location.path.is_none() {
                     warning.location.file = Some(file.to_owned());
-                    warning.location.path = Some("/resources/Sky/sun_size_deg".to_owned());
+                    warning.location.path = Some(field.to_owned());
                 }
             }
         }
@@ -429,6 +437,7 @@ fn stats_json(stats: &wish_render::RenderStats) -> Value {
         "draw_calls": stats.draw_calls,
         "triangles": stats.triangles,
         "shadow_casters": stats.shadow_casters,
+        "shadow_cascades": stats.shadow_cascades,
         "point_lights": stats.point_lights,
         "spot_lights": stats.spot_lights,
         "effects": stats.effects.names(),

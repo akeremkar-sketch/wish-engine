@@ -10,7 +10,9 @@ use crate::capture::CAPTURE_FORMAT;
 use crate::gpu::Gpu;
 use crate::mesh::VERTEX_STRIDE;
 
-/// Bytes of the light uniform of the shadow pass: one matrix.
+/// Bytes of the light uniform the shadow pass binds for one shadow map: one
+/// matrix. A frame with cascades has one for each, in one buffer
+/// (`shadow::LIGHT_UNIFORM_STRIDE` apart), picked by a dynamic offset.
 pub(super) const LIGHT_UNIFORM_SIZE: u64 = 64;
 
 /// The layouts, pipelines and samplers of the lit picture.
@@ -34,7 +36,8 @@ pub(super) struct Pipelines {
     pub grade_layout: wgpu::BindGroupLayout,
     /// A material's five textures and the sampler.
     pub material_layout: wgpu::BindGroupLayout,
-    /// The light's matrix, for the shadow pass.
+    /// The light's matrix for the shadow pass, picked by a dynamic offset
+    /// (each cascade has its own).
     pub light_layout: wgpu::BindGroupLayout,
     pub sky: wgpu::RenderPipeline,
     /// The sky with the sun's disc and the fog (`fs_look`): used only by a
@@ -165,9 +168,12 @@ impl Pipelines {
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::VERTEX,
+                    // One buffer for all the shadow maps of a frame, bound
+                    // with an offset: never two groups of this layout over
+                    // different buffers (`pool.rs`).
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
+                        has_dynamic_offset: true,
                         min_binding_size: wgpu::BufferSize::new(LIGHT_UNIFORM_SIZE),
                     },
                     count: None,

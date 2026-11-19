@@ -4622,6 +4622,9 @@ impl EditorApp {
                 if !self.ai_mode {
                 egui::ComboBox::from_id_salt("view")
                     .selected_text(view_label(self.view.name()))
+                    // Every view in sight: the list is short, and one that
+                    // has to be scrolled to is one nobody finds.
+                    .height(400.0)
                     .show_ui(ui, |ui| {
                         for name in View::NAMES {
                             if ui
@@ -5404,6 +5407,7 @@ fn view_label(name: &str) -> &'static str {
         "wireframe" => t("Wireframe"),
         "colliders" => t("Colliders"),
         "lights" => t("Lights"),
+        "shadow_cascades" => t("Shadow cascades"),
         _ => t("Other view"),
     }
 }

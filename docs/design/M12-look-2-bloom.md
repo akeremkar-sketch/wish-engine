@@ -493,6 +493,8 @@ No high finding; one medium and seven low. What was done with each:
    mapping alone makes of the value) is the first, and CI runs it on
    lavapipe. WGSL has no other way to test for such a value, so nothing
    was changed; if that test fails on an adapter, this is where to look.
+   (After the commit: CI ran the test on lavapipe on Linux and on WARP on
+   Windows, and it passed on both, as did the two new golden images.)
 5. **Low: the test of one look at every size had little margin.** It now
    measures the mean lift over the same share of the picture at both sizes
    and allows 30% (a tight glow, the case the test leaves out, differs by

@@ -62,10 +62,12 @@ const SMALLEST_BUFFER: u64 = 64;
 /// map are 238 MiB. FXAA keeps the tone mapped picture too (4 bytes a
 /// pixel, 32 MiB), and bloom the bloomed picture (8 bytes a pixel, 63 MiB)
 /// and its nine levels (8 bytes a pixel of each, together a third of the
-/// picture: 21 MiB). So such a view with every effect on is 354 MiB and is
-/// drawn without making anything; the sizes a dragged window edge leaves
-/// behind do not pile up beside it.
-pub(super) const BUDGET_BYTES: u64 = 384 << 20;
+/// picture: 21 MiB). So such a view with every effect on is 354 MiB. Four
+/// shadow cascades at the default size are an atlas of 4096x4096 texels,
+/// 64 MiB in place of the single map's 16: 402 MiB. That view is drawn
+/// without making anything; the sizes a dragged window edge leaves behind
+/// do not pile up beside it.
+pub(super) const BUDGET_BYTES: u64 = 448 << 20;
 
 /// How many GPU objects a renderer's pool has created since the renderer was
 /// made. (What is created beside the pool, such as a posed mesh's vertex

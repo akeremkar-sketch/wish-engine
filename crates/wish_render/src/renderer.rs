@@ -3,7 +3,9 @@
 //! A frame is planned on the CPU and then drawn by a fixed list of passes
 //! (`passes.rs` has the table of what each reads and writes):
 //!
-//! 1. **Shadow:** the scene's depth as the directional light sees it.
+//! 1. **Shadow:** the scene's depth as the directional light sees it: one
+//!    map around everything, or cascades fitted to slices of the camera's
+//!    depth when the scene asks for them.
 //! 2. **Sky:** fills the HDR target with the sky gradient.
 //! 3. **Opaque:** draws every surface with the glTF metallic-roughness BRDF,
 //!    one directional light with its shadow, the point and spot lights of
@@ -33,7 +35,8 @@
 //! - `models.rs`: uploaded meshes and models, posing animated models;
 //! - `draw_list.rs`: a scene's draws as draw calls, shared by every pass
 //!   that draws meshes, the debug views included;
-//! - `shadow.rs`: the shadow map's size and the light's fitted view;
+//! - `shadow.rs`: the shadow maps (one, or cascades), their sizes and the
+//!   light's fitted views;
 //! - `frame.rs`: the frame plan, its statistics, and its GPU resources;
 //! - `look.rs`: the look settings as the numbers the shaders read;
 //! - `bloom.rs`: the bloom's levels, targets and passes;
@@ -44,7 +47,8 @@
 //!
 //! Design: `docs/design/M12-render-foundation.md`; the look settings:
 //! `docs/design/M12-look-1-sky-fog-grading-fxaa.md` and
-//! `docs/design/M12-look-2-bloom.md`.
+//! `docs/design/M12-look-2-bloom.md`; the cascades:
+//! `docs/design/M12-look-3-cascaded-shadows.md`.
 
 use std::collections::BTreeMap;
 use std::sync::{Mutex, MutexGuard};
@@ -88,8 +92,9 @@ pub(crate) use pool::{Pool, TextureKey};
 const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-/// Bytes of the frame uniform: four matrices and seventeen vectors.
-const FRAME_UNIFORM_SIZE: u64 = 528;
+/// Bytes of the frame uniform: four matrices and seventeen vectors, and the
+/// shadow cascades.
+const FRAME_UNIFORM_SIZE: u64 = 528 + shadow::CASCADES_UNIFORM_SIZE;
 /// Bytes of one point or spot light in the light buffer: four vectors.
 const LIGHT_STRIDE: usize = 64;
 const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -101,6 +106,11 @@ const DRAW_UNIFORM_STRIDE: u64 = 256;
 
 /// The engine's own shader modules: (name, file, source).
 const SHADERS: &[(&str, &str, &str)] = &[
+    (
+        "cascades",
+        "wish_render/shaders/cascades.wgsl",
+        include_str!("shaders/cascades.wgsl"),
+    ),
     (
         "common",
         "wish_render/shaders/common.wgsl",
@@ -268,6 +278,7 @@ const ENTRY_POINTS: &[(&str, &[(naga::ShaderStage, &str)])] = {
                 (Fragment, "fs_normals"),
                 (Fragment, "fs_fill"),
                 (Fragment, "fs_line"),
+                (Fragment, "fs_cascades"),
             ],
         ),
         ("gizmo_pass", &[(Vertex, "vs_main"), (Fragment, "fs_main")]),
@@ -624,7 +635,7 @@ impl Renderer {
     ///
     /// A renderer keeps the targets of its last frames so that the next
     /// frame creates nothing: right for a window that draws many frames a
-    /// second, and it holds itself to 384 MiB beside what its last frame
+    /// second, and it holds itself to 448 MiB beside what its last frame
     /// used. A caller that draws now and then (a tool that takes one
     /// picture) calls this afterwards, so that a large picture does not stay
     /// in memory until some later call. Uploaded models and pictures are not
@@ -706,7 +717,8 @@ impl Renderer {
                     masked: &self.pipelines.shadow_masked,
                     light: &resources.light_group,
                     draw_uniforms: &resources.draw_group,
-                    casters: plan.shadow.is_some().then_some(&plan.draws),
+                    casters: &plan.draws,
+                    maps: &passes::shadow_maps(plan.shadow.as_ref()),
                 },
             );
             passes::sky(

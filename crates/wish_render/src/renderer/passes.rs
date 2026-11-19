@@ -2,7 +2,7 @@
 //!
 //! | Pass | Reads | Writes |
 //! |---|---|---|
-//! | [`shadow`] | the draw list, the light's matrix | the shadow map |
+//! | [`shadow`] | the draw list, the light's matrix for each map | the shadow map, or the atlas of the cascades (all of it) |
 //! | [`sky`] | the frame uniform | the HDR picture (all of it) |
 //! | [`opaque`] | the draw list, the frame uniform, the shadow map, the light lists | the HDR picture, the depth buffer |
 //! | the bloom's passes (only when asked for; `bloom.rs`) | the HDR picture | the bloom's levels, the bloomed picture (all of it) |
@@ -27,8 +27,9 @@
 
 use wish_core::Result;
 
-use super::draw_list::DrawList;
+use super::draw_list::{DrawItem, DrawList};
 use super::pool::Pool;
+use super::shadow::{LIGHT_UNIFORM_STRIDE, ShadowPlan};
 use crate::capture::Target;
 use crate::gpu::Gpu;
 use crate::image::RgbaImage;
@@ -48,22 +49,62 @@ fn colour(
     })
 }
 
+/// One shadow map of a frame, as the shadow pass draws it.
+pub(super) struct ShadowMap<'a> {
+    /// The part of the texture it is drawn into: left, top and side, in
+    /// texels (a cascade's tile of the atlas). `None` for the single map,
+    /// which is the whole texture.
+    pub area: Option<[u32; 3]>,
+    /// Where its matrix is in the light uniform.
+    pub light_offset: u32,
+    /// The draws that go into it, as positions in the draw list; `None`
+    /// for all of them.
+    pub draws: Option<&'a [u32]>,
+}
+
+/// The shadow maps of a frame with this plan, in the order they are drawn:
+/// the single map, each cascade, or none.
+pub(super) fn shadow_maps(plan: Option<&ShadowPlan>) -> Vec<ShadowMap<'_>> {
+    match plan {
+        None => Vec::new(),
+        Some(ShadowPlan::Single { .. }) => vec![ShadowMap {
+            area: None,
+            light_offset: 0,
+            draws: None,
+        }],
+        Some(ShadowPlan::Cascades(cascades)) => cascades
+            .cascades
+            .iter()
+            .enumerate()
+            .map(|(index, cascade)| ShadowMap {
+                area: Some(cascades.area(index)),
+                light_offset: u32::try_from(index as u64 * LIGHT_UNIFORM_STRIDE)
+                    .unwrap_or(u32::MAX),
+                draws: Some(&cascade.draws),
+            })
+            .collect(),
+    }
+}
+
 /// What the shadow pass reads and writes.
 pub(super) struct Shadow<'a> {
-    /// Written: the light's depth picture, cleared to "nothing in the way".
+    /// Written: the light's depth picture (for cascades: their atlas),
+    /// cleared to "nothing in the way".
     pub map: &'a wgpu::TextureView,
     /// The depth-only pipeline of solid surfaces.
     pub solid: &'a wgpu::RenderPipeline,
     /// The pipeline of alpha-masked surfaces: it leaves out what the
     /// material cuts out.
     pub masked: &'a wgpu::RenderPipeline,
-    /// The light's matrix (group 0).
+    /// The lights' matrices (group 0, one for each map, by offset).
     pub light: &'a wgpu::BindGroup,
     /// The draws' uniform data (group 1, by offset).
     pub draw_uniforms: &'a wgpu::BindGroup,
-    /// What casts shadows; `None` when the frame has no shadow map (the pass
-    /// then only clears the 1x1 map the shader is given).
-    pub casters: Option<&'a DrawList<'a>>,
+    /// What casts shadows.
+    pub casters: &'a DrawList<'a>,
+    /// The maps to draw; empty when the frame has no shadows (the pass then
+    /// only clears the 1x1 map the shader is given).
+    pub maps: &'a [ShadowMap<'a>],
 }
 
 /// The shadow pass: every surface's depth as the light sees it.
@@ -83,29 +124,40 @@ pub(super) fn shadow(encoder: &mut wgpu::CommandEncoder, inputs: &Shadow<'_>) {
         occlusion_query_set: None,
         multiview_mask: None,
     });
-    let Some(casters) = inputs.casters else {
-        return;
-    };
-    // Solid surfaces go through the solid pipeline exactly as they always
-    // did; the pipeline changes only where the list changes kind.
-    let mut current = None;
-    for item in &casters.items {
-        if current != Some(item.masked) {
-            pass.set_pipeline(if item.masked {
-                inputs.masked
-            } else {
-                inputs.solid
-            });
-            pass.set_bind_group(0, inputs.light, &[]);
-            current = Some(item.masked);
+    for map in inputs.maps {
+        // A cascade is drawn into its own tile and nowhere else.
+        if let Some([left, top, side]) = map.area {
+            pass.set_viewport(left as f32, top as f32, side as f32, side as f32, 0.0, 1.0);
+            pass.set_scissor_rect(left, top, side, side);
         }
-        pass.set_bind_group(1, inputs.draw_uniforms, &[item.offset]);
-        if item.masked {
-            pass.set_bind_group(2, item.textures, &[]);
+        // Solid surfaces go through the solid pipeline exactly as they
+        // always did; the pipeline changes only where the list changes kind.
+        let mut current = None;
+        let mut draw = |item: &DrawItem<'_>| {
+            if current != Some(item.masked) {
+                pass.set_pipeline(if item.masked {
+                    inputs.masked
+                } else {
+                    inputs.solid
+                });
+                pass.set_bind_group(0, inputs.light, &[map.light_offset]);
+                current = Some(item.masked);
+            }
+            pass.set_bind_group(1, inputs.draw_uniforms, &[item.offset]);
+            if item.masked {
+                pass.set_bind_group(2, item.textures, &[]);
+            }
+            pass.set_vertex_buffer(0, item.mesh.vertices.slice(..));
+            pass.set_index_buffer(item.mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..item.mesh.index_count, 0, 0..1);
+        };
+        match map.draws {
+            None => inputs.casters.items.iter().for_each(&mut draw),
+            Some(draws) => draws
+                .iter()
+                .filter_map(|index| inputs.casters.items.get(*index as usize))
+                .for_each(&mut draw),
         }
-        pass.set_vertex_buffer(0, item.mesh.vertices.slice(..));
-        pass.set_index_buffer(item.mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
-        pass.draw_indexed(0..item.mesh.index_count, 0, 0..1);
     }
 }
 

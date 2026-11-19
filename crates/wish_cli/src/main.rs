@@ -48,11 +48,11 @@ USAGE:
     wen migrate [files...] [--root <folder>] [--json]
     wen watch --example <name> --scene <file> [--root <folder>] [--seconds <n>] [--json]
     wen capture --example <name> --scene <file> --out <png> [--root <folder>] [--camera <id>]
-                [--size <w>x<h>] [--view lit|ids|depth|normals|wireframe] [--software] [--shaders <folder>] [--json]
+                [--size <w>x<h>] [--view <view>] [--software] [--shaders <folder>] [--json]
     wen describe --example <name> --scene <file> [--root <folder>] [--camera <id>]
                  [--size <w>x<h>] [--software] [--shaders <folder>] [--json]
     wen view --example <name> --scene <file> [--root <folder>] [--size <w>x<h>]
-             [--view lit|ids|depth|normals|wireframe] [--software] [--shaders <folder>] [--exit-after <frames>]
+             [--view <view>] [--software] [--shaders <folder>] [--exit-after <frames>]
     wen shaders [--dir <folder>] [--json]
     wen new <folder> [--name <name>] [--template <name>] [--json]
     wen build [--root <folder>] [--dry-run] [--json]
@@ -104,14 +104,19 @@ COMMANDS:
                the same on every machine. Rendering never changes the simulation.
                --view picks what is drawn: lit (the picture), ids (each entity in its own
                colour), depth (white near, black far), normals (surface direction as
-               colour), wireframe (triangle edges, hidden ones left out).
+               colour), wireframe (triangle edges, hidden ones left out), colliders (the
+               wireframe with the physics shapes), lights (the wireframe with how far lights
+               reach), shadow_cascades (each surface in the colour of the shadow map it uses:
+               red, green, blue, yellow from the nearest cascade; white with one map; grey
+               where there is no shadow).
     describe   Say what a camera sees without looking at a picture: for each visible entity
                its pixel count, how much of it is not hidden by other things, its screen
                box and its distance; and the entities that are drawn but not visible
                (default size 640x360; each entity costs one extra render).
     view       Open a window onto a scene. Right mouse button + mouse looks around, W A S D move,
-               Q / E go down / up, Shift is faster, F returns to the scene's camera, 1-5 pick
-               the view (lit, ids, depth, normals, wireframe), a left click names the entity
+               Q / E go down / up, Shift is faster, F returns to the scene's camera, 1-8 pick
+               the view (lit, ids, depth, normals, wireframe, colliders, lights,
+               shadow_cascades), a left click names the entity
                under the cursor. Changed scene, prefab, model or shader files are reloaded; a
                mistake is reported and the last good picture stays. Needs a desktop session.
     shaders    Check every shader of the engine (syntax and validation, no GPU needed); --dir checks
