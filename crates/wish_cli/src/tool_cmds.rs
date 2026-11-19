@@ -226,7 +226,7 @@ pub fn shortcut(
     args: &Value,
     context: &ToolContext,
     as_json: bool,
-    human: fn(&Value) -> String,
+    human: &dyn Fn(&Value) -> String,
 ) -> Outcome {
     let value = match open(context) {
         Ok(mut workspace) => workspace.call(
@@ -402,7 +402,7 @@ pub fn describe(args: &crate::args::DescribeArgs, as_json: bool) -> Outcome {
         &tool_args,
         &context,
         as_json,
-        describe_text,
+        &describe_text,
     )
 }
 
@@ -709,15 +709,16 @@ pub fn pkg_text(answer: &Value) -> String {
     text.trim_end().to_owned()
 }
 
-/// Text for a `script_build` answer.
-pub fn build_text(answer: &Value) -> String {
+/// Text for a `script_build` answer. The answer carries no duration
+/// (ADR-027, rule 2): `seconds` is what the command line measured around the
+/// call.
+pub fn build_text(answer: &Value, seconds: f64) -> String {
     let mut text = String::new();
     for entry in answer["diagnostics"].as_array().into_iter().flatten() {
         if let Ok(problem) = serde_json::from_value::<Diagnostic>(entry.clone()) {
             text.push_str(&format!("{problem}\n"));
         }
     }
-    let seconds = answer["seconds"].as_f64().unwrap_or(0.0);
     if answer["passed"] == true {
         let systems = answer["systems"]
             .as_array()

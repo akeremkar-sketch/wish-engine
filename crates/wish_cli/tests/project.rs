@@ -638,6 +638,98 @@ fn a_project_of_format_1_is_read_as_it_is_and_migrated_on_request() {
     assert_eq!(report["up_to_date"], 2);
 }
 
+/// `wish.json` of a project made by an older engine (canonical).
+fn project_file(engine: &str) -> String {
+    format!(
+        "{{\n  \"engine\": \"{engine}\",\n  \"format\": 1,\n  \"name\": \"Old\",\n  \"scene\": \"main.scene.json\",\n  \"types\": {{\n    \"example\": \"stress\"\n  }}\n}}\n"
+    )
+}
+
+/// ADR-027, rule 3: `wen migrate` sets `engine` in `wish.json` to the
+/// migrating engine's version when it migrated something, and only then;
+/// opening, checking and editing never touch the key.
+#[test]
+fn migrate_names_the_migrating_engine_and_nothing_else_does() {
+    let dir = Dir::new("migrate-engine");
+    let old = GOOD.replace("\"format\": 2", "\"format\": 1");
+    dir.write("wish.json", &project_file("0.0.9"));
+    dir.write("main.scene.json", &old);
+    dir.write("other.scene.json", GOOD);
+    // Checking and running read it; nothing is written.
+    let check = ["check", "--root", dir.arg(), "--json"];
+    let (ok, report) = wen_json(&check);
+    assert!(ok, "{report}");
+    let (ok, run) = wen_json(&["call", "scene_get", "{}", "--root", dir.arg()]);
+    assert!(ok, "{run}");
+    assert_eq!(dir.read("wish.json"), project_file("0.0.9"));
+    // An edit through the engine saves the scene in the new format, but the
+    // project still names the engine that made it.
+    let (ok, edit) = wen_json(&[
+        "call",
+        "edit_apply",
+        r#"{"scene":"other.scene.json","ops":[{"op":"spawn","id":"b"}]}"#,
+        "--root",
+        dir.arg(),
+    ]);
+    assert!(ok, "{edit}");
+    assert_eq!(dir.read("wish.json"), project_file("0.0.9"));
+    // A migration that migrates something names this engine; only that key
+    // changes.
+    let here = env!("CARGO_PKG_VERSION");
+    let (ok, report) = wen_json(&["migrate", "--root", dir.arg(), "--json"]);
+    assert!(ok, "{report}");
+    assert_eq!(report["migrated"], serde_json::json!(["main.scene.json"]));
+    assert_eq!(report["engine"], here);
+    assert_eq!(dir.read("wish.json"), project_file(here));
+    let (ok, text) = wen(&["migrate", "--root", dir.arg()]);
+    assert!(ok, "{text}");
+    assert!(!text.contains("now names engine"), "{text}");
+    // Nothing to migrate: the key is left alone, whatever it says.
+    dir.write("wish.json", &project_file("0.0.9"));
+    let (ok, report) = wen_json(&["migrate", "--root", dir.arg(), "--json"]);
+    assert!(ok, "{report}");
+    assert!(report["engine"].is_null(), "{report}");
+    assert_eq!(dir.read("wish.json"), project_file("0.0.9"));
+    // A project that names a newer engine keeps it: the key is only raised.
+    dir.write("wish.json", &project_file("9.0.0"));
+    dir.write("main.scene.json", &old);
+    let (ok, report) = wen_json(&["migrate", "--root", dir.arg(), "--json"]);
+    assert!(ok, "{report}");
+    assert_eq!(report["migrated"], serde_json::json!(["main.scene.json"]));
+    assert!(report["engine"].is_null(), "{report}");
+    assert_eq!(dir.read("wish.json"), project_file("9.0.0"));
+    // One that is not a version is replaced.
+    dir.write("wish.json", &project_file("0.2"));
+    dir.write("main.scene.json", &old);
+    let (ok, report) = wen_json(&["migrate", "--root", dir.arg(), "--json"]);
+    assert!(ok, "{report}");
+    assert_eq!(report["engine"], here);
+    assert_eq!(dir.read("wish.json"), project_file(here));
+}
+
+/// ADR-027, rule 3: an `engine` that is not a version is reported, where it
+/// is, with a hint; the project still opens.
+#[test]
+fn check_reports_an_engine_that_is_not_a_version() {
+    let dir = Dir::new("engine-not-a-version");
+    dir.write("wish.json", &project_file("0.2"));
+    dir.write("main.scene.json", GOOD);
+    let (ok, report) = wen_json(&["check", "--root", dir.arg(), "--json"]);
+    assert!(ok, "a warning: {report}");
+    let found = &report["diagnostics"][0];
+    assert_eq!(found["code"], "invalid_version", "{report}");
+    assert_eq!(found["severity"], "warning");
+    assert_eq!(found["location"]["file"], "wish.json");
+    assert_eq!(found["location"]["path"], "/engine");
+    assert_eq!(found["location"]["line"], 2);
+    assert!(found["hint"].as_str().unwrap().contains("three numbers"));
+    // A version is not reported.
+    dir.write("wish.json", &project_file("0.2.0"));
+    let (ok, report) = wen_json(&["check", "--root", dir.arg(), "--json"]);
+    assert!(ok, "{report}");
+    assert_eq!(report["warnings"], 0, "{report}");
+}
+
 #[test]
 fn watch_reloads_a_valid_change_and_keeps_the_scene_on_an_invalid_one() {
     let dir = Dir::new("watch");

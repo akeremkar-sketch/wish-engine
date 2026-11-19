@@ -195,8 +195,8 @@ pub fn format(
 /// (`wish_control::migrate`: a file keeps every value it relied on whose
 /// default changed) and checks the rest. Format 1 becomes format 2 (the
 /// look lock of 1.0); files already at format 2 are left as they are.
-/// (Setting `engine` in `wish.json` after a migration is a follow-up of
-/// ADR-027, rule 3, and is not done here.)
+/// When a file was migrated, `wish.json`'s `engine` becomes this engine's
+/// version (ADR-027, rule 3).
 pub fn migrate(paths: &[String], root: &Path, as_json: bool) -> Result<Outcome> {
     let paths = resolve(paths, root)?;
     let current = wish_scene::FORMAT;
@@ -222,6 +222,7 @@ pub fn migrate(paths: &[String], root: &Path, as_json: bool) -> Result<Outcome> 
             "current_format": current,
             "up_to_date": report.up_to_date,
             "migrated": migrated,
+            "engine": report.engine,
             "diagnostics": report.diagnostics,
         })
         .to_string()
@@ -231,6 +232,12 @@ pub fn migrate(paths: &[String], root: &Path, as_json: bool) -> Result<Outcome> 
             text.push_str(&format!(
                 "Migrated: {name} (format {current}; {} value(s) written that the file relied on)\n",
                 written.len()
+            ));
+        }
+        if let Some(engine) = &report.engine {
+            text.push_str(&format!(
+                "wish.json now names engine {engine}: older engines cannot read the migrated files.
+"
             ));
         }
         if report.migrated.is_empty() {

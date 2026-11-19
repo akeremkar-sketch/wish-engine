@@ -12,8 +12,11 @@
 //! A project's `wish.json` names the engine version that wrote it. It opens
 //! with that exact version if one is installed (a game plays bit for bit the
 //! same only on the engine it was made with), else with the newest
-//! installed version compatible with it (`^version`, never older); with no
-//! such engine it opens with the running one, which says so.
+//! installed engine that opens it unchanged: not older than the project,
+//! and stating in its `opens_from` a version no newer than the project's
+//! (ADR-027, rule 3; an engine packaged before `opens_from` existed is
+//! judged by the caret rule, `^version`). With no such engine it opens with
+//! the running one, which says so.
 
 use std::path::{Path, PathBuf};
 
@@ -32,6 +35,34 @@ pub const ENGINES_FOLDER: &str = "engines";
 pub const MAX_ENGINES: usize = 64;
 /// The largest `wish-engine.json` or `engines.json` read.
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
+
+/// The oldest engine version whose projects this engine opens unchanged:
+/// it reads every file such a project has with the meaning it was written
+/// with, writes nothing on opening, and no format window lies between them
+/// (ADR-027, rule 3). It moves only in a format window, to the first version
+/// that writes the new format; `tests/engines.rs` records it with the
+/// format constants and fails when a format changes and this does not.
+///
+/// 0.1.0 after the look lock (format 2 of scene files): no version but 0.1.0
+/// has ever existed, and this engine reads format 1 with its old meaning
+/// (design note M12-public-face-code, section 3).
+pub const OPENS_FROM: Version = Version {
+    major: 0,
+    minor: 1,
+    patch: 0,
+};
+
+/// Engines whose `wish-engine.json` has no `opens_from` were packaged before
+/// the key existed: every one of them is 0.1.0 or older, and the 0.1.0 ones
+/// from before the look lock cannot read scene format 2, which a 0.1.0
+/// project may already use. Such an engine is trusted, by the caret rule,
+/// only for a project older than this version. Unlike [`OPENS_FROM`] it never
+/// moves: it records when the key began, not a format.
+pub const UNSTATED_BEFORE: Version = Version {
+    major: 0,
+    minor: 1,
+    patch: 0,
+};
 
 /// The command-line program of an engine.
 pub const WEN: &str = if cfg!(windows) { "wen.exe" } else { "wen" };
@@ -67,6 +98,10 @@ pub struct Engine {
     pub folder: PathBuf,
     /// Where it came from.
     pub source: Source,
+    /// The oldest version whose projects it opens unchanged ([`OPENS_FROM`]
+    /// of that engine); `None` for an engine packaged before the key
+    /// existed, which is judged by the caret rule.
+    pub opens_from: Option<Version>,
 }
 
 impl Engine {
@@ -81,13 +116,20 @@ impl Engine {
             "version": self.version.to_string(),
             "folder": self.folder.display().to_string(),
             "source": self.source.name(),
+            "opens_from": self.opens_from.map(|v| v.to_string()),
         })
     }
 }
 
-/// The text of `wish-engine.json` for `version` (canonical JSON).
+/// The text of `wish-engine.json` for `version` (canonical JSON), with this
+/// engine's [`OPENS_FROM`]. The key is optional: the file stays format 1, and
+/// an engine that does not know it ignores it.
 pub fn engine_file_text(version: Version) -> Result<String> {
-    wish_scene::json::to_canonical(&json!({ "format": 1, "version": version.to_string() }))
+    wish_scene::json::to_canonical(&json!({
+        "format": 1,
+        "opens_from": OPENS_FROM.to_string(),
+        "version": version.to_string(),
+    }))
 }
 
 /// The engine this program belongs to.
@@ -100,6 +142,7 @@ pub fn running() -> Engine {
         version: Version::engine(),
         folder,
         source: Source::Running,
+        opens_from: Some(OPENS_FROM),
     }
 }
 
@@ -150,6 +193,29 @@ pub fn read_engine(folder: &Path, source: Source) -> Result<Engine> {
                 &format!("its {ENGINE_FILE} has no valid \"version\""),
             )
         })?;
+    let opens_from = match value.get("opens_from") {
+        None | Some(Value::Null) => None,
+        Some(text) => Some(
+            text.as_str()
+                .and_then(|text| Version::parse(text).ok())
+                .filter(|from| *from <= version)
+                .ok_or_else(|| {
+                    let name = folder.file_name().map_or_else(
+                        || folder.display().to_string(),
+                        |n| n.to_string_lossy().into_owned(),
+                    );
+                    Diagnostic::error(
+                        "engine_folder_invalid",
+                        format!(
+                            "'{name}' is not an engine folder: its {ENGINE_FILE} has an \"opens_from\" of {text}, which is not a version up to its own ({version})."
+                        ),
+                        format!(
+                            "Fix \"opens_from\" in its {ENGINE_FILE} (three numbers, no newer than \"version\"), or remove the key: an engine without it is judged as one packaged before it existed."
+                        ),
+                    )
+                })?,
+        ),
+    };
     if !folder.join(WEN).is_file() {
         return Err(invalid_folder(folder, &format!("it has no {WEN}")));
     }
@@ -157,6 +223,7 @@ pub fn read_engine(folder: &Path, source: Source) -> Result<Engine> {
         version,
         folder: folder.to_path_buf(),
         source,
+        opens_from,
     })
 }
 
@@ -474,6 +541,7 @@ pub fn remove(config: &Path, folder: &Path, dry_run: bool) -> Result<Removed> {
                     },
                     folder: folder.to_path_buf(),
                     source: Source::Added,
+                    opens_from: None,
                 },
                 trash: None,
                 stale: true,
@@ -555,7 +623,9 @@ pub fn remove(config: &Path, folder: &Path, dry_run: bool) -> Result<Removed> {
 pub enum Fit {
     /// The version that wrote the project.
     Exact,
-    /// A newer version compatible with it (`^version`).
+    /// A newer version that opens it unchanged (its `opens_from` is no
+    /// newer than the project's version; `^version` for an engine without
+    /// `opens_from`).
     Compatible,
 }
 
@@ -569,9 +639,30 @@ impl Fit {
     }
 }
 
+/// Whether `engine` opens a project written by `wanted` unchanged: it is
+/// not older, and its `opens_from` is no newer than `wanted`. An engine
+/// without `opens_from` (packaged before the key existed) is judged by the
+/// caret rule (below 1.0 the same minor only), and only for a project older
+/// than [`UNSTATED_BEFORE`]: a 0.1.0 package from before the look lock calls
+/// itself 0.1.0 too, and refuses the format-2 files a 0.1.0 project may
+/// have. This is not [`VersionReq`]: a package's requirement keeps Cargo's
+/// meaning.
+pub fn opens(engine: &Engine, wanted: Version) -> bool {
+    match engine.opens_from {
+        Some(from) => from <= wanted && wanted <= engine.version,
+        None => {
+            wanted < UNSTATED_BEFORE
+                && VersionReq::parse(&format!("^{wanted}"))
+                    .is_ok_and(|compatible| compatible.matches(engine.version))
+        }
+    }
+}
+
 /// The engine that opens a project written by `wanted`: the exact version
-/// (the running engine if it is one), else the newest compatible one;
-/// `None` when no engine fits.
+/// (the running engine if it is one) among the engines that open it
+/// ([`opens`]: an engine without `opens_from` is not taken for a project of
+/// [`UNSTATED_BEFORE`] or newer, even of its own number), else the newest
+/// one that opens it unchanged; `None` when no engine fits.
 pub fn pick(wanted: Version, engines: &[Engine]) -> Option<(Engine, Fit)> {
     let prefer_running = |a: &&Engine, b: &&Engine| {
         a.version
@@ -581,15 +672,14 @@ pub fn pick(wanted: Version, engines: &[Engine]) -> Option<(Engine, Fit)> {
     };
     if let Some(exact) = engines
         .iter()
-        .filter(|e| e.version == wanted)
+        .filter(|e| e.version == wanted && opens(e, wanted))
         .max_by(prefer_running)
     {
         return Some((exact.clone(), Fit::Exact));
     }
-    let compatible = VersionReq::parse(&format!("^{wanted}")).ok()?;
     engines
         .iter()
-        .filter(|e| compatible.matches(e.version))
+        .filter(|e| opens(e, wanted))
         .max_by(prefer_running)
         .map(|e| (e.clone(), Fit::Compatible))
 }
@@ -654,8 +744,10 @@ impl Choice {
                 "This project was made with Wish Engine {project}, newer than this one ({here}): install {project} or newer and open it there."
             )
         } else {
+            // Older than this engine's `opens_from`: a format window lies
+            // between them, so this is true every time it is shown.
             format!(
-                "This project was made with Wish Engine {project}; no engine compatible with it is installed, so {here} opens it. Its files may change."
+                "This project was made with Wish Engine {project}, and a file format has changed since: {here} opens it, and its files will change when they are saved. Install {project} to keep them as they are."
             )
         })
     }

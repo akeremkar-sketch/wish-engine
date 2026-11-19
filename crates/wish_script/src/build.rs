@@ -290,20 +290,19 @@ pub struct BuildReport {
     pub errors: usize,
     /// How many warnings.
     pub warnings: usize,
-    /// How long the compiler took.
-    pub seconds: f64,
     /// The built module (project-relative), when it passed.
     pub output: Option<String>,
 }
 
 impl BuildReport {
-    /// The report in tool-answer form.
+    /// The report in tool-answer form. It carries no duration: a tool's
+    /// answer is the same bytes in every process (ADR-027, rule 2); the
+    /// command line and the editor time the call themselves.
     pub fn to_json(&self) -> Value {
         json!({
             "passed": self.passed,
             "errors": self.errors,
             "warnings": self.warnings,
-            "seconds": (self.seconds * 1000.0).round() / 1000.0,
             "output": self.output,
             "diagnostics": self.diagnostics.iter().map(|d| serde_json::to_value(d).unwrap_or(Value::Null)).collect::<Vec<_>>(),
         })
@@ -434,13 +433,12 @@ pub fn build_game(toolchain: &Toolchain, root: &Path, install: bool) -> Result<B
 }
 
 /// A report for a build that never reached the compiler, or was stopped.
-fn refused_build(diagnostic: Diagnostic, seconds: f64) -> BuildReport {
+fn refused_build(diagnostic: Diagnostic) -> BuildReport {
     BuildReport {
         passed: false,
         diagnostics: vec![diagnostic],
         errors: 1,
         warnings: 0,
-        seconds,
         output: None,
     }
 }
@@ -487,7 +485,7 @@ pub fn build_game_within(
     }
     // Game code is untrusted: it may not read the machine while it builds.
     if let Err(refusal) = crate::source_check::check_sources(root) {
-        return Ok(refused_build(refusal, 0.0));
+        return Ok(refused_build(refusal));
     }
     let build = root.join(".wish").join("build");
     std::fs::create_dir_all(&build).map_err(|e| io_failed("create .wish/build", &e))?;
@@ -497,14 +495,11 @@ pub fn build_game_within(
         .zip(std::fs::canonicalize(root).ok())
         .is_some_and(|(build, root)| build.starts_with(root));
     if !inside {
-        return Ok(refused_build(
-            Diagnostic::error(
-                "script_build_failed",
-                "The project's .wish/build folder leads outside the project.",
-                "Delete .wish/build (it is a link) and build again; the engine recreates it.",
-            ),
-            0.0,
-        ));
+        return Ok(refused_build(Diagnostic::error(
+            "script_build_failed",
+            "The project's .wish/build folder leads outside the project.",
+            "Delete .wish/build (it is a link) and build again; the engine recreates it.",
+        )));
     }
     let output = root.join(CHECKED_WASM);
     let _ = std::fs::remove_file(&output);
@@ -592,7 +587,6 @@ pub fn build_game_within(
     let stderr = reader
         .and_then(|thread| thread.join().ok())
         .unwrap_or_default();
-    let seconds = start.elapsed().as_secs_f64();
     let Some(status) = status else {
         let _ = std::fs::remove_file(&output);
         return Ok(refused_build(
@@ -605,7 +599,6 @@ pub fn build_game_within(
                 "Something in the game code makes compilation run for very long: look for a const or static computed by a long loop, or a deeply recursive macro. The previous build stays in use.",
             )
             .at_file(SCRIPTS_ENTRY),
-            seconds,
         ));
     };
     let mut diagnostics = Vec::new();
@@ -652,7 +645,6 @@ pub fn build_game_within(
         diagnostics,
         errors,
         warnings,
-        seconds,
         output: passed.then(|| if install { GAME_WASM } else { CHECKED_WASM }.to_owned()),
     })
 }

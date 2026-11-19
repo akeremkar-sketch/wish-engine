@@ -1269,7 +1269,7 @@ pub fn engine_note(choice: &wish_control::engines::Choice) -> Option<String> {
         )
     } else {
         tf(
-            "This project was made with Wish Engine {project}; no engine compatible with it is installed, so {here} opens it. Its files may change.",
+            "This project was made with Wish Engine {project}, and a file format has changed since: {here} opens it, and its files will change when they are saved. Install {project} to keep them as they are.",
             &[("project", &project), ("here", &here)],
         )
     })

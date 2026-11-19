@@ -152,24 +152,38 @@ fn engines_are_added_listed_and_removed() {
     assert!(engines::engines(Some(&config)).1.is_empty());
 }
 
+/// An engine packaged before `opens_from` existed.
 fn engine(version: &str, source: Source, folder: &str) -> engines::Engine {
     engines::Engine {
         version: v(version),
         folder: PathBuf::from(folder),
         source,
+        opens_from: None,
+    }
+}
+
+/// An engine that says from which version on it opens projects unchanged.
+fn engine_from(version: &str, opens_from: &str, folder: &str) -> engines::Engine {
+    engines::Engine {
+        opens_from: Some(v(opens_from)),
+        ..engine(version, Source::Installed, folder)
     }
 }
 
 #[test]
 fn a_project_opens_with_its_own_version_else_the_newest_compatible() {
+    // A format window at 2.0.0 and one at 0.3.0.
     let all = [
-        engine("2.0.0", Source::Installed, "a"),
-        engine("1.4.0", Source::Added, "b"),
-        engine("1.2.3", Source::Installed, "c"),
-        engine("1.2.0", Source::Added, "d"),
-        engine("1.2.0", Source::Running, "here"),
-        engine("0.3.1", Source::Added, "e"),
-        engine("0.3.0", Source::Added, "f"),
+        engine_from("2.0.0", "2.0.0", "a"),
+        engine_from("1.4.0", "1.0.0", "b"),
+        engine_from("1.2.3", "1.0.0", "c"),
+        engine_from("1.2.0", "1.0.0", "d"),
+        engines::Engine {
+            source: Source::Running,
+            ..engine_from("1.2.0", "1.0.0", "here")
+        },
+        engine_from("0.3.1", "0.3.0", "e"),
+        engine_from("0.3.0", "0.3.0", "f"),
     ];
     let pick = |wanted: &str| {
         engines::pick(v(wanted), &all).map(|(e, fit)| (e.folder.display().to_string(), fit))
@@ -177,13 +191,175 @@ fn a_project_opens_with_its_own_version_else_the_newest_compatible() {
     // The exact version, the running engine first among equals.
     assert_eq!(pick("1.2.0"), Some(("here".to_owned(), Fit::Exact)));
     assert_eq!(pick("1.2.3"), Some(("c".to_owned(), Fit::Exact)));
-    // Else the newest compatible one, never an older one.
+    // Else the newest one that opens it, never an older one.
     assert_eq!(pick("1.1.0"), Some(("b".to_owned(), Fit::Compatible)));
     assert_eq!(pick("1.3.0"), Some(("b".to_owned(), Fit::Compatible)));
     assert_eq!(pick("0.3.0"), Some(("f".to_owned(), Fit::Exact)));
-    assert_eq!(pick("0.2.0"), None, "0.x minors are not compatible");
+    assert_eq!(pick("0.2.0"), None, "a format window lies between");
     assert_eq!(pick("1.5.0"), None, "only older ones");
     assert_eq!(pick("3.0.0"), None);
+}
+
+/// Engines packaged before `opens_from` existed are judged by the caret
+/// rule, and only for projects older than `UNSTATED_BEFORE`: a 0.1.0 package
+/// from before the look lock (such as an early `wen package` folder) cannot
+/// read scene format 2, which a 0.1.0 project may use, so it is not taken
+/// even for a project of its own number (review of package 11a).
+#[test]
+fn an_engine_without_opens_from_is_not_taken_for_a_project_it_may_not_read() {
+    let old = [
+        engine("0.0.5", Source::Installed, "older"),
+        engine("0.1.0", Source::Installed, "pre-lock"),
+    ];
+    let pick = |all: &[engines::Engine], wanted: &str| {
+        engines::pick(v(wanted), all).map(|(e, fit)| (e.folder.display().to_string(), fit))
+    };
+    assert_eq!(pick(&old, "0.0.5"), Some(("older".to_owned(), Fit::Exact)));
+    assert_eq!(pick(&old, "0.0.3"), None, "^0.0.3 is 0.0.3 only");
+    assert_eq!(pick(&old, "0.1.0"), None, "not even its own number");
+    // A pre-lock package folder as it is on disk: 0.1.0 and no key.
+    let base = base("pre-lock");
+    let folder = base.join("engines/0.1.0");
+    fake_engine(&folder, "0.1.0");
+    let pre_lock = engines::read_engine(&folder, Source::Installed).unwrap();
+    assert_eq!(pre_lock.opens_from, None);
+    // A newer engine that states the key takes the project instead.
+    let all = [pre_lock, engine_from("0.2.0", "0.1.0", "stated")];
+    assert_eq!(
+        pick(&all, "0.1.0"),
+        Some(("stated".to_owned(), Fit::Compatible))
+    );
+    // In a person's list, beside the running engine (0.1.0, stating it).
+    let config = base.join("config");
+    fake_engine(&config.join("engines/old-0.1.0"), "0.1.0");
+    project(&base.join("game"), "0.1.0");
+    let choice = engines::choose(&base.join("game"), Some(&config));
+    assert!(choice.switch().is_none(), "{:?}", choice.picked);
+}
+
+/// ADR-027, rule 3: across 0.x the number is not a gate; an engine opens a
+/// project unchanged from its `opens_from` up to its own version.
+#[test]
+fn across_0_x_an_engine_opens_every_project_from_its_opens_from_on() {
+    let all = [
+        engine_from("1.2.0", "1.2.0", "after-a-window"),
+        engine_from("0.4.0", "0.1.0", "d"),
+        engine_from("0.3.0", "0.1.0", "c"),
+        engine("0.2.5", Source::Added, "old-package"),
+    ];
+    let pick = |wanted: &str| {
+        engines::pick(v(wanted), &all).map(|(e, fit)| (e.folder.display().to_string(), fit))
+    };
+    // The newest that opens it, never an older one.
+    assert_eq!(pick("0.2.0"), Some(("d".to_owned(), Fit::Compatible)));
+    assert_eq!(pick("0.1.0"), Some(("d".to_owned(), Fit::Compatible)));
+    assert_eq!(pick("0.3.0"), Some(("c".to_owned(), Fit::Exact)));
+    // An old package without the key is not taken for a 0.1.0 or newer
+    // project, even of its own number; 0.4.0 opens it.
+    assert_eq!(pick("0.2.5"), Some(("d".to_owned(), Fit::Compatible)));
+    // A format window between them: 1.2.0 opens only from 1.2.0 on.
+    assert_eq!(pick("0.5.0"), None);
+    assert_eq!(pick("1.1.0"), None);
+    // Older than every opens_from: nobody opens it unchanged.
+    assert_eq!(pick("0.0.9"), None);
+    // The running engine says from which version on it opens projects.
+    assert_eq!(engines::running().opens_from, Some(engines::OPENS_FROM));
+    assert!(engines::OPENS_FROM <= Version::engine());
+}
+
+#[test]
+fn a_0_2_project_opens_in_0_3_as_compatible_and_with_no_note() {
+    let base = base("zero-x");
+    let config = base.join("config");
+    project(&base.join("game"), "0.2.0");
+    // An installed 0.3.0 that opens projects from 0.1.0 on (as `wen package`
+    // writes it).
+    let folder = config.join("engines/0.3.0");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(
+        folder.join(engines::ENGINE_FILE),
+        json!({ "format": 1, "opens_from": "0.1.0", "version": "0.3.0" }).to_string(),
+    )
+    .unwrap();
+    std::fs::write(folder.join(engines::WEN), "").unwrap();
+    let answer =
+        wish_control::engines_act_in(Some(&config), "pick", Some(&base.join("game")), None, false)
+            .unwrap();
+    assert_eq!(answer["fit"], "compatible", "{answer:?}");
+    assert_eq!(answer["opens_with"]["version"], "0.3.0");
+    assert_eq!(answer["opens_with"]["opens_from"], "0.1.0");
+    let choice = engines::choose(&base.join("game"), Some(&config));
+    assert!(choice.note().is_none(), "{:?}", choice.note());
+    // The same engine without the key (packaged before it existed) is
+    // judged by the caret rule, as before: 0.3.0 is not ^0.2.0.
+    std::fs::write(
+        folder.join(engines::ENGINE_FILE),
+        json!({ "format": 1, "version": "0.3.0" }).to_string(),
+    )
+    .unwrap();
+    let choice = engines::choose(&base.join("game"), Some(&config));
+    assert!(choice.picked.is_none());
+    // A key that is not a version, or names a newer one than the engine's
+    // own, makes the folder not an engine.
+    for bad in [json!("soon"), json!("0.4.0"), json!(3)] {
+        std::fs::write(
+            folder.join(engines::ENGINE_FILE),
+            json!({ "format": 1, "opens_from": bad, "version": "0.3.0" }).to_string(),
+        )
+        .unwrap();
+        let problem = engines::read_engine(&folder, Source::Installed).unwrap_err();
+        assert_eq!(problem.code, "engine_folder_invalid", "{bad}");
+        assert!(
+            problem.message.contains("opens_from"),
+            "{}",
+            problem.message
+        );
+        assert!(
+            problem.hint.contains("remove the key"),
+            "a specific hint: {}",
+            problem.hint
+        );
+    }
+}
+
+/// `opens_from` moves only in a format window (ADR-027, rule 3), and then
+/// it must move: every format the engine writes is recorded here beside the
+/// `opens_from` decided for it. Rows are never edited; a format change adds
+/// a row with the first version that writes the new format.
+#[test]
+fn opens_from_moves_with_the_formats() {
+    // (opens_from, [scene, project, material, meta, package manifest, game ABI])
+    const DECIDED: &[(&str, [u64; 6])] = &[
+        // The look lock (M12 package 9): scene files are format 2; 0.1.0 is
+        // the only version there has been (M12-public-face-code, section 3).
+        ("0.1.0", [2, 1, 1, 1, 1, 1]),
+    ];
+    let now = [
+        u64::from(wish_control::SCENE_FORMAT),
+        wish_control::PROJECT_FORMAT,
+        u64::from(wish_asset::material::MATERIAL_FORMAT),
+        u64::from(wish_asset::meta::META_FORMAT),
+        wish_control::packages::MANIFEST_FORMAT,
+        u64::try_from(wish_script::ABI_VERSION).unwrap(),
+    ];
+    for pair in DECIDED.windows(2) {
+        assert_ne!(pair[0].1, pair[1].1, "a row without a format change");
+        assert!(
+            v(pair[0].0) < v(pair[1].0),
+            "a format changed but opens_from did not move: {pair:?}"
+        );
+    }
+    let (opens_from, formats) = DECIDED[DECIDED.len() - 1];
+    assert_eq!(
+        now, formats,
+        "a format constant changed: that is a format window (ADR-027, rule 1). Add a row here with the new formats and set engines::OPENS_FROM to the first version that writes them"
+    );
+    assert_eq!(engines::OPENS_FROM, v(opens_from));
+    // `wen package` writes it.
+    let text = engines::engine_file_text(Version::engine()).unwrap();
+    let file: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(file["opens_from"], opens_from);
+    assert_eq!(file["format"], 1);
 }
 
 #[test]
@@ -238,7 +414,7 @@ fn a_note_says_when_no_engine_fits() {
     let note = engines::choose(&base.join("ancient"), Some(&config))
         .note()
         .unwrap();
-    assert!(note.contains("no engine compatible"), "{note}");
+    assert!(note.contains("a file format has changed since"), "{note}");
     // With that engine installed, the project goes to it.
     fake_engine(&config.join("engines/0.0.1"), "0.0.1");
     let choice = engines::choose(&base.join("ancient"), Some(&config));

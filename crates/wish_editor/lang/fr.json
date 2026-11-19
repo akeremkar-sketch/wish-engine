@@ -392,7 +392,7 @@
   "There is no settings folder to keep the list of engines in.": "Il n'y a pas de dossier de réglages pour garder la liste des moteurs.",
   "This project": "Ce projet",
   "This project was made with Wish Engine {project}, newer than this one ({here}): install {project} or newer and open it there.": "Ce projet a été créé avec Wish Engine {project}, plus récent que celui-ci ({here}) : installez {project} ou plus récent et ouvrez-le là.",
-  "This project was made with Wish Engine {project}; no engine compatible with it is installed, so {here} opens it. Its files may change.": "Ce projet a été créé avec Wish Engine {project} ; aucun moteur compatible n'est installé, donc {here} l'ouvre. Ses fichiers peuvent changer.",
+  "This project was made with Wish Engine {project}, and a file format has changed since: {here} opens it, and its files will change when they are saved. Install {project} to keep them as they are.": "Ce projet a été créé avec Wish Engine {project}, et un format de fichier a changé depuis : {here} l'ouvre, et ses fichiers changeront à l'enregistrement. Installez {project} pour les garder tels quels.",
   "This run is being recorded as a replay": "Cette partie est enregistrée comme replay",
   "This scene cannot be shown": "Cette scène ne peut pas être affichée",
   "Thud sound": "Son choc sourd",

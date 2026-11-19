@@ -82,7 +82,10 @@ fn line_of(source: &str, text: &str) -> u32 {
 fn game_code_builds_runs_and_reports_its_mistakes_on_its_own_lines() {
     let toolchain = toolchain();
     let root = project("game", GAME);
+    // The report carries no duration (ADR-027, rule 2): timed here.
+    let started = std::time::Instant::now();
     let report = build_game(toolchain, &root, true).unwrap();
+    let first = started.elapsed().as_secs_f64();
     assert!(report.passed, "{:?}", report.diagnostics);
     assert_eq!(report.errors, 0);
     // Only the bonus coin is in reach of a player who starts at 0 here.
@@ -92,13 +95,12 @@ fn game_code_builds_runs_and_reports_its_mistakes_on_its_own_lines() {
     // A one-line change rebuilds quickly (incremental).
     let edited = GAME.replace("Coin { value: 10 }", "Coin { value: 20 }");
     std::fs::write(root.join(SCRIPTS_ENTRY), &edited).unwrap();
+    let started = std::time::Instant::now();
     let again = build_game(toolchain, &root, true).unwrap();
+    let seconds = started.elapsed().as_secs_f64();
     assert!(again.passed);
-    println!(
-        "first build {:.2} s, after a one-line edit {:.2} s",
-        report.seconds, again.seconds
-    );
-    assert!(again.seconds < 10.0, "{} s", again.seconds);
+    println!("first build {first:.2} s, after a one-line edit {seconds:.2} s");
+    assert!(seconds < 10.0, "{seconds} s");
     assert_eq!(play(&root), json!({ "points": 20, "coins": 1 }));
     let good = std::fs::read(root.join(GAME_WASM)).unwrap_or(good);
 

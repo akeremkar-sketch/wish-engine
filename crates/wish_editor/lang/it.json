@@ -392,7 +392,7 @@
   "There is no settings folder to keep the list of engines in.": "Non c'è una cartella delle impostazioni per tenere l'elenco dei motori.",
   "This project": "Questo progetto",
   "This project was made with Wish Engine {project}, newer than this one ({here}): install {project} or newer and open it there.": "Questo progetto è stato fatto con Wish Engine {project}, più recente di questo ({here}): installa {project} o successivo e aprilo lì.",
-  "This project was made with Wish Engine {project}; no engine compatible with it is installed, so {here} opens it. Its files may change.": "Questo progetto è stato fatto con Wish Engine {project}; nessun motore compatibile è installato, quindi lo apre {here}. I suoi file possono cambiare.",
+  "This project was made with Wish Engine {project}, and a file format has changed since: {here} opens it, and its files will change when they are saved. Install {project} to keep them as they are.": "Questo progetto è stato fatto con Wish Engine {project}, e da allora è cambiato un formato di file: lo apre {here}, e i suoi file cambieranno quando saranno salvati. Installa {project} per lasciarli come sono.",
   "This run is being recorded as a replay": "Questa partita viene registrata come replay",
   "This scene cannot be shown": "Questa scena non può essere mostrata",
   "Thud sound": "Suono tonfo",

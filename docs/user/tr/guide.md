@@ -260,13 +260,14 @@ Motor hiçbir yapay zekâ olmadan eksiksizdir. Yardımcı, aynı işleri yapman�
 ## 7. Paketler, temalar, çalışma alanları ve komut paleti
 
 **Paketler** tema, çalışma alanı, dil, tarif ve şablon getirir. Paket, içinde `wish-package.json` olan bir klasördür.
+- Paket, çalıştığı motor sürümlerini `engine` alanında söyler. Motorun sürümü 0 ile başladığı sürece `">=0.2"` gibi bir alt sınır yazın: tek başına `"0.2"` yalnızca 0.2.x demektir ve daha yeni her 0.x motoru paketi reddeder (`package_engine_mismatch`).
 - *Proje menüsü → Paketler...* kurulu olanları listeler ve klasöründen paket kurar: *Projeye yükle* (projeyle birlikte taşınır; `packages/` ve `wish.lock` hangi dosyaların olduğunu tam olarak kaydeder) ya da *Benim için yükle* (bu bilgisayarda açtığınız her proje için).
 - *Kaldır* paketi çöp kutusuna taşır; hiçbir şey silinmez.
 - Projenin kilidi denetlenir: bir paketin dosyaları değişirse pencere bunu söyler; değişiklik sizinse *Kilidi yeniden yaz*.
 - **Paket dizini:** *Paket dizininden* bölümünde dizin klasörünü yazın (paketlerden oluşan bir klasör; hatırlanır), birkaç sözcük yazıp *Ara*'ya basın. Her paket, bu motorla çalışan en yeni sürümünü gösterir: *Projeye ekle*, *Benim için ekle* ya da daha yeni uyumlu bir sürüm varsa *Güncelle*. Hub'ın *Paketler* sekmesinde kendi paketleriniz için aynı arama vardır.
 - Komut satırında: `wen pkg search dark theme --index <klasör>`, `wen pkg add <id>`, `wen pkg update`, `wen pkg remove <id>`, `wen pkg lock` (kendi paketleriniz için `--user`; `WISH_PACKAGE_INDEX` her seferinde `--index` yazmaktan kurtarır).
 
-**Motor sürümleri:** motorun birden çok sürümü yan yana durabilir. Hub'ın *Motor sürümleri* sekmesi onları listeler; *Motor ekle* başka bir motorun klasörünü olduğu yerde hatırlar (`wen` ve `wish-engine.json` içeren klasör; hiçbir şey kopyalanmaz), *Kaldır* birini unutur. Bir proje, yapıldığı sürümle açılır (`wish.json` hangisi olduğunu söyler); o sürüm bilgisayarda yoksa en yeni uyumlu sürümle; o da yoksa bu motor açar ve bunu söyler. Son projeler listesi, başka bir sürümle yapılmış projeyi gösterir. Komut satırında: `wen engines`, `wen engines add <klasör>`, `wen engines pick <proje>`.
+**Motor sürümleri:** motorun birden çok sürümü yan yana durabilir. Hub'ın *Motor sürümleri* sekmesi onları listeler; *Motor ekle* başka bir motorun klasörünü olduğu yerde hatırlar (`wen` ve `wish-engine.json` içeren klasör; hiçbir şey kopyalanmaz), *Kaldır* birini unutur. Bir proje, yapıldığı sürümle açılır (`wish.json` hangisi olduğunu söyler); o sürüm bilgisayarda yoksa onu değiştirmeden açabilen en yeni sürümle (her motor, hangi sürümden itibaren projeleri dosyalarını değiştirmeden açtığını bilir); o da yoksa bu motor açar ve nedenini söyler: daha yeni bir proje kendi sürümünü ister; bir dosya biçimi değişmeden önce yapılmış eski bir projenin dosyaları ise kaydedilince değişir. Son projeler listesi, başka bir sürümle yapılmış projeyi gösterir. Komut satırında: `wen engines`, `wen engines add <klasör>`, `wen engines pick <proje>`.
 
 **Temalar:** *Proje menüsü → Tema* editörün görünümünü hemen değiştirir: Atelier (varsayılan), Midnight, High contrast ve paketlerin getirdiği her tema.
 

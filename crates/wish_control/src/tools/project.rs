@@ -352,6 +352,12 @@ fn check(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<String
     {
         diagnostics.push(problem.clone());
     }
+    // An `engine` that is not a version (ADR-027, rule 3).
+    if selected(PROJECT_FILE)
+        && let Ok(source) = std::fs::read_to_string(root.join(PROJECT_FILE))
+    {
+        diagnostics.extend(crate::project::engine_problem(&source));
+    }
     diagnostics.extend(
         project
             .diagnostics

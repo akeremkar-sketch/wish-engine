@@ -398,7 +398,7 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     ),
     (
         "invalid_version",
-        "A version is not three numbers (major.minor.patch, such as 1.2.0).",
+        "A version is not three numbers (major.minor.patch, such as 1.2.0). check reports it as a warning for the engine key of wish.json: until it is a version, no engine can be chosen for the project.",
     ),
     (
         "invalid_version_requirement",
@@ -487,6 +487,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "mesh_too_large_for_gpu",
         "A mesh has more vertex data than the GPU allows in one buffer. Split it or reduce its detail in the modelling tool.",
+    ),
+    (
+        "migration_engine_not_set",
+        "wen migrate migrated files but could not read wish.json, so its engine key still names the older engine, which cannot read the migrated files. Fix wish.json and set engine to the version of the engine that migrated (the hint names it).",
     ),
     (
         "migration_prefab_unresolved",

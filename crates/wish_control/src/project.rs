@@ -146,6 +146,43 @@ fn text(
     }
 }
 
+/// A warning when `engine` in `wish.json` (its text, `source`) is there but
+/// is not a version: the project opens and plays, but no engine can be
+/// chosen for it, so the running one opens it with no word (ADR-027,
+/// rule 3). `None` when the key is a version, is missing, or the file
+/// cannot be read as JSON (its own error says that).
+pub fn engine_problem(source: &str) -> Option<Diagnostic> {
+    let node = wish_scene::json::parse(source, PROJECT_FILE).ok()?;
+    let value = node.to_value();
+    let engine = value.get("engine")?;
+    if engine
+        .as_str()
+        .is_some_and(|text| crate::packages::Version::parse(text).is_ok())
+    {
+        return None;
+    }
+    let shown = engine
+        .as_str()
+        .map_or_else(|| engine.to_string(), |text| format!("'{text}'"));
+    let mut diagnostic = Diagnostic::warning(
+        "invalid_version",
+        format!(
+            "'engine' in '{PROJECT_FILE}' is {shown}, which is not a version; no engine can be chosen for the project, so whichever one opens it does."
+        ),
+        format!(
+            "Write the version of the engine that made the project: three numbers, such as \"{}\" (this engine's).",
+            env!("CARGO_PKG_VERSION")
+        ),
+    )
+    .at_file(PROJECT_FILE)
+    .at_path("/engine");
+    if let Some(found) = node.locate("/engine") {
+        let span = found.value;
+        diagnostic = diagnostic.at_line(span.line, Some(span.column));
+    }
+    Some(diagnostic)
+}
+
 /// Reads `source` (the text of `wish.json`).
 pub fn parse_project(source: &str) -> Result<ProjectConfig> {
     let node = wish_scene::json::parse(source, PROJECT_FILE)?;

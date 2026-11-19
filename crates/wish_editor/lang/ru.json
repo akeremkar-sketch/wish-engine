@@ -392,7 +392,7 @@
   "There is no settings folder to keep the list of engines in.": "Нет папки настроек для списка движков.",
   "This project": "Этот проект",
   "This project was made with Wish Engine {project}, newer than this one ({here}): install {project} or newer and open it there.": "Этот проект создан в Wish Engine {project}, новее этого ({here}): установите {project} или новее и откройте его там.",
-  "This project was made with Wish Engine {project}; no engine compatible with it is installed, so {here} opens it. Its files may change.": "Этот проект создан в Wish Engine {project}; совместимый движок не установлен, поэтому его открывает {here}. Его файлы могут измениться.",
+  "This project was made with Wish Engine {project}, and a file format has changed since: {here} opens it, and its files will change when they are saved. Install {project} to keep them as they are.": "Этот проект создан в Wish Engine {project}, и с тех пор изменился формат файлов: его открывает {here}, и его файлы изменятся при сохранении. Установите {project}, чтобы оставить их как есть.",
   "This run is being recorded as a replay": "Этот запуск записывается как повтор",
   "This scene cannot be shown": "Эту сцену нельзя показать",
   "Thud sound": "Звук удара",

@@ -13,7 +13,7 @@ use crate::workspace::Workspace;
 pub(crate) const ENGINES: Tool = Tool {
     name: "engines",
     title: "Engine versions on this computer",
-    description: "Engine versions are installed side by side. list shows them (the running one, the installed ones and folders the person added) and which one opens this project: the exact version in its wish.json if there is one, else the newest compatible one. pick says that for another project folder. add (a person only) adds an engine folder where it is (a folder with wen and wish-engine.json); remove (a person only) forgets an added one or moves an installed one to the trash.",
+    description: "Engine versions are installed side by side. list shows them (the running one, the installed ones and folders the person added) and which one opens this project: the exact version in its wish.json if there is one, else the newest one that opens it unchanged (fit compatible: not older than the project, and its opens_from no newer). pick says that for another project folder. add (a person only) adds an engine folder where it is (a folder with wen and wish-engine.json); remove (a person only) forgets an added one or moves an installed one to the trash.",
     params: &[
         Param::optional(
             "action",

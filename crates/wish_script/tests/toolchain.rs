@@ -69,9 +69,12 @@ fn a_packed_toolchain_builds_game_code_on_its_own() {
     // The build runs with an empty environment and only the pack's bin
     // folder on the PATH (build_game always does): no rustup, no cargo, no
     // Visual Studio, no host linker can take part.
+    // The report carries no duration (ADR-027, rule 2): timed here.
+    let started = std::time::Instant::now();
     let report = build_game(&toolchain, &root, true).unwrap();
+    let seconds = started.elapsed().as_secs_f64();
     assert!(report.passed, "{:?}", report.diagnostics);
-    println!("built in {:.2} s with the packed toolchain", report.seconds);
+    println!("built in {seconds:.2} s with the packed toolchain");
 
     let engine = ScriptEngine::new(Limits::default()).unwrap();
     let module = GameModule::load(

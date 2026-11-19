@@ -6,6 +6,9 @@
 //! written into it, so it means under the new defaults what it meant under
 //! the old ones (its picture to the byte), and its format number goes up.
 //! Meta and material files have one format so far and are only checked.
+//! When something was migrated, `wish.json`'s `engine` becomes this engine's
+//! version: older engines can no longer read the files (ADR-027, rule 3).
+//! Opening or editing a project never touches that key.
 //!
 //! Design: `docs/design/M12-look-lock.md`.
 
@@ -28,6 +31,11 @@ pub struct Report {
     pub migrated: Vec<(String, Vec<String>)>,
     /// Documents that could not be read or migrated.
     pub diagnostics: Vec<Diagnostic>,
+    /// The version written into `wish.json`'s `engine` (this engine's),
+    /// when something was migrated and the key named an older version, none
+    /// or one that is not a version; `None` when the file was left as it was
+    /// (or, in a dry run, would be).
+    pub engine: Option<String>,
 }
 
 /// The engine's own defaults now: those of every type it registers.
@@ -53,7 +61,9 @@ fn kind_of(name: &str) -> Option<Kind> {
 /// files are checked against format 1. With `write` false nothing is
 /// written (a dry run). Each file is written atomically inside the
 /// project; a file that cannot be written or migrated is a located
-/// diagnostic in the report, and the others go on.
+/// diagnostic in the report, and the others go on. When a document was
+/// migrated, `wish.json`'s `engine` is set to this engine's version
+/// ([`Report::engine`]).
 pub fn migrate_project(
     root: &Path,
     only: &[String],
@@ -201,7 +211,72 @@ pub fn migrate_project(
             }
         }
     }
+    if !report.migrated.is_empty() {
+        set_engine(root, write, &mut report);
+    }
     Ok(report)
+}
+
+/// After a migration: `wish.json` names this engine, the oldest that reads
+/// the migrated files, unless it already names this engine or a newer one.
+/// Only the `engine` key changes (the file is written canonically, as every
+/// writer of it does).
+fn set_engine(root: &Path, write: bool, report: &mut Report) {
+    let here = crate::packages::Version::engine().to_string();
+    let config = match crate::project::read_project(root) {
+        Ok(Some(config)) => config,
+        // No project file: nothing names an engine.
+        Ok(None) => return,
+        Err(problem) => {
+            report.diagnostics.push(Diagnostic::warning(
+                "migration_engine_not_set",
+                format!(
+                    "The files were migrated, but '{}' could not be read, so its 'engine' still names the older engine: {}",
+                    crate::PROJECT_FILE,
+                    problem.message
+                ),
+                format!(
+                    "Fix '{}' and set \"engine\": \"{here}\" in it: older engines cannot read the migrated files.",
+                    crate::PROJECT_FILE
+                ),
+            ));
+            return;
+        }
+    };
+    let on_disk = fs::read_to_string(root.join(crate::PROJECT_FILE)).unwrap_or_default();
+    let named = serde_json::from_str::<Value>(&on_disk)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("engine")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        });
+    // Only ever raised: a project that names this engine or a newer one
+    // keeps its key (an older engine migrating a newer project must not
+    // make it look older). Missing or not a version: written.
+    let this = crate::packages::Version::engine();
+    if named
+        .as_deref()
+        .and_then(|text| crate::packages::Version::parse(text).ok())
+        .is_some_and(|named| named >= this)
+    {
+        return;
+    }
+    let mut next = config;
+    next.engine.clone_from(&here);
+    if write {
+        let saved = next.to_canonical().and_then(|text| {
+            crate::documents::write_project_file(root, crate::PROJECT_FILE, &text)
+        });
+        if let Err(problem) = saved {
+            report
+                .diagnostics
+                .push(problem.at_file(crate::PROJECT_FILE.to_owned()));
+            return;
+        }
+    }
+    report.engine = Some(here);
 }
 
 /// The prefabs a scene or prefab file places (its instances' `prefab`).

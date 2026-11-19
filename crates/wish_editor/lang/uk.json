@@ -392,7 +392,7 @@
   "There is no settings folder to keep the list of engines in.": "Немає теки налаштувань для списку рушіїв.",
   "This project": "Цей проєкт",
   "This project was made with Wish Engine {project}, newer than this one ({here}): install {project} or newer and open it there.": "Цей проєкт створено у Wish Engine {project}, новішому за цей ({here}): встановіть {project} або новіший і відкрийте його там.",
-  "This project was made with Wish Engine {project}; no engine compatible with it is installed, so {here} opens it. Its files may change.": "Цей проєкт створено у Wish Engine {project}; сумісного рушія не встановлено, тож його відкриває {here}. Його файли можуть змінитися.",
+  "This project was made with Wish Engine {project}, and a file format has changed since: {here} opens it, and its files will change when they are saved. Install {project} to keep them as they are.": "Цей проєкт створено у Wish Engine {project}, і відтоді змінився формат файлів: його відкриває {here}, і його файли зміняться під час збереження. Встановіть {project}, щоб залишити їх як є.",
   "This run is being recorded as a replay": "Цей запуск записується як повтор",
   "This scene cannot be shown": "Цю сцену неможливо показати",
   "Thud sound": "Звук удару",

@@ -249,7 +249,7 @@ fn execute_any(args: Args) -> Result<Outcome> {
                 http: None,
             },
             args.json,
-            tool_cmds::check_text,
+            &tool_cmds::check_text,
         )),
         Command::Move {
             from,
@@ -268,7 +268,7 @@ fn execute_any(args: Args) -> Result<Outcome> {
                 http: None,
             },
             args.json,
-            tool_cmds::move_text,
+            &tool_cmds::move_text,
         )),
         Command::Format {
             paths,
@@ -289,19 +289,24 @@ fn execute_any(args: Args) -> Result<Outcome> {
                 success: true,
             },
         ),
-        Command::Build { root, dry_run } => Ok(tool_cmds::shortcut(
-            "script_build",
-            &serde_json::json!({ "dry_run": dry_run }),
-            &args::ToolContext {
-                root: root.clone(),
-                example: None,
-                actor: None,
-                software: false,
-                http: None,
-            },
-            args.json,
-            tool_cmds::build_text,
-        )),
+        Command::Build { root, dry_run } => {
+            // The answer carries no duration (ADR-027, rule 2): the command
+            // line measures the call itself.
+            let started = std::time::Instant::now();
+            Ok(tool_cmds::shortcut(
+                "script_build",
+                &serde_json::json!({ "dry_run": dry_run }),
+                &args::ToolContext {
+                    root: root.clone(),
+                    example: None,
+                    actor: None,
+                    software: false,
+                    http: None,
+                },
+                args.json,
+                &|answer| tool_cmds::build_text(answer, started.elapsed().as_secs_f64()),
+            ))
+        }
         Command::Pkg {
             action,
             rest,
@@ -358,7 +363,7 @@ fn execute_any(args: Args) -> Result<Outcome> {
                     http: None,
                 },
                 args.json,
-                tool_cmds::pkg_text,
+                &tool_cmds::pkg_text,
             ))
         }
         Command::Engines {
@@ -418,7 +423,7 @@ fn execute_any(args: Args) -> Result<Outcome> {
                     http: None,
                 },
                 args.json,
-                tool_cmds::export_text,
+                &tool_cmds::export_text,
             ))
         }
         Command::Test {
@@ -436,7 +441,7 @@ fn execute_any(args: Args) -> Result<Outcome> {
                 http: None,
             },
             args.json,
-            tool_cmds::test_text,
+            &tool_cmds::test_text,
         )),
         Command::Replay { name, root } => Ok(tool_cmds::shortcut(
             "replay",
@@ -449,7 +454,7 @@ fn execute_any(args: Args) -> Result<Outcome> {
                 http: None,
             },
             args.json,
-            tool_cmds::replay_text,
+            &tool_cmds::replay_text,
         )),
         Command::Package { out } => {
             tool_cmds::package(out.as_deref(), args.json).map(|text| Outcome {

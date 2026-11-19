@@ -51,6 +51,10 @@ pub mod types;
 mod ui;
 pub mod workspace;
 
+/// The oldest engine version whose projects this engine opens unchanged; it
+/// moves with the file formats ([`SCENE_FORMAT`], [`PROJECT_FORMAT`] and the
+/// others: ADR-027, rule 3).
+pub use engines::OPENS_FROM;
 pub use param::{Args, Kind, Param, from_flags, input_schema};
 pub use project::{PROJECT_FILE, PROJECT_FORMAT, ProjectConfig, parse_project, read_project};
 pub use render::{base64, base64_decode};
