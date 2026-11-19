@@ -148,7 +148,9 @@ roughness squared. No lookup texture, no pre-filtered cube: those come with
 environment maps (release 1.1).
 
 Both parts are scaled by `sky_strength` and by the material's occlusion, as
-the flat ambient was.
+the flat ambient was. (Changed on 19 November 2026: `sky_strength` now
+scales the diffuse part only, and the reflection is at full strength in
+both modes; section 8.)
 
 What the sky's light does not include: the sun's disc. The disc is the
 picture of the `DirectionalLight`, whose light and highlight are already
@@ -499,3 +501,52 @@ The settings of the two "after" pictures, to taste:
 ```
 
 The sky's own colours are the example's and were left alone.
+
+## 8. Amendment, 19 November 2026: the sky's reflection at full strength
+
+**Decision (the user's, 19 November 2026).** `Ambient.sky_strength` scales
+the sky's light on surfaces (the diffuse part, `sky_irradiance`) and nothing
+else. The sky's reflection (`sky_reflection`, the specular part) is at full
+strength in the sky-light mode, times the material's occlusion only, as it
+always was in the `Color` mode. Section 3.1 had scaled both.
+
+**Why.** The default look of 1.0 is Natural, whose `sky_strength` is 0.3
+(the default sky is about three times as bright as a real one, section
+3.1). Scaling the reflection with it made every metal reflect 0.3 of the
+sky it faces, so the gold coins of `hop` and `collect` and the ball of
+`first-pixel` went dark and dull under the default look
+([M12-look-lock.md](M12-look-lock.md), sections 10.4 and 10.10). The
+strength exists to bring the sky's *light* to a real level; the
+reflection shows the sky as the sky pass draws it, and a mirror that
+showed a sky three times darker than the one behind it would be wrong at
+any strength.
+
+**Rough metals.** A rough surface reflects `sky_irradiance / pi`, the
+sky's mean radiance around the reflected direction, which is never
+brighter than the brightest part of the gradient it averages. Measured on
+gold spheres at roughness 0.2, 0.5 and 0.9 under the default sky with a
+sun (1280x720, hardware adapter; mean linear luminance of each sphere):
+`Color` mode 0.233, 0.237, 0.198; sky light before the change 0.062,
+0.099, 0.103; sky light after it 0.231, 0.237, 0.200. So the sky-light
+mode now matches the `Color` mode within about 1%, with the roughest
+ball a little less saturated (it mixes the zenith's blue and the ground
+in, where the `Color` mode shows the gradient sharp at every roughness).
+Not too bright.
+
+**What it changes.** Only the sky-light mode, and in it only the specular
+part: every picture with `Ambient.source: Sky` changes where a surface
+reflects (metals most; a dielectric's 4% reflection a little). The
+`Color` mode, every format-1 scene (read with a flat ambient) and the look
+`plain` are unchanged to the byte. No file's values change, the scene
+format does not change, and the recorded defaults do not change. The
+*meaning* of `sky_strength` in a file that sets the sky-light mode does
+change; such files have existed for a day (since package 4, 18 November
+2026) and no release has been made, so there is no migration.
+
+**Tests.** `look.rs::a_rough_metal_reflects_a_wide_part_of_the_sky` now
+also draws its metals at `sky_strength` 0, 0.3 and 4 and asks for the same
+picture to the byte; the new
+`look.rs::the_sky_strength_scales_the_light_on_surfaces_and_not_the_reflection`
+asks a matte ball to be darker at 0.3 than at 1 and a gold ball to be the
+same. The pictures that changed are listed in
+[M12-look-lock.md](M12-look-lock.md), section 10.10.

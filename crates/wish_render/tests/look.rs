@@ -458,6 +458,74 @@ fn a_rough_metal_reflects_a_wide_part_of_the_sky() {
         rough_sky[1] + 12 < rough_sky[0] && rough_sky[1] + 12 < rough_sky[2],
         "the rough ball mixes the sky: {rough_sky:?} (it was {rough_flat:?})"
     );
+
+    // The sky's strength scales the light it gives a surface, not its
+    // reflection: a metal has no diffuse part, so a picture of metals alone
+    // is the same at any strength, to the byte (19 November 2026: before,
+    // the reflection was scaled too and metals went dark under the default
+    // look's 0.3).
+    for strength in [0.0, 0.3, 4.0] {
+        let other = renderer
+            .render(
+                &gpu,
+                &balls(json!({ "source": "Sky", "sky_strength": strength })),
+                None,
+                320,
+                240,
+            )
+            .unwrap();
+        assert_eq!(other.image, sky.image, "sky_strength {strength}");
+    }
+}
+
+/// The sky's strength makes a matte surface darker or brighter, and leaves
+/// what a metal reflects as it is.
+#[test]
+fn the_sky_strength_scales_the_light_on_surfaces_and_not_the_reflection() {
+    let gpu = gpu();
+    let renderer = Renderer::new(&gpu).unwrap();
+    let pair = |strength: f64| {
+        prepare(&scene(
+            json!({
+                "Sky": three_colour_sky(),
+                "Ambient": { "source": "Sky", "sky_strength": strength }
+            }),
+            json!({
+                "camera": { "components": {
+                    "Camera": { "fov_y_deg": 45 },
+                    "Transform": { "translation": [0, 1, 6] } } },
+                "matte": { "components": {
+                    "Material": { "base_color": [0.8, 0.8, 0.8, 1], "roughness": 1 },
+                    "Primitive": { "shape": "Sphere" },
+                    "Transform": { "translation": [-1.2, 1, 0], "scale": [2, 2, 2] } } },
+                "gold": { "components": {
+                    "Material": { "base_color": [0.95, 0.75, 0.35, 1], "metallic": 1, "roughness": 0.5 },
+                    "Primitive": { "shape": "Sphere" },
+                    "Transform": { "translation": [1.2, 1, 0], "scale": [2, 2, 2] } } }
+            }),
+        ))
+    };
+    let (full_scene, low_scene) = (pair(1.0), pair(0.3));
+    let full = renderer.render(&gpu, &full_scene, None, 320, 240).unwrap();
+    let low = renderer.render(&gpu, &low_scene, None, 320, 240).unwrap();
+    let camera = Vec3::new(0.0, 1.0, 6.0);
+    let nearest = |centre: Vec3| centre + (camera - centre).normalize();
+    let matte = nearest(Vec3::new(-1.2, 1.0, 0.0));
+    let gold = nearest(Vec3::new(1.2, 1.0, 0.0));
+
+    let (matte_full, matte_low) = (
+        pixel_at(&full, &full_scene, matte),
+        pixel_at(&low, &low_scene, matte),
+    );
+    assert!(
+        sum(matte_low) + 90 < sum(matte_full),
+        "the matte ball is darker at 0.3: {matte_low:?} vs {matte_full:?}"
+    );
+    let (gold_full, gold_low) = (
+        pixel_at(&full, &full_scene, gold),
+        pixel_at(&low, &low_scene, gold),
+    );
+    assert_eq!(gold_low, gold_full, "the gold ball is the same");
 }
 
 // ---------------------------------------------------------------------------

@@ -314,10 +314,13 @@ pub struct Ambient {
     /// surface faces (`Sky`, the default), or one colour (`Color`).
     #[schema(default = AmbientSource::Sky)]
     pub source: AmbientSource,
-    /// With `source: Sky`, how strongly the sky lights the scene: 1 is the
-    /// light the sky's colours and luminance give by themselves, 0.5 half of
-    /// it. The default of 0.3 suits the default sky, which is about three
-    /// times as bright as a real clear one. Not used with `source: Color`.
+    /// With `source: Sky`, how strongly the sky lights the surfaces of the
+    /// scene: 1 is the light the sky's colours and luminance give by
+    /// themselves, 0.5 half of it. The default of 0.3 suits the default sky,
+    /// which is about three times as bright as a real clear one. It scales
+    /// only the sky's light on surfaces, not its reflection: a metal or a
+    /// shiny surface shows the sky as it is drawn, whatever this is. Not
+    /// used with `source: Color`.
     #[schema(range = 0.0..=10.0, default = 0.3)]
     pub sky_strength: f32,
 }

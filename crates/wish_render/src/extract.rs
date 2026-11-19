@@ -409,7 +409,8 @@ pub struct RenderScene {
     /// (lux). Not used when [`RenderScene::sky_light`] is set.
     pub ambient: [f32; 3],
     /// When the ambient light comes from the sky (`Ambient.source: Sky`):
-    /// its strength, 1 for what the sky gives by itself.
+    /// its strength, 1 for what the sky gives by itself. It scales the sky's
+    /// light on surfaces, not the sky's reflection.
     pub sky_light: Option<f32>,
     /// When the ambient light comes from the sky and `Ambient` sets a
     /// colour or an intensity of its own (other than the default), which

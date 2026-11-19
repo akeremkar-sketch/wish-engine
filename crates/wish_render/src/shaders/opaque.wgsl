@@ -120,11 +120,13 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
     let reflected = reflect(-v, n);
     if (frame.sky_light.x > 0.5) {
         // From the sky: each surface gathers the part of the sky it faces,
-        // and a rough surface reflects a wide part of it.
-        let strength = occlusion * frame.sky_light.y;
-        colour += diffuse_colour * sky_irradiance(n) / PI * strength;
+        // and a rough surface reflects a wide part of it. The sky's strength
+        // scales only the light it gives a surface; its reflection shows
+        // the sky as it is drawn, as in the flat mode, so a metal is not
+        // dimmed with it.
+        colour += diffuse_colour * sky_irradiance(n) / PI * (occlusion * frame.sky_light.y);
         colour += environment_brdf(f0, roughness, n_dot_v)
-            * sky_reflection(reflected, roughness) * strength;
+            * sky_reflection(reflected, roughness) * occlusion;
     } else {
         colour += diffuse_colour * frame.ambient.rgb / PI * occlusion;
         colour += environment_brdf(f0, roughness, n_dot_v) * sky_radiance(reflected) * occlusion;

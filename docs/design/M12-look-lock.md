@@ -894,21 +894,42 @@ low priority), 19 November 2026.
   cascades, blending) included. So the effects themselves agree
   between WARP and lavapipe; the default-look goldens of this switch are
   checked by the first push.
-- **Open question for the user: how strongly the sky is reflected under
-  sky light.** In the sky-light mode (`Ambient.source: Sky`) the opaque
-  pass multiplies both what the sky gives a surface, its diffuse light and
-  its *reflection*, by `sky_strength`
-  (`crates/wish_render/src/shaders/opaque.wgsl`, the `frame.sky_light`
-  branch: `strength` scales the `sky_reflection` term). With Natural's 0.3,
-  every metal reflects 0.3 of the sky; in the `Color` mode the reflection
-  is at full strength (`sky_radiance(reflected)`, times occlusion only).
-  That is why the gold coins of `hop` and `collect` and the ball of
-  `first-pixel` are darker under Natural (10.4). Scaling only the diffuse
-  part by `sky_strength` would brighten metals under Natural, but it
-  changes the look the user approved (and every default-look picture), so
-  it is the user's to decide; not changed. If changed, it is a change of
-  the default picture inside format 2 (no file's values change), so it
-  should come before 1.0 or with a format step.
+- **Answered (the user's decision, 19 November 2026): the sky's
+  reflection is at full strength.** Under sky light the opaque pass used to
+  multiply both what the sky gives a surface, its diffuse light and its
+  *reflection*, by `sky_strength`, so with Natural's 0.3 every metal
+  reflected 0.3 of the sky (the gold coins of `hop` and `collect` and the
+  ball of `first-pixel` were darker, 10.4). Now `sky_strength` scales only
+  the diffuse part, and the reflection is `sky_reflection` times occlusion
+  in the sky-light mode, as `sky_radiance` times occlusion is in the
+  `Color` mode (`crates/wish_render/src/shaders/opaque.wgsl`; the reasons
+  and the measurement of rough metals in
+  [M12-look-1-sky-fog-grading-fxaa.md](M12-look-1-sky-fog-grading-fxaa.md),
+  section 8). It changes the default picture inside format 2: no file's
+  values, no format and no recorded default change; the meaning of
+  `sky_strength` does, in files that have existed for a day, before any
+  release. "Plain is exact" holds: the `Color` mode is untouched, and
+  17 of the 20 golden images of `wish_render` (every one whose fixture
+  does not use sky light) are byte-identical to the ones drawn before the
+  change. Refreshed, each looked at:
+
+  | File | What changed |
+  |---|---|
+  | `crates/wish_render/tests/golden/look_sky_light.png` | The gold ball shows the sky: lighter and golden, where it was dark olive. 15% of the pixels differ by more than 2 (mostly the ball and the ground's faint reflection). |
+  | `crates/wish_render/tests/golden/look_all.png` | The same ball under every effect of package 4. |
+  | `crates/wish_render/tests/golden/bloom_all.png` | The same, with bloom. |
+  | `examples/islands/tests/golden/win.png` | The win screen (software adapter): 1.2% of the pixels differ by more than 2, the surfaces' faint reflection at grazing angles; the interface is the same. |
+  | `examples/islands/.template/thumbnail.png` | The same kind of change, across the islands' tops and sides. |
+  | `examples/hop/.template/thumbnail.png` | Gold coins, where they were dark. |
+  | `examples/collect/.template/thumbnail.png` | Gold coins, where they were dark and dull. |
+  | `crates/wish_editor/assets/empty-project.png` | At most 2/255: the ground's faint reflection. |
+  | `crates/wish_editor/tests/golden/editor_window.png` | At most 2/255, only inside the scene view (the same starting scene). |
+
+  Not changed (byte-identical): `examples/bricks` (2D) and `examples/quiz`
+  (interface) thumbnails and `bricks`' golden, the editor's
+  `inspector.png`. The thumbnails were drawn as in 10.6 (scene captures at
+  640x360 on the hardware adapter; the old engine redrew the old ones to
+  the byte first). Before and after pictures: `C:/wish-build/metals/`.
 - **The pictures were looked at by the implementer, not signed off by the
   user.** The user chose Natural from the candidate sheets; the nine
   refreshed files and the before/after sheets in
@@ -1000,9 +1021,10 @@ done with each:
 6. **Docs.** 10.10 said that CI runs only on pushes to `main`; it runs on
    the milestone branches too, on Windows and on Linux with lavapipe
    (corrected). 10.9 has the measured result.
-7. **An open question for the user** (10.10): the sky's reflection is
-   scaled by `sky_strength` too, which is why metals are darker under
-   Natural. Not changed.
+7. **An open question for the user** (10.10): the sky's reflection was
+   scaled by `sky_strength` too, which is why metals were darker under
+   Natural. Answered on 19 November 2026: the reflection is at full
+   strength (10.10).
 
 Noted, not done:
 
