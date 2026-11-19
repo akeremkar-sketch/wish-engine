@@ -939,16 +939,28 @@ fn choose(app: &mut EditorApp, label: &str, choice: &str) {
     click(app, item);
 }
 
+/// Every look effect of the default look, in the order a frame draws them.
+const ALL_EFFECTS: [&str; 6] = [
+    "sky_light",
+    "sun_disc",
+    "fog",
+    "bloom",
+    "color_grading",
+    "fxaa",
+];
+
 /// The look settings of M12 (sky light, sun disc, fog, colour grading,
 /// anti-aliasing) are resources with a schema, so a person sets every one of
 /// them in the inspector, with no editor code written for them (invariant 9).
+/// A new scene has the default look; here a person changes each part of it,
+/// and switches two of them off.
 #[test]
 fn the_look_of_a_scene_is_set_by_hand() {
     let dir = project("look");
     let mut app = open(&dir);
     let size = json!({ "width": 96, "height": 54 });
     let before = app.call("capture_frame", &size);
-    assert_eq!(before["stats"]["effects"], json!([]), "{before}");
+    assert_eq!(before["stats"]["effects"], json!(ALL_EFFECTS), "{before}");
     assert!(has_text(&app, "Scene resources"));
 
     // Each resource is added from the list, one of its fields is set, and
@@ -962,10 +974,10 @@ fn the_look_of_a_scene_is_set_by_hand() {
     type_number(&mut app, "height_falloff", "0.1");
     fold(&mut app, "Fog");
     add_resource(&mut app, "RenderSettings");
-    choose(&mut app, "antialiasing", "Fxaa");
+    choose(&mut app, "antialiasing", "Off");
     fold(&mut app, "RenderSettings");
     add_resource(&mut app, "Ambient");
-    choose(&mut app, "source", "Sky");
+    choose(&mut app, "source", "Color");
     type_number(&mut app, "sky_strength", "0.5");
     fold(&mut app, "Ambient");
     add_resource(&mut app, "ColorGrading");
@@ -980,20 +992,21 @@ fn the_look_of_a_scene_is_set_by_hand() {
     assert_eq!(
         scene_file(&dir)["resources"],
         json!({
-            "Ambient": { "sky_strength": 0.5, "source": "Sky" },
+            "Ambient": { "sky_strength": 0.5, "source": "Color" },
             "ColorGrading": { "contrast": 1.2, "saturation": 0.8, "temperature": 0.25, "vignette": 0.4 },
             "Fog": { "density": 0.02, "height_falloff": 0.1 },
-            "RenderSettings": { "antialiasing": "Fxaa" },
+            "RenderSettings": { "antialiasing": "Off" },
             "Sky": { "sun_size_deg": 4.5 }
         }),
         "{}",
         scene_file(&dir)
     );
-    // The picture uses all of them.
+    // The picture follows: the sky's light and the smoothing are off, the
+    // rest is drawn with the new numbers.
     let after = app.call("capture_frame", &size);
     assert_eq!(
         after["stats"]["effects"],
-        json!(["sky_light", "sun_disc", "fog", "color_grading", "fxaa"]),
+        json!(["sun_disc", "fog", "bloom", "color_grading"]),
         "{after}"
     );
     assert_ne!(after["image"]["data"], before["image"]["data"]);
@@ -1012,15 +1025,17 @@ fn the_look_of_a_scene_is_set_by_hand() {
 
 /// A named look (M12 package 9, the look lock) is applied by hand from the
 /// scene resources: one change by a human that writes every value of the
-/// look into the scene, and the picture uses all of it. Plain gives the
-/// first picture back, to the byte (invariant 9).
+/// look into the scene, and the picture uses all of it. Natural is the look
+/// a new scene has already, so it gives the first picture, to the byte;
+/// Plain switches every effect off (invariant 9).
 #[test]
 fn a_look_is_applied_by_hand() {
     let dir = project("apply-look");
     let mut app = open(&dir);
     let size = json!({ "width": 96, "height": 54 });
     let before = app.call("capture_frame", &size);
-    assert_eq!(before["stats"]["effects"], json!([]), "{before}");
+    assert_eq!(before["stats"]["effects"], json!(ALL_EFFECTS), "{before}");
+    assert!(scene_file(&dir).get("resources").is_none());
 
     let menu = named(&app, "Add resource...");
     click(&mut app, menu);
@@ -1038,21 +1053,12 @@ fn a_look_is_applied_by_hand() {
         }
     }
     let after = app.call("capture_frame", &size);
-    assert_eq!(
-        after["stats"]["effects"],
-        json!([
-            "sky_light",
-            "sun_disc",
-            "fog",
-            "bloom",
-            "color_grading",
-            "fxaa"
-        ]),
-        "{after}"
-    );
+    assert_eq!(after["stats"]["effects"], json!(ALL_EFFECTS), "{after}");
     assert_eq!(after["stats"]["shadow_cascades"], 4, "{after}");
+    // The default look written out: the same picture, to the byte.
+    assert_eq!(after["image"]["data"], before["image"]["data"]);
 
-    // Plain, by hand too: the picture of the defaults again, to the byte.
+    // Plain, by hand too: no effect is left, and one shadow map.
     let menu = named(&app, "Add resource...");
     click(&mut app, menu);
     let plain = named(&app, "Plain");
@@ -1060,7 +1066,8 @@ fn a_look_is_applied_by_hand() {
     assert_eq!(app.status(), "applied the look Plain");
     let again = app.call("capture_frame", &size);
     assert_eq!(again["stats"]["effects"], json!([]), "{again}");
-    assert_eq!(again["image"]["data"], before["image"]["data"]);
+    assert_eq!(again["stats"]["shadow_cascades"], 1, "{again}");
+    assert_ne!(again["image"]["data"], before["image"]["data"]);
 
     // Each look was one change by a human.
     let history = app.call("edit_history", &json!({ "action": "list", "limit": 50 }));
@@ -1178,8 +1185,9 @@ fn bloom_is_set_by_hand() {
     let dir = project("bloom");
     let mut app = open(&dir);
     let size = json!({ "width": 96, "height": 54 });
+    // A new scene has the default look's faint glow.
     let before = app.call("capture_frame", &size);
-    assert_eq!(before["stats"]["effects"], json!([]), "{before}");
+    assert_eq!(before["stats"]["effects"], json!(ALL_EFFECTS), "{before}");
 
     add_resource(&mut app, "Bloom");
     type_number(&mut app, "strength", "0.2");
@@ -1194,13 +1202,21 @@ fn bloom_is_set_by_hand() {
     );
     // The picture uses it.
     let after = app.call("capture_frame", &size);
-    assert_eq!(after["stats"]["effects"], json!(["bloom"]), "{after}");
+    assert_eq!(after["stats"]["effects"], json!(ALL_EFFECTS), "{after}");
     assert_ne!(after["image"]["data"], before["image"]["data"]);
-    // Every step was one change by a human: the resource added, three
+    // And it is switched off by hand: a strength of 0.
+    type_number(&mut app, "strength", "0");
+    let off = app.call("capture_frame", &size);
+    assert_eq!(
+        off["stats"]["effects"],
+        json!(["sky_light", "sun_disc", "fog", "color_grading", "fxaa"]),
+        "{off}"
+    );
+    // Every step was one change by a human: the resource added, four
     // fields set.
     let history = app.call("edit_history", &json!({ "action": "list", "limit": 50 }));
     let entries = history["entries"].as_array().unwrap();
-    assert_eq!(entries.len(), 4, "{history}");
+    assert_eq!(entries.len(), 5, "{history}");
     assert!(
         entries
             .iter()
@@ -1219,21 +1235,21 @@ fn cascaded_shadows_are_set_by_hand() {
     let mut app = open(&dir);
     let size = json!({ "width": 96, "height": 54 });
     let before = app.call("capture_frame", &size);
-    assert_eq!(before["stats"]["shadow_cascades"], 1, "{before}");
+    assert_eq!(before["stats"]["shadow_cascades"], 4, "{before}");
 
     add_resource(&mut app, "RenderSettings");
-    type_number(&mut app, "shadow_cascades", "4");
+    type_number(&mut app, "shadow_cascades", "2");
     type_number(&mut app, "shadow_distance", "60");
 
     assert_eq!(
         scene_file(&dir)["resources"],
-        json!({ "RenderSettings": { "shadow_cascades": 4, "shadow_distance": 60.0 } }),
+        json!({ "RenderSettings": { "shadow_cascades": 2, "shadow_distance": 60.0 } }),
         "{}",
         scene_file(&dir)
     );
     // The picture uses them.
     let after = app.call("capture_frame", &size);
-    assert_eq!(after["stats"]["shadow_cascades"], 4, "{after}");
+    assert_eq!(after["stats"]["shadow_cascades"], 2, "{after}");
     // Every step was one change by a human: the resource added, two fields
     // set.
     let history = app.call("edit_history", &json!({ "action": "list", "limit": 50 }));

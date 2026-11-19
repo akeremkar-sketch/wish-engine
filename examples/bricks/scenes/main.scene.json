@@ -840,7 +840,7 @@
       }
     }
   },
-  "format": 1,
+  "format": 2,
   "resources": {
     "Sky": {
       "ground": [0.02, 0.02, 0.05, 1],

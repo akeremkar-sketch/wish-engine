@@ -4,9 +4,11 @@
 //!
 //! Two ways, chosen by `RenderSettings.shadow_cascades`:
 //!
-//! - **one map** (1, the default), fitted around everything that casts
-//!   ([`fit_light`]): the map it always was;
-//! - **cascades** (2 to 4): maps fitted to slices of the camera's depth, as
+//! - **one map** (1; the default of scene files of format 1 and of the look
+//!   Plain), fitted around everything that casts ([`fit_light`]): the map
+//!   it always was;
+//! - **cascades** (2 to 4; 4 is the default since the look lock): maps
+//!   fitted to slices of the camera's depth, as
 //!   tiles of one texture ([`CascadePlan`]). Each slice is enclosed in a
 //!   sphere and its map is a square around that sphere whose centre is
 //!   snapped to whole texels, so the map's texels do not move in the world
@@ -822,6 +824,8 @@ mod tests {
         let view = camera(Vec3::new(0.0, 1.0, 5.0), Vec3::NEG_Z, None);
         scene.lights.push(sun(Vec3::NEG_Y));
         scene.settings.shadow_map_size = 512;
+        // One map (the default is four cascades).
+        scene.settings.shadow_cascades = 1;
         let planned = plan(&scene, &view, 1.5, (&boxes, &[]), 16384);
         assert!(
             matches!(planned.plan, Some(ShadowPlan::Single { map_size: 512, .. })),
@@ -855,8 +859,8 @@ mod tests {
     fn the_settings_of_the_cascades_are_cleaned() {
         let mut scene = empty_scene();
         let view = camera(Vec3::ZERO, Vec3::NEG_Z, None);
-        // The defaults: one map, a hundred meters.
-        assert_eq!(count(&scene), 1);
+        // The defaults: four cascades, a hundred meters.
+        assert_eq!(count(&scene), 4);
         assert_eq!(distance(&scene, &view), 100.0);
         for (asked, drawn) in [
             (0, 1),

@@ -98,6 +98,18 @@ Dil, karşılama ekranının sağ üstünden, sonra da proje menüsünden (*Dil*
     şemasından gelir.
 - **Sahne kaynakları:** bir nesneye değil sahneye ait ayarlar; yerçekimi, gökyüzü ve ortam ışığı
   gibi. *Sahne kaynakları* altındadır.
+- **Sahnenin görünümü:**
+  - Yeni bir sahne motorun varsayılan görünümüyle gelir, *Doğal*: sahneyi gökyüzü aydınlatır,
+    küçük bir güneş diski, uzakta hafif bir pus, parlak ışıkta yumuşak bir parıltı, hafif renk
+    ayarı, yumuşatılmış kenarlar ve kameranın yakınında keskin gölgeler.
+  - *Sahne kaynakları*, *Kaynak ekle...*, *Görünüm uygula...* bütün bir görünümü tek adımda
+    ayarlar: *Sade* (hiç efekt yok), *Doğal* ya da *Canlı* (Doğal'ın daha güçlüsü). Değerleri
+    sahneye yazar; tek bir geri alma hepsini geri alır.
+  - Her parçası sonradan elle değiştirilebilir: *Sahne kaynakları* altına `Fog`, `Bloom`,
+    `ColorGrading`, `Sky`, `Ambient` ya da `RenderSettings` ekleyip alanlarını düzenleyin.
+  - Oyun içi arayüz, sprite'lar ve parçacıklar biten resmin üstüne çizilir: görünüm onları
+    değiştirmez. *Orthographic* (2B) ayarlı bir kamera güneş diskini hiç göstermez.
+  - Motorun eski bir sürümüyle yapılmış sahne, eski görünümünü korur (bkz. bölüm 10).
 - **Varlıklar** (alt sekme; projenin dosyaları):
   - Projenin modelleri, resimleri ve sesleri, türe göre süzülür.
   - Görünüme sürükleyince sahneye yerleşir.
@@ -330,6 +342,20 @@ açıklar.
 | *Claude Code bulunamadı* | Claude Code'u kurun ve bir kez oturum açın, ya da `WISH_CLAUDE`'u yoluna ayarlayın |
 | *dışa aktarılmadı: ... hata* | *Sorunlar*'ın listelediklerini düzeltin, sonra yeniden dışa aktarın |
 | Görünüm siyah | *Sorunlar*'a bakın: sahnede kamera olmayabilir |
+| *This file is format 1; this engine writes format 2* | Bir sorun yok: aşağıya bakın |
+
+**Eski bir sürümden kalan projeler.** Sahne ve prefab dosyaları bir biçim numarası taşır. Bu sürüm
+biçim 2 yazar; bir sahnenin varsayılan görünümü de onunla değişti. Biçim 1 olan bir dosya olduğu
+gibi açılır, eskisi gibi görünür ve oynanır: motor onun için eski değerleri korur. *Sorunlar* (ve
+`wen check`) bu dosyaları bir uyarıyla listeler. Dosya, o değerler içine yazılarak biçim 2 olarak
+yeniden yazılır: sahneyi editörde ilk değiştirdiğinizde, ya da hepsi birden şu komutla:
+
+```bash
+wen migrate --root oyunum
+```
+
+Böyle bir sahneye sonradan yeni görünümü vermek için *Görünüm uygula...* ile *Doğal*'ı seçin.
+Dosyalar yeniden yazılmadan önce kaydedilmiş tekrarlar artık uymaz; yeniden kaydedilmeleri gerekir.
 
 Motorun tanı iletileri İngilizcedir (ajanlar ve belgeler için tek dil); editörün arayüzü sizin
 dilinizdedir.

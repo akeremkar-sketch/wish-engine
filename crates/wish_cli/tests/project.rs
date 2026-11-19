@@ -63,8 +63,8 @@ impl Drop for Dir {
     }
 }
 
-const GOOD: &str = "{\n  \"entities\": {\n    \"a\": {\n      \"components\": {\n        \"MeshRef\": {\n          \"mesh\": \"assets/a.glb\"\n        }\n      }\n    }\n  },\n  \"format\": 1\n}\n";
-const LOOSE: &str = r#"{ "format": 1, "entities": { "a": { "components": { "MeshRef": { "mesh": "assets/a.glb" } } } } }"#;
+const GOOD: &str = "{\n  \"entities\": {\n    \"a\": {\n      \"components\": {\n        \"MeshRef\": {\n          \"mesh\": \"assets/a.glb\"\n        }\n      }\n    }\n  },\n  \"format\": 2\n}\n";
+const LOOSE: &str = r#"{ "format": 2, "entities": { "a": { "components": { "MeshRef": { "mesh": "assets/a.glb" } } } } }"#;
 
 #[test]
 fn check_reports_every_problem_and_fails_only_on_errors() {
@@ -150,7 +150,7 @@ fn check_reports_every_problem_and_fails_only_on_errors() {
 #[test]
 fn render_scenes_are_checked_and_run_like_any_other() {
     let dir = Dir::new("render");
-    let scene = "{\n  \"entities\": {\n    \"camera\": {\n      \"components\": {\n        \"Camera\": {\n          \"fov_y_deg\": 50\n        },\n        \"Transform\": {\n          \"translation\": [0, 2, 8]\n        }\n      }\n    },\n    \"cube\": {\n      \"components\": {\n        \"Material\": {\n          \"metallic\": 1\n        },\n        \"Primitive\": {\n          \"shape\": \"Cube\"\n        }\n      }\n    }\n  },\n  \"format\": 1,\n  \"resources\": {\n    \"Exposure\": {\n      \"ev100\": 12\n    }\n  }\n}\n";
+    let scene = "{\n  \"entities\": {\n    \"camera\": {\n      \"components\": {\n        \"Camera\": {\n          \"fov_y_deg\": 50\n        },\n        \"Transform\": {\n          \"translation\": [0, 2, 8]\n        }\n      }\n    },\n    \"cube\": {\n      \"components\": {\n        \"Material\": {\n          \"metallic\": 1\n        },\n        \"Primitive\": {\n          \"shape\": \"Cube\"\n        }\n      }\n    }\n  },\n  \"format\": 2,\n  \"resources\": {\n    \"Exposure\": {\n      \"ev100\": 12\n    }\n  }\n}\n";
     dir.write("main.scene.json", scene);
     let (ok, report) = wen_json(&[
         "check",
@@ -228,7 +228,7 @@ fn capture_draws_a_scene_file_into_a_png() {
     let dir = Dir::new("capture");
     dir.write(
         "main.scene.json",
-        r#"{ "format": 1, "entities": {
+        r#"{ "format": 2, "entities": {
             "cam": { "components": { "Camera": {}, "Transform": { "translation": [0, 1, 5] } } },
             "box": { "components": { "Primitive": { "shape": "Cube" }, "Material": { "base_color": [0.9, 0.1, 0.1, 1] } } },
             "sun": { "components": { "DirectionalLight": {}, "Transform": { "rotation": [-0.38, 0, 0, 0.92] } } }
@@ -308,7 +308,7 @@ fn describe_lists_what_a_camera_sees() {
     let dir = Dir::new("describe");
     dir.write(
         "main.scene.json",
-        r#"{ "format": 1, "entities": {
+        r#"{ "format": 2, "entities": {
             "cam": { "components": { "Camera": {}, "Transform": { "translation": [0, 1, 8] } } },
             "wall": { "components": { "Primitive": { "shape": "Cube" }, "Transform": { "translation": [0, 1, 0], "scale": [3, 3, 1] } } },
             "hidden_box": { "components": { "Primitive": { "shape": "Cube" }, "Transform": { "translation": [0, 1, -3], "scale": [0.5, 0.5, 0.5] } } },
@@ -414,7 +414,7 @@ fn capture_draws_models_from_the_projects_assets_and_reports_the_ones_it_cannot(
     std::fs::write(dir.0.join("assets/broken.glb"), b"not a model").unwrap();
     dir.write(
         "main.scene.json",
-        r#"{ "format": 1, "entities": {
+        r#"{ "format": 2, "entities": {
             "cam": { "components": { "Camera": {}, "Transform": { "translation": [0, 0, 6] } } },
             "sun": { "components": { "DirectionalLight": {} } },
             "tri": { "components": { "Model": { "asset": "assets/tri.glb" } } },
@@ -499,7 +499,13 @@ fn migrate_accepts_current_files_and_refuses_what_it_cannot_upgrade() {
     let (ok, report) = wen_json(&["migrate", "--root", dir.arg(), "--json"]);
     assert!(ok, "{report}");
     assert_eq!(report["up_to_date"], 1);
-    assert_eq!(report["current_format"], 1);
+    assert_eq!(report["current_format"], 2);
+    assert_eq!(report["migrated"], serde_json::json!([]));
+    assert_eq!(
+        dir.read("a.scene.json"),
+        GOOD,
+        "a current file is left alone"
+    );
 
     dir.write("old.scene.json", "{ \"format\": 0 }");
     dir.write("new.scene.json", "{ \"format\": 9 }");
@@ -512,6 +518,124 @@ fn migrate_accepts_current_files_and_refuses_what_it_cannot_upgrade() {
         .map(|d| d["code"].as_str().unwrap())
         .collect();
     assert_eq!(codes, ["unsupported_format", "no_migration"]);
+}
+
+/// A project of format 1 (the scene format before the look lock of 1.0):
+/// every command reads it as it is; `check` says so with a warning and
+/// passes; `fmt` tidies a file in its own format and never migrates;
+/// `migrate` writes format 2 with the values the files relied on, after
+/// which the project is current and silent.
+#[test]
+fn a_project_of_format_1_is_read_as_it_is_and_migrated_on_request() {
+    let dir = Dir::new("format-1");
+    let old = GOOD.replace("\"format\": 2", "\"format\": 1");
+    let loose = LOOSE.replace("\"format\": 2", "\"format\": 1");
+    assert_ne!(old, GOOD);
+    dir.write("assets/a.glb", "glb");
+    dir.write("tidy.scene.json", &old);
+    dir.write("loose.scene.json", &loose);
+    let check = [
+        "check",
+        "--example",
+        "stress",
+        "--root",
+        dir.arg(),
+        "--json",
+    ];
+    let (ok, report) = wen_json(&check);
+    assert!(ok, "format 1 is a warning, not an error: {report}");
+    assert_eq!(report["errors"], 0);
+    let noted: Vec<(&str, &str)> = report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| {
+            (
+                d["location"]["file"].as_str().unwrap(),
+                d["code"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        noted,
+        [
+            ("loose.scene.json", "old_format"),
+            ("loose.scene.json", "not_canonical"),
+            ("tidy.scene.json", "old_format"),
+        ],
+        "{report}"
+    );
+    assert!(
+        report["diagnostics"][0]["hint"]
+            .as_str()
+            .unwrap()
+            .contains("wen migrate"),
+        "{report}"
+    );
+
+    // A run of the scene works, and nothing was written by reading.
+    let (ok, run) = wen_json(&[
+        "run",
+        "--example",
+        "stress",
+        "--scene",
+        "tidy.scene.json",
+        "--root",
+        dir.arg(),
+        "--frames",
+        "3",
+        "--json",
+    ]);
+    assert!(ok, "{run}");
+    assert_eq!(dir.read("tidy.scene.json"), old);
+    assert_eq!(dir.read("loose.scene.json"), loose);
+
+    // fmt: the loose file is tidied as format 1; both are named as older.
+    let fmt = ["fmt", "--example", "stress", "--root", dir.arg(), "--json"];
+    let mut fmt_check = fmt.to_vec();
+    fmt_check.push("--check");
+    let (ok, report) = wen_json(&fmt_check);
+    assert!(!ok, "{report}");
+    assert_eq!(report["changed"], serde_json::json!(["loose.scene.json"]));
+    assert_eq!(
+        report["older_format"],
+        serde_json::json!(["loose.scene.json", "tidy.scene.json"])
+    );
+    let (ok, report) = wen_json(&fmt);
+    assert!(ok, "{report}");
+    assert_eq!(dir.read("loose.scene.json"), old, "tidied, still format 1");
+    assert_eq!(dir.read("tidy.scene.json"), old);
+    let (ok, report) = wen_json(&fmt_check);
+    assert!(ok, "a tidy file of format 1 passes fmt --check: {report}");
+    assert_eq!(report["changed"], serde_json::json!([]));
+
+    // migrate: both become format 2, with the look they had written in.
+    let (ok, report) = wen_json(&["migrate", "--root", dir.arg(), "--json"]);
+    assert!(ok, "{report}");
+    assert_eq!(
+        report["migrated"],
+        serde_json::json!(["loose.scene.json", "tidy.scene.json"])
+    );
+    let migrated: serde_json::Value = serde_json::from_str(&dir.read("tidy.scene.json")).unwrap();
+    assert_eq!(migrated["format"], 2);
+    assert_eq!(migrated["resources"]["Fog"]["density"], 0.0);
+    assert_eq!(migrated["resources"]["Ambient"]["source"], "Color");
+    assert_eq!(
+        migrated["entities"],
+        serde_json::from_str::<serde_json::Value>(GOOD).unwrap()["entities"]
+    );
+    assert_eq!(dir.read("loose.scene.json"), dir.read("tidy.scene.json"));
+    // Now the project is current: no warning, canonical, nothing to migrate.
+    let (ok, report) = wen_json(&check);
+    assert!(ok, "{report}");
+    assert_eq!(report["warnings"], 0, "{report}");
+    let (ok, report) = wen_json(&fmt_check);
+    assert!(ok, "{report}");
+    assert!(report.get("older_format").is_none(), "{report}");
+    let (ok, report) = wen_json(&["migrate", "--root", dir.arg(), "--json"]);
+    assert!(ok, "{report}");
+    assert_eq!(report["migrated"], serde_json::json!([]));
+    assert_eq!(report["up_to_date"], 2);
 }
 
 #[test]
@@ -598,7 +722,7 @@ fn shaders_are_checked_and_a_folder_of_edits_can_be_drawn_with() {
     // Capture refuses to draw with it and says why.
     dir.write(
         "main.scene.json",
-        r#"{ "format": 1, "entities": { "cam": { "components": { "Camera": {} } } } }"#,
+        r#"{ "format": 2, "entities": { "cam": { "components": { "Camera": {} } } } }"#,
     );
     let out = dir.0.join("x.png");
     let (ok, report) = wen_json(&[
@@ -647,7 +771,7 @@ fn without_a_usable_graphics_adapter_capture_explains_instead_of_crashing() {
     let dir = Dir::new("no-gpu");
     dir.write(
         "main.scene.json",
-        r#"{ "format": 1, "entities": { "cam": { "components": { "Camera": {} } } } }"#,
+        r#"{ "format": 2, "entities": { "cam": { "components": { "Camera": {} } } } }"#,
     );
     let out = dir.0.join("never.png");
     // Asking for a backend this platform does not have leaves no adapter.
@@ -704,7 +828,7 @@ fn a_package_template_makes_a_new_project() {
     .unwrap();
     std::fs::write(
         package.join("tiny/scenes/main.scene.json"),
-        r#"{ "format": 1, "entities": {} }"#,
+        r#"{ "format": 2, "entities": {} }"#,
     )
     .unwrap();
     std::fs::write(package.join("tiny/.template/thumbnail.png"), "png").unwrap();
@@ -881,7 +1005,7 @@ fn material_project(name: &str) -> Dir {
     );
     dir.write(
         "main.scene.json",
-        r#"{ "format": 1, "entities": {
+        r#"{ "format": 2, "entities": {
             "cam": { "components": { "Camera": {}, "Transform": { "translation": [0, 0, 3] } } },
             "box": { "components": { "Primitive": { "shape": "Cube" }, "Material": { "file": "assets/wall.mat.json" } } },
             "sun": { "components": { "DirectionalLight": {}, "Transform": { "rotation": [-0.38, 0, 0, 0.92] } } }

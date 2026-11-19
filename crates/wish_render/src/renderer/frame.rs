@@ -165,6 +165,19 @@ fn named(scene: &RenderScene, lights: &[crate::extract::LightView]) -> String {
     }
 }
 
+/// The warning `ambient_color_unused`: `Ambient.<field>` is set and the
+/// ambient light comes from the sky, which does not use it. `check` gives
+/// the same warning from the scene file (`wish_asset::project`).
+fn ambient_unused_warning(field: &str) -> Diagnostic {
+    Diagnostic::warning(
+        "ambient_color_unused",
+        format!(
+            "Ambient.{field} is set, but the ambient light comes from the sky (Ambient.source is Sky, the default since scene format 2), which does not use Ambient.color or Ambient.intensity: the setting changes nothing."
+        ),
+        "For a flat ambient light of that colour and intensity, set Ambient.source to \"Color\" (or apply the look plain, which turns every look effect off). To keep the light from the sky, remove Ambient.color and Ambient.intensity, and use Ambient.sky_strength to make it stronger or weaker.",
+    )
+}
+
 /// What the scene's lights say that a picture of it cannot show, whatever
 /// the camera and the view: more point and spot lights than can be drawn,
 /// and directional lights beside the one that is used. Every view reports
@@ -389,12 +402,23 @@ impl Renderer {
             clusters.log_scale,
             cluster::TILE_PX as f32,
         ]);
-        let look = Look::of(scene, exposure);
-        look.write_frame(&mut frame, view.ortho_height.is_some());
+        let orthographic = view.ortho_height.is_some();
+        let look = Look::of(scene, exposure, orthographic);
+        look.write_frame(&mut frame, orthographic);
         shadow::write_cascades(shadow.as_ref(), &mut frame);
         frame.pad_to(FRAME_UNIFORM_SIZE);
+        // A disc is drawn by default, so a scene without a sun is no mistake
+        // by itself (an interior, a 2D scene, a menu): only a size someone
+        // changed says that a disc was wanted. An orthographic camera never
+        // shows one, so nothing is missing there.
         let sun_size = scene.sky.sun_size_deg;
-        if scene.lights.is_empty() && sun_size.is_finite() && sun_size > 0.0 {
+        let asked = sun_size != crate::components::Sky::default().sun_size_deg;
+        if scene.lights.is_empty()
+            && sun_size.is_finite()
+            && sun_size > 0.0
+            && asked
+            && !orthographic
+        {
             warnings.push(Diagnostic::warning(
                 "sun_disc_without_light",
                 format!(
@@ -402,6 +426,11 @@ impl Renderer {
                 ),
                 "Add an entity with a DirectionalLight (its Transform's rotation says where the sun stands), or set Sky.sun_size_deg to 0.",
             ));
+        }
+        // The sky lights the scene by default: a colour or an intensity
+        // written for the flat ambient light then does nothing.
+        if let Some(field) = scene.ambient_unused {
+            warnings.push(ambient_unused_warning(field));
         }
 
         let cluster_ranges: Vec<u8> = clusters

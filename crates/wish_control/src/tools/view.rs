@@ -37,7 +37,7 @@ const SHADERS: Param = Param::optional(
 pub(crate) const CAPTURE_FRAME: Tool = Tool {
     name: "capture_frame",
     title: "Take a picture",
-    description: "Draws the scene (or a session's live world) from a camera and returns the picture as a PNG (image content over MCP; image.data is base64 on the command line unless out is given). The default 512x288 keeps it cheap; ask for more only to inspect detail. view picks what is drawn: lit (the real picture), ids (each entity its own color), depth (white near, black far), normals (surface direction as color), wireframe (triangle edges), colliders (the wireframe with every physics collider over it: fixed green, moving cyan, sensors yellow), lights (the wireframe with how far each point and spot light reaches), shadow_cascades (each surface in the color of the shadow map its shadow is read from: red, green, blue, yellow from the cascade nearest the camera, mixed where two blend; white with one shadow map; gray where there is no shadow, as beyond RenderSettings.shadow_distance). stats says what drawing the picture took, in counts that are the same on every machine: draw_calls, triangles, shadow_casters (draws into the shadow maps), shadow_cascades (how many shadow maps: 0 none, 1 the one map around everything, 2 to 4 cascades, set with RenderSettings.shadow_cascades; the shadow_cascades view answers the number of the lit picture whose maps it shows, every other debug view 0), point_lights, spot_lights, blended_surfaces (see-through surfaces: a Material with base_color alpha below 1, or a material file or glTF material with alpha_mode Blend; drawn back to front over the rest, casting no shadow; the debug views draw them as any surface), and effects, the optional look effects the picture used (sky_light, sun_disc, fog, bloom, color_grading, fxaa; they are set with the Ambient, Sky, Fog, Bloom, ColorGrading and RenderSettings resources and are off by default). Use describe_view to ask what is visible instead of reading pixels.",
+    description: "Draws the scene (or a session's live world) from a camera and returns the picture as a PNG (image content over MCP; image.data is base64 on the command line unless out is given). The default 512x288 keeps it cheap; ask for more only to inspect detail. view picks what is drawn: lit (the real picture), ids (each entity its own color), depth (white near, black far), normals (surface direction as color), wireframe (triangle edges), colliders (the wireframe with every physics collider over it: fixed green, moving cyan, sensors yellow), lights (the wireframe with how far each point and spot light reaches), shadow_cascades (each surface in the color of the shadow map its shadow is read from: red, green, blue, yellow from the cascade nearest the camera, mixed where two blend; white with one shadow map; gray where there is no shadow, as beyond RenderSettings.shadow_distance). stats says what drawing the picture took, in counts that are the same on every machine: draw_calls, triangles, shadow_casters (draws into the shadow maps), shadow_cascades (how many shadow maps: 0 none, 1 the one map around everything, 2 to 4 cascades, set with RenderSettings.shadow_cascades, 4 by default; the shadow_cascades view answers the number of the lit picture whose maps it shows, every other debug view 0), point_lights, spot_lights, blended_surfaces (see-through surfaces: a Material with base_color alpha below 1, or a material file or glTF material with alpha_mode Blend; drawn back to front over the rest, casting no shadow; the debug views draw them as any surface), and effects, the optional look effects the picture used (sky_light, sun_disc, fog, bloom, color_grading, fxaa; set with the Ambient, Sky, Fog, Bloom, ColorGrading and RenderSettings resources; a scene has all of them by default, the look natural, and edit_apply apply_look plain turns them all off). Use describe_view to ask what is visible instead of reading pixels.",
     params: &[
         SCENE,
         SESSION,
@@ -115,11 +115,13 @@ pub(crate) const DESCRIBE_VIEW: Tool = Tool {
 
 /// How many bytes of render targets the renderer may keep after a tool
 /// call. The picture of a tool call is drawn now and then, not every frame:
-/// what the usual sizes take (a 1280x720 lit picture with its shadow map is
-/// 34 MiB) stays for the next call, a large capture does not sit in memory
-/// until some later call. The editor's views draw through the same renderer
-/// many times a second and keep their targets (`Workspace::render_picture`).
-const KEPT_AFTER_A_TOOL_CALL: u64 = 64 << 20;
+/// what the usual sizes take stays for the next call (the four shadow maps
+/// of the default look are 64 MiB by themselves; with a 1280x720 lit
+/// picture and the targets of its bloom and FXAA that is about 90 MiB), a
+/// larger capture does not sit in memory until some later call. The
+/// editor's views draw through the same renderer many times a second and
+/// keep their targets (`Workspace::render_picture`).
+const KEPT_AFTER_A_TOOL_CALL: u64 = 128 << 20;
 
 /// What drawing needs from the world, taken while it is borrowed.
 struct Prepared {
@@ -164,7 +166,8 @@ impl Prepared {
     /// drawn, when the picture is of the scene file as it is now (not a
     /// checkpoint's copy, not a preview) and the light is an entity of
     /// that file (not one a prefab brought in); the sky's sun size, when a
-    /// disc is asked for and there is no light to give it a place; and the
+    /// disc is asked for and there is no light to give it a place; the
+    /// ambient colour or intensity the sky light does not use; and the
     /// shadow distance, when cascades are asked for and it reaches nothing.
     /// The place names the file, because a path without a file points
     /// into the call's arguments.
@@ -193,17 +196,25 @@ impl Prepared {
         }
         // Only a scene file's own `Sky` resource can ask for a disc there,
         // and only its own `RenderSettings` for cascades: the field to
-        // change is the distance (the field the hint names first).
+        // change is the distance (the field the hint names first). For an
+        // ambient colour or intensity the sky light does not use, it is the
+        // field the warning names.
         if let Some(file) = file {
             for warning in &mut warnings {
                 let field = match &*warning.code {
-                    "sun_disc_without_light" => "/resources/Sky/sun_size_deg",
-                    "shadows_out_of_range" => "/resources/RenderSettings/shadow_distance",
+                    "sun_disc_without_light" => "/resources/Sky/sun_size_deg".to_owned(),
+                    "shadows_out_of_range" => {
+                        "/resources/RenderSettings/shadow_distance".to_owned()
+                    }
+                    "ambient_color_unused" => match self.scene.ambient_unused {
+                        Some(field) => format!("/resources/Ambient/{field}"),
+                        None => continue,
+                    },
                     _ => continue,
                 };
                 if warning.location.path.is_none() {
                     warning.location.file = Some(file.to_owned());
-                    warning.location.path = Some(field.to_owned());
+                    warning.location.path = Some(field);
                 }
             }
         }

@@ -405,7 +405,9 @@ fn lamp_setup(dir: &Path) -> Result<(), String> {
         json!([
             { "op": "despawn", "id": "sun" },
             { "op": "set_resource", "name": "Sky", "value": { "luminance": 0 } },
-            { "op": "set_resource", "name": "Ambient", "value": { "intensity": 0 } },
+            // No fill light at all: a flat ambient light of 0 (the sky,
+            // which lights a scene by default, is dark too).
+            { "op": "set_resource", "name": "Ambient", "value": { "source": "Color", "intensity": 0 } },
             { "op": "set_resource", "name": "Exposure", "value": { "ev100": 4 } },
             { "op": "spawn", "id": "table", "components": {
                 "Transform": { "translation": [0, 0.5, 0], "scale": [2, 1, 1] },

@@ -275,14 +275,15 @@ pub struct Sky {
     /// horizon is around 20000 cd/m².
     #[schema(unit = "cd/m2", range = 0.0..=100000.0, default = 20000.0)]
     pub luminance: f32,
-    /// How wide the sun's disc is in the sky, from edge to edge. 0 draws no
-    /// disc. The disc sits where the scene's `DirectionalLight` shines from
-    /// and has that light's colour; its edge is soft. The real sun is 0.53
-    /// degrees wide; games usually draw it larger (2 to 6). Leave it at 0
-    /// for a scene seen through an orthographic camera: such a camera
-    /// looks at one point of the sky, so the disc would fill the
-    /// background or not show at all.
-    #[schema(unit = "deg", range = 0.0..=45.0, default = 0.0)]
+    /// How wide the sun's disc is in the sky, from edge to edge (3 by
+    /// default). 0 draws no disc. The disc sits where the scene's
+    /// `DirectionalLight` shines from and has that light's colour; its edge
+    /// is soft; a scene without such a light has no disc. The real sun is
+    /// 0.53 degrees wide; games usually draw it larger (2 to 6). An
+    /// orthographic camera never shows the disc: such a camera looks at one
+    /// point of the sky, so the disc would fill the background or not show
+    /// at all.
+    #[schema(unit = "deg", range = 0.0..=45.0, default = 3.0)]
     pub sun_size_deg: f32,
 }
 
@@ -292,9 +293,10 @@ pub enum AmbientSource {
     /// One colour, the same on every surface whichever way it faces:
     /// `Ambient.color` and `Ambient.intensity`.
     Color,
-    /// The sky: a surface is lit by the part of the `Sky` it faces, so tops
-    /// take the zenith's colour, sides the horizon's and undersides the
-    /// ground's. `Ambient.color` and `Ambient.intensity` are not used.
+    /// The sky (the default of `Ambient.source`): a surface is lit by the
+    /// part of the `Sky` it faces, so tops take the zenith's colour, sides
+    /// the horizon's and undersides the ground's. `Ambient.color` and
+    /// `Ambient.intensity` are not used.
     Sky,
 }
 
@@ -308,13 +310,15 @@ pub struct Ambient {
     /// gets around 20000 lux.
     #[schema(unit = "lux", range = 0.0..=200000.0, default = 20000.0)]
     pub intensity: f32,
-    /// Where the light comes from: one colour (`Color`), or the sky's own
-    /// colours by the direction a surface faces (`Sky`).
+    /// Where the light comes from: the sky's own colours by the direction a
+    /// surface faces (`Sky`, the default), or one colour (`Color`).
+    #[schema(default = AmbientSource::Sky)]
     pub source: AmbientSource,
     /// With `source: Sky`, how strongly the sky lights the scene: 1 is the
     /// light the sky's colours and luminance give by themselves, 0.5 half of
-    /// it. Not used with `source: Color`.
-    #[schema(range = 0.0..=10.0, default = 1.0)]
+    /// it. The default of 0.3 suits the default sky, which is about three
+    /// times as bright as a real clear one. Not used with `source: Color`.
+    #[schema(range = 0.0..=10.0, default = 0.3)]
     pub sky_strength: f32,
 }
 
@@ -329,7 +333,8 @@ pub struct Exposure {
 
 /// How the picture is drawn: settings that change what a frame costs and how
 /// fine it looks, never what happens in the game. A scene without this
-/// resource is drawn with the defaults.
+/// resource is drawn with the defaults: shadows from four cascades to 100 m,
+/// and edges smoothed with FXAA.
 #[resource]
 pub struct RenderSettings {
     /// Whether directional lights cast shadows at all. Off, no shadow map is
@@ -344,17 +349,17 @@ pub struct RenderSettings {
     /// them is a map of this size.
     #[schema(unit = "px", range = 64..=4096, default = 2048)]
     pub shadow_map_size: u32,
-    /// How many shadow maps the directional light has. 1 (the default) is
-    /// one map fitted around everything that is drawn: fine for a room,
-    /// blurry in a large level, where one far object makes every shadow
-    /// coarse. 2 to 4 are cascades: maps fitted to slices of what the
-    /// camera sees, a small sharp one for what is near and larger ones for
-    /// what is farther, up to `shadow_distance`. Shadows near the camera
-    /// are then sharp whatever the scene's size. Each cascade is drawn as
-    /// a map of its own, so more of them cost more; 4 suits an open level
+    /// How many shadow maps the directional light has. 1 is one map fitted
+    /// around everything that is drawn: fine for a room, blurry in a large
+    /// level, where one far object makes every shadow coarse. 2 to 4 are
+    /// cascades: maps fitted to slices of what the camera sees, a small
+    /// sharp one for what is near and larger ones for what is farther, up
+    /// to `shadow_distance`. Shadows near the camera are then sharp
+    /// whatever the scene's size. Each cascade is drawn as a map of its
+    /// own, so more of them cost more; 4 (the default) suits an open level
     /// seen from the ground, 2 a small level or a camera that looks down
     /// from above.
-    #[schema(range = 1..=4, default = 1)]
+    #[schema(range = 1..=4, default = 4)]
     pub shadow_cascades: u32,
     /// With `shadow_cascades` 2 or more: how far from the camera shadows
     /// are drawn, measured along the direction the camera looks. They fade
@@ -364,9 +369,12 @@ pub struct RenderSettings {
     /// `far`. Not used with one map, which covers everything.
     #[schema(unit = "m", range = 0.1..=10000.0, default = 100.0)]
     pub shadow_distance: f32,
-    /// How jagged edges are smoothed in the lit picture. The in-game
-    /// interface, sprites and particles are drawn afterwards and stay as
-    /// sharp as they were made.
+    /// How jagged edges are smoothed in the lit picture: with FXAA by
+    /// default. The in-game interface, sprites and particles are drawn
+    /// afterwards and stay as sharp as they were made. `Off` keeps every
+    /// pixel of a lit surface as it was drawn (pixel art on a textured
+    /// shape).
+    #[schema(default = Antialiasing::Fxaa)]
     pub antialiasing: Antialiasing,
 }
 
@@ -375,14 +383,16 @@ pub struct RenderSettings {
 pub enum Antialiasing {
     /// Not at all: every pixel is one sample.
     Off,
-    /// FXAA: one pass over the finished picture that finds edges by their
-    /// contrast and blends along them. Cheap; softens fine detail a little.
+    /// FXAA (the default of `RenderSettings.antialiasing`): one pass over
+    /// the finished picture that finds edges by their contrast and blends
+    /// along them. Cheap; softens fine detail a little.
     Fxaa,
 }
 
 /// Fog: far things fade into the colour of the horizon, and the sky near the
-/// horizon hazes over with them. With `density` 0 (the default) there is no
-/// fog.
+/// horizon hazes over with them. The defaults are a light haze that lies low
+/// (half of a thing at ground level shows through at 460 m, and it thins out
+/// above 20 m); with `density` 0 there is no fog.
 ///
 /// The fog is thickest at `base_height` and thins out above it by
 /// `height_falloff`; with a falloff of 0 it is the same at every height and
@@ -397,14 +407,15 @@ pub struct Fog {
     #[schema(default = Color::rgb(1.0, 1.0, 1.0))]
     pub tint: Color,
     /// How thick the fog is at `base_height`: the share of light lost per
-    /// meter. 0 is no fog; 0.005 is a light haze (half of a thing shows
-    /// through at 140 m), 0.05 a thick fog (half at 14 m).
-    #[schema(unit = "1/m", range = 0.0..=1.0, default = 0.0)]
+    /// meter. 0 is no fog; 0.0015 (the default) is a faint haze, 0.005 a
+    /// light one (half of a thing shows through at 140 m), 0.05 a thick fog
+    /// (half at 14 m).
+    #[schema(unit = "1/m", range = 0.0..=1.0, default = 0.0015)]
     pub density: f32,
     /// How fast the fog thins out with height: at `1 / height_falloff`
-    /// meters above `base_height` it is down to about a third. 0 keeps it
-    /// the same at every height.
-    #[schema(unit = "1/m", range = 0.0..=10.0, default = 0.0)]
+    /// meters above `base_height` it is down to about a third (by default at
+    /// 20 m). 0 keeps it the same at every height.
+    #[schema(unit = "1/m", range = 0.0..=10.0, default = 0.05)]
     pub height_falloff: f32,
     /// The height (world Y) at which the fog is as thick as `density` says.
     /// Below it the fog gets thicker when `height_falloff` is above 0.
@@ -413,45 +424,48 @@ pub struct Fog {
     /// How far from the camera the fog starts; nearer things are clear.
     #[schema(unit = "m", range = 0.0..=100000.0, default = 0.0)]
     pub start: f32,
-    /// The most the fog can hide: 1 lets far things vanish completely, 0.8
-    /// always leaves a fifth of them (and of the sky) showing.
-    #[schema(range = 0.0..=1.0, default = 1.0)]
+    /// The most the fog can hide: 1 lets far things vanish completely, 0.9
+    /// (the default) always leaves a tenth of them (and of the sky) showing.
+    #[schema(range = 0.0..=1.0, default = 0.9)]
     pub max_opacity: f32,
 }
 
 /// Colour grading: the finishing touches on the lit picture, applied to the
-/// sky and to surfaces before tone mapping. The defaults leave the picture
-/// as it is. Sprites, particles and the in-game interface keep the colours
+/// sky and to surfaces before tone mapping. The defaults are a gentle grade:
+/// a little more contrast and colour, slightly warm, corners a little
+/// darker. Sprites, particles and the in-game interface keep the colours
 /// they were made with.
 #[resource]
 pub struct ColorGrading {
     /// The difference between dark and bright around middle grey. 1 leaves
-    /// it as it is, above 1 is punchier, below 1 flatter (0 is plain grey).
-    #[schema(range = 0.0..=2.0, default = 1.0)]
+    /// it as it is, above 1 is punchier (1.05 by default), below 1 flatter
+    /// (0 is plain grey).
+    #[schema(range = 0.0..=2.0, default = 1.05)]
     pub contrast: f32,
     /// How colourful the picture is. 1 leaves it as it is, 0 is black and
-    /// white, above 1 is more vivid.
-    #[schema(range = 0.0..=2.0, default = 1.0)]
+    /// white, above 1 is more vivid (1.1 by default).
+    #[schema(range = 0.0..=2.0, default = 1.1)]
     pub saturation: f32,
     /// White balance between blue and orange. 0 leaves colours as they
-    /// are, positive is warmer (towards orange), negative cooler (towards
-    /// blue).
-    #[schema(range = -1.0..=1.0, default = 0.0)]
+    /// are, positive is warmer (towards orange; 0.03 by default), negative
+    /// cooler (towards blue).
+    #[schema(range = -1.0..=1.0, default = 0.03)]
     pub temperature: f32,
     /// White balance between green and magenta. 0 leaves colours as they
     /// are, positive is more magenta, negative more green.
     #[schema(range = -1.0..=1.0, default = 0.0)]
     pub tint: f32,
     /// How much the corners of the picture are darkened, like a lens does.
-    /// 0 is not at all, 1 takes the corners to black.
-    #[schema(range = 0.0..=1.0, default = 0.0)]
+    /// 0 is not at all, 0.1 (the default) faintly, 1 takes the corners to
+    /// black.
+    #[schema(range = 0.0..=1.0, default = 0.1)]
     pub vignette: f32,
 }
 
 /// Bloom: bright light spreads softly around itself, as it does in a
 /// camera's lens and in the eye, so a lamp, the sun's disc or a strong
-/// highlight glows instead of ending at a hard edge. With `strength` 0 (the
-/// default) there is no bloom.
+/// highlight glows instead of ending at a hard edge. The default is a glow
+/// only bright lights show; with `strength` 0 there is no bloom.
 ///
 /// The light is moved, not added: a scene with nothing brighter than white
 /// keeps its brightness and hardly changes (a small light much brighter
@@ -467,15 +481,17 @@ pub struct ColorGrading {
 /// for a later release).
 #[resource]
 pub struct Bloom {
-    /// How much of the light is spread around: 0 is no bloom, 0.05 a glow
-    /// only bright lights show, 0.15 a clear one, 0.4 a dream sequence.
-    #[schema(range = 0.0..=1.0, default = 0.0)]
+    /// How much of the light is spread around: 0 is no bloom, 0.05 (the
+    /// default) a glow only bright lights show, 0.15 a clear one, 0.4 a
+    /// dream sequence.
+    #[schema(range = 0.0..=1.0, default = 0.05)]
     pub strength: f32,
     /// How far the glow reaches. 0 keeps it close around the light, 0.5
-    /// (the default) falls off evenly, 1 lets it reach a third of the
-    /// picture's height like a haze. The reach is a share of the picture,
-    /// so the look is much the same at every picture size.
-    #[schema(range = 0.0..=1.0, default = 0.5)]
+    /// falls off evenly (the default of 0.4 is a little closer), 1 lets it
+    /// reach a third of the picture's height like a haze. The reach is a
+    /// share of the picture, so the look is much the same at every picture
+    /// size.
+    #[schema(range = 0.0..=1.0, default = 0.4)]
     pub spread: f32,
     /// Only light brighter than this blooms, where 1 is the brightness of a
     /// white surface in the finished picture. 0 (the default) lets all

@@ -239,9 +239,36 @@ fn the_cost_of_a_picture_is_reported_in_counts_and_render_settings_change_it() {
             "Primitive": { "shape": "Sphere" }, "Transform": { "translation": [0, 1, 0] } } }] }),
         &me,
     ));
+    // The default look (Natural) takes four shadow maps and the passes of
+    // its effects; the answer says so in counts.
+    let natural =
+        ok(&ws.call("capture_frame", &json!({ "width": 160, "height": 90 }), &me)).clone();
+    assert_eq!(natural["stats"]["shadow_cascades"], 4, "{natural}");
+    assert_eq!(
+        natural["stats"]["effects"],
+        json!([
+            "sky_light",
+            "sun_disc",
+            "fog",
+            "bloom",
+            "color_grading",
+            "fxaa"
+        ])
+    );
+    // With the look Plain a frame is its bare passes, which the rest of
+    // this test counts.
+    ok(&ws.call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "apply_look", "look": "plain" }] }),
+        &me,
+    ));
     // The ground (2 triangles) and the ball (960), drawn into the shadow map
     // and into the picture, plus the sky and tone mapping.
     let shot = ok(&ws.call("capture_frame", &json!({ "width": 160, "height": 90 }), &me)).clone();
+    assert!(
+        natural["stats"]["draw_calls"].as_u64() > shot["stats"]["draw_calls"].as_u64(),
+        "{natural}"
+    );
     assert_eq!(
         shot["stats"],
         json!({
@@ -306,10 +333,7 @@ fn the_cost_of_a_picture_is_reported_in_counts_and_render_settings_change_it() {
     let file: Value =
         serde_json::from_str(&std::fs::read_to_string(dir.join("scenes/main.scene.json")).unwrap())
             .unwrap();
-    assert_eq!(
-        file["resources"]["RenderSettings"],
-        json!({ "shadows": false })
-    );
+    assert_eq!(file["resources"]["RenderSettings"]["shadows"], false);
     let flat = ok(&ws.call("capture_frame", &json!({ "width": 160, "height": 90 }), &me)).clone();
     assert_eq!(flat["stats"]["shadow_casters"], 0);
     assert_eq!(flat["stats"]["draw_calls"], 4);
@@ -488,39 +512,49 @@ fn a_tool_call_does_not_leave_a_large_picture_in_memory() {
     let (dir, mut ws) = project("kept");
     let me = parse_actor("claude-code");
     assert_eq!(ws.kept_render_bytes(), 0);
-    // The usual sizes stay for the next call: a small picture and its 2048
-    // shadow map are 16 MiB and a little.
+    // The usual sizes stay for the next call: a small picture and the four
+    // 2048 shadow maps of the default look are 64 MiB and a little.
     let small = json!({ "width": 160, "height": 90 });
     ok(&ws.call("capture_frame", &small, &me));
     let usual = ws.kept_render_bytes();
-    assert!(usual > 16 * MIB && usual < 17 * MIB, "{usual}");
+    assert!(usual > 64 * MIB && usual < 66 * MIB, "{usual}");
     ok(&ws.call("describe_view", &small, &me));
     assert!(ws.kept_render_bytes() >= usual);
-    // A shadow map of 4096 texels is 64 MiB by itself: with the picture it
-    // is more than a tool call leaves behind, so the largest target goes
-    // when the call ends, not when some later call begins.
+    // So does a 1280x720 picture with them, with the targets of its bloom
+    // and FXAA.
+    ok(&ws.call(
+        "capture_frame",
+        &json!({ "width": 1280, "height": 720 }),
+        &me,
+    ));
+    let whole = ws.kept_render_bytes();
+    assert!(whole > usual && whole < 128 * MIB, "{whole}");
+    // Two cascades of 4096 texels are 128 MiB by themselves: with the
+    // picture that is more than a tool call leaves behind, so the largest
+    // target goes when the call ends, not when some later call begins.
     ok(&ws.call(
         "edit_apply",
         &json!({ "ops": [{ "op": "set_resource", "name": "RenderSettings",
-            "value": { "shadow_map_size": 4096 } }] }),
+            "value": { "shadow_map_size": 4096, "shadow_cascades": 2 } }] }),
         &me,
     ));
     let large = ok(&ws.call("capture_frame", &small, &me)).clone();
-    assert_eq!(large["stats"]["shadow_casters"], 1);
+    assert_eq!(large["stats"]["shadow_cascades"], 2, "{large}");
     let kept = ws.kept_render_bytes();
-    assert!(kept < 64 * MIB, "{kept} bytes kept after a large picture");
+    assert!(kept < 128 * MIB, "{kept} bytes kept after a large picture");
     // What a later call needs again is made again: the same picture.
     let again = ok(&ws.call("capture_frame", &small, &me)).clone();
     assert_eq!(again["image"]["data"], large["image"]["data"]);
     // describe_view lets go the same way.
     ok(&ws.call("describe_view", &small, &me));
-    assert!(ws.kept_render_bytes() < 64 * MIB);
+    assert!(ws.kept_render_bytes() < 128 * MIB);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
 /// The look settings of M12 (sky light, sun disc, fog, colour grading, FXAA)
 /// from the control plane: documented, searchable, set with edits, written
-/// to the scene file, seen in the answers, and off until asked for.
+/// to the scene file, seen in the answers, on by default (the look Natural)
+/// and all off with the look Plain.
 #[test]
 fn the_look_settings_are_documented_set_with_edits_and_reported() {
     let (dir, mut ws) = project("look");
@@ -532,11 +566,31 @@ fn the_look_settings_are_documented_set_with_edits_and_reported() {
         &me,
     ));
     let size = json!({ "width": 160, "height": 90 });
+    // A scene that sets nothing of the look has the default look.
+    let natural = ok(&ws.call("capture_frame", &size, &me)).clone();
+    assert_eq!(
+        natural["stats"]["effects"],
+        json!([
+            "sky_light",
+            "sun_disc",
+            "fog",
+            "bloom",
+            "color_grading",
+            "fxaa"
+        ])
+    );
+    // Plain turns all of it off; the settings below are then set one by
+    // one from there.
+    ok(&ws.call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "apply_look", "look": "plain" }] }),
+        &me,
+    ));
     let plain = ok(&ws.call("capture_frame", &size, &me)).clone();
     assert_eq!(plain["stats"]["effects"], json!([]));
 
     // Every setting is in the schema with its documentation, range and
-    // default, and every default is "off".
+    // default, and the defaults are the look Natural.
     let schema = ok(&ws.call(
         "schema_get",
         &json!({ "names": ["Ambient", "Sky", "Fog", "ColorGrading", "RenderSettings"], "detail": "full" }),
@@ -553,7 +607,7 @@ fn the_look_settings_are_documented_set_with_edits_and_reported() {
             .clone()
     };
     let fog = properties("Fog");
-    assert_eq!(fog["density"]["default"], 0.0, "{fog}");
+    assert_eq!(fog["density"]["default"], 0.0015, "{fog}");
     assert_eq!(fog["density"]["x-unit"], "1/m");
     assert_eq!(
         (
@@ -565,14 +619,14 @@ fn the_look_settings_are_documented_set_with_edits_and_reported() {
     assert_eq!(fog["height_falloff"]["x-unit"], "1/m");
     assert_eq!(fog["base_height"]["x-unit"], "m");
     assert_eq!(fog["start"]["x-unit"], "m");
-    assert_eq!(fog["max_opacity"]["default"], 1.0);
+    assert_eq!(fog["max_opacity"]["default"], 0.9);
     let grading = properties("ColorGrading");
     for (field, default, low, high) in [
-        ("contrast", 1.0, 0.0, 2.0),
-        ("saturation", 1.0, 0.0, 2.0),
-        ("temperature", 0.0, -1.0, 1.0),
+        ("contrast", 1.05, 0.0, 2.0),
+        ("saturation", 1.1, 0.0, 2.0),
+        ("temperature", 0.03, -1.0, 1.0),
         ("tint", 0.0, -1.0, 1.0),
-        ("vignette", 0.0, 0.0, 1.0),
+        ("vignette", 0.1, 0.0, 1.0),
     ] {
         let property = &grading[field];
         assert_eq!(property["default"].as_f64(), Some(default), "{field}");
@@ -580,13 +634,13 @@ fn the_look_settings_are_documented_set_with_edits_and_reported() {
         assert_eq!(property["maximum"].as_f64(), Some(high), "{field}");
     }
     let ambient = properties("Ambient");
-    assert_eq!(ambient["source"]["default"], "Color", "{ambient}");
-    assert_eq!(ambient["sky_strength"]["default"], 1.0);
+    assert_eq!(ambient["source"]["default"], "Sky", "{ambient}");
+    assert_eq!(ambient["sky_strength"]["default"], 0.3);
     let sky = properties("Sky");
-    assert_eq!(sky["sun_size_deg"]["default"], 0.0);
+    assert_eq!(sky["sun_size_deg"]["default"], 3.0);
     assert_eq!(sky["sun_size_deg"]["x-unit"], "deg");
     let settings = properties("RenderSettings");
-    assert_eq!(settings["antialiasing"]["default"], "Off", "{settings}");
+    assert_eq!(settings["antialiasing"]["default"], "Fxaa", "{settings}");
     for (name, fields) in [
         ("Fog", &fog),
         ("ColorGrading", &grading),
@@ -626,8 +680,8 @@ fn the_look_settings_are_documented_set_with_edits_and_reported() {
         );
     }
 
-    // Set with one edit; the scene file holds what was said and nothing
-    // else.
+    // Set with one edit; the scene file holds what was said (on top of
+    // what Plain wrote).
     let look = json!({ "ops": [
         { "op": "set_resource", "name": "Ambient", "value": { "source": "Sky", "sky_strength": 0.5 } },
         { "op": "set_resource", "name": "Sky", "value": { "sun_size_deg": 4 } },
@@ -639,16 +693,15 @@ fn the_look_settings_are_documented_set_with_edits_and_reported() {
     let file: Value =
         serde_json::from_str(&std::fs::read_to_string(dir.join("scenes/main.scene.json")).unwrap())
             .unwrap();
-    assert_eq!(
-        file["resources"],
-        json!({
-            "Ambient": { "sky_strength": 0.5, "source": "Sky" },
-            "ColorGrading": { "contrast": 1.1, "vignette": 0.3 },
-            "Fog": { "density": 0.01, "height_falloff": 0.05 },
-            "RenderSettings": { "antialiasing": "Fxaa" },
-            "Sky": { "sun_size_deg": 4 }
-        })
-    );
+    for op in look["ops"].as_array().unwrap() {
+        let name = op["name"].as_str().unwrap();
+        for (field, value) in op["value"].as_object().unwrap() {
+            assert_eq!(&file["resources"][name][field], value, "{name}.{field}");
+        }
+    }
+    // The fields nobody named keep what Plain gave them.
+    assert_eq!(file["resources"]["ColorGrading"]["saturation"], 1.0);
+    assert_eq!(file["resources"]["Bloom"]["strength"], 0.0);
     let all = json!(["sky_light", "sun_disc", "fog", "color_grading", "fxaa"]);
     let shot = ok(&ws.call("capture_frame", &size, &me)).clone();
     assert_eq!(shot["stats"]["effects"], all);
@@ -731,26 +784,57 @@ fn the_look_settings_are_documented_set_with_edits_and_reported() {
     );
     assert!(warned(ok(&ws.call("describe_view", &size, &me))));
 
-    // Taking the settings away again (and the ball's sun back) gives the
-    // first picture, to the byte: nothing of a look stays behind.
-    let mut ops: Vec<Value> = ["Ambient", "Sky", "Fog", "ColorGrading", "RenderSettings"]
-        .iter()
-        .map(|name| json!({ "op": "remove_resource", "name": name }))
-        .collect();
-    ops.push(json!({ "op": "spawn", "id": "sun", "components": {
+    // At the default size a scene without a sun simply has no disc: nothing
+    // to warn about (an interior, a menu, a 2D scene).
+    ok(&ws.call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "set_resource", "name": "Sky", "value": { "sun_size_deg": 3 } }] }),
+        &me,
+    ));
+    let quiet = ok(&ws.call("capture_frame", &size, &me)).clone();
+    assert!(
+        diagnostic(&quiet, "sun_disc_without_light").is_none(),
+        "{quiet}"
+    );
+    assert_eq!(quiet["stats"]["effects"], sunless["stats"]["effects"]);
+
+    // Plain again (and the ball's sun back) gives the Plain picture, to the
+    // byte: nothing of the settings stays behind.
+    let sun = json!({ "op": "spawn", "id": "sun", "components": {
         "DirectionalLight": { "illuminance_lux": 100000 },
-        "Transform": { "rotation": [-0.4545195, 0.3304543, 0.1786597, 0.8067046] } } }));
-    ok(&ws.call("edit_apply", &json!({ "ops": ops }), &me));
+        "Transform": { "rotation": [-0.4545195, 0.3304543, 0.1786597, 0.8067046] } } });
+    ok(&ws.call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "apply_look", "look": "plain" }, sun] }),
+        &me,
+    ));
     let back = ok(&ws.call("capture_frame", &size, &me)).clone();
     assert_eq!(back["stats"], plain["stats"]);
     assert_eq!(back["image"]["data"], plain["image"]["data"]);
+    // And with the look's resources taken away the scene has the default
+    // look again, to the byte.
+    let ops: Vec<Value> = [
+        "Ambient",
+        "Bloom",
+        "ColorGrading",
+        "Fog",
+        "RenderSettings",
+        "Sky",
+    ]
+    .iter()
+    .map(|name| json!({ "op": "remove_resource", "name": name }))
+    .collect();
+    ok(&ws.call("edit_apply", &json!({ "ops": ops }), &me));
+    let default = ok(&ws.call("capture_frame", &size, &me)).clone();
+    assert_eq!(default["stats"], natural["stats"]);
+    assert_eq!(default["image"]["data"], natural["image"]["data"]);
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
 /// Bloom (M12, design note M12-look-2-bloom) from the control plane:
 /// documented, searchable, set with an edit, written to the scene file,
-/// seen in the answers, and off until asked for.
+/// seen in the answers, and off with the look Plain.
 #[test]
 fn bloom_is_documented_set_with_an_edit_and_reported() {
     let (dir, mut ws) = project("bloom");
@@ -760,7 +844,8 @@ fn bloom_is_documented_set_with_an_edit_and_reported() {
         "edit_apply",
         &json!({ "ops": [{ "op": "spawn", "id": "lamp", "components": {
             "Primitive": { "shape": "Sphere" }, "Transform": { "translation": [0, 1, 0] },
-            "Material": { "base_color": [0, 0, 0, 1], "emissive": [12, 6, 1] } } }] }),
+            "Material": { "base_color": [0, 0, 0, 1], "emissive": [12, 6, 1] } } },
+            { "op": "apply_look", "look": "plain" }] }),
         &me,
     ));
     let size = json!({ "width": 160, "height": 90 });
@@ -768,7 +853,7 @@ fn bloom_is_documented_set_with_an_edit_and_reported() {
     assert_eq!(plain["stats"]["effects"], json!([]));
 
     // The setting is in the schema with its documentation, ranges and
-    // defaults, and the default is "off".
+    // defaults (the default look's faint glow).
     let schema = ok(&ws.call(
         "schema_get",
         &json!({ "names": ["Bloom"], "detail": "full" }),
@@ -786,8 +871,8 @@ fn bloom_is_documented_set_with_an_edit_and_reported() {
     assert!(bloom.to_string().contains("particles"), "{bloom}");
     let properties = &bloom["schema"]["properties"];
     for (field, default, low, high) in [
-        ("strength", 0.0, 0.0, 1.0),
-        ("spread", 0.5, 0.0, 1.0),
+        ("strength", 0.05, 0.0, 1.0),
+        ("spread", 0.4, 0.0, 1.0),
         ("threshold", 0.0, 0.0, 64.0),
     ] {
         let property = &properties[field];
@@ -815,8 +900,8 @@ fn bloom_is_documented_set_with_an_edit_and_reported() {
         );
     }
 
-    // Set with one edit; the scene file holds what was said and nothing
-    // else.
+    // Set with one edit; the scene file holds what was said (the other two
+    // fields keep what Plain wrote).
     ok(&ws.call(
         "edit_apply",
         &json!({ "ops": [{ "op": "set_resource", "name": "Bloom", "value": { "strength": 0.15 } }] }),
@@ -825,7 +910,10 @@ fn bloom_is_documented_set_with_an_edit_and_reported() {
     let file: Value =
         serde_json::from_str(&std::fs::read_to_string(dir.join("scenes/main.scene.json")).unwrap())
             .unwrap();
-    assert_eq!(file["resources"], json!({ "Bloom": { "strength": 0.15 } }));
+    assert_eq!(
+        file["resources"]["Bloom"],
+        json!({ "spread": 0.5, "strength": 0.15, "threshold": 0.0 })
+    );
     let shot = ok(&ws.call("capture_frame", &size, &me)).clone();
     assert_eq!(shot["stats"]["effects"], json!(["bloom"]));
     assert_eq!(
@@ -899,12 +987,12 @@ fn bloom_is_documented_set_with_an_edit_and_reported() {
         );
     }
 
-    // Taking the settings away again gives the first picture, to the byte.
-    let ops: Vec<Value> = ["Bloom", "Fog", "ColorGrading", "RenderSettings"]
-        .iter()
-        .map(|name| json!({ "op": "remove_resource", "name": name }))
-        .collect();
-    ok(&ws.call("edit_apply", &json!({ "ops": ops }), &me));
+    // Plain again gives the first picture, to the byte.
+    ok(&ws.call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "apply_look", "look": "plain" }] }),
+        &me,
+    ));
     let back = ok(&ws.call("capture_frame", &size, &me)).clone();
     assert_eq!(back["stats"], plain["stats"]);
     assert_eq!(back["image"]["data"], plain["image"]["data"]);
@@ -930,12 +1018,19 @@ fn cascaded_shadows_are_documented_set_with_an_edit_seen_and_reported() {
         &me,
     ));
     let size = json!({ "width": 160, "height": 90 });
+    let natural = ok(&ws.call("capture_frame", &size, &me)).clone();
+    assert_eq!(natural["stats"]["shadow_cascades"], 4, "four by default");
+    ok(&ws.call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "apply_look", "look": "plain" }] }),
+        &me,
+    ));
     let plain = ok(&ws.call("capture_frame", &size, &me)).clone();
-    assert_eq!(plain["stats"]["shadow_cascades"], 1, "one map by default");
+    assert_eq!(plain["stats"]["shadow_cascades"], 1, "one map with Plain");
     assert_eq!(plain["stats"]["shadow_casters"], 2);
 
     // The two fields are in the schema with their documentation, ranges and
-    // defaults, and the defaults are "one map".
+    // defaults, and the defaults are four cascades to a hundred meters.
     let schema = ok(&ws.call(
         "schema_get",
         &json!({ "names": ["RenderSettings"], "detail": "full" }),
@@ -944,7 +1039,7 @@ fn cascaded_shadows_are_documented_set_with_an_edit_seen_and_reported() {
     .clone();
     let properties = &schema["types"][0]["schema"]["properties"];
     for (field, default, low, high) in [
-        ("shadow_cascades", 1.0, 1.0, 4.0),
+        ("shadow_cascades", 4.0, 1.0, 4.0),
         ("shadow_distance", 100.0, 0.1, 10000.0),
     ] {
         let property = &properties[field];
@@ -981,8 +1076,7 @@ fn cascaded_shadows_are_documented_set_with_an_edit_seen_and_reported() {
         );
     }
 
-    // Set with one edit; the scene file holds what was said and nothing
-    // else.
+    // Set with one edit; the scene file holds what was said.
     ok(&ws.call(
         "edit_apply",
         &json!({ "ops": [{ "op": "set_resource", "name": "RenderSettings",
@@ -993,8 +1087,8 @@ fn cascaded_shadows_are_documented_set_with_an_edit_seen_and_reported() {
         serde_json::from_str(&std::fs::read_to_string(dir.join("scenes/main.scene.json")).unwrap())
             .unwrap();
     assert_eq!(
-        file["resources"],
-        json!({ "RenderSettings": { "shadow_cascades": 4, "shadow_distance": 40, "shadow_map_size": 256 } })
+        file["resources"]["RenderSettings"],
+        json!({ "antialiasing": "Off", "shadow_cascades": 4, "shadow_distance": 40, "shadow_map_size": 256 })
     );
     let shot = ok(&ws.call("capture_frame", &size, &me)).clone();
     assert_eq!(shot["stats"]["shadow_cascades"], 4, "{shot}");
@@ -1149,11 +1243,13 @@ fn cascaded_shadows_are_documented_set_with_an_edit_seen_and_reported() {
     assert_eq!(mended["stats"]["shadow_cascades"], 2);
     assert!(mended["diagnostics"].is_null(), "{mended}");
 
-    // Removing the resource is the first picture again... of the smaller
-    // ground: the same bytes as a project that never had cascades.
+    // Replacing the resource with one map is the Plain picture again... of
+    // the smaller ground: the same bytes as a project that never had
+    // cascades.
     ok(&ws.call(
         "edit_apply",
-        &json!({ "ops": [{ "op": "remove_resource", "name": "RenderSettings" }] }),
+        &json!({ "ops": [{ "op": "replace_resource", "name": "RenderSettings",
+            "value": { "antialiasing": "Off", "shadow_cascades": 1 } }] }),
         &me,
     ));
     let back = ok(&ws.call("capture_frame", &size, &me)).clone();
@@ -1164,7 +1260,8 @@ fn cascaded_shadows_are_documented_set_with_an_edit_seen_and_reported() {
         &json!({ "ops": [
             { "op": "spawn", "id": "ball", "components": {
                 "Primitive": { "shape": "Sphere" }, "Transform": { "translation": [0, 1, 0] } } },
-            { "op": "set", "id": "ground", "component": "Transform", "value": { "scale": [4, 1, 4] } } ] }),
+            { "op": "set", "id": "ground", "component": "Transform", "value": { "scale": [4, 1, 4] } },
+            { "op": "apply_look", "look": "plain" } ] }),
         &me,
     ));
     let never = ok(&other.call("capture_frame", &size, &me)).clone();
@@ -1172,4 +1269,149 @@ fn cascaded_shadows_are_documented_set_with_an_edit_seen_and_reported() {
 
     std::fs::remove_dir_all(&dir).unwrap();
     std::fs::remove_dir_all(&other_dir).unwrap();
+}
+
+/// An `Ambient` colour or intensity under the sky light (the default since
+/// scene format 2) changes nothing, so `check` and the picture say so, at
+/// the field in the scene file; `source: Color` (or the look plain) makes
+/// the setting count and quiets the warning. A file of format 1 meant a flat
+/// light by default and is not warned about (review of the switch).
+#[test]
+fn an_ambient_colour_the_sky_light_does_not_use_is_said() {
+    let (dir, mut ws) = project("ambient-unused");
+    let me = parse_actor("claude-code");
+    let size = json!({ "width": 64, "height": 36 });
+    let file = "scenes/main.scene.json";
+    let quiet = ok(&ws.call("check", &json!({}), &me)).clone();
+    assert!(
+        diagnostic(&quiet, "ambient_color_unused").is_none(),
+        "{quiet}"
+    );
+    let shot = ok(&ws.call("capture_frame", &size, &me)).clone();
+    assert!(
+        diagnostic(&shot, "ambient_color_unused").is_none(),
+        "{shot}"
+    );
+
+    // Only the intensity: the place is the intensity.
+    ok(&ws.call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "set_resource", "name": "Ambient", "value": { "intensity": 5000 } }] }),
+        &me,
+    ));
+    let checked = ok(&ws.call("check", &json!({}), &me)).clone();
+    assert_eq!(checked["passed"], true, "a warning, not an error");
+    let warning = diagnostic(&checked, "ambient_color_unused")
+        .unwrap_or_else(|| panic!("{checked}"))
+        .clone();
+    assert_eq!(warning["severity"], "warning");
+    assert_eq!(warning["location"]["file"], file);
+    assert_eq!(warning["location"]["path"], "/resources/Ambient/intensity");
+    assert!(warning["location"]["line"].as_u64().is_some(), "{warning}");
+    assert!(
+        warning["hint"]
+            .as_str()
+            .is_some_and(|hint| hint.contains("\"Color\"") && hint.contains("plain")),
+        "{warning}"
+    );
+    let shot = ok(&ws.call("capture_frame", &size, &me)).clone();
+    let said = diagnostic(&shot, "ambient_color_unused")
+        .unwrap_or_else(|| panic!("{shot}"))
+        .clone();
+    assert_eq!(said["location"]["file"], file);
+    assert_eq!(said["location"]["path"], "/resources/Ambient/intensity");
+    assert!(
+        diagnostic(
+            ok(&ws.call("describe_view", &size, &me)),
+            "ambient_color_unused"
+        )
+        .is_some()
+    );
+    // The setting really does nothing: the picture is the default one.
+    let default_look = {
+        let (other_dir, mut other) = project("ambient-unused-default");
+        let picture = ok(&other.call("capture_frame", &size, &me))["image"]["data"].clone();
+        std::fs::remove_dir_all(&other_dir).unwrap();
+        picture
+    };
+    assert_eq!(shot["image"]["data"], default_look);
+
+    // A colour too: the colour is named first.
+    ok(&ws.call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "set_resource", "name": "Ambient", "value": { "color": [1, 0.5, 0.2, 1] } }] }),
+        &me,
+    ));
+    let checked = ok(&ws.call("check", &json!({}), &me)).clone();
+    assert_eq!(
+        diagnostic(&checked, "ambient_color_unused").unwrap()["location"]["path"],
+        "/resources/Ambient/color"
+    );
+
+    // A flat light: the colour and intensity count, nothing is said.
+    ok(&ws.call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "set_resource", "name": "Ambient", "value": { "source": "Color" } }] }),
+        &me,
+    ));
+    let checked = ok(&ws.call("check", &json!({}), &me)).clone();
+    assert!(
+        diagnostic(&checked, "ambient_color_unused").is_none(),
+        "{checked}"
+    );
+    let flat = ok(&ws.call("capture_frame", &size, &me)).clone();
+    assert!(
+        diagnostic(&flat, "ambient_color_unused").is_none(),
+        "{flat}"
+    );
+    assert_ne!(flat["image"]["data"], default_look);
+
+    // The look plain sets a flat light too.
+    ok(&ws.call(
+        "edit_apply",
+        &json!({ "ops": [
+            { "op": "set_resource", "name": "Ambient", "value": { "source": "Sky" } },
+            { "op": "apply_look", "look": "plain" }
+        ] }),
+        &me,
+    ));
+    let checked = ok(&ws.call("check", &json!({}), &me)).clone();
+    assert!(
+        diagnostic(&checked, "ambient_color_unused").is_none(),
+        "{checked}"
+    );
+
+    // Format 1: an intensity alone was a flat light's (the old default
+    // source) and is not warned about; a source of Sky written out is.
+    std::fs::write(
+        dir.join("scenes/old.scene.json"),
+        "{\n  \"entities\": {},\n  \"format\": 1,\n  \"resources\": {\n    \"Ambient\": {\n      \"intensity\": 5000.0\n    }\n  }\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("scenes/old_sky.scene.json"),
+        "{\n  \"entities\": {},\n  \"format\": 1,\n  \"resources\": {\n    \"Ambient\": {\n      \"intensity\": 5000.0,\n      \"source\": \"Sky\"\n    }\n  }\n}\n",
+    )
+    .unwrap();
+    let checked = ok(&ws.call("check", &json!({}), &me)).clone();
+    let unused: Vec<&Value> = checked["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|d| d["code"] == "ambient_color_unused")
+        .collect();
+    assert_eq!(unused.len(), 1, "{checked}");
+    assert_eq!(unused[0]["location"]["file"], "scenes/old_sky.scene.json");
+    assert_eq!(unused[0]["location"]["line"], 6, "{}", unused[0]);
+
+    // The catalogue knows the code.
+    let docs = ok(&ws.call(
+        "docs_search",
+        &json!({ "query": "ambient_color_unused" }),
+        &me,
+    ))
+    .clone();
+    assert!(docs.to_string().contains("ambient_color_unused"), "{docs}");
+
+    std::fs::remove_dir_all(&dir).unwrap();
 }

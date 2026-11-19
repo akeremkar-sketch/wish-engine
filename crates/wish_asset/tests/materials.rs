@@ -273,7 +273,7 @@ const SCENE: &str = r#"{
       }
     }
   },
-  "format": 1
+  "format": 2
 }
 "#;
 
@@ -447,7 +447,7 @@ fn a_material_that_says_what_is_not_used_is_a_warning() {
     project.write(
         "scenes/main.scene.json",
         r#"{
-  "format": 1,
+  "format": 2,
   "entities": {
     "both": { "components": { "Primitive": {},
       "Material": { "file": "assets/materials/brick.mat.json", "base_color": [1, 0, 0, 1], "roughness": 1 } } },

@@ -303,10 +303,17 @@ fn bench_render_times_frames_and_reports_their_counts() {
     assert_eq!(report["workload"], "render");
     assert_eq!(report["adapter"]["software"], true);
     assert_eq!(report["frames"], 3);
-    // Every surface is drawn into the shadow map and into the picture; the
-    // sky and tone mapping are a draw call each.
-    assert_eq!(report["stats"]["draw_calls"], 40 + 40 + 2);
-    assert_eq!(report["stats"]["shadow_casters"], 40);
+    // The benchmark scene has the default look. Every surface is drawn into
+    // the picture (40) and into the cascades that it can shadow (four
+    // cascades; a surface counts once for each one it is drawn into); the
+    // sky, tone mapping and FXAA are a draw call each, and bloom is two for
+    // each of its four levels in a picture 90 pixels high.
+    let casters = report["stats"]["shadow_casters"].as_u64().unwrap();
+    assert!((40..=160).contains(&casters), "{report}");
+    assert_eq!(
+        report["stats"]["draw_calls"].as_u64().unwrap(),
+        40 + casters + 3 + 8
+    );
     assert_eq!(report["stats"]["width"], 160);
     assert_eq!(report["stats"]["height"], 90);
     assert!(report["stats"]["point_lights"].as_u64().unwrap() >= 1);
@@ -334,7 +341,10 @@ fn bench_render_times_frames_and_reports_their_counts() {
         text.contains("render - 10 draws - 96x64 - 2 frames"),
         "{text}"
     );
-    assert!(text.contains("22 draw calls"), "{text}");
+    // Ten surfaces in the picture and each in all four cascades, the sky,
+    // tone mapping, FXAA, and eight passes of bloom.
+    assert!(text.contains("61 draw calls"), "{text}");
+    assert!(text.contains("40 shadow casters"), "{text}");
     assert!(
         text.contains("created after the first frame: 0 textures, 0 buffers"),
         "{text}"

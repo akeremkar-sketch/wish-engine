@@ -95,11 +95,18 @@ pub fn format(
     };
     let mut changed: Vec<&str> = Vec::new();
     let mut skipped: Vec<&str> = Vec::new();
+    // Files of an older format are tidied in their own format, never
+    // migrated here (that would change what a formatter may: `wen migrate`
+    // does it, on purpose); they are named so that nobody is surprised.
+    let mut older: Vec<&str> = Vec::new();
     for file in project
         .files
         .iter()
         .filter(|file| selected(paths, &file.path))
     {
+        if file.older_format.is_some() {
+            older.push(&file.path);
+        }
         match &file.canonical {
             Some(canonical) if *canonical != file.source => {
                 if !check_only {
@@ -140,14 +147,17 @@ pub fn format(
         .collect();
     let success = skipped.is_empty() && !(check_only && !changed.is_empty());
     let text = if as_json {
-        json!({
+        let mut answer = json!({
             "ok": success,
             "check": check_only,
             "changed": changed,
             "skipped": skipped,
             "diagnostics": problems,
-        })
-        .to_string()
+        });
+        if !older.is_empty() {
+            answer["older_format"] = json!(older);
+        }
+        answer.to_string()
     } else {
         let mut text = render(&problems.iter().map(|d| (*d).clone()).collect::<Vec<_>>());
         let verb = if check_only {
@@ -160,6 +170,12 @@ pub fn format(
         }
         for path in &skipped {
             text.push_str(&format!("Skipped (has errors): {path}\n"));
+        }
+        for path in &older {
+            text.push_str(&format!(
+                "Older format (kept; `wen migrate` upgrades it to format {}): {path}\n",
+                wish_scene::FORMAT
+            ));
         }
         text.push_str(&format!(
             "{} file(s) {}.",
@@ -177,9 +193,10 @@ pub fn format(
 
 /// `wen migrate`: upgrades scene and prefab files of older format versions
 /// (`wish_control::migrate`: a file keeps every value it relied on whose
-/// default changed) and checks the rest. Format 1 is the only version so
-/// far, so today this reports what is current and refuses what it cannot
-/// upgrade.
+/// default changed) and checks the rest. Format 1 becomes format 2 (the
+/// look lock of 1.0); files already at format 2 are left as they are.
+/// (Setting `engine` in `wish.json` after a migration is a follow-up of
+/// ADR-027, rule 3, and is not done here.)
 pub fn migrate(paths: &[String], root: &Path, as_json: bool) -> Result<Outcome> {
     let paths = resolve(paths, root)?;
     let current = wish_scene::FORMAT;

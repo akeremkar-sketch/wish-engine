@@ -26,8 +26,10 @@
 //! type, recorded for each format in `defaults/format-<n>.json` and kept
 //! equal to the engine's own by a test (`wish_control`'s
 //! `the_recorded_defaults_are_the_engines`) until the format changes.
-//! [`STEPS`] lists the migrations this build can make; it is empty while
-//! every file is format 1.
+//! [`STEPS`] lists the migrations this build can make: one, from format 1
+//! (the defaults before the look lock of 1.0) to format 2. The loader runs
+//! them in memory on an older file as it reads it (`crate::document`), and
+//! `wen migrate` writes the result.
 //!
 //! Design: `docs/design/M12-look-lock.md`.
 
@@ -50,11 +52,37 @@ pub struct Step {
     pub defaults: &'static str,
 }
 
-/// The migrations this build makes, oldest first. Empty: format 1 is the
-/// only format so far. The switch of the default look adds
-/// `Step { from: 1, defaults: FORMAT_1_DEFAULTS }` and makes
-/// [`crate::FORMAT`] 2 (`docs/design/M12-look-lock.md`, "The switch").
-pub const STEPS: &[Step] = &[];
+/// The defaults scene and prefab files of format 2 are written against:
+/// the default look of 1.0 ("Natural"). Kept equal to the engine's own by a
+/// test until the format changes again.
+pub const FORMAT_2_DEFAULTS: &str = include_str!("defaults/format-2.json");
+
+/// The record of the format this build writes ([`crate::FORMAT`]).
+pub const CURRENT_DEFAULTS: &str = FORMAT_2_DEFAULTS;
+
+/// The migrations this build makes, oldest first. One: format 1 to 2, the
+/// switch of the default look (`docs/design/M12-look-lock.md`, "Switched").
+/// A later step is added after it, and [`crate::FORMAT`] goes up with it.
+pub const STEPS: &[Step] = &[Step {
+    from: 1,
+    defaults: FORMAT_1_DEFAULTS,
+}];
+
+/// Whether a file of format `from`, older than [`crate::FORMAT`], can be
+/// brought up to it: every step on the way exists.
+pub fn can_upgrade_from(from: u32) -> bool {
+    from < crate::FORMAT
+        && (from..crate::FORMAT).all(|format| STEPS.iter().any(|step| step.from == format))
+}
+
+/// The oldest format this build reads.
+pub fn oldest_readable() -> u32 {
+    (0..crate::FORMAT)
+        .rev()
+        .take_while(|format| can_upgrade_from(*format))
+        .last()
+        .unwrap_or(crate::FORMAT)
+}
 
 /// What kind of file is pinned.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -127,6 +155,28 @@ impl Defaults {
             components: table("components")?,
             resources: table("resources")?,
         })
+    }
+
+    /// These defaults without the types whose value differs from `record`'s
+    /// (or that `record` lacks).
+    ///
+    /// A file is pinned by type name, and only the engine's own types have
+    /// recorded defaults. A registry may hold another type of the same name
+    /// (a small tool's own `Camera`, a test's `Collider`): its defaults are
+    /// not the record's, and the old engine's values must never be written
+    /// into it. The engine's own types agree with the record of the current
+    /// format (a test keeps them equal), so for them nothing is left out.
+    pub fn agreeing_with(&self, record: &Defaults) -> Defaults {
+        let agreeing = |own: &BTreeMap<String, Value>, recorded: &BTreeMap<String, Value>| {
+            own.iter()
+                .filter(|(name, value)| recorded.get(*name) == Some(*value))
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect()
+        };
+        Defaults {
+            components: agreeing(&self.components, &record.components),
+            resources: agreeing(&self.resources, &record.resources),
+        }
     }
 
     /// The record of these defaults as format `format`'s.
@@ -552,12 +602,31 @@ mod tests {
                 "{record}"
             );
         }
-        // Today: format 1 is current and there is nothing to do.
-        assert!(STEPS.is_empty());
+        // The build's own steps: format 1 is read, format 2 is current, and
+        // the two records differ where the look lock changed a default.
+        assert_eq!(crate::FORMAT, 2);
+        assert!(can_upgrade_from(1) && !can_upgrade_from(0) && !can_upgrade_from(2));
+        assert_eq!(oldest_readable(), 1);
         let recorded = Defaults::parse(FORMAT_1_DEFAULTS).unwrap();
-        assert!(
-            recorded.resources.contains_key("Fog"),
-            "the record has the look resources"
+        let now = Defaults::parse(FORMAT_2_DEFAULTS).unwrap();
+        assert_eq!(recorded.resources["Fog"]["density"], 0.0);
+        assert_eq!(now.resources["Fog"]["density"], 0.0015);
+        assert_eq!(recorded.resources["Ambient"]["source"], "Color");
+        assert_eq!(now.resources["Ambient"]["source"], "Sky");
+        assert_eq!(
+            recorded.components, now.components,
+            "no component default changed"
         );
+        // A type of the same name with other defaults is not the engine's:
+        // it is left out, so nothing of the old record is written into it.
+        let mut other = now.clone();
+        other
+            .resources
+            .insert("Fog".to_owned(), json!({ "density": 7 }));
+        other.resources.insert("Mine".to_owned(), json!({ "a": 1 }));
+        let kept = other.agreeing_with(&now);
+        assert!(!kept.resources.contains_key("Fog") && !kept.resources.contains_key("Mine"));
+        assert_eq!(kept.resources.len(), now.resources.len() - 1);
+        assert_eq!(kept.components, now.components);
     }
 }

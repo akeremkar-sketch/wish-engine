@@ -411,12 +411,17 @@ pub struct RenderScene {
     /// When the ambient light comes from the sky (`Ambient.source: Sky`):
     /// its strength, 1 for what the sky gives by itself.
     pub sky_light: Option<f32>,
-    /// The fog (the world's `Fog`, or the defaults: none).
+    /// When the ambient light comes from the sky and `Ambient` sets a
+    /// colour or an intensity of its own (other than the default), which
+    /// are then not used: the first such field's name (`"color"`, then
+    /// `"intensity"`), for the warning `ambient_color_unused`.
+    pub ambient_unused: Option<&'static str>,
+    /// The fog (the world's `Fog`, or the defaults: a faint low haze).
     pub fog: Fog,
-    /// The colour grading (the world's `ColorGrading`, or the defaults:
-    /// none).
+    /// The colour grading (the world's `ColorGrading`, or the defaults: a
+    /// gentle grade).
     pub grading: ColorGrading,
-    /// The bloom (the world's `Bloom`, or the defaults: none).
+    /// The bloom (the world's `Bloom`, or the defaults: a faint glow).
     pub bloom: Bloom,
     /// Exposure value at ISO 100.
     pub ev100: f32,
@@ -457,6 +462,23 @@ impl RenderScene {
 fn rgb(color: Color) -> [f32; 3] {
     let [r, g, b, _] = color.to_array();
     [r, g, b]
+}
+
+/// With `source: Sky`, the first of `Ambient`'s own colour and intensity
+/// that is not its default: set, and not used. (Before the look lock the
+/// default source was `Color`, so a scene that sets only these fields now
+/// changes nothing; the warning says so.)
+fn ambient_unused(ambient: &Ambient) -> Option<&'static str> {
+    let default = Ambient::default();
+    if ambient.source != AmbientSource::Sky {
+        None
+    } else if ambient.color != default.color {
+        Some("color")
+    } else if ambient.intensity != default.intensity {
+        Some("intensity")
+    } else {
+        None
+    }
 }
 
 fn finite_matrix(matrix: &Mat4) -> bool {
@@ -504,6 +526,7 @@ pub fn extract(world: &World) -> Result<RenderScene> {
             ]
         },
         sky_light: (ambient.source == AmbientSource::Sky).then_some(ambient.sky_strength),
+        ambient_unused: ambient_unused(&ambient),
         fog: world.resource::<Fog>().copied().unwrap_or_default(),
         grading: world
             .resource::<ColorGrading>()

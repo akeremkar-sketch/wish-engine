@@ -10,6 +10,13 @@
 //!   now invalid leaves the last good document in place, and changes are
 //!   refused until the file is fixed: an agent must never overwrite a
 //!   person's half-finished edit.
+//! - A file of an older scene format is read as that format meant it
+//!   (`wish_scene::migrate`): the document holds the values the file relied
+//!   on, the file stays as it is. "Unchanged" is judged by the file's text,
+//!   so the difference between the two is never taken for a change made
+//!   outside the engine, never enters the history and never rewrites the
+//!   file by itself; the next change made through the engine writes the
+//!   document, which is the file migrated (what `wen migrate` writes).
 //! - Tools that read values (`entity_query`, `entity_get`) look at the
 //!   document instantiated into a world ([`WorldView`]): prefabs expanded,
 //!   defaults filled in, global transforms computed. Views are cached per
@@ -482,7 +489,13 @@ impl Workspace {
                 }
                 None => return Err(self.scene_not_found(path)),
             };
-            notes.extend(warnings.into_iter().filter(|w| w.code != "not_canonical"));
+            // How the file is written (its layout, an older format) is
+            // `check`'s to say, not every tool call's.
+            notes.extend(
+                warnings
+                    .into_iter()
+                    .filter(|w| w.code != "not_canonical" && w.code != "old_format"),
+            );
             self.docs.open.insert(
                 path.to_owned(),
                 OpenDocument {

@@ -99,6 +99,18 @@ The language is chosen at the top right of the welcome screen, and later in the 
     the game code's schema.
 - **Scene resources:** settings that belong to the scene, not to an entity, such as gravity,
   sky and ambient light. They are under *Scene resources*.
+- **The look of a scene:**
+  - A new scene has the engine's default look, *Natural*: the sky lights the scene, a small sun
+    disc, a faint haze far away, a soft glow on bright light, gentle colour grading, smoothed
+    edges and sharp shadows near the camera.
+  - *Scene resources*, *Add resource...*, *Apply a look...* sets a whole look in one step:
+    *Plain* (no effects at all), *Natural* or *Vivid* (Natural, stronger). It writes the values
+    into the scene, and one undo takes it back.
+  - Each part can be changed by hand afterwards: add `Fog`, `Bloom`, `ColorGrading`, `Sky`,
+    `Ambient` or `RenderSettings` under *Scene resources* and edit its fields.
+  - The in-game interface, sprites and particles are drawn over the finished picture: the look
+    does not change them. A camera set to *Orthographic* (2D) never shows the sun's disc.
+  - A scene made with an older version of the engine keeps the look it had (see section 10).
 - **Assets** (bottom tab):
   - Models, images and sounds of the project, filtered by kind.
   - Drag one into the view to place it.
@@ -331,6 +343,20 @@ explains a code.
 | *Claude Code was not found* | Install Claude Code and sign in once, or set `WISH_CLAUDE` to its path |
 | *not exported: ... errors* | Fix what *Problems* lists, then export again |
 | The view is black | Look in *Problems*: the scene may have no camera |
+| *This file is format 1; this engine writes format 2* | Nothing is wrong: see below |
+
+**Projects from an older version.** Scene and prefab files carry a format number. This version
+writes format 2; the default look of a scene changed with it. A file of format 1 opens as it is and
+looks and plays as it did: the engine keeps the old values for it. *Problems* (and `wen check`)
+lists such files with a warning. The file is rewritten as format 2, with those values written into
+it, the first time you change the scene in the editor, or all at once with:
+
+```bash
+wen migrate --root my_game
+```
+
+To give such a scene the new look afterwards, use *Apply a look...* and pick *Natural*. Replays
+recorded before the files were rewritten no longer match and have to be recorded again.
 
 ## 11. What is in a project folder
 

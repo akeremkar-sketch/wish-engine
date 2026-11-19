@@ -1017,7 +1017,12 @@ fn settings_that_are_not_numbers_draw_the_picture_of_their_fallbacks() {
     let renderer = Renderer::new(&gpu).unwrap();
     let draw = |scene: &RenderScene| renderer.render(&gpu, scene, None, 160, 100).unwrap();
     let plain = draw(&panel_scene(BRIGHT, json!({})));
-    let even = draw(&panel_scene(BRIGHT, json!({ "strength": 0.2 })));
+    // The fixture is format 1, whose spread was 0.5: the engine's default
+    // (0.4 since the look lock) is written out.
+    let even = draw(&panel_scene(
+        BRIGHT,
+        json!({ "strength": 0.2, "spread": 0.4 }),
+    ));
 
     // A scene file cannot hold these (the loader checks ranges); game code
     // can write them into the resource. A strength that is not a number is
@@ -1031,7 +1036,7 @@ fn settings_that_are_not_numbers_draw_the_picture_of_their_fallbacks() {
         assert_eq!(frame.image, plain.image, "strength {strength}");
         assert_eq!(frame.stats.effects, Effects::default());
     }
-    // The other two fall back to their defaults.
+    // The other two fall back to the engine's defaults.
     let mut broken = panel_scene(BRIGHT, json!({ "strength": 0.2 }));
     broken.bloom.spread = f32::NAN;
     broken.bloom.threshold = f32::INFINITY;

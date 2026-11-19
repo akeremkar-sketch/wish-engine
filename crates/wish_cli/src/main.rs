@@ -96,7 +96,11 @@ COMMANDS:
                column. Exits with failure if there is any error.
     fmt        Rewrite documents in canonical form; --check only lists the ones that are
                not (for CI). Files with errors are skipped and reported.
-    migrate    Upgrade documents of older format versions (format 1 is the only one so far).
+    migrate    Upgrade scene and prefab files of an older format to the one this engine writes
+               (format 2). A file keeps its meaning: every value it relied on whose default
+               changed since is written into it, so it looks and plays as it did. Files of
+               format 1 are read without it too (check names them); the next change made
+               through the engine saves them migrated.
     watch      Load a scene and reload it when files change; an invalid change is reported
                and the last good scene stays. With --json, one JSON line per event.
     capture    Draw a scene into a PNG without a window (default 1280x720, from the first

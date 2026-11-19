@@ -61,11 +61,11 @@ impl Drop for Dir {
     }
 }
 
-const PREFAB: &str = "{\n  \"entities\": {\n    \"root\": {}\n  },\n  \"format\": 1\n}\n";
+const PREFAB: &str = "{\n  \"entities\": {\n    \"root\": {}\n  },\n  \"format\": 2\n}\n";
 
 fn scene(extra: &str) -> String {
     format!(
-        "{{\n  \"entities\": {{\n    \"a\": {{}},\n    \"m\": {{\n      \"components\": {{\n        \"Model\": {{\n          \"mesh\": \"assets/m.glb\"\n        }}\n      }}\n    }}{extra}\n  }},\n  \"format\": 1\n}}\n"
+        "{{\n  \"entities\": {{\n    \"a\": {{}},\n    \"m\": {{\n      \"components\": {{\n        \"Model\": {{\n          \"mesh\": \"assets/m.glb\"\n        }}\n      }}\n    }}{extra}\n  }},\n  \"format\": 2\n}}\n"
     )
 }
 
@@ -109,7 +109,7 @@ fn a_project_is_checked_as_a_whole_with_every_problem_reported() {
     dir.write("assets/m.glb.meta.json", "{ \"format\": 3 }");
     dir.write(
         "prefabs/bad.prefab.json",
-        "{ \"format\": 1, \"entities\": {} }",
+        "{ \"format\": 2, \"entities\": {} }",
     );
     dir.write(
         "extra.scene.json",
@@ -250,7 +250,7 @@ fn hot_reload_swaps_the_scene_and_keeps_the_last_good_one_when_a_change_is_inval
 fn hot_reload_resets_resources_the_file_no_longer_sets() {
     let dir = project("resources");
     let with = |resources: &str| {
-        format!("{{\n  \"entities\": {{\n    \"a\": {{}}\n  }},\n  \"format\": 1{resources}\n}}\n")
+        format!("{{\n  \"entities\": {{\n    \"a\": {{}}\n  }},\n  \"format\": 2{resources}\n}}\n")
     };
     dir.write(
         "main.scene.json",

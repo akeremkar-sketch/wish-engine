@@ -1,8 +1,11 @@
 //! The look lock (M12 package 9): named looks applied with `edit_apply`
 //! `apply_look`; the recorded defaults of the file format, kept equal to the
-//! engine's (ADR-027, rule 1, the guard); and the migration a change of the
-//! default look needs, tried with each candidate look as the new defaults on
-//! every scene of the repository and on generated ones. Design:
+//! engine's (ADR-027, rule 1, the guard); the migration the change of the
+//! default look needed, tried with each look as the new defaults on every
+//! scene of the repository and on generated ones; and the switch itself:
+//! the defaults are the look "Natural", the scene format is 2, and a file of
+//! format 1 is read as it was meant, keeps its picture to the byte, and
+//! becomes its migrated form when it is next saved. Design:
 //! `docs/design/M12-look-lock.md`.
 
 #![allow(missing_docs)]
@@ -45,9 +48,32 @@ fn record_path() -> PathBuf {
     ))
 }
 
+/// The defaults of format 1: the engine's before the look lock.
 fn recorded() -> Defaults {
     Defaults::parse(wish_scene::migrate::FORMAT_1_DEFAULTS).unwrap()
 }
+
+const MAIN: &str = "scenes/main.scene.json";
+
+/// Relabels the project's scene as a file of format 1: what a project made
+/// before the look lock holds (the starting scene's content did not change
+/// with the switch, only the number).
+fn as_format_1(dir: &Path) -> String {
+    let now = std::fs::read_to_string(dir.join(MAIN)).unwrap();
+    let old = now.replace("\"format\": 2", "\"format\": 1");
+    assert_ne!(old, now, "a new project is format 2: {now}");
+    std::fs::write(dir.join(MAIN), &old).unwrap();
+    old
+}
+
+const ALL_EFFECTS: [&str; 6] = [
+    "sky_light",
+    "sun_disc",
+    "fog",
+    "bloom",
+    "color_grading",
+    "fxaa",
+];
 
 // --- Named looks -----------------------------------------------------------
 
@@ -56,8 +82,13 @@ fn a_look_is_applied_in_one_step_and_the_answer_says_what_it_set() {
     let (dir, mut ws) = project("apply");
     let me = parse_actor("claude-code");
     let size = json!({ "width": 96, "height": 54 });
+    // A new scene sets nothing of the look: it is drawn with the defaults,
+    // which are the look "Natural".
     let before = ok(&ws.call("capture_frame", &size, &me)).clone();
+    assert_eq!(before["stats"]["effects"], json!(ALL_EFFECTS), "{before}");
+    assert_eq!(before["stats"]["shadow_cascades"], 4);
     let file_before = std::fs::read_to_string(dir.join("scenes/main.scene.json")).unwrap();
+    assert!(!file_before.contains("resources"), "{file_before}");
 
     // A dry run says what would change and changes nothing.
     let dry = ok(&ws.call(
@@ -108,18 +139,11 @@ fn a_look_is_applied_in_one_step_and_the_answer_says_what_it_set() {
     assert_eq!(now["Sky"]["luminance"], 20000.0);
 
     let after = ok(&ws.call("capture_frame", &size, &me)).clone();
-    assert_eq!(
-        after["stats"]["effects"],
-        json!([
-            "sky_light",
-            "sun_disc",
-            "fog",
-            "bloom",
-            "color_grading",
-            "fxaa"
-        ])
-    );
+    assert_eq!(after["stats"]["effects"], json!(ALL_EFFECTS));
     assert_eq!(after["stats"]["shadow_cascades"], 4);
+    // Natural written out is the picture of the defaults, to the byte: the
+    // look and the defaults are the same twenty values.
+    assert_eq!(after["image"]["data"], before["image"]["data"]);
     // One change of the history, undone in one step.
     ok(&ws.call("edit_history", &json!({ "action": "undo" }), &me));
     assert_eq!(
@@ -129,15 +153,38 @@ fn a_look_is_applied_in_one_step_and_the_answer_says_what_it_set() {
     let undone = ok(&ws.call("capture_frame", &size, &me)).clone();
     assert_eq!(undone["image"]["data"], before["image"]["data"]);
 
-    // Plain is the picture of the defaults, to the byte.
+    // Vivid is another picture, with the same effects.
+    ok(&ws.call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "apply_look", "look": "vivid" }] }),
+        &me,
+    ));
+    let vivid = ok(&ws.call("capture_frame", &size, &me)).clone();
+    assert_ne!(vivid["image"]["data"], before["image"]["data"]);
+    assert_eq!(vivid["stats"]["effects"], json!(ALL_EFFECTS));
+
+    // Plain turns every effect off: the picture the engine drew before the
+    // look settings existed, which is also, to the byte, the picture of
+    // the same scene as a file of format 1.
     ok(&ws.call(
         "edit_apply",
         &json!({ "ops": [{ "op": "apply_look", "look": "plain" }] }),
         &me,
     ));
     let plain = ok(&ws.call("capture_frame", &size, &me)).clone();
-    assert_eq!(plain["image"]["data"], before["image"]["data"]);
+    assert_ne!(plain["image"]["data"], before["image"]["data"]);
     assert_eq!(plain["stats"]["effects"], json!([]));
+    assert_eq!(plain["stats"]["shadow_cascades"], 1);
+    std::fs::write(
+        dir.join("scenes/old.scene.json"),
+        file_before.replace("\"format\": 2", "\"format\": 1"),
+    )
+    .unwrap();
+    let mut old_size = size.clone();
+    old_size["scene"] = json!("scenes/old.scene.json");
+    let old = ok(&ws.call("capture_frame", &old_size, &me)).clone();
+    assert_eq!(old["image"]["data"], plain["image"]["data"]);
+    assert_eq!(old["stats"]["effects"], json!([]));
 
     // An unknown look is refused at its own index, with the names there are.
     let wrong = ws.call(
@@ -170,7 +217,7 @@ fn a_look_is_applied_in_one_step_and_the_answer_says_what_it_set() {
 }
 
 #[test]
-fn every_look_is_a_full_set_of_clean_values_and_plain_is_the_format_1_defaults() {
+fn every_look_is_a_full_set_of_clean_values_plain_is_format_1_and_natural_the_defaults() {
     let record = recorded();
     let looks = wish_control::looks::looks().unwrap();
     let (_dir, mut ws) = project("clean");
@@ -206,6 +253,29 @@ fn every_look_is_a_full_set_of_clean_values_and_plain_is_the_format_1_defaults()
             );
         }
     }
+    // Natural is the engine's defaults, exactly: the record of format 1
+    // with Natural's values in place is the engine's whole table of
+    // defaults (so no other default moved with the switch), and that table
+    // is the record of format 2.
+    let engine = wish_control::migrate::engine_defaults().unwrap();
+    assert_eq!(with_look(&record, "natural"), engine);
+    assert_eq!(
+        Defaults::parse(wish_scene::migrate::FORMAT_2_DEFAULTS).unwrap(),
+        engine
+    );
+    // What changed between the two formats: fourteen values of six
+    // resources, and nothing of any component.
+    assert_eq!(record.components, engine.components);
+    let (mut changed, mut added) = (Vec::new(), Vec::new());
+    differences(
+        &record.to_value(1)["resources"],
+        &engine.to_value(1)["resources"],
+        "",
+        &mut changed,
+        &mut added,
+    );
+    assert!(added.is_empty(), "{added:?}");
+    assert_eq!(changed.len(), 14, "{changed:#?}");
 }
 
 // --- The guard: recorded defaults ------------------------------------------
@@ -270,6 +340,54 @@ fn the_recorded_defaults_are_the_engines() {
         "new types or fields since the record of format {} (additions keep old files' meaning): \
          {added:#?}\nRecord them with UPDATE_DEFAULTS=1 and look at the diff.",
         wish_scene::FORMAT
+    );
+}
+
+/// The loader reads an older file with the defaults of the registry's types
+/// that agree with the record of the current format
+/// (`Defaults::agreeing_with`), so that someone else's type of an engine
+/// type's name is never pinned. A type whose defaults drift from the record
+/// (a field added without `UPDATE_DEFAULTS=1`) would be left out silently,
+/// and every file of format 1 would then lose its pinned values for that
+/// type and change its look with no diagnostic. So every type the engine
+/// registers must be kept, and every type the record of format 1 knows must
+/// still be one of them (a type taken away needs a migration step of its
+/// own) — checked against the record built into the loader, not the file
+/// on disk (review of the switch).
+#[test]
+fn the_loader_pins_every_type_the_engine_registers() {
+    let engine = wish_control::migrate::engine_defaults().unwrap();
+    let current = Defaults::parse(wish_scene::migrate::CURRENT_DEFAULTS).unwrap();
+    let kept = engine.agreeing_with(&current);
+    let left_out = |all: &BTreeMap<String, Value>, kept: &BTreeMap<String, Value>| {
+        all.keys()
+            .filter(|name| !kept.contains_key(*name))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        left_out(&engine.components, &kept.components),
+        Vec::<String>::new(),
+        "engine components whose defaults are not the record of format {} (run \
+         UPDATE_DEFAULTS=1 cargo test -p wish_control --test look_lock)",
+        wish_scene::FORMAT
+    );
+    assert_eq!(
+        left_out(&engine.resources, &kept.resources),
+        Vec::<String>::new(),
+        "engine resources whose defaults are not the record of format {} (run \
+         UPDATE_DEFAULTS=1 cargo test -p wish_control --test look_lock)",
+        wish_scene::FORMAT
+    );
+    assert_eq!(kept, engine);
+    let old = recorded();
+    assert_eq!(
+        left_out(&old.components, &kept.components),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        left_out(&old.resources, &kept.resources),
+        Vec::<String>::new()
     );
 }
 
@@ -548,6 +666,10 @@ fn a_migrated_file_means_under_the_new_defaults_what_it_meant_under_the_old() {
             .is_some()
     };
     let candidates = [
+        (
+            "the engine's",
+            wish_control::migrate::engine_defaults().unwrap(),
+        ),
         ("natural", with_look(&record, "natural")),
         ("vivid", with_look(&record, "vivid")),
         ("plain", with_look(&record, "plain")),
@@ -593,14 +715,15 @@ fn a_migrated_file_means_under_the_new_defaults_what_it_meant_under_the_old() {
         }
         written_total.insert(*label, written);
     }
-    // Plain is today's defaults: nothing to write, every file as it was.
+    // Plain is format 1's defaults: nothing to write, every file as it was.
     assert_eq!(written_total["plain"], 0, "{written_total:?}");
     assert!(
         written_total["natural"] > 0
             && written_total["everything changed"] > written_total["natural"]
     );
-    // With no changed default (today), every example's file is left
-    // byte for byte as it is.
+    assert_eq!(written_total["the engine's"], written_total["natural"]);
+    // With no changed default, every example's file is left byte for byte
+    // as it is.
     for (name, kind, file) in &files {
         if !name.contains("/examples/") {
             continue;
@@ -618,23 +741,9 @@ fn a_migrated_file_means_under_the_new_defaults_what_it_meant_under_the_old() {
     }
 }
 
-/// Writes the resources whose default differs between `record` and `new`
-/// in full, as they are under `new`: drawn by today's engine (whose defaults
-/// are `record`), the file then looks as it would under `new`.
-fn as_drawn_under(file: &Value, record: &Defaults, new: &Defaults) -> Value {
-    let mut out = file.clone();
-    let meaning = meaning(file, new, &BTreeMap::new());
-    for (name, value) in &new.resources {
-        if record.resources.get(name) != Some(value) {
-            out["resources"][name] = meaning[format!("resource {name}")].clone();
-        }
-    }
-    out
-}
-
 /// Draws `file` as a new scene file of the project (a new name each time,
-/// so that no change is missed).
-fn picture(dir: &Path, ws: &mut Workspace, file: &Value) -> Value {
+/// so that no change is missed). Returns the picture and the effects.
+fn picture(dir: &Path, ws: &mut Workspace, file: &Value) -> (Value, Value) {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let scene = format!("scenes/probe_{n}.scene.json");
@@ -644,24 +753,28 @@ fn picture(dir: &Path, ws: &mut Workspace, file: &Value) -> Value {
     )
     .unwrap();
     let me = parse_actor("claude-code");
-    ok(&ws.call(
+    let answer = ok(&ws.call(
         "capture_frame",
         &json!({ "scene": scene, "width": 160, "height": 90 }),
         &me,
-    ))["image"]["data"]
-        .clone()
+    ))
+    .clone();
+    (
+        answer["image"]["data"].clone(),
+        answer["stats"]["effects"].clone(),
+    )
 }
 
-/// The proof by picture: each scene drawn as it is today, and drawn as the
-/// migrated file would be under a candidate's defaults, gives the same
-/// bytes; without the migration the picture changes.
+/// The proof by picture, with the real switch: a scene file of format 1
+/// drawn as it is (read through the migration in memory), drawn after the
+/// migration wrote it as format 2, and drawn with the look Plain applied to
+/// its unmigrated content give the same bytes; the same content labelled
+/// format 2 without the migration is the new default look, another picture.
 #[test]
-fn a_migrated_scene_keeps_its_picture_to_the_byte() {
-    let record = recorded();
+fn a_format_1_scene_keeps_its_picture_to_the_byte() {
     let (dir, mut ws) = project("pictures");
     let start: Value =
-        serde_json::from_str(&std::fs::read_to_string(dir.join("scenes/main.scene.json")).unwrap())
-            .unwrap();
+        serde_json::from_str(&std::fs::read_to_string(dir.join(MAIN)).unwrap()).unwrap();
     let first_pixel: Value = serde_json::from_str(
         &std::fs::read_to_string(repo().join("examples/first-pixel/scenes/main.scene.json"))
             .unwrap(),
@@ -669,58 +782,106 @@ fn a_migrated_scene_keeps_its_picture_to_the_byte() {
     .unwrap();
     let mut partly = start.clone();
     partly["resources"] = json!({
-        "Fog": { "density": 0.0 },
+        "Fog": { "start": 2.0 },
         "RenderSettings": { "shadow_map_size": 1024 },
         "Sky": { "zenith": [0.3, 0.2, 0.6, 1.0] },
         "Ambient": { "intensity": 12000.0 }
     });
     let no_prefabs = |_: &str, _: &str, _: &str| false;
-    for look in ["natural", "vivid"] {
-        let new = with_look(&record, look);
-        for (label, file) in [
-            ("new project", &start),
-            ("first-pixel", &first_pixel),
-            ("partly set", &partly),
-        ] {
-            let today = picture(&dir, &mut ws, file);
-            let mut pinned = file.clone();
-            wish_scene::migrate::pin(&mut pinned, Kind::Scene, &record, &new, &no_prefabs);
-            let migrated = picture(&dir, &mut ws, &as_drawn_under(&pinned, &record, &new));
-            assert_eq!(
-                migrated, today,
-                "{look}: {label}: the migrated file draws differently"
-            );
-            let unmigrated = picture(&dir, &mut ws, &as_drawn_under(file, &record, &new));
-            assert_ne!(
-                unmigrated, today,
-                "{look}: {label}: the new defaults change nothing?"
-            );
-        }
+    let engine = wish_control::migrate::engine_defaults().unwrap();
+    let me = parse_actor("claude-code");
+    for (label, file) in [
+        ("new project", &start),
+        ("first-pixel", &first_pixel),
+        ("partly set", &partly),
+    ] {
+        let mut old = file.clone();
+        old["format"] = json!(1);
+        let (as_it_is, effects) = picture(&dir, &mut ws, &old);
+        assert_eq!(
+            effects,
+            json!([]),
+            "{label}: a format-1 file has no effect on"
+        );
+        let mut migrated = old.clone();
+        let written = wish_scene::migrate::upgrade(
+            &mut migrated,
+            Kind::Scene,
+            wish_scene::FORMAT,
+            wish_scene::migrate::STEPS,
+            &engine,
+            &no_prefabs,
+        )
+        .unwrap();
+        assert!(!written.is_empty(), "{label}");
+        assert_eq!(migrated["format"], 2);
+        let (after, effects) = picture(&dir, &mut ws, &migrated);
+        assert_eq!(
+            after, as_it_is,
+            "{label}: the migrated file draws differently"
+        );
+        assert_eq!(effects, json!([]));
+        // The same content as a file of format 2: the new defaults.
+        let mut new = file.clone();
+        new["format"] = json!(2);
+        let (unmigrated, effects) = picture(&dir, &mut ws, &new);
+        assert_ne!(
+            unmigrated, as_it_is,
+            "{label}: the new defaults change nothing?"
+        );
+        assert_eq!(effects, json!(ALL_EFFECTS), "{label}");
+        // And Plain applied to that is the old picture again.
+        let scene = format!("scenes/plain_{}.scene.json", label.replace([' ', '-'], "_"));
+        std::fs::write(
+            dir.join(&scene),
+            wish_scene::json::to_canonical(&new).unwrap(),
+        )
+        .unwrap();
+        ok(&ws.call(
+            "edit_apply",
+            &json!({ "scene": scene, "ops": [{ "op": "apply_look", "look": "plain" }] }),
+            &me,
+        ));
+        let plain = ok(&ws.call(
+            "capture_frame",
+            &json!({ "scene": scene, "width": 160, "height": 90 }),
+            &me,
+        ))["image"]["data"]
+            .clone();
+        assert_eq!(
+            plain, as_it_is,
+            "{label}: Plain is not the format-1 picture"
+        );
     }
 }
 
-/// `wen migrate`'s capability, with a step as the switch would add it: the
-/// project's scene files are rewritten in canonical form with the values
-/// they relied on, a second run finds them current, and a dry run writes
-/// nothing.
+/// `wen migrate`'s capability with the engine's own step: a project of
+/// format 1 is rewritten in canonical form with the values it relied on, a
+/// second run finds it current, and a dry run writes nothing.
 #[test]
 fn a_project_is_migrated_with_the_switchs_step() {
-    let record = recorded();
     let (dir, _ws) = project("migrate");
-    let new = with_look(&record, "natural");
-    const STEP: Step = Step {
-        from: 1,
-        defaults: wish_scene::migrate::FORMAT_1_DEFAULTS,
-    };
-    let scene = dir.join("scenes/main.scene.json");
-    let before = std::fs::read_to_string(&scene).unwrap();
-    let dry = wish_control::migrate::migrate_project(&dir, &[], &[STEP], 2, &new, false).unwrap();
+    let engine = wish_control::migrate::engine_defaults().unwrap();
+    let steps = wish_scene::migrate::STEPS;
+    let to = wish_scene::FORMAT;
+    assert_eq!((steps.len(), to), (1, 2));
+    // A new project is current already.
+    let fresh =
+        wish_control::migrate::migrate_project(&dir, &[], steps, to, &engine, true).unwrap();
+    assert!(
+        fresh.migrated.is_empty() && fresh.diagnostics.is_empty(),
+        "{fresh:?}"
+    );
+    let before = as_format_1(&dir);
+    let scene = dir.join(MAIN);
+    let dry = wish_control::migrate::migrate_project(&dir, &[], steps, to, &engine, false).unwrap();
     assert_eq!(dry.migrated.len(), 1, "{dry:?}");
     assert_eq!(std::fs::read_to_string(&scene).unwrap(), before);
-    let done = wish_control::migrate::migrate_project(&dir, &[], &[STEP], 2, &new, true).unwrap();
+    let done = wish_control::migrate::migrate_project(&dir, &[], steps, to, &engine, true).unwrap();
     assert!(done.diagnostics.is_empty(), "{:?}", done.diagnostics);
     let (name, written) = &done.migrated[0];
-    assert_eq!(name, "scenes/main.scene.json");
+    assert_eq!(name, MAIN);
+    assert_eq!(written.len(), 14, "{written:?}");
     assert!(
         written.contains(&"/resources/Ambient/source".to_owned()),
         "{written:?}"
@@ -729,18 +890,142 @@ fn a_project_is_migrated_with_the_switchs_step() {
     assert_eq!(after["format"], 2);
     assert_eq!(after["resources"]["Ambient"]["source"], "Color");
     assert_eq!(after["resources"]["RenderSettings"]["shadow_cascades"], 1);
+    assert_eq!(after["resources"]["Sky"]["sun_size_deg"], 0.0);
     assert_eq!(
         wish_scene::json::to_canonical(&after).unwrap(),
         std::fs::read_to_string(&scene).unwrap(),
         "written in canonical form"
     );
-    let again = wish_control::migrate::migrate_project(&dir, &[], &[STEP], 2, &new, true).unwrap();
+    let again =
+        wish_control::migrate::migrate_project(&dir, &[], steps, to, &engine, true).unwrap();
     assert!(again.migrated.is_empty());
     assert_eq!(again.up_to_date, done.up_to_date + 1);
-    // Today's engine: format 1 is current, nothing to migrate.
-    let (dir, _ws) = project("migrate-today");
-    let today = wish_control::migrate::migrate_project(
-        &dir,
+}
+
+fn open(dir: &Path) -> Workspace {
+    let mut ws = Workspace::open(WorkspaceOptions {
+        root: dir.to_path_buf(),
+        example: None,
+    })
+    .unwrap();
+    ws.set_software(true);
+    ws
+}
+
+/// A project of format 1 is opened without a migration: read as it was
+/// meant, never rewritten by looking at it, never taken for a change made
+/// outside the engine; the first change saves it as its migrated form, the
+/// bytes `wen migrate` writes; `check` says so with a warning, not an error.
+#[test]
+fn a_format_1_project_opens_as_it_was_and_is_saved_migrated_on_its_next_change() {
+    let (dir, ws) = project("format-1");
+    drop(ws);
+    let old = as_format_1(&dir);
+    let scene = dir.join(MAIN);
+    let me = parse_actor("claude-code");
+    let mut ws = open(&dir);
+
+    // check: one warning that names the file and the remedy; it passes.
+    let checked = ok(&ws.call("check", &json!({}), &me)).clone();
+    assert_eq!(checked["passed"], true, "{checked}");
+    let warnings: Vec<&Value> = checked["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|d| d["code"] == "old_format")
+        .collect();
+    assert_eq!(warnings.len(), 1, "{checked}");
+    assert_eq!(warnings[0]["severity"], "warning");
+    assert_eq!(warnings[0]["location"]["file"], MAIN);
+    assert!(
+        warnings[0]["hint"]
+            .as_str()
+            .unwrap()
+            .contains("wen migrate"),
+        "{checked}"
+    );
+
+    // Looking at it, again and again: the old picture, the values the file
+    // relied on, no history, nothing "changed by others", and the file as
+    // it was.
+    for _ in 0..2 {
+        let shot =
+            ok(&ws.call("capture_frame", &json!({ "width": 96, "height": 54 }), &me)).clone();
+        assert_eq!(shot["stats"]["effects"], json!([]), "{shot}");
+        assert_eq!(shot["stats"]["shadow_cascades"], 1);
+        assert_eq!(shot["revision"], 0);
+        assert!(shot.get("diagnostics").is_none(), "{shot}");
+        let got = ok(&ws.call("scene_get", &json!({}), &me)).clone();
+        assert_eq!(got["revision"], 0, "{got}");
+        assert!(got.get("changed_by_others").is_none(), "{got}");
+        let history = ok(&ws.call("edit_history", &json!({}), &me)).clone();
+        assert_eq!(history["revision"], 0, "{history}");
+        assert!(
+            history["entries"].as_array().is_none_or(Vec::is_empty),
+            "{history}"
+        );
+        assert_eq!(std::fs::read_to_string(&scene).unwrap(), old);
+    }
+    let fog = ok(&ws.call(
+        "entity_get",
+        &json!({ "resources": ["Fog", "Ambient"] }),
+        &me,
+    ))
+    .clone();
+    assert_eq!(fog["resources"]["Fog"]["density"], 0.0, "{fog}");
+    assert_eq!(fog["resources"]["Ambient"]["source"], "Color");
+    // A game started from it plays, and the file is still as it was.
+    let session = ok(&ws.call("sim_start", &json!({}), &me))["session"].clone();
+    ok(&ws.call("sim_step", &json!({ "session": session, "frames": 3 }), &me));
+    ok(&ws.call("sim_stop", &json!({ "session": session }), &me));
+    assert_eq!(std::fs::read_to_string(&scene).unwrap(), old);
+
+    // A change made outside the engine to the format-1 file is one change
+    // by the file that touches what was changed, nothing else.
+    let mut by_hand: Value = serde_json::from_str(&old).unwrap();
+    by_hand["entities"]["ground"]["components"]["Material"]["roughness"] = json!(0.5);
+    let edited = wish_scene::json::to_canonical(&by_hand).unwrap();
+    assert_ne!(edited, old, "{old}");
+    std::fs::write(&scene, &edited).unwrap();
+    let got = ok(&ws.call("scene_get", &json!({}), &me)).clone();
+    assert_eq!(got["revision"], 1, "{got}");
+    assert_eq!(got["changed_by_others"]["by"], json!(["file"]), "{got}");
+    assert_eq!(
+        got["changed_by_others"]["entities"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1,
+        "{got}"
+    );
+    assert_eq!(std::fs::read_to_string(&scene).unwrap(), edited);
+
+    // The first change through the engine saves the file as format 2, with
+    // the values it relied on written in. Undone, the file is the migrated
+    // form of what it was: the bytes `wen migrate` writes for the same file.
+    ok(&ws.call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "set", "id": "camera", "component": "Camera", "value": { "fov_y_deg": 40.0 } }] }),
+        &me,
+    ));
+    let saved: Value = serde_json::from_str(&std::fs::read_to_string(&scene).unwrap()).unwrap();
+    assert_eq!(saved["format"], 2, "{saved}");
+    assert_eq!(saved["resources"]["Fog"]["density"], 0.0);
+    assert_eq!(saved["resources"]["Bloom"]["strength"], 0.0);
+    assert_eq!(
+        saved["entities"]["camera"]["components"]["Camera"]["fov_y_deg"],
+        40.0
+    );
+    let shot = ok(&ws.call("capture_frame", &json!({ "width": 96, "height": 54 }), &me)).clone();
+    assert_eq!(shot["stats"]["effects"], json!([]), "{shot}");
+    ok(&ws.call("edit_history", &json!({ "action": "undo" }), &me));
+    let by_the_engine = std::fs::read_to_string(&scene).unwrap();
+
+    let (other, ws2) = project("format-1-migrated");
+    drop(ws2);
+    std::fs::write(other.join(MAIN), &edited).unwrap();
+    let report = wish_control::migrate::migrate_project(
+        &other,
         &[],
         wish_scene::migrate::STEPS,
         wish_scene::FORMAT,
@@ -748,7 +1033,46 @@ fn a_project_is_migrated_with_the_switchs_step() {
         true,
     )
     .unwrap();
-    assert!(today.migrated.is_empty() && today.diagnostics.is_empty());
+    assert_eq!(report.migrated.len(), 1, "{report:?}");
+    assert_eq!(
+        std::fs::read_to_string(other.join(MAIN)).unwrap(),
+        by_the_engine
+    );
+    // The migrated file is current: it loads without a note, and loading
+    // and saving it gives the same bytes (invariant 3).
+    let mut ws2 = open(&other);
+    let checked = ok(&ws2.call("check", &json!({}), &me)).clone();
+    assert_eq!(checked["warnings"], 0, "{checked}");
+    ok(&ws2.call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "set_notes", "id": "camera", "notes": "x" }] }),
+        &me,
+    ));
+    ok(&ws2.call("edit_history", &json!({ "action": "undo" }), &me));
+    assert_eq!(
+        std::fs::read_to_string(other.join(MAIN)).unwrap(),
+        by_the_engine
+    );
+
+    // A file newer than the engine is still refused, and so is a format no
+    // engine wrote.
+    for (format, word) in [(3, "newer"), (0, "No engine")] {
+        std::fs::write(
+            dir.join("scenes/odd.scene.json"),
+            format!("{{\n  \"format\": {format}\n}}\n"),
+        )
+        .unwrap();
+        let refused = ws.call(
+            "scene_get",
+            &json!({ "scene": "scenes/odd.scene.json" }),
+            &me,
+        );
+        assert_eq!(refused["error"]["code"], "unsupported_format", "{refused}");
+        assert!(
+            refused["error"]["hint"].as_str().unwrap().contains(word),
+            "{refused}"
+        );
+    }
 }
 
 /// The review of this package: `wen migrate` writes each file atomically
@@ -759,6 +1083,7 @@ fn a_project_is_migrated_with_the_switchs_step() {
 fn a_migration_goes_on_past_a_file_it_cannot_write_and_takes_prefabs_along() {
     let record = recorded();
     let (dir, _ws) = project("migrate-review");
+    as_format_1(&dir);
     let mut new = with_look(&record, "natural");
     new.components.get_mut("Material").unwrap()["roughness"] = json!(0.9);
     const STEP: Step = Step {

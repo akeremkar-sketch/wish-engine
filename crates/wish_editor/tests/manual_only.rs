@@ -3,8 +3,9 @@
 //! fresh clone; its game code is built from the editor; a new part of the
 //! level is made (an entity, its components, its place, a prefab of it and a
 //! second instance); undo and redo work; the game is played, recorded and
-//! played back; the project's tests pass; a picture is saved; `check` finds
-//! no problems. Every change goes in through the interface (clicks, keys,
+//! played back; the look is changed, the winning picture's golden image is
+//! taken again and the project's tests pass; a picture is saved; `check`
+//! finds no problems. Every change goes in through the interface (clicks, keys,
 //! typing) and is recorded as the human's. No AI, no tool call made by the
 //! test itself except to read what happened.
 //!
@@ -348,10 +349,23 @@ fn a_part_of_the_showcase_is_built_played_and_readied_by_hand_only() {
     project_menu(&mut app, &["Replays", "take_1"]);
     assert!(app.status().contains("plays the same"), "{}", app.status());
 
-    // 6. The project's tests still pass; a picture; no problems.
-    // The new island makes the scene bigger, so its sun's shadow map covers
-    // more and the winning picture's shadows move a little: the person
-    // looks at it, takes it as the new golden picture, and all pass.
+    // 6. The look of the game, changed by hand: with nothing selected the
+    //    inspector shows the scene's resources, and the person applies the
+    //    look Plain (every effect off) from "Add resource...". The new
+    //    island is far off the course and does not show in the winning
+    //    picture (the shadows come from cascades fitted to the camera, not
+    //    from one map around the whole scene), but the look does.
+    app.select(&[]);
+    play(&mut app, json!([{ "idle": 2 }]));
+    let add = shown(&mut app, "Add resource...", 1100.0);
+    click(&mut app, add);
+    let plain = named(&app, "Plain");
+    click(&mut app, plain);
+    assert_eq!(app.status(), "applied the look Plain");
+
+    // 7. The project's tests: the winning picture is no longer the golden
+    //    one, so its test fails and says so; the person looks at it, takes
+    //    it as the new golden picture, and all pass. A picture; no problems.
     project_menu(&mut app, &["Run tests"]);
     assert_eq!(
         app.status(),
@@ -380,7 +394,8 @@ fn a_part_of_the_showcase_is_built_played_and_readied_by_hand_only() {
     project_menu(&mut app, &["Check"]);
     assert_eq!(app.status(), "check: no problems");
 
-    // 7. Every change is in the one history, as the human's.
+    // 8. Every change is in the one history, as the human's (the look is one
+    //    of them).
     let history = app.call("edit_history", &json!({ "action": "list", "limit": 100 }));
     let entries = history["entries"].as_array().unwrap();
     assert!(entries.len() >= 8, "{history}");
@@ -390,4 +405,10 @@ fn a_part_of_the_showcase_is_built_played_and_readied_by_hand_only() {
     let saved = std::fs::read_to_string(dir.join("scenes/main.scene.json")).unwrap();
     assert!(saved.contains("\"island_far\""));
     assert!(saved.contains("prefabs/island_far.prefab.json"));
+    let saved: Value = serde_json::from_str(&saved).unwrap();
+    assert_eq!(
+        saved["resources"]["RenderSettings"]["antialiasing"], "Off",
+        "{saved}"
+    );
+    assert_eq!(saved["resources"]["Ambient"]["source"], "Color", "{saved}");
 }

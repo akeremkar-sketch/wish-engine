@@ -608,6 +608,79 @@ fn a_sun_disc_needs_a_light_above_the_horizon() {
     assert_eq!(off.differing_pixels, 0);
 }
 
+/// The two rules a disc that is on by default needs (the look lock,
+/// `M12-look-lock.md` "Switched"): an orthographic camera never shows the
+/// disc, and a scene without a sun is told about it only when someone
+/// changed the disc's size.
+#[test]
+fn an_orthographic_camera_never_shows_the_sun_disc() {
+    let gpu = gpu();
+    let renderer = Renderer::new(&gpu).unwrap();
+    // A camera that looks along -Z, the sun 17 degrees off that way: a disc
+    // 45 degrees wide covers the one direction an orthographic camera sees.
+    let looking = |camera: Value, sun_size: f64, sun: bool| {
+        let mut entities = json!({ "camera": { "components": {
+            "Camera": camera, "Transform": { "translation": [0, 1.6, 0] } } } });
+        if sun {
+            entities["sun"] = json!({ "components": {
+                "DirectionalLight": {}, "Transform": { "rotation": SUN_AHEAD } } });
+        }
+        prepare(&scene(
+            json!({ "Sky": { "sun_size_deg": sun_size } }),
+            entities,
+        ))
+    };
+    let flat = json!({ "projection": "Orthographic", "ortho_height": 10 });
+    let none = renderer
+        .render(&gpu, &looking(flat.clone(), 0.0, true), None, 160, 120)
+        .unwrap();
+    for size in [3.0, 45.0] {
+        let frame = renderer
+            .render(&gpu, &looking(flat.clone(), size, true), None, 160, 120)
+            .unwrap();
+        assert!(!frame.stats.effects.sun_disc, "a disc of {size} degrees");
+        assert!(frame.warnings.is_empty(), "{:?}", frame.warnings);
+        assert_eq!(frame.image, none.image, "a disc of {size} degrees");
+    }
+    // The same scene through a perspective camera has its disc.
+    let deep = renderer
+        .render(
+            &gpu,
+            &looking(json!({ "fov_y_deg": 60 }), 45.0, true),
+            None,
+            160,
+            120,
+        )
+        .unwrap();
+    assert!(deep.stats.effects.sun_disc);
+
+    // No sun: at the default size that is no mistake (an interior, a menu),
+    // and nothing is said; a size someone changed is still answered, unless
+    // the camera could not show a disc anyway.
+    let default_size = f64::from(wish_render::components::Sky::default().sun_size_deg);
+    assert_eq!(default_size, 3.0);
+    let quiet = renderer
+        .render(
+            &gpu,
+            &looking(json!({}), default_size, false),
+            None,
+            160,
+            120,
+        )
+        .unwrap();
+    assert!(quiet.warnings.is_empty(), "{:?}", quiet.warnings);
+    assert!(!quiet.stats.effects.sun_disc);
+    let asked = renderer
+        .render(&gpu, &looking(json!({}), 5.0, false), None, 160, 120)
+        .unwrap();
+    let codes: Vec<&str> = asked.warnings.iter().map(|w| w.code.as_ref()).collect();
+    assert_eq!(codes, ["sun_disc_without_light"]);
+    let flat_asked = renderer
+        .render(&gpu, &looking(flat, 5.0, false), None, 160, 120)
+        .unwrap();
+    assert!(flat_asked.warnings.is_empty(), "{:?}", flat_asked.warnings);
+}
+
 // ---------------------------------------------------------------------------
 // Fog
 
@@ -1230,8 +1303,28 @@ fn settings_that_are_not_numbers_draw_the_picture_of_their_fallbacks() {
     broken.grading.tint = f32::NEG_INFINITY;
     broken.grading.vignette = f32::NAN;
     let frame = renderer.render(&gpu, &broken, None, 160, 100).unwrap();
-    assert_eq!(frame.image, plain.image, "each falls back to its default");
+    assert_eq!(frame.image, plain.image, "each falls back to no effect");
     assert_eq!(frame.stats.effects, Effects::default());
+
+    // The fog's limit can switch the fog off, so a limit that is not a
+    // number does; a falloff cannot, so it takes the engine's default (the
+    // fixtures are format 1, whose falloff was 0: the default is written).
+    let fog = |fields: Value| look_scene(json!({ "Fog": fields }));
+    let draw =
+        |scene: &wish_render::RenderScene| renderer.render(&gpu, scene, None, 160, 100).unwrap();
+    let fogged = draw(&fog(json!({ "density": 0.05 })));
+    assert_ne!(fogged.image, plain.image, "the fog shows");
+    let mut unlimited = fog(json!({ "density": 0.05 }));
+    unlimited.fog.max_opacity = f32::NAN;
+    let frame = draw(&unlimited);
+    assert_eq!(frame.image, plain.image, "a broken limit is no fog");
+    assert_eq!(frame.stats.effects, Effects::default());
+    let mut thinning = fog(json!({ "density": 0.05, "height_falloff": 0.5 }));
+    thinning.fog.height_falloff = f32::NAN;
+    assert_eq!(
+        draw(&thinning).image,
+        draw(&fog(json!({ "density": 0.05, "height_falloff": 0.05 }))).image
+    );
 
     // Out of range: held to the range's end, and the picture is the one of
     // that end.
@@ -1247,8 +1340,10 @@ fn settings_that_are_not_numbers_draw_the_picture_of_their_fallbacks() {
     extreme.grading.temperature = 1.0e9;
     extreme.grading.tint = -1.0e9;
     extreme.grading.vignette = 12.0;
+    // A sky strength that is not a number takes the engine's default (0.3;
+    // the fixture is format 1, whose default was 1: it is written out).
     let held = look_scene(json!({
-        "Ambient": { "source": "Sky" },
+        "Ambient": { "source": "Sky", "sky_strength": 0.3 },
         "Sky": { "sun_size_deg": 45 },
         "Fog": { "density": 1 },
         "ColorGrading": { "contrast": 2, "saturation": 0, "temperature": 1, "tint": -1, "vignette": 1 }

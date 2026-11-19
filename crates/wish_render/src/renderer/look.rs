@@ -1,22 +1,25 @@
 //! The look of a frame: what the scene's look settings come to as the
 //! numbers the shaders read.
 //!
-//! Six effects are switched here, each off unless the scene asks for it
-//! (design notes `M12-look-1-sky-fog-grading-fxaa.md` and
-//! `M12-look-2-bloom.md`):
+//! Six effects are switched here, each by the scene's own values (design
+//! notes `M12-look-1-sky-fog-grading-fxaa.md` and `M12-look-2-bloom.md`).
+//! Since the look lock of 1.0 (`M12-look-lock.md`) the defaults of the
+//! resources turn all six on (the look "Natural"); the look "Plain", and
+//! every scene file of format 1, turns all six off:
 //!
 //! | Effect | Asked for by | Where it is drawn |
 //! |---|---|---|
 //! | sky light | `Ambient.source: Sky` | the opaque pass (`sky.wgsl`) |
-//! | sun disc | `Sky.sun_size_deg` above 0, and a directional light | the sky pass (`sky.wgsl`) |
+//! | sun disc | `Sky.sun_size_deg` above 0, a directional light, and a perspective camera | the sky pass (`sky.wgsl`) |
 //! | fog | `Fog.density` above 0 | the sky and opaque passes (`fog.wgsl`) |
 //! | bloom | `Bloom.strength` above 0 | its own passes, before tone mapping (`bloom.rs`) |
-//! | colour grading | a `ColorGrading` field off its default | the tone mapping pass |
+//! | colour grading | a `ColorGrading` field off its neutral value (1, 1, 0, 0, 0) | the tone mapping pass |
 //! | FXAA | `RenderSettings.antialiasing: Fxaa` | its own pass, after tone mapping |
 //!
-//! A scene that asks for none of them must keep its picture: the defaults
-//! are part of the file format (ADR-027, rule 1). So an effect that is off
-//! costs the frame nothing it did not do before:
+//! A scene that asks for none of them (Plain) must keep the picture the
+//! engine drew before the effects existed: scene files of format 1 depend
+//! on it (ADR-027, rule 1). So an effect that is off costs the frame
+//! nothing it did not do before:
 //!
 //! - the sky pass and the tone mapping pass each have two fragment
 //!   functions, the one they always had (`fs_main`, untouched) and one with
@@ -29,11 +32,27 @@
 //!   not taken.
 //!
 //! Every number is cleaned on the way: game code can write anything into a
-//! resource, and nothing that is not finite may reach a shader.
+//! resource, and nothing that is not finite may reach a shader. A value
+//! that is not finite is replaced, and since the look lock the defaults
+//! turn effects on, so the replacement is not always the default:
+//!
+//! - a field that has a value which switches its effect off takes that
+//!   value: `Sky.sun_size_deg` 0 (no disc), `Fog.density` and
+//!   `Fog.max_opacity` 0 (no fog), `Bloom.strength` 0 (no bloom), and every
+//!   `ColorGrading` field its neutral value (an ungraded picture). A broken
+//!   value never turns an effect on, and switches off the effect it
+//!   belongs to;
+//! - a field without such a value takes its type's default:
+//!   `Ambient.sky_strength`, `Fog.height_falloff` and `Bloom.spread`, and
+//!   `Fog.base_height`, `Fog.start` and `Bloom.threshold`, whose defaults
+//!   are 0;
+//! - a colour channel that is not finite (or is below 0) is 0.
+//!
+//! Values that are finite are held to the field's range.
 
 use super::Bytes;
 use super::bloom::{BloomPlan, BloomSettings};
-use crate::components::Antialiasing;
+use crate::components::{Ambient, Antialiasing, Bloom, Fog};
 use crate::extract::RenderScene;
 
 /// Bytes of the tone mapping pass's uniform (`Grade` in
@@ -126,10 +145,14 @@ struct SunDisc {
 /// at [`SUN_DISC_CORE`] of its radius to the brightness of a white surface
 /// at the radius, so the disc that shows is as wide as the scene says
 /// however bright it is.
-fn sun_disc(scene: &RenderScene, exposure: f32) -> Option<SunDisc> {
+///
+/// An orthographic camera has no disc: every pixel of it looks the same way,
+/// so the disc would fill the whole background or not show at all, and a 2D
+/// scene whose camera happens to face the sun would lose its sky to it.
+fn sun_disc(scene: &RenderScene, exposure: f32, orthographic: bool) -> Option<SunDisc> {
     let size = clean(scene.sky.sun_size_deg, 0.0, 45.0, 0.0);
     let light = scene.lights.first()?;
-    if size <= 0.0 {
+    if size <= 0.0 || orthographic {
         return None;
     }
     let radius = (size.max(SUN_DISC_SMALLEST) * 0.5).to_radians();
@@ -177,8 +200,9 @@ struct FogData {
 
 fn fog(scene: &RenderScene) -> Option<FogData> {
     let fog = &scene.fog;
+    let defaults = Fog::default();
     let density = clean(fog.density, 0.0, 1.0, 0.0);
-    let limit = clean(fog.max_opacity, 0.0, 1.0, 1.0);
+    let limit = clean(fog.max_opacity, 0.0, 1.0, 0.0);
     if density <= 0.0 || limit <= 0.0 {
         return None;
     }
@@ -189,7 +213,7 @@ fn fog(scene: &RenderScene) -> Option<FogData> {
     Some(FogData {
         colour: clean_rgb([0, 1, 2].map(|i| horizon[i] * tint[i] * luminance)),
         density,
-        falloff: clean(fog.height_falloff, 0.0, 10.0, 0.0),
+        falloff: clean(fog.height_falloff, 0.0, 10.0, defaults.height_falloff),
         base: clean(fog.base_height, -100_000.0, 100_000.0, 0.0),
         start: clean(fog.start, 0.0, 100_000.0, 0.0),
         limit,
@@ -205,7 +229,7 @@ fn bloom(scene: &RenderScene) -> Option<BloomSettings> {
     }
     Some(BloomSettings {
         strength,
-        spread: clean(bloom.spread, 0.0, 1.0, 0.5),
+        spread: clean(bloom.spread, 0.0, 1.0, Bloom::default().spread),
         threshold: clean(bloom.threshold, 0.0, 64.0, 0.0),
     })
 }
@@ -344,13 +368,14 @@ pub(super) struct Look {
 
 impl Look {
     /// The look of `scene` in a picture exposed by `exposure` (the
-    /// multiplier of `exposure_multiplier`).
-    pub(super) fn of(scene: &RenderScene, exposure: f32) -> Self {
+    /// multiplier of `exposure_multiplier`), seen through a camera that is
+    /// `orthographic` or not.
+    pub(super) fn of(scene: &RenderScene, exposure: f32, orthographic: bool) -> Self {
         Self {
-            sun: sun_disc(scene, exposure),
+            sun: sun_disc(scene, exposure, orthographic),
             sky_light: scene
                 .sky_light
-                .map(|strength| clean(strength, 0.0, 10.0, 1.0)),
+                .map(|strength| clean(strength, 0.0, 10.0, Ambient::default().sky_strength)),
             fog: fog(scene),
             bloom: bloom(scene),
             grade: grade(scene),

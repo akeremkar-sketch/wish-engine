@@ -17,6 +17,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "That change was taken back already (edit_history revert). Undo the revert to bring it back.",
     ),
     (
+        "ambient_color_unused",
+        "A scene's Ambient sets color or intensity, but its light comes from the sky (Ambient.source Sky, the default since scene format 2), which uses neither: the setting changes nothing. Set Ambient.source to \"Color\" for a flat ambient light (or apply the look plain), or remove the two fields and use sky_strength. Given by check (at the field in the scene file) and by capture_frame.",
+    ),
+    (
         "archive_failed",
         "An archive could not be written or read (the engine's release archives, `wen package`): a link or a name that is not UTF-8 in the folder, a file too large for the format, a damaged archive, or a checksum list that is not one. The message names the file.",
     ),
@@ -570,6 +574,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "The file or folder to move does not exist.",
     ),
     (
+        "old_format",
+        "A scene or prefab file is of an older format than this engine writes. It is read as its own format meant it (a default that changed since keeps its old value for this file), so nothing looks or plays differently. wen migrate rewrites it in the current format with those values written in; so does the next change made through the engine.",
+    ),
+    (
         "output_exists",
         "A picture would replace a file that already exists. Choose a new name, or pass overwrite: true to replace an earlier capture.",
     ),
@@ -1006,7 +1014,7 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     ),
     (
         "sun_disc_without_light",
-        "Sky.sun_size_deg asks for a sun disc and the scene has no DirectionalLight, so none is drawn: the disc sits where that light shines from. Add the light, or set sun_size_deg to 0.",
+        "Sky.sun_size_deg was changed from its default to ask for a sun disc, and the scene has no DirectionalLight, so none is drawn: the disc sits where that light shines from. Add the light, or set sun_size_deg to 0. At the default size a scene without a sun simply has no disc and nothing is reported; an orthographic camera never shows one.",
     ),
     (
         "system_failed",
@@ -1196,7 +1204,7 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     ),
     (
         "unsupported_format",
-        "A document has a format number this engine does not read.",
+        "A document has a format number this engine does not read: newer than the engine (update the engine), or one no engine wrote. An older scene or prefab format the engine knows is read and reported as old_format instead.",
     ),
     (
         "unsupported_primitive_mode",
@@ -1390,12 +1398,12 @@ interface (`UiNode`, `UiText`, `UiButton`; `describe_view` lists it; `sim_step` 
 material files (`*.mat.json`, type `MaterialFile`: textures, tiling, cut-outs) that a `Material` names in its `file`.\n\
 Picture quality is the `RenderSettings` resource (shadows on or off, the shadow map's size, `antialiasing`); `capture_frame`\n\
 and `describe_view` give `stats`: what the picture costs in draw calls, triangles and lights, and which effects it used.\n\
-The look is data too, all of it off until a scene asks: `Ambient` `source: \"Sky\"` lights surfaces from the sky's own\n\
-colours, `Sky` `sun_size_deg` draws the sun's disc, `Fog` (`density`, `height_falloff`) fades far things into the horizon,\n\
-`Bloom` (`strength`) makes what is brighter than white glow (an emissive `Material`, the sun's disc), `ColorGrading` sets\n\
-contrast, saturation, white balance and a vignette, `RenderSettings` `antialiasing: \"Fxaa\"` smooths edges. In a level\n\
-larger than a room, `RenderSettings` `shadow_cascades: 4` keeps shadows near the camera sharp (up to `shadow_distance`\n\
-meters; `view: \"shadow_cascades\"` shows them). All at once: `edit_apply` `apply_look`.\n\
+The look is data too, and a scene has the look `natural` by default: `Ambient` `source: \"Sky\"` lights surfaces from\n\
+the sky's own colours, `Sky` `sun_size_deg` draws the sun's disc, `Fog` (`density`, `height_falloff`) fades far things into\n\
+the horizon, `Bloom` (`strength`) makes what is brighter than white glow (an emissive `Material`, the sun's disc),\n\
+`ColorGrading` sets contrast, saturation, white balance and a vignette, `RenderSettings` `antialiasing` smooths edges and\n\
+`shadow_cascades` keeps shadows near the camera sharp (up to `shadow_distance` meters; `view: \"shadow_cascades\"` shows\n\
+them). A whole look at once: `edit_apply` `apply_look` (`plain` is none of it).\n\
 **`wish://docs/recipes` has working pieces of games** (a platformer character, a follow camera, pickups with a score,\n\
 checkpoints, moving platforms, a win screen and a button, a 2D scene, a texture on a box, tests): start from them.\n\
 \n\

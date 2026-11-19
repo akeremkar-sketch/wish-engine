@@ -1,16 +1,15 @@
 # M12 package 9: the look lock
 
-**Status:** prepared, not switched. Built and tested: named looks (the
-`edit_apply` operation `apply_look`, its answer `now_resources`, the
-editor's "Apply a look..."), the recorded defaults of file format 1 with a
-guard test, the migration a change of defaults needs, and comparison
-pictures of three candidate default looks. **Not done, by design: the
-switch itself.** The user picks the default look by eye from the pictures
-(section 7); the switch is then the small change of section 3.5.
-
-Recommended model · effort for the switch and for finishing this package:
-Opus 5.5 · high (it touches golden images and many tests, but every decision
-is made here).
+**Status:** switched on 19 November 2026 (not committed). The user chose
+**Natural** as the default look of 1.0 by eye, from the comparison pictures
+of section 7. The defaults of the look are Natural's, the scene and prefab
+file format is 2, a file of format 1 is read as it was meant and keeps its
+picture to the byte, and the examples and templates have the new look.
+What was done, what it costs and what is not verified: **section 10,
+"Switched"**. Sections 1 to 9 are the preparation as it was written before
+the switch (part 1 of this package: named looks, the recorded defaults,
+the migration, the candidates); where they say "today" they mean the
+engine before the switch.
 
 Plan: [M12-road-to-1-0.md](M12-road-to-1-0.md) §0 item 9 ("the look lock:
 presets and the one switch of the default look, signed off by the user by
@@ -497,7 +496,7 @@ changes only at its edges (FXAA).
 - `wen check` does not suggest a look; the guides (`docs/user`) do not
   mention looks yet (the "public face" package).
 
-## 9. Review
+## 9. Review (of the preparation)
 
 One independent reader went through the preparation (read only). No high
 finding; four medium, five low. What was done with each:
@@ -558,3 +557,466 @@ finding; four medium, five low. What was done with each:
      needs its own record.
    - The by-hand test types only the first channel of `Fog.tint` and the
      first axis of `uv_scale`; the other boxes are the same widget.
+
+## 10. Switched
+
+19 November 2026, part 2 of this package. The user chose Natural. The work
+list was section 3.5; this section says what was done with each item, the
+decisions the list left open, what changed in pictures, what the new
+default costs, and what is not verified. Nothing is committed.
+
+### 10.1 What was done
+
+| Item of 3.5 | Done |
+|---|---|
+| 1. Defaults | The fourteen attributes in `crates/wish_types/src/render.rs`, with Natural's values read from `looks.json` by the script that made the edit; the field documentation says what the default now is. `plain`, `natural` and `vivid` stay as looks. A test holds that the record of format 1 with Natural's values in place is the engine's whole table of defaults, so `natural` is the defaults exactly and no other default moved (`look_lock.rs::every_look_is_a_full_set_of_clean_values_plain_is_format_1_and_natural_the_defaults`). |
+| 2. Format | `wish_scene::FORMAT` is 2; `STEPS` is `[Step { from: 1, defaults: FORMAT_1_DEFAULTS }]`. |
+| 3. The record | `crates/wish_scene/src/defaults/format-2.json`, written by the guard test with `UPDATE_DEFAULTS=1`: it differs from `format-1.json` in the format number and the fourteen values, nothing else. `format-1.json` is unchanged and is never edited again. The guard now holds format 2's. |
+| 4. Reading format 1 in memory | Built (10.2). |
+| 5. The examples | Format 2, not pinned: they take the new look on purpose (10.4). |
+| 6. The sun disc under an orthographic camera | A rule of the renderer (10.3). |
+| 7. Tests that leaned on "the default is off" | Decided test by test (10.5). |
+| 8. Literal formats | The fixtures that draw stay format 1 (they are the old-format corpus and keep their pictures); the fixtures of tests that assert a clean, silent load moved to format 2 (10.5). |
+| 9. Game code | The SDK pack is rebuilt (`wen sdk`); the tests build their own. One line in the release note (10.8). |
+
+### 10.2 Reading format 1 without a migration first
+
+A scene or prefab file of format 1 is read by every reader, because they
+all go through `wish_scene::document::load_with`:
+
+- **The loader** (`wish_scene/src/document.rs`). The file is validated as
+  it is written, so every problem still points at the file's own lines.
+  The format number may be the current one or an older one that every
+  step exists for (`migrate::can_upgrade_from`). An older file's document
+  is then filled in (`fill_in_older`): `migrate::upgrade` runs on the
+  document, with the document's own prefabs saying what an instance takes
+  from its prefab, and the patches it changed are taken back. The document
+  is the file as format 2 holds it: every value it relied on whose default
+  changed is written in, the six look resources included when the scene
+  did not set them.
+- **Only the engine's own types are filled in.** Pinning goes by type
+  name, and a registry can hold someone else's type of the same name (the
+  tests of `wish_scene` and `wish_asset` have their own `Camera`, `Sky` and
+  `Collider`). `Defaults::agreeing_with` keeps only the types whose
+  defaults in the registry are the record's of the current format, which
+  the engine's are (the guard test); into any other type nothing is
+  written.
+- **What the loader answers.** `LoadResult.older_format` (the file's
+  format, when older) and `LoadResult.canonical`: the file's own text in
+  canonical form **in the format it is in**. A warning `old_format`, at
+  the file's format number: "This file is format 1; this engine writes
+  format 2. It is read as format 1 meant it...", with the hint "Run `wen
+  migrate`...". `not_canonical` is judged against the file's own format.
+- **`check` and `wen check`: a warning, never an error.** A project of
+  format 1 passes, with one `old_format` per file. Decision: not refused
+  (it works) and not silent (the person should know the file will be
+  rewritten when it is next saved).
+- **`wen fmt` never migrates.** It writes a file's canonical form in the
+  file's own format: a loose format-1 file becomes a tidy format-1 file,
+  and a tidy one passes `wen fmt --check`. The files of an older format
+  are named in its answer (`older_format`, a line each in the text form).
+  Decision: a formatter that added six resources to a file would change
+  more than a formatter may; `wen migrate` does it, on purpose.
+- **Tool calls do not repeat it.** `documents.rs` drops `old_format` from
+  the notes of a tool call, as it already drops `not_canonical`: how a
+  file is written is `check`'s to say.
+- **The documents of the control plane** needed no change of mechanism,
+  and that is the point that was to be checked: an open document keeps the
+  file's text as read (`disk_text`), and "changed outside the engine" is
+  judged by that text, never by comparing the file with the document. So
+  the difference between a format-1 file and its pinned document is not
+  taken for an outside change, does not enter the history and does not
+  rewrite the file: looking at a format-1 scene any number of times
+  (`scene_get`, `capture_frame`, `entity_get`, a play session) leaves
+  revision 0, an empty history, no `changed_by_others` and the file's bytes
+  as they were. A real outside edit of the format-1 file is one change by
+  the file that touches what was edited (both sides of the comparison are
+  pinned). The first change made through the engine writes the document:
+  format 2, with the values written in. Undone, the file is exactly what
+  `wen migrate` writes for it.
+- **A newer file is still refused** (`unsupported_format`, "update the
+  engine"), and so is a format no engine wrote (0).
+- Checkpoints, export, the player, sessions, hot reload (`wen watch`) and
+  asset moves read through the same loader or copy the file's text as it
+  is; none of them rewrites a format-1 file.
+
+Tests: `look_lock.rs::a_format_1_project_opens_as_it_was_and_is_saved_migrated_on_its_next_change`
+(all of the above through the tools, including the equal bytes with `wen
+migrate`), `a_format_1_scene_keeps_its_picture_to_the_byte` (three scenes:
+the format-1 file, its migrated form and Plain applied to its content draw
+the same bytes; the same content as format 2 draws the default look),
+`a_project_is_migrated_with_the_switchs_step`;
+`wish_scene/tests/document.rs::a_file_of_format_1_is_read_as_the_current_format_with_a_warning`;
+`wish_cli/tests/project.rs::a_project_of_format_1_is_read_as_it_is_and_migrated_on_request`
+(`check`, `run`, `fmt`, `fmt --check`, `migrate` on the command line).
+
+Limits: the equal bytes hold for a file in canonical form (what the engine
+writes and `wen fmt` gives): `wen migrate` works on the file's JSON and
+keeps an empty `"components": {}` that the document form drops. A scene's
+world differs from the one the old engine made of the same file: the
+pinned resources are resources of the world (section 3.4), so its world
+hash is another, and a replay recorded before the switch diverges at tick
+0. Measured on the examples (240 ticks with input): `hop`, whose scene sets
+no look resource, has the same hash on the old engine and on the new one as
+format 2; `islands` and `bricks` set `Sky` colours, so their `Sky` now
+holds a sun size of 3 and their hash is another; every format-1 copy read
+by the new engine has another hash than on the old. No hash or replay is
+recorded in the repository for a scene (the recorded hashes of `wish_ecs`
+and `wish_physics` did not move; `wish_core`'s neither).
+
+### 10.3 Rules of the renderer, not defaults
+
+Checked with pictures (`C:/wish-build/look-switch/`): each default in a 2D
+scene (`bricks`, and `bricks` with the default sky), an interface-only
+scene (`quiz`) and the 3D examples.
+
+- **The sun's disc is never drawn through an orthographic camera**
+  (`look::sun_disc`). Such a camera looks one way from every pixel, so the
+  disc would fill the background or not show; with a default of 3 degrees
+  a 2D scene whose camera faces the sun would have lost its sky. Test:
+  `look.rs::an_orthographic_camera_never_shows_the_sun_disc` (the picture
+  with a sun size of 3 and of 30 is the picture without a disc, and
+  `effects` leaves `sun_disc` out).
+- **`sun_disc_without_light` is given only for a size someone changed.**
+  With a disc by default, a scene without a directional light (an
+  interior, a menu, a 2D scene) is no mistake and has no disc; the
+  warning remains for a `Sky.sun_size_deg` other than the default in a
+  scene without the light, and never under an orthographic camera. (So a
+  `sun_size_deg: 3` written out in such a scene is silent too: the
+  renderer sees the value, not whether it was written; section 11.)
+- **A value that is not a number is "no effect" where a field has one, and
+  the default where it does not.** The renderer's cleaning (`look::clean`):
+  a broken value written by game code never turns an effect on. Three
+  fallbacks were stronger than the new defaults and were changed in the
+  review (section 11, item 3).
+- **Nothing else needed a rule.** Sprites, particles and the interface are
+  drawn after the look: `bricks` and `quiz` do not change (no pixel
+  differs by more than 2/255 at 1280x720). What the look touches in such a
+  scene is the sky behind the sprites: with the default sky it gets
+  slightly brighter in the middle and a faint vignette (7 levels from the
+  middle to a corner against 5 before); the fog hazes it towards the
+  horizon's colour, which is what an orthographic camera shows anyway.
+  Cascades work under an orthographic camera (`cascades.rs`, package 6)
+  and are not drawn at all in a scene without a directional light.
+- **One class of scene is worse off and it is not fixed here:** pixel art
+  shown on lit, textured shapes (not on `Sprite`s) is softened by FXAA.
+  The field's documentation says so and `antialiasing: "Off"` is one
+  field. A 2D game made of sprites is not affected.
+- **Cost in scenes that show nothing of it:** `bricks` and `quiz` draw 19
+  and 18 passes where they drew 4 and 3 (bloom, FXAA and the look's sky
+  pass over a sky nobody sees much of). Not skipped by a rule: the sky can
+  bloom, and a rule that guesses "nothing to do" would change bytes.
+
+### 10.4 The examples, the templates and a new project
+
+All six example scenes are format 2 with nothing pinned; `wen new`, the
+templates (they are the examples) and `edit_apply` with `create` make
+format 2. Their scenario tests pass at the same ticks as before (`islands`'
+`win` at 889, `checkpoint` at 294). No example needed a choice of its own.
+
+| Example | Under Natural |
+|---|---|
+| `islands` | Deeper colours, smoothed edges, a faint vignette. The sun is behind the camera. Better. |
+| `hop` | The grey band under the horizon is gone (the haze); the platform's edges are smooth. Much better. The gold coins are darker. |
+| `collect` | The vignette shows on the white ground; **the gold coins are darker and duller**: a rough metal now reflects the sky's mean light, not the bright horizon. This is the change the candidate pictures showed for Natural; it is the one thing here that someone could call worse. |
+| `first-pixel` | The haze joins ground and sky; the metal ball is darker for the same reason. |
+| `bricks` (2D) | The same picture (no pixel differs by more than 2/255). |
+| `quiz` (interface) | The same picture. |
+
+### 10.5 Tests: what moved and what was decided
+
+The first full run after the switch: 917 passed, 30 failed. With the
+in-memory reading of format 1, **every golden image of `wish_render` is
+unchanged** (their fixtures are format 1: `basic`, `lights`, `many_lights`,
+`probe`, `sprites`, `ui`, every `look_*`, `bloom_*` and view): "off is
+exact" now reads "Plain is exact", and the tests that prove it prove it
+with format-1 fixtures as they did, and with `apply_look plain` in the
+control plane's tests. The 30, by cause:
+
+- **A clean load is no longer silent for a format-1 fixture** (the
+  `old_format` warning), 15 tests in `wish_asset` (`materials`,
+  `project`), `wish_cli` (`project`) and `wish_scene` (`document`), and
+  `scene_tools::an_agent_builds_a_scene_and_the_file_follows` (the file
+  listed six resources after its first change). These tests are about
+  loading, checking and editing, not about the look: their scene and
+  prefab fixtures are now format 2. `wish_scene/tests/document.rs` moved
+  whole (38 fixtures) and got a test of its own for format 1.
+- **Tests that set look effects from "nothing"** (`view_tools.rs`: the
+  look, bloom, cascades, the cost of a picture; the editor's
+  `parity_ops.rs`: the same four by hand). They now say Plain where they
+  measure a setting (`apply_look plain` first, then the settings one by
+  one, and Plain again at the end gives the first picture to the byte),
+  and they assert the default where the test is about the default: a new
+  scene answers all six effects and four cascades, and removing the look's
+  resources gives the default picture back to the byte. The by-hand tests
+  change values in the other direction where the old value is now the
+  default (anti-aliasing switched off, the ambient light to `Color`, two
+  cascades), and one switches bloom off by hand.
+- **Counts of a default frame** (`wen bench --render`'s test; two unit
+  tests of `shadow.rs` that read `RenderSettings::default()`): accepted,
+  with the new numbers explained.
+- **What a tool call keeps in memory.** The four cascade maps of the
+  default look are 64 MiB, which was the whole budget
+  (`KEPT_AFTER_A_TOOL_CALL`): every default `capture_frame` would have made
+  them again. The budget is 128 MiB (the maps, and a 1280x720 picture with
+  its bloom and FXAA targets); the test follows, and still shows that a
+  larger target goes when the call ends.
+- **Golden pictures of the default look**: the two example goldens and the
+  editor's window (10.6).
+- One catalogue text that did not end in a full stop.
+
+### 10.6 Every picture that changed
+
+Refreshed with the new engine, each one looked at. Nine files:
+
+| File | What changed |
+|---|---|
+| `examples/islands/tests/golden/win.png` | The showcase's win screen under Natural: deeper colours, smoothed edges, the sky hazed; the interface on it is the same. 78% of the pixels differ by more than 2. Right. |
+| `examples/bricks/tests/golden/won.png` | No pixel differs by more than 2 (the old golden still passed); rewritten so that it is the engine's picture. Right. |
+| `examples/islands/.template/thumbnail.png` | As the scene's picture above. |
+| `examples/hop/.template/thumbnail.png` | The grey band under the horizon is gone; darker coins. |
+| `examples/collect/.template/thumbnail.png` | A faint vignette on the white ground; darker coins. |
+| `examples/bricks/.template/thumbnail.png` | Nothing visible (at most 2/255). |
+| `examples/quiz/.template/thumbnail.png` | Nothing visible (at most 1/255). |
+| `crates/wish_editor/assets/empty-project.png` | The welcome screen's picture of an empty project: the starting scene under Natural (the haze joins ground and sky). |
+| `crates/wish_editor/tests/golden/editor_window.png` | Only the scene picture inside the window: the starting scene under Natural. The interface around it is pixel for pixel the same. |
+
+The thumbnails are scene captures at 640x360 on the hardware adapter, the
+way the old ones were made (checked: the old engine redraws the old ones
+to within a few levels). Not changed: every golden image of `wish_render`,
+and the editor's `inspector.png`.
+
+### 10.7 What the new default costs
+
+`wen bench --render` (a frame drawn and read back; release build, four
+cores at low priority), the same commands before the switch (the old
+`wen`, whose default is now called Plain) and after it. The benchmark's
+scene sets nothing of the look, so it measures the default.
+
+| Adapter | Scene | Size | Before | After |
+|---|---|---|---|---|
+| WARP (software), Dx12 | 20 surfaces | 512x288 | 49 ms | **129 ms** |
+| WARP (software), Dx12 | 20 surfaces | 1280x720 | 241 ms | **704 ms** |
+| WARP (software), Dx12 | 2500 surfaces, 16 lamps | 512x288 | 324 ms | 376 ms |
+| WARP (software), Dx12 | 2500 surfaces, 16 lamps | 1280x720 | 649 ms | 1070 ms |
+| RTX 3060 Ti, Vulkan | 20 surfaces | 512x288 | 0.67 ms | 1.05 ms |
+| RTX 3060 Ti, Vulkan | 20 surfaces | 1280x720 | 2.07 ms | 2.92 ms |
+| RTX 3060 Ti, Vulkan | 2500 surfaces, 16 lamps | 512x288 | 4.24 ms | 5.19 ms |
+| RTX 3060 Ti, Vulkan | 2500 surfaces, 16 lamps | 1280x720 | 5.20 ms | 7.05 ms |
+
+(Medians of 30 frames. Reproduce: `wen bench --render --entities 20
+--ticks 30 --size 512x288 --software`, and the other rows by their
+numbers; without `--software` for the graphics card.)
+
+**On the software adapter the default picture is about 2.7 times as
+expensive in a small scene: 80 ms more for a default 512x288
+`capture_frame`, almost half a second more at 1280x720.** That is the
+price CI and every agent on a machine without a graphics card pay for
+each lit picture of a scene with the default look. Most of it is bloom
+(about 60 ms and 360 ms of the two, by the bloom note's own measurement);
+the rest is FXAA, the look's sky and tone mapping passes and three more
+shadow maps. It grows with the picture, not with the scene. On a graphics
+card it is under a millisecond at 1280x720 in a small scene, about two in
+a large one. The debug views, `describe_view`'s identity pass and
+everything in a format-1 or Plain scene cost what they did.
+
+Memory: the default look's shadow maps are 64 MiB of GPU memory (four of
+2048 texels) where one was 16 MiB, and a tool server keeps up to 128 MiB
+of targets between calls (was 64).
+
+The whole test suite took 39 minutes on this machine in the first run
+after the switch, most of it building; there is no timing of the suite
+before the switch from the same conditions to compare with.
+
+### 10.8 The release note
+
+> **The default look changed, and scene files are format 2.** A new scene
+> now has the look "Natural": the sky lights the scene, a sun disc, a
+> light haze, a soft glow on bright light, gentle colour grading, smoothed
+> edges (FXAA) and four shadow cascades. **Your existing scenes keep the
+> look they had.** Scene and prefab files written before this release are
+> format 1; the engine reads them as they were meant, so they look and
+> play as before, and `check` names them with the warning `old_format`.
+> A file is rewritten as format 2, with the values it relied on written
+> into it, the first time you change it in the editor or through a tool,
+> or all at once with `wen migrate`. To give an old scene the new look,
+> apply it: *Scene resources*, *Add resource...*, *Apply a look...*,
+> *Natural* (or `edit_apply` with `{ "op": "apply_look", "look":
+> "natural" }`); `plain` turns every effect off. **Record replays again**:
+> a replay made before a scene was read by this version no longer matches
+> it. Game code that builds a `Fog`, `Bloom`, `ColorGrading`, `Sky`,
+> `Ambient` or `RenderSettings` from `Default::default()` gets the new
+> values when it is rebuilt. Pictures of a default scene take longer on a
+> machine without a graphics card (about 130 ms instead of 50 ms for a
+> 512x288 capture); a test that only needs to see where things are can
+> use `describe_view` or a debug view, or apply `plain`. An engine older
+> than this one cannot read a format-2 file.
+
+### 10.9 Result of the switch
+
+Measured on this machine (Windows, WARP for the pictures; four cores at
+low priority), 19 November 2026.
+
+- **The switch as built, before the review's fixes:** `cargo fmt --all
+  --check` clean; `cargo clippy --workspace --all-targets -- -D warnings`
+  clean; `cargo test --workspace --no-fail-fast` 949 passed, **1 failed**
+  (`wish_editor/tests/manual_only.rs`, section 11, item 1); `cargo test
+  --release -p wish_render` 191 passed.
+- **After the review's fixes (section 11):** fmt and clippy (whole
+  workspace, every target) clean; `cargo test -p wish_render -p
+  wish_asset` 222 passed, 0 failed; `cargo test --release -p wish_render`
+  191 passed, 0 failed; `cargo test -p wish_control -p
+  wish_cli -p wish_mcp -p wish_evals` 271 passed, 0 failed (the new tests
+  `an_ambient_colour_the_sky_light_does_not_use_is_said` and
+  `the_loader_pins_every_type_the_engine_registers` among them); `cargo
+  test -p wish_editor --test manual_only` 1 passed (172 s); `wish-evals
+  selftest` 41/41 (task 18 with its corrected setup included). The full
+  workspace gate is run again before the commit.
+- **Pictures:** the nine files of 10.6, each looked at; no golden image of
+  `wish_render` moved.
+- **The examples:** every scenario test passes at the tick it passed at
+  before (10.4); no recorded world hash of `wish_ecs`, `wish_core` or
+  `wish_physics` moved.
+- **Cost:** 10.7 (on the software adapter a default 512x288 picture takes
+  about 2.7 times as long; on a graphics card under a millisecond more in
+  a small scene).
+
+### 10.10 Not done, not verified
+
+- **Linux and lavapipe, for this switch.** Not run yet: nothing of the
+  switch is pushed. The refreshed `examples/islands/tests/golden/win.png`
+  now has FXAA and bloom in it and was made on WARP; it is compared in CI
+  at 2/255. CI (`.github/workflows/ci.yml`) runs on pushes to `main` and to
+  the milestone branches (`m[0-9]*`) and on pull requests, on Windows and
+  on Linux with lavapipe; every push of `m9-product` so far ran there and
+  was green (the branch's Actions run history, as read on 19 November
+  2026), the golden images of packages 4 to 8 (fog, grading, FXAA, bloom,
+  cascades, blending) included. So the effects themselves agree
+  between WARP and lavapipe; the default-look goldens of this switch are
+  checked by the first push.
+- **Open question for the user: how strongly the sky is reflected under
+  sky light.** In the sky-light mode (`Ambient.source: Sky`) the opaque
+  pass multiplies both what the sky gives a surface, its diffuse light and
+  its *reflection*, by `sky_strength`
+  (`crates/wish_render/src/shaders/opaque.wgsl`, the `frame.sky_light`
+  branch: `strength` scales the `sky_reflection` term). With Natural's 0.3,
+  every metal reflects 0.3 of the sky; in the `Color` mode the reflection
+  is at full strength (`sky_radiance(reflected)`, times occlusion only).
+  That is why the gold coins of `hop` and `collect` and the ball of
+  `first-pixel` are darker under Natural (10.4). Scaling only the diffuse
+  part by `sky_strength` would brighten metals under Natural, but it
+  changes the look the user approved (and every default-look picture), so
+  it is the user's to decide; not changed. If changed, it is a change of
+  the default picture inside format 2 (no file's values change), so it
+  should come before 1.0 or with a format step.
+- **The pictures were looked at by the implementer, not signed off by the
+  user.** The user chose Natural from the candidate sheets; the nine
+  refreshed files and the before/after sheets in
+  `C:/wish-build/look-switch/` are for the user to look at.
+- `wen migrate` does not set the `engine` key of `wish.json` (ADR-027,
+  rule 3: a follow-up of the public-face package), and `opens_from` does
+  not exist. An older engine refuses a format-2 file with
+  `unsupported_format`.
+- A real project migrated by a person: the migration ran on the examples'
+  copies, a new project and the test corpus only.
+- The editor showing `old_format` in its *Problems* tab was not looked at
+  in the window (the tab lists what `check` answers).
+- Tiers, a render scale and looks from packages stay where section 8 put
+  them.
+
+## 11. Review (of the switch)
+
+One independent reader went through the switch (read only), and the first
+full run of the gate on it had one failing test. No high finding. What was
+done with each:
+
+1. **The one failing test: `wish_editor/tests/manual_only.rs`** (M8a's exit
+   criterion, the showcase built by hand). It expected the project's tests
+   to fail once, because a new island far off the course made the one
+   shadow map cover more and moved the winning picture's shadows; the
+   person then took the picture as the new golden one by hand. With four
+   cascades fitted to the camera by default, the island no longer moves
+   the picture, and all four tests passed. It is the only test that uses
+   *Update golden pictures* by hand, so the expectation was not just
+   changed: the person now changes the look by hand (nothing selected,
+   *Add resource...*, *Plain*), which the winning picture shows; its test
+   fails and says "golden"; *Update golden pictures*, *Run tests*: all
+   four pass; `check` finds no problems; every history entry, the look's
+   included, is the human's; the saved scene holds Plain's values. The
+   golden image changed is the one in the test's own copy of the project.
+2. **Medium: an `Ambient.color` or `intensity` did nothing, silently.**
+   `source` is `Sky` by default, and the sky light uses neither. A new
+   warning, `ambient_color_unused` (in `docs::DIAGNOSTICS`): when the
+   source is `Sky` and `color` or `intensity` differs from its default,
+   naming the first of them. `check` gives it from the scene as loaded
+   (`wish_asset::project`, located at the field's line in the file; a file
+   of format 1 is judged with its own default, a flat light, so only a
+   `source: "Sky"` written out there is warned about); the lit picture
+   gives it (`capture_frame`, `describe_view`; `RenderScene.ambient_unused`
+   from `extract`, located at the field by `view.rs`). Its hint says to
+   set `source: "Color"` or apply `plain`, or to remove the two fields and
+   use `sky_strength`. Test:
+   `view_tools.rs::an_ambient_colour_the_sky_light_does_not_use_is_said`
+   (both tools, both fields, the picture unchanged by the setting, quiet
+   with `Color` and after `plain`, the two format-1 cases, the catalogue).
+   The evaluation task 18 (a lamp at night, `m6_tasks.rs`) set only
+   `intensity: 0` to take the fill light away: under the sky light that
+   did nothing (the scene stayed dark only because its sky's luminance is
+   0 too). It now sets `source: "Color"` with it, which is what it meant,
+   and gives no warning.
+3. **Low: three fallbacks of the renderer's cleaning were stronger than
+   the new defaults** (`look.rs`): `Fog.max_opacity` 1 (default 0.9),
+   `Bloom.spread` 0.5 (default 0.4), `Ambient.sky_strength` 1 (default
+   0.3); `Fog.height_falloff`'s 0 (a fog that does not thin out with
+   height, default 0.05) was the same kind and was changed too. Now a
+   field that has a value switching its effect off takes it (`max_opacity`
+   0 is no fog, as a broken `density` already was), and a field without
+   one takes its type's default, read from the type
+   (`Ambient::default().sky_strength`, `Fog::default().height_falloff`,
+   `Bloom::default().spread`). The module's comment says exactly which
+   field does what. Tests: `look.rs::settings_that_are_not_numbers_...`
+   (a broken limit is no fog; a broken falloff is the default's picture;
+   a broken sky strength is 0.3's) and `bloom.rs`'s (a broken spread is
+   0.4's). `shadow.rs`'s header no longer calls one map the default.
+4. **Low: `Defaults::agreeing_with` left a type out silently** when the
+   registry's defaults and the record disagree: a field added to `Fog`
+   without `UPDATE_DEFAULTS=1` would stop format-1 files being pinned for
+   `Fog`, and old scenes would change look with no diagnostic. The guard
+   test fails in that case already, but it reads the record from disk;
+   the loader uses the record built into it. New test
+   `look_lock.rs::the_loader_pins_every_type_the_engine_registers`: with
+   the built-in record, `agreeing_with` keeps every component and resource
+   the engine registers, and every type of the format-1 record is among
+   them. No warning at run time (the test makes drift a failing build, not
+   a user's changed scene).
+5. **Low, a note: checkpoints keep two forms of a format-1 file.** A
+   checkpoint stores an open document as the engine holds it (format 2,
+   pinned) and a document nobody opened as the file's own text (format 1).
+   Both mean the same picture and the same world: a restore loads the kept
+   text through the same loader (pinned on reading) and compares documents,
+   not texts, so nothing is restored that did not change; a document
+   deleted since is written back as the kept text, in whichever of the two
+   formats it was kept. Harmless; not changed.
+6. **Docs.** 10.10 said that CI runs only on pushes to `main`; it runs on
+   the milestone branches too, on Windows and on Linux with lavapipe
+   (corrected). 10.9 has the measured result.
+7. **An open question for the user** (10.10): the sky's reflection is
+   scaled by `sky_strength` too, which is why metals are darker under
+   Natural. Not changed.
+
+Noted, not done:
+
+- **The cost in CI.** About 150 captures of the default look on the
+  software adapter in the test suites (the reader's estimate: the tests
+  that draw a format-2 scene without a look). At roughly tens of
+  milliseconds more each (10.7 measured 80 ms more at 512x288, and most
+  test pictures are smaller), that is a few seconds to under a minute per
+  operating system. Not measured. Ways to cut it if it
+  matters: tests that only need positions ask `describe_view` or a debug
+  view, or apply `plain`; smaller pictures; bloom skipped when no texel is
+  above the threshold (would need a rule that changes no byte).
+- **`sun_disc_without_light` is silent for a written `sun_size_deg: 3`**
+  in a scene without a directional light. The renderer sees the value,
+  not whether a file wrote it, and the value is the default; telling the
+  two apart would need the scene file, for a warning about a disc that is
+  drawn nowhere. Documented (10.3), not changed.
