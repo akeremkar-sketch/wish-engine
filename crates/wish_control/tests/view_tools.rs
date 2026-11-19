@@ -745,3 +745,167 @@ fn the_look_settings_are_documented_set_with_edits_and_reported() {
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Bloom (M12, design note M12-look-2-bloom) from the control plane:
+/// documented, searchable, set with an edit, written to the scene file,
+/// seen in the answers, and off until asked for.
+#[test]
+fn bloom_is_documented_set_with_an_edit_and_reported() {
+    let (dir, mut ws) = project("bloom");
+    let me = parse_actor("claude-code");
+    // A lamp: a ball that gives off light.
+    ok(&ws.call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "spawn", "id": "lamp", "components": {
+            "Primitive": { "shape": "Sphere" }, "Transform": { "translation": [0, 1, 0] },
+            "Material": { "base_color": [0, 0, 0, 1], "emissive": [12, 6, 1] } } }] }),
+        &me,
+    ));
+    let size = json!({ "width": 160, "height": 90 });
+    let plain = ok(&ws.call("capture_frame", &size, &me)).clone();
+    assert_eq!(plain["stats"]["effects"], json!([]));
+
+    // The setting is in the schema with its documentation, ranges and
+    // defaults, and the default is "off".
+    let schema = ok(&ws.call(
+        "schema_get",
+        &json!({ "names": ["Bloom"], "detail": "full" }),
+        &me,
+    ))
+    .clone();
+    let bloom = schema["types"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "Bloom")
+        .unwrap_or_else(|| panic!("Bloom is not a type: {schema}"))
+        .clone();
+    // What does not bloom is said where an agent reads it.
+    assert!(bloom.to_string().contains("particles"), "{bloom}");
+    let properties = &bloom["schema"]["properties"];
+    for (field, default, low, high) in [
+        ("strength", 0.0, 0.0, 1.0),
+        ("spread", 0.5, 0.0, 1.0),
+        ("threshold", 0.0, 0.0, 64.0),
+    ] {
+        let property = &properties[field];
+        assert_eq!(property["default"].as_f64(), Some(default), "{field}");
+        assert_eq!(property["minimum"].as_f64(), Some(low), "{field}");
+        assert_eq!(property["maximum"].as_f64(), Some(high), "{field}");
+        assert!(
+            property["description"]
+                .as_str()
+                .is_some_and(|text| text.len() > 10),
+            "Bloom.{field} says what it is: {property}"
+        );
+    }
+    assert_eq!(properties.as_object().unwrap().len(), 3, "{properties}");
+    // The words people use find it.
+    for words in ["bloom", "glow", "glare", "halo", "neon"] {
+        let found = ok(&ws.call("schema_get", &json!({ "search": words }), &me)).clone();
+        assert!(
+            found["types"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|t| t["name"] == "Bloom"),
+            "a search for {words} finds Bloom: {found}"
+        );
+    }
+
+    // Set with one edit; the scene file holds what was said and nothing
+    // else.
+    ok(&ws.call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "set_resource", "name": "Bloom", "value": { "strength": 0.15 } }] }),
+        &me,
+    ));
+    let file: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("scenes/main.scene.json")).unwrap())
+            .unwrap();
+    assert_eq!(file["resources"], json!({ "Bloom": { "strength": 0.15 } }));
+    let shot = ok(&ws.call("capture_frame", &size, &me)).clone();
+    assert_eq!(shot["stats"]["effects"], json!(["bloom"]));
+    assert_eq!(
+        shot["stats"]["draw_calls"].as_u64().unwrap(),
+        plain["stats"]["draw_calls"].as_u64().unwrap() + 8,
+        "a picture 90 pixels high has four levels, two passes each"
+    );
+    assert_ne!(shot["image"]["data"], plain["image"]["data"]);
+    assert_eq!(shot.get("diagnostics"), plain.get("diagnostics"));
+    // The same call gives the same bytes.
+    let again = ok(&ws.call("capture_frame", &size, &me)).clone();
+    assert_eq!(again["image"]["data"], shot["image"]["data"]);
+    // describe_view says what the lit picture uses; a debug view uses none.
+    let seen = ok(&ws.call("describe_view", &size, &me)).clone();
+    assert_eq!(seen["stats"], shot["stats"]);
+    let ids = ok(&ws.call(
+        "capture_frame",
+        &json!({ "width": 160, "height": 90, "view": "ids" }),
+        &me,
+    ))
+    .clone();
+    assert_eq!(ids["stats"]["effects"], json!([]));
+    // A running game is drawn with the scene's bloom.
+    ok(&ws.call("sim_start", &json!({}), &me));
+    let live = ok(&ws.call(
+        "capture_frame",
+        &json!({ "session": "s1", "width": 160, "height": 90 }),
+        &me,
+    ))
+    .clone();
+    assert_eq!(live["stats"]["effects"], json!(["bloom"]));
+    ok(&ws.call("sim_stop", &json!({ "session": "s1" }), &me));
+
+    // With the rest of the look it is named where it is drawn: after the
+    // fog, before the grading.
+    ok(&ws.call(
+        "edit_apply",
+        &json!({ "ops": [
+            { "op": "set_resource", "name": "Fog", "value": { "density": 0.01 } },
+            { "op": "set_resource", "name": "ColorGrading", "value": { "contrast": 1.1 } },
+            { "op": "set_resource", "name": "RenderSettings", "value": { "antialiasing": "Fxaa" } }
+        ] }),
+        &me,
+    ));
+    let together = ok(&ws.call("capture_frame", &size, &me)).clone();
+    assert_eq!(
+        together["stats"]["effects"],
+        json!(["fog", "bloom", "color_grading", "fxaa"])
+    );
+
+    // What is out of range, or not a field, is refused when it is set, with
+    // what would be accepted.
+    for value in [
+        json!({ "strength": 2 }),
+        json!({ "strength": -0.1 }),
+        json!({ "spread": 1.5 }),
+        json!({ "threshold": 100 }),
+        json!({ "radius": 4 }),
+    ] {
+        let refused = ws.call(
+            "edit_apply",
+            &json!({ "ops": [{ "op": "set_resource", "name": "Bloom", "value": value }] }),
+            &me,
+        );
+        assert_eq!(refused["ok"], false, "{value}: {refused}");
+        assert!(
+            refused["error"]["hint"]
+                .as_str()
+                .is_some_and(|hint| !hint.is_empty()),
+            "{refused}"
+        );
+    }
+
+    // Taking the settings away again gives the first picture, to the byte.
+    let ops: Vec<Value> = ["Bloom", "Fog", "ColorGrading", "RenderSettings"]
+        .iter()
+        .map(|name| json!({ "op": "remove_resource", "name": name }))
+        .collect();
+    ok(&ws.call("edit_apply", &json!({ "ops": ops }), &me));
+    let back = ok(&ws.call("capture_frame", &size, &me)).clone();
+    assert_eq!(back["stats"], plain["stats"]);
+    assert_eq!(back["image"]["data"], plain["image"]["data"]);
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}

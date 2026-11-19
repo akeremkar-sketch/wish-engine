@@ -34,8 +34,8 @@ pub mod ui;
 
 pub use capture::{MAX_CAPTURE_SIZE, draw_probe};
 pub use components::{
-    Ambient, AmbientSource, Antialiasing, Camera, ColorGrading, DirectionalLight, Exposure, Fog,
-    Material, Model, Primitive, RenderSettings, Shape, Sky,
+    Ambient, AmbientSource, Antialiasing, Bloom, Camera, ColorGrading, DirectionalLight, Exposure,
+    Fog, Material, Model, Primitive, RenderSettings, Shape, Sky,
 };
 pub use extract::{
     CameraView, ColliderView, Draw, EmitterView, LightView, LocalLightView, MaterialData, Mesh,

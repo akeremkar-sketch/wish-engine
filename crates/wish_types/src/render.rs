@@ -310,3 +310,43 @@ pub struct ColorGrading {
     #[schema(range = 0.0..=1.0, default = 0.0)]
     pub vignette: f32,
 }
+
+/// Bloom: bright light spreads softly around itself, as it does in a
+/// camera's lens and in the eye, so a lamp, the sun's disc or a strong
+/// highlight glows instead of ending at a hard edge. With `strength` 0 (the
+/// default) there is no bloom.
+///
+/// The light is moved, not added: a scene with nothing brighter than white
+/// keeps its brightness and hardly changes (a small light much brighter
+/// than white loses a little more than its glow gives back). What glows is
+/// what is much brighter than white before the picture is finished: a
+/// `Material` with `emissive` above 1, the sun's disc (`Sky.sun_size_deg`),
+/// the highlight of a strong light on a shiny surface. A light that is only
+/// a pixel or two wide in the picture hardly glows: single very bright
+/// pixels are held back so that they do not flicker. Fog is in the light
+/// that blooms, and the glow is graded with the rest of the picture.
+/// Sprites, particles and the in-game interface are drawn afterwards: they
+/// do not glow and nothing glows over them (particles that glow are planned
+/// for a later release).
+#[resource]
+pub struct Bloom {
+    /// How much of the light is spread around: 0 is no bloom, 0.05 a glow
+    /// only bright lights show, 0.15 a clear one, 0.4 a dream sequence.
+    #[schema(range = 0.0..=1.0, default = 0.0)]
+    pub strength: f32,
+    /// How far the glow reaches. 0 keeps it close around the light, 0.5
+    /// (the default) falls off evenly, 1 lets it reach a third of the
+    /// picture's height like a haze. The reach is a share of the picture,
+    /// so the look is much the same at every picture size.
+    #[schema(range = 0.0..=1.0, default = 0.5)]
+    pub spread: f32,
+    /// Only light brighter than this blooms, where 1 is the brightness of a
+    /// white surface in the finished picture. 0 (the default) lets all
+    /// light bloom, which is how a lens behaves. With a threshold, light
+    /// dimmer than half of it is left perfectly sharp and the bloom sets in
+    /// softly from there, so 2 or more keeps everything that is not
+    /// brighter than white sharp, for a stylised look (raise `strength`
+    /// with it: less light is left to spread).
+    #[schema(range = 0.0..=64.0, default = 0.0)]
+    pub threshold: f32,
+}

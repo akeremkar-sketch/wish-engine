@@ -9,17 +9,20 @@
 //!    one directional light with its shadow, the point and spot lights of
 //!    the pixel's cluster, ambient light and the sky's reflection, with a
 //!    depth buffer.
-//! 4. **Tone mapping:** colour grading when the scene asks for it, then
+//! 4. **Bloom:** when the scene asks for it, bright light spread around
+//!    itself: down a chain of ever smaller pictures, back up it, and into a
+//!    second HDR target that tone mapping then reads.
+//! 5. **Tone mapping:** colour grading when the scene asks for it, then
 //!    Khronos PBR Neutral, from the HDR target to the 8-bit sRGB picture.
-//! 5. **FXAA:** when the scene asks for it, edges smoothed over the
+//! 6. **FXAA:** when the scene asks for it, edges smoothed over the
 //!    tone-mapped picture.
-//! 6. **Overlay:** sprites and particles, tested against the depth buffer.
-//! 7. **Interface:** the in-game interface.
-//! 8. **Readback:** the picture copied to the CPU.
+//! 7. **Overlay:** sprites and particles, tested against the depth buffer.
+//! 8. **Interface:** the in-game interface.
+//! 9. **Readback:** the picture copied to the CPU.
 //!
-//! The sky's light, the sun's disc, fog, grading and FXAA are each off
-//! unless the scene asks for them (`look.rs`): a scene that asks for none is
-//! drawn exactly as it was before they existed.
+//! The sky's light, the sun's disc, fog, bloom, grading and FXAA are each
+//! off unless the scene asks for them (`look.rs`): a scene that asks for
+//! none is drawn exactly as it was before they existed.
 //!
 //! Values are pre-exposed: the sky and opaque passes multiply by the
 //! exposure before writing, so the HDR target holds displayable magnitudes.
@@ -33,13 +36,15 @@
 //! - `shadow.rs`: the shadow map's size and the light's fitted view;
 //! - `frame.rs`: the frame plan, its statistics, and its GPU resources;
 //! - `look.rs`: the look settings as the numbers the shaders read;
+//! - `bloom.rs`: the bloom's levels, targets and passes;
 //! - `pool.rs`: targets and buffers kept across frames (and why bind groups
 //!   are not);
 //! - `passes.rs`: the passes;
 //! - `debug.rs`: the debug views, the identity buffer and `describe`.
 //!
 //! Design: `docs/design/M12-render-foundation.md`; the look settings:
-//! `docs/design/M12-look-1-sky-fog-grading-fxaa.md`.
+//! `docs/design/M12-look-1-sky-fog-grading-fxaa.md` and
+//! `docs/design/M12-look-2-bloom.md`.
 
 use std::collections::BTreeMap;
 use std::sync::{Mutex, MutexGuard};
@@ -56,6 +61,7 @@ use crate::mesh::primitive;
 use crate::shader::ShaderLibrary;
 use crate::texture;
 
+mod bloom;
 mod debug;
 mod draw_list;
 mod frame;
@@ -151,6 +157,11 @@ const SHADERS: &[(&str, &str, &str)] = &[
         include_str!("shaders/tonemap_pass.wgsl"),
     ),
     (
+        "bloom_pass",
+        "wish_render/shaders/bloom_pass.wgsl",
+        include_str!("shaders/bloom_pass.wgsl"),
+    ),
+    (
         "fxaa_pass",
         "wish_render/shaders/fxaa_pass.wgsl",
         include_str!("shaders/fxaa_pass.wgsl"),
@@ -191,6 +202,7 @@ pub fn engine_shaders() -> ShaderLibrary {
 pub const ENTRY_SHADERS: &[&str] = &[
     "sky_pass",
     "opaque",
+    "bloom_pass",
     "tonemap_pass",
     "fxaa_pass",
     "shadow_pass",
@@ -220,6 +232,16 @@ const ENTRY_POINTS: &[(&str, &[(naga::ShaderStage, &str)])] = {
             ],
         ),
         ("opaque", &[(Vertex, "vs_main"), (Fragment, "fs_main")]),
+        (
+            "bloom_pass",
+            &[
+                (Vertex, "vs_main"),
+                (Fragment, "fs_first"),
+                (Fragment, "fs_down"),
+                (Fragment, "fs_up"),
+                (Fragment, "fs_composite"),
+            ],
+        ),
         (
             "tonemap_pass",
             &[
@@ -602,7 +624,7 @@ impl Renderer {
     ///
     /// A renderer keeps the targets of its last frames so that the next
     /// frame creates nothing: right for a window that draws many frames a
-    /// second, and it holds itself to 256 MiB beside what its last frame
+    /// second, and it holds itself to 384 MiB beside what its last frame
     /// used. A caller that draws now and then (a tool that takes one
     /// picture) calls this afterwards, so that a large picture does not stay
     /// in memory until some later call. Uploaded models and pictures are not
@@ -709,6 +731,12 @@ impl Renderer {
                     draws: &plan.draws,
                 },
             );
+            // Bloom, for a frame that asks for it: tone mapping then reads
+            // the picture these passes write (the frame's tone mapping group
+            // binds it).
+            if let (Some(bloom), Some(targets)) = (&plan.bloom, &resources.bloom) {
+                bloom::draw(&mut encoder, &self.pipelines, bloom, targets);
+            }
             // With FXAA the tone-mapped picture is an intermediate one and
             // the FXAA pass writes the picture; without, tone mapping writes
             // the picture itself, as it always did.
@@ -810,6 +838,7 @@ mod tests {
                 &[
                     "sky_pass",
                     "opaque",
+                    "bloom_pass",
                     "tonemap_pass",
                     "fxaa_pass",
                     "shadow_pass",

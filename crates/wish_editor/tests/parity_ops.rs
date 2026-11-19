@@ -814,3 +814,42 @@ fn the_look_of_a_scene_is_set_by_hand() {
         "{history}"
     );
 }
+
+/// Bloom (M12, the second look package) is a resource with a schema like
+/// the rest of the look, so a person adds it and sets its three numbers in
+/// the inspector, with no editor code written for it (invariant 9).
+#[test]
+fn bloom_is_set_by_hand() {
+    let dir = project("bloom");
+    let mut app = open(&dir);
+    let size = json!({ "width": 96, "height": 54 });
+    let before = app.call("capture_frame", &size);
+    assert_eq!(before["stats"]["effects"], json!([]), "{before}");
+
+    add_resource(&mut app, "Bloom");
+    type_number(&mut app, "strength", "0.2");
+    type_number(&mut app, "spread", "0.7");
+    type_number(&mut app, "threshold", "0.5");
+
+    assert_eq!(
+        scene_file(&dir)["resources"],
+        json!({ "Bloom": { "spread": 0.7, "strength": 0.2, "threshold": 0.5 } }),
+        "{}",
+        scene_file(&dir)
+    );
+    // The picture uses it.
+    let after = app.call("capture_frame", &size);
+    assert_eq!(after["stats"]["effects"], json!(["bloom"]), "{after}");
+    assert_ne!(after["image"]["data"], before["image"]["data"]);
+    // Every step was one change by a human: the resource added, three
+    // fields set.
+    let history = app.call("edit_history", &json!({ "action": "list", "limit": 50 }));
+    let entries = history["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 4, "{history}");
+    assert!(
+        entries
+            .iter()
+            .all(|entry| entry.to_string().contains("human")),
+        "{history}"
+    );
+}

@@ -38,7 +38,7 @@ one it was, byte for byte, and no existing golden image is refreshed.
 | Quick win: FXAA is "pure arithmetic on the 8-bit image, so adapters agree" | Half true. The arithmetic is the same everywhere (every read is a `textureLoad`), but its input is the tone-mapped picture, which differs by up to 1/255 between adapters, and FXAA decides by thresholds. A pixel near a threshold can be smoothed on one adapter and not on another. That is inside the golden tolerance only as long as such pixels are few; it is not measured on lavapipe (section 6). |
 | Fog in `opaque.wgsl` and `sky_pass.wgsl` from a small `Fog` resource; grading inside `tonemap_pass.wgsl` | Done that way. |
 | "Changes every existing golden once" | Not in this package: see the rule above. It happens at the look lock. |
-| "Move particles before tone mapping so they can glow" | Not here: it belongs with bloom, the next package (section 3.6). |
+| "Move particles before tone mapping so they can glow" | Not here, and not in the bloom package either: the plan places "particles that glow" in release 1.9 (section 3.6). |
 | At most four storage buffers per stage, the fragment stage uses three | Still three: the new numbers are in the frame uniform and in one small uniform of the tone mapping pass. |
 
 Facts the map does not mention, found on the way:
@@ -301,11 +301,13 @@ Why:
   place.
 
 The cost of this, said plainly: **in a foggy 3D scene a far sprite or spark
-stands out**, and saturation 0 leaves them in colour. The next package moves
-particles before tone mapping so they can bloom; there fog and grading reach
-them for free. Whether sprites follow (a 3D billboard wants fog, a 2D game's
-art does not want grading) is a decision for that package or the look lock,
-and one switch on `Sprite` would settle it.
+stands out**, and saturation 0 leaves them in colour. Release 1.9 moves
+particles before tone mapping so they can glow (road-to-2-0.md, "particles
+that glow"; an earlier version of this note said the bloom package would,
+which the plan does not); there fog and grading reach them for free. Whether
+sprites follow (a 3D billboard wants fog, a 2D game's art does not want
+grading) is a decision for that release or the look lock, and one switch on
+`Sprite` would settle it.
 
 ### 3.7 Seeing it from the control plane
 
@@ -424,8 +426,10 @@ Not verified:
 
 Handed on:
 
-- to the bloom package: particles move before tone mapping; fog and grading
-  then reach them; decide whether sprites follow (section 3.6);
+- to release 1.9 ("particles that glow", road-to-2-0.md; not to the bloom
+  package, as this list first said): particles move before tone mapping;
+  fog, grading and bloom then reach them; decide whether sprites follow
+  (section 3.6);
 - to the look lock: which of these become the default (`Ambient.source`,
   `sky_strength` or a dimmer default sky, `sun_size_deg`, `antialiasing`),
   with the migration that writes the old values into existing files;

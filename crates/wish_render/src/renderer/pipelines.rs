@@ -3,6 +3,7 @@
 
 use wish_core::Result;
 
+use super::bloom::BLOOM_UNIFORM_SIZE;
 use super::look::GRADE_UNIFORM_SIZE;
 use super::{DEPTH_FORMAT, DRAW_UNIFORM_SIZE, FRAME_UNIFORM_SIZE, HDR_FORMAT, SHADOW_FORMAT};
 use crate::capture::CAPTURE_FORMAT;
@@ -20,8 +21,14 @@ pub(super) struct Pipelines {
     /// One draw's uniform data, picked by a dynamic offset.
     pub draw_layout: wgpu::BindGroupLayout,
     /// One picture read pixel by pixel: the HDR picture for the tone mapping
-    /// pass, the tone-mapped picture for the FXAA pass.
+    /// pass, the tone-mapped picture for the FXAA pass, a level of the bloom
+    /// for the bloom's down- and up-sample passes.
     pub hdr_layout: wgpu::BindGroupLayout,
+    /// The HDR picture and the bloom's numbers, for the bloom's first pass.
+    pub bloom_first_layout: wgpu::BindGroupLayout,
+    /// The bloom's finest level, the HDR picture and the bloom's numbers,
+    /// for the bloom's last pass.
+    pub bloom_composite_layout: wgpu::BindGroupLayout,
     /// The HDR picture and the colour grading's numbers, for the tone
     /// mapping pass of a graded frame.
     pub grade_layout: wgpu::BindGroupLayout,
@@ -48,6 +55,16 @@ pub(super) struct Pipelines {
     pub tonemap_graded: wgpu::RenderPipeline,
     /// Anti-aliasing over the tone-mapped picture.
     pub fxaa: wgpu::RenderPipeline,
+    /// Bloom, first step down: from the HDR picture, cleaned and with
+    /// fireflies held (`fs_first`).
+    pub bloom_first: wgpu::RenderPipeline,
+    /// Bloom, every further step down (`fs_down`).
+    pub bloom_down: wgpu::RenderPipeline,
+    /// Bloom, a step up (`fs_up`): blended into the level it is drawn over
+    /// by the pass's blend constant.
+    pub bloom_up: wgpu::RenderPipeline,
+    /// Bloom, last step (`fs_composite`): the picture with its bloom.
+    pub bloom_composite: wgpu::RenderPipeline,
     pub sampler: wgpu::Sampler,
     pub shadow_sampler: wgpu::Sampler,
 }
@@ -179,6 +196,25 @@ impl Pipelines {
                 label: Some("grade"),
                 entries: &[loaded_entry, uniform_entry(1, false, GRADE_UNIFORM_SIZE)],
             });
+            // The bloom's first and last pass read its numbers, each through
+            // a layout of its own over the frame's one bloom buffer; the
+            // passes between bind a level through `hdr_layout` and have no
+            // numbers at all.
+            let second_loaded_entry = wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                ..loaded_entry
+            };
+            let bloom_entry = uniform_entry(2, false, BLOOM_UNIFORM_SIZE);
+            let bloom_first_layout =
+                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("bloom first"),
+                    entries: &[loaded_entry, bloom_entry],
+                });
+            let bloom_composite_layout =
+                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("bloom composite"),
+                    entries: &[loaded_entry, second_loaded_entry, bloom_entry],
+                });
             let texture_entry = |binding: u32| wgpu::BindGroupLayoutEntry {
                 binding,
                 visibility: wgpu::ShaderStages::FRAGMENT,
@@ -215,35 +251,44 @@ impl Pipelines {
                     immediate_size: 0,
                 })
             };
-            let fullscreen = |(name, fragment): (&str, &str),
+            let fullscreen_blended =
+                |(name, fragment): (&str, &str),
+                 pipeline_layout: &wgpu::PipelineLayout,
+                 format: wgpu::TextureFormat,
+                 blend: Option<wgpu::BlendState>| {
+                    let shader = module(name);
+                    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                        label: Some(name),
+                        layout: Some(pipeline_layout),
+                        vertex: wgpu::VertexState {
+                            module: &shader,
+                            entry_point: Some("vs_main"),
+                            compilation_options: wgpu::PipelineCompilationOptions::default(),
+                            buffers: &[],
+                        },
+                        primitive: wgpu::PrimitiveState::default(),
+                        depth_stencil: None,
+                        multisample: wgpu::MultisampleState::default(),
+                        fragment: Some(wgpu::FragmentState {
+                            module: &shader,
+                            entry_point: Some(fragment),
+                            compilation_options: wgpu::PipelineCompilationOptions::default(),
+                            targets: &[Some(wgpu::ColorTargetState {
+                                format,
+                                blend,
+                                write_mask: wgpu::ColorWrites::ALL,
+                            })],
+                        }),
+                        multiview_mask: None,
+                        cache: None,
+                    })
+                };
+            // A pass that replaces its target: every full-screen pass but
+            // the bloom's steps up.
+            let fullscreen = |functions: (&str, &str),
                               pipeline_layout: &wgpu::PipelineLayout,
                               format: wgpu::TextureFormat| {
-                let shader = module(name);
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some(name),
-                    layout: Some(pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: &shader,
-                        entry_point: Some("vs_main"),
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                        buffers: &[],
-                    },
-                    primitive: wgpu::PrimitiveState::default(),
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState::default(),
-                    fragment: Some(wgpu::FragmentState {
-                        module: &shader,
-                        entry_point: Some(fragment),
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format,
-                            blend: None,
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                    }),
-                    multiview_mask: None,
-                    cache: None,
-                })
+                fullscreen_blended(functions, pipeline_layout, format, None)
             };
             // The plain sky and plain tone mapping are built from the
             // functions they always were (`fs_main`); what a look adds to
@@ -266,6 +311,37 @@ impl Pipelines {
                 ("fxaa_pass", "fs_main"),
                 &layout(&[&hdr_layout]),
                 CAPTURE_FORMAT,
+            );
+            // The bloom. Its levels are HDR pictures like the one it reads.
+            let level_layout = layout(&[&hdr_layout]);
+            let bloom_first = fullscreen(
+                ("bloom_pass", "fs_first"),
+                &layout(&[&bloom_first_layout]),
+                HDR_FORMAT,
+            );
+            let bloom_down = fullscreen(("bloom_pass", "fs_down"), &level_layout, HDR_FORMAT);
+            // A step up is mixed into the level it is drawn over:
+            // `drawn * constant + level * (1 - constant)`, the constant set
+            // by the pass. That is how each level gets its weight without a
+            // uniform per pass.
+            let mix = wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::Constant,
+                dst_factor: wgpu::BlendFactor::OneMinusConstant,
+                operation: wgpu::BlendOperation::Add,
+            };
+            let bloom_up = fullscreen_blended(
+                ("bloom_pass", "fs_up"),
+                &level_layout,
+                HDR_FORMAT,
+                Some(wgpu::BlendState {
+                    color: mix,
+                    alpha: mix,
+                }),
+            );
+            let bloom_composite = fullscreen(
+                ("bloom_pass", "fs_composite"),
+                &layout(&[&bloom_composite_layout]),
+                HDR_FORMAT,
             );
 
             let opaque_shader = module("opaque");
@@ -440,6 +516,8 @@ impl Pipelines {
                 frame_layout,
                 draw_layout,
                 hdr_layout,
+                bloom_first_layout,
+                bloom_composite_layout,
                 grade_layout,
                 material_layout,
                 light_layout,
@@ -452,6 +530,10 @@ impl Pipelines {
                 tonemap,
                 tonemap_graded,
                 fxaa,
+                bloom_first,
+                bloom_down,
+                bloom_up,
+                bloom_composite,
                 sampler,
                 shadow_sampler,
             }

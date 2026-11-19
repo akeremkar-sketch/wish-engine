@@ -10,6 +10,7 @@
 use wish_core::Diagnostic;
 use wish_core::math::Mat4;
 
+use super::bloom::{BloomPlan, BloomTargets};
 use super::draw_list::{Collected, DrawList};
 use super::look::{Effects, GRADE_UNIFORM_SIZE, Look};
 use super::models::Posed;
@@ -36,8 +37,8 @@ pub struct RenderStats {
     /// The picture's height in pixels.
     pub height: u32,
     /// Draw calls of the frame, all passes together (the shadow map, the
-    /// sky, the surfaces, tone mapping, FXAA, sprites and particles, the
-    /// interface).
+    /// sky, the surfaces, bloom, tone mapping, FXAA, sprites and particles,
+    /// the interface).
     pub draw_calls: u32,
     /// Triangles those draw calls hand to the GPU (before it culls any).
     pub triangles: u64,
@@ -48,7 +49,7 @@ pub struct RenderStats {
     /// Spot lights that light some part of the view.
     pub spot_lights: u32,
     /// Which optional effects the lit picture used: the sky's light, the
-    /// sun's disc, fog, colour grading, FXAA.
+    /// sun's disc, fog, bloom, colour grading, FXAA.
     pub effects: Effects,
 }
 
@@ -66,6 +67,8 @@ pub(super) struct FramePlan<'a> {
     pub light_uniform: Vec<u8>,
     /// Whether the sky pass draws a sun disc or fog with the gradient.
     pub sky_look: bool,
+    /// For a frame with bloom, its levels and numbers.
+    pub bloom: Option<BloomPlan>,
     /// For a graded frame, the colour grading (`Grade` in
     /// `tonemap_pass.wgsl`).
     pub grade_uniform: Option<Vec<u8>>,
@@ -180,13 +183,14 @@ pub(super) fn light_warnings(scene: &RenderScene) -> Vec<Diagnostic> {
 }
 
 /// What the lit picture of these parts takes to draw. Each line is one pass
-/// of `passes.rs` and counts exactly what that pass draws.
+/// of `passes.rs` and counts exactly what that pass draws. `effects` comes
+/// with the number of passes the bloom is (0 without bloom).
 fn lit_stats(
     size: (u32, u32),
     draws: &DrawList<'_>,
     shadow: Option<&ShadowPlan>,
     lights: (u32, u32),
-    effects: Effects,
+    (effects, bloom_passes): (Effects, u32),
     overlay: Option<&crate::sprites::Overlay>,
     interface: Option<&crate::ui::Batch>,
 ) -> RenderStats {
@@ -199,8 +203,9 @@ fn lit_stats(
     };
     let (overlay_draws, overlay_triangles) = overlay.map_or((0, 0), |overlay| overlay.counts());
     let (interface_draws, interface_triangles) = interface.map_or((0, 0), |batch| batch.counts());
-    // The sky, tone mapping and FXAA are one triangle each.
-    let fullscreen = 2 + u32::from(effects.fxaa);
+    // The sky, tone mapping, FXAA and each pass of the bloom are one
+    // triangle each.
+    let fullscreen = 2 + u32::from(effects.fxaa) + bloom_passes;
     RenderStats {
         width: size.0,
         height: size.1,
@@ -353,12 +358,13 @@ impl Renderer {
         let mut light_uniform = Bytes::default();
         light_uniform.mat4(&light_view_proj);
 
+        let bloom = look.bloom_plan((width, height));
         let stats = lit_stats(
             (width, height),
             &draws,
             shadow.as_ref(),
             lights_in_view(&scene.local_lights, &clusters),
-            look.effects(),
+            (look.effects(), bloom.as_ref().map_or(0, BloomPlan::passes)),
             overlay.as_ref(),
             interface.as_ref(),
         );
@@ -369,6 +375,7 @@ impl Renderer {
             frame_uniform: frame.0,
             light_uniform: light_uniform.0,
             sky_look: look.sky(),
+            bloom,
             grade_uniform: look.grade_uniform((width, height)),
             fxaa: look.fxaa,
             local_lights: light_bytes(&scene.local_lights),
@@ -398,8 +405,11 @@ pub(super) struct FrameResources {
     pub light_group: wgpu::BindGroup,
     /// One draw's uniform data, picked by its offset.
     pub draw_group: wgpu::BindGroup,
-    /// The HDR picture, for tone mapping; in a graded frame with the
-    /// grading's numbers.
+    /// With bloom: its levels, and the picture with its bloom that tone
+    /// mapping reads in place of the HDR picture.
+    pub bloom: Option<BloomTargets>,
+    /// The HDR picture (with bloom: the bloomed picture), for tone mapping;
+    /// in a graded frame with the grading's numbers.
     pub tonemap_group: wgpu::BindGroup,
     /// With FXAA: the tone-mapped picture that tone mapping writes instead
     /// of the picture itself, and the group the FXAA pass reads it through.
@@ -506,11 +516,19 @@ impl FrameResources {
             ],
         });
         let draw_group = plan.draws.upload(gpu, pool, &pipelines.draw_layout);
+        // Only a frame with bloom has the bloom's targets. Tone mapping then
+        // reads the picture the bloom's last step writes; without bloom it
+        // reads the HDR picture, as it always did.
+        let bloom = plan
+            .bloom
+            .as_ref()
+            .map(|bloom| BloomTargets::acquire(gpu, pool, pipelines, bloom, &hdr));
+        let lit = bloom.as_ref().map_or(&hdr, |bloom| &bloom.bloomed);
         // Only a graded frame has the grading's buffer, and the group that
         // binds it.
         let hdr_entry = wgpu::BindGroupEntry {
             binding: 0,
-            resource: wgpu::BindingResource::TextureView(&hdr),
+            resource: wgpu::BindingResource::TextureView(lit),
         };
         let tonemap_group = match &plan.grade_uniform {
             Some(numbers) => {
@@ -564,6 +582,7 @@ impl FrameResources {
             frame_group,
             light_group,
             draw_group,
+            bloom,
             tonemap_group,
             fxaa,
         }

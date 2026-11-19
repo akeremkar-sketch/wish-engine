@@ -481,6 +481,10 @@ const SEARCH_WORDS: &[(&str, &str)] = &[
         "mist haze atmosphere distance depth weather smog fade far",
     ),
     (
+        "Bloom",
+        "glow glowing glare halo shine shining neon emissive bright light lens post processing dreamy",
+    ),
+    (
         "ColorGrading",
         "color colour grade grading contrast saturation vivid white balance temperature warm cool tint vignette post processing filter look mood tone",
     ),

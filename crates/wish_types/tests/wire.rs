@@ -94,6 +94,7 @@ fn every_engine_type_round_trips() {
         RenderSettings::schema(),
         Fog::schema(),
         ColorGrading::schema(),
+        Bloom::schema(),
         Time::schema(),
         Everything::schema(),
     ] {

@@ -13,8 +13,8 @@ use wish_ecs::World;
 use wish_transform::GlobalTransform;
 
 use crate::components::{
-    Ambient, AmbientSource, Camera, ColorGrading, DirectionalLight, Exposure, Fog, Material, Model,
-    PointLight, Primitive, RenderSettings, Shape, Sky, SpotLight,
+    Ambient, AmbientSource, Bloom, Camera, ColorGrading, DirectionalLight, Exposure, Fog, Material,
+    Model, PointLight, Primitive, RenderSettings, Shape, Sky, SpotLight,
 };
 
 /// What a draw shows.
@@ -261,6 +261,8 @@ pub struct RenderScene {
     /// The colour grading (the world's `ColorGrading`, or the defaults:
     /// none).
     pub grading: ColorGrading,
+    /// The bloom (the world's `Bloom`, or the defaults: none).
+    pub bloom: Bloom,
     /// Exposure value at ISO 100.
     pub ev100: f32,
     /// How the picture is drawn (the world's `RenderSettings`, or the
@@ -352,6 +354,7 @@ pub fn extract(world: &World) -> Result<RenderScene> {
             .resource::<ColorGrading>()
             .copied()
             .unwrap_or_default(),
+        bloom: world.resource::<Bloom>().copied().unwrap_or_default(),
         ev100: world
             .resource::<Exposure>()
             .copied()

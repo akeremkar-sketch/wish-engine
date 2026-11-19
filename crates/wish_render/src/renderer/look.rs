@@ -1,14 +1,16 @@
 //! The look of a frame: what the scene's look settings come to as the
 //! numbers the shaders read.
 //!
-//! Five effects are switched here, each off unless the scene asks for it
-//! (design note `M12-look-1-sky-fog-grading-fxaa.md`):
+//! Six effects are switched here, each off unless the scene asks for it
+//! (design notes `M12-look-1-sky-fog-grading-fxaa.md` and
+//! `M12-look-2-bloom.md`):
 //!
 //! | Effect | Asked for by | Where it is drawn |
 //! |---|---|---|
 //! | sky light | `Ambient.source: Sky` | the opaque pass (`sky.wgsl`) |
 //! | sun disc | `Sky.sun_size_deg` above 0, and a directional light | the sky pass (`sky.wgsl`) |
 //! | fog | `Fog.density` above 0 | the sky and opaque passes (`fog.wgsl`) |
+//! | bloom | `Bloom.strength` above 0 | its own passes, before tone mapping (`bloom.rs`) |
 //! | colour grading | a `ColorGrading` field off its default | the tone mapping pass |
 //! | FXAA | `RenderSettings.antialiasing: Fxaa` | its own pass, after tone mapping |
 //!
@@ -23,12 +25,14 @@
 //! - the opaque pass branches on a flag in the frame uniform, and with the
 //!   flags at 0 runs the instructions it always ran on the inputs it always
 //!   had (one shader for both: its lighting code is not to be kept twice);
-//! - the FXAA pass is not run.
+//! - the bloom passes and the FXAA pass are not run, and their targets are
+//!   not taken.
 //!
 //! Every number is cleaned on the way: game code can write anything into a
 //! resource, and nothing that is not finite may reach a shader.
 
 use super::Bytes;
+use super::bloom::{BloomPlan, BloomSettings};
 use crate::components::Antialiasing;
 use crate::extract::RenderScene;
 
@@ -61,6 +65,8 @@ pub struct Effects {
     pub sun_disc: bool,
     /// There was fog (`Fog.density`).
     pub fog: bool,
+    /// Bright light was spread around itself (`Bloom.strength`).
+    pub bloom: bool,
     /// The picture was graded (`ColorGrading`).
     pub color_grading: bool,
     /// Edges were smoothed with FXAA (`RenderSettings.antialiasing`).
@@ -69,12 +75,14 @@ pub struct Effects {
 
 impl Effects {
     /// The names of the effects that were on, in the order of the frame's
-    /// passes: `sky_light`, `sun_disc`, `fog`, `color_grading`, `fxaa`.
+    /// passes: `sky_light`, `sun_disc`, `fog`, `bloom`, `color_grading`,
+    /// `fxaa`.
     pub fn names(&self) -> Vec<&'static str> {
         [
             (self.sky_light, "sky_light"),
             (self.sun_disc, "sun_disc"),
             (self.fog, "fog"),
+            (self.bloom, "bloom"),
             (self.color_grading, "color_grading"),
             (self.fxaa, "fxaa"),
         ]
@@ -185,6 +193,20 @@ fn fog(scene: &RenderScene) -> Option<FogData> {
         base: clean(fog.base_height, -100_000.0, 100_000.0, 0.0),
         start: clean(fog.start, 0.0, 100_000.0, 0.0),
         limit,
+    })
+}
+
+/// The bloom's settings, cleaned; `None` when nothing is spread.
+fn bloom(scene: &RenderScene) -> Option<BloomSettings> {
+    let bloom = &scene.bloom;
+    let strength = clean(bloom.strength, 0.0, 1.0, 0.0);
+    if strength <= 0.0 {
+        return None;
+    }
+    Some(BloomSettings {
+        strength,
+        spread: clean(bloom.spread, 0.0, 1.0, 0.5),
+        threshold: clean(bloom.threshold, 0.0, 64.0, 0.0),
     })
 }
 
@@ -314,6 +336,7 @@ pub(super) struct Look {
     /// The strength of the sky's light when it is the ambient light.
     sky_light: Option<f32>,
     fog: Option<FogData>,
+    bloom: Option<BloomSettings>,
     grade: Option<Grade>,
     /// Whether the FXAA pass runs.
     pub fxaa: bool,
@@ -329,6 +352,7 @@ impl Look {
                 .sky_light
                 .map(|strength| clean(strength, 0.0, 10.0, 1.0)),
             fog: fog(scene),
+            bloom: bloom(scene),
             grade: grade(scene),
             fxaa: scene.settings.antialiasing == Antialiasing::Fxaa,
         }
@@ -340,6 +364,7 @@ impl Look {
             sky_light: self.sky_light.is_some(),
             sun_disc: self.sun.is_some(),
             fog: self.fog.is_some(),
+            bloom: self.bloom.is_some(),
             color_grading: self.grade.is_some(),
             fxaa: self.fxaa,
         }
@@ -381,6 +406,12 @@ impl Look {
                 frame.floats(&[0.0; 4]);
             }
         }
+    }
+
+    /// For a frame with bloom, its levels and numbers for a picture of
+    /// `size` pixels.
+    pub(super) fn bloom_plan(&self, size: (u32, u32)) -> Option<BloomPlan> {
+        self.bloom.map(|settings| BloomPlan::new(settings, size))
     }
 
     /// For a graded frame, the tone mapping pass's uniform (`Grade` in

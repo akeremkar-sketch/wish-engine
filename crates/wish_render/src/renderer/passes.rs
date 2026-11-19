@@ -5,7 +5,8 @@
 //! | [`shadow`] | the draw list, the light's matrix | the shadow map |
 //! | [`sky`] | the frame uniform | the HDR picture (all of it) |
 //! | [`opaque`] | the draw list, the frame uniform, the shadow map, the light lists | the HDR picture, the depth buffer |
-//! | [`tone_map`] | the HDR picture, the colour grading | the picture, or with FXAA the tone-mapped picture (all of it) |
+//! | the bloom's passes (only when asked for; `bloom.rs`) | the HDR picture | the bloom's levels, the bloomed picture (all of it) |
+//! | [`tone_map`] | the HDR picture (with bloom: the bloomed picture), the colour grading | the picture, or with FXAA the tone-mapped picture (all of it) |
 //! | [`fxaa`] (only when asked for) | the tone-mapped picture | the picture (all of it) |
 //! | [`overlay`] | sprites and particles, the depth buffer | the picture |
 //! | [`interface`] | the interface batch | the picture |
@@ -184,7 +185,7 @@ pub(super) fn opaque(encoder: &mut wgpu::CommandEncoder, inputs: &Opaque<'_>) {
 /// The tone mapping pass: from the HDR picture to the displayable one,
 /// replacing whatever the pooled picture held. For a graded frame `pipeline`
 /// is the grading one and `hdr` carries the grading's numbers with the HDR
-/// picture.
+/// picture. In a frame with bloom `hdr` binds the bloomed picture.
 pub(super) fn tone_map(
     encoder: &mut wgpu::CommandEncoder,
     picture: &wgpu::TextureView,

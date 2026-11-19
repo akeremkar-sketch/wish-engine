@@ -58,11 +58,14 @@ const SMALLEST_BUFFER: u64 = 64;
 /// How many bytes of targets and buffers a renderer keeps from one call to
 /// the next, on top of what the last call used. A 3840x2160 window's lit
 /// picture (20 bytes a pixel: the picture, its readback buffer, the HDR
-/// picture and the depth buffer; 24 with FXAA, which keeps the tone mapped
-/// picture too), its identity picture and a 2048 shadow map are 238 MiB,
-/// 270 MiB with FXAA, so one such view is drawn without making anything;
-/// the sizes a dragged window edge leaves behind do not pile up beside it.
-pub(super) const BUDGET_BYTES: u64 = 320 << 20;
+/// picture and the depth buffer), its identity picture and a 2048 shadow
+/// map are 238 MiB. FXAA keeps the tone mapped picture too (4 bytes a
+/// pixel, 32 MiB), and bloom the bloomed picture (8 bytes a pixel, 63 MiB)
+/// and its nine levels (8 bytes a pixel of each, together a third of the
+/// picture: 21 MiB). So such a view with every effect on is 354 MiB and is
+/// drawn without making anything; the sizes a dragged window edge leaves
+/// behind do not pile up beside it.
+pub(super) const BUDGET_BYTES: u64 = 384 << 20;
 
 /// How many GPU objects a renderer's pool has created since the renderer was
 /// made. (What is created beside the pool, such as a posed mesh's vertex
