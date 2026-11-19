@@ -28,9 +28,11 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-Render tests run on a software adapter, so they give the same pictures on every machine. Golden
-images are refreshed with `UPDATE_GOLDEN=1`; look at the difference before committing it. Render
-tests must also pass in release (`cargo test --release -p wish_render`).
+Render tests run on a software adapter (WARP on Windows, lavapipe on Linux), so a picture does not
+depend on the graphics card. The two adapters differ slightly (by at most 1/255 a channel when
+measured in M3), and golden-image comparisons allow a small tolerance for that. Golden images are refreshed with `UPDATE_GOLDEN=1`; look at the
+difference before committing it. Render tests must also pass in release
+(`cargo test --release -p wish_render`).
 
 If you touch a crate with `unsafe` code (`wish_ecs`, `wish_sdk`), Miri must be clean too:
 
@@ -76,6 +78,9 @@ A change that breaks one of these is wrong, however useful it looks. The reasons
 | Editor text | `t("...")` / `tf("...", ...)` with a literal, and its translation in all 11 files of `crates/wish_editor/lang/` |
 | A dependency | a license check (MIT, Apache-2.0 or BSD-like only; see `deny.toml`), then `python tools/third_party.py` |
 | A `Plain` type or a macro message | refreshed `trybuild` snapshots (`TRYBUILD=overwrite`), with the difference reviewed |
+| An engine type, a field or a default | the recorded defaults refreshed (`UPDATE_DEFAULTS=1 cargo test -p wish_control --test look_lock`); a default changes only in a planned format window, with a migration ([docs/STABILITY.md](docs/STABILITY.md)) |
+| A link in any Markdown file | a target that exists, with its letter case and `#anchor` (`cargo test -p wish_control --test doc_links`) |
+| A number, a comparison or a "works on" in public text | the command that reproduces it, or who checked it, on what and when ([ADR-027](docs/DECISIONS.md#adr-027--four-rules-before-the-freeze-defaults-answers-versions-claims), rule 4) |
 
 ## Code conventions
 
@@ -102,8 +107,8 @@ A change that breaks one of these is wrong, however useful it looks. The reasons
 2. Work in small steps. Each step builds, is tested and is committed.
 3. Show that it works: run the command that proves it, and report its output. If a test fails, say
    so with the output.
-4. An idea outside the current scope goes to the M10 list in [docs/ROADMAP.md](docs/ROADMAP.md),
-   not into the code.
+4. An idea outside the current scope goes to the M11 list in
+   [docs/ROADMAP.md](docs/ROADMAP.md#m11--after-10-order-depends-on-need), not into the code.
 
 ## Releases
 
@@ -122,7 +127,14 @@ target/dist/wen package --out <folder>/package
 
 On Windows, set `RUSTFLAGS=-C target-feature=+crt-static` and add
 `--target x86_64-pc-windows-msvc` (the programs then are in `target/x86_64-pc-windows-msvc/dist`),
-so that they start on a Windows without the Visual C++ runtime.
+so that they start on a Windows without the Visual C++ runtime. The game SDK's three macro
+libraries do not get the flag yet, so building game code still needs that runtime; `wen package`
+warns about it (`package_needs_static_crt`;
+[docs/design/M12-release-pipeline.md](docs/design/M12-release-pipeline.md), section 6).
+
+The pictures of the README are drawn by the engine: after `cargo build --release -p wish_cli`,
+`python tools/readme_pictures.py` draws them again into `docs/images/`. Look at each one before
+committing it.
 
 ## Where things are
 

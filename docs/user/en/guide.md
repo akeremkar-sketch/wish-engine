@@ -17,13 +17,24 @@ This guide follows a game from the first start to an exported game.
 - [9. The command line](#9-the-command-line)
 - [10. When something goes wrong](#10-when-something-goes-wrong)
 - [11. What is in a project folder](#11-what-is-in-a-project-folder)
+- [12. How the claims in this guide are checked](#12-how-the-claims-in-this-guide-are-checked)
 
 ## 1. Install and first start
 
-Unpack the Wish Engine folder anywhere and run `wish-engine.exe` (for a shortcut, the icon is
-`wish-engine.ico` in the folder). Nothing else needs to be installed: the compiler for game code
-ships inside the folder. Drop a project folder on `wish-engine.exe` to open the editor on it. On the
-command line the same is `wen edit`.
+No release has been published yet: build the engine from source, or make the release archive
+yourself, as the [README](../../../README.md#getting-started) says.
+
+Unpack the Wish Engine archive anywhere and run `wish-engine.exe` on Windows (for a shortcut, the
+icon is `wish-engine.ico` in the folder), or `wish-engine` on Linux. The compiler for game code
+ships inside the folder, so no developer tool needs to be installed. Two things the computer itself
+must have:
+- **Windows:** building game code currently needs the Visual C++ runtime (`VCRUNTIME140.dll`),
+  which most Windows computers have. The engine, the editor and exported games do not need it.
+- **Linux:** the ALSA library (`libasound2`), a Vulkan driver or OpenGL, and the X11 or Wayland
+  libraries a desktop has.
+
+Drop a project folder on `wish-engine.exe` to open the editor on it. On the command line the same is
+`wen edit`.
 
 Without a project, the editor opens on the **welcome screen**:
 
@@ -173,7 +184,7 @@ the change enters the history as *file*, and a broken file is reported, never ov
   - **Pause**, **Step** (one tick) and **Stop**: stopping returns the scene to how it was.
   - Changes you make while playing are live and are not kept.
 - **Timeline:** while playing, you can go back to an earlier tick. The game is deterministic: the
-  same scene and seed always play out the same way.
+  same scene, seed and keys always play out the same way on the same engine version.
 - **Replays:**
   - *Record* records a run, keys included.
   - Saved replays are listed under *Replays* and can be played back.
@@ -253,8 +264,8 @@ A **checkpoint is saved before every task**, so you can always go back.
 - *Connect an outside agent...* shows an address and a token: give both to any MCP client.
 - Claude Code in the project folder needs nothing: the project's `.mcp.json` starts `wen mcp`
   itself.
-- The agent uses the same tools the editor uses, about 30 of them. Every one of them can also be
-  done by hand.
+- The agent uses the same tools the editor uses, 34 of them. Every one of them can also be done by
+  hand.
 
 The engine is complete without any AI. An assistant is a faster way to do the same things.
 
@@ -282,12 +293,14 @@ Project menu, *Export game* (or `wen export`):
 - The project is checked first.
 - The game code must be built.
 - The result is `exports/<name>/`:
-  - `<name>.exe`: the player;
+  - `<name>.exe` on Windows, `<name>` on Linux: the player;
   - `game/`: scenes, assets and the built code;
   - `LICENSES.txt`.
 
-To share the game, zip that folder. It runs on a machine without the engine, the editor or a
-compiler. It plays exactly as it did in the editor.
+To share the game, zip that folder. The player is in it, so it needs neither the engine, the editor
+nor a compiler. It plays exactly as it did in the editor: after the same ticks, the same world. The
+game is exported for the system it is made on (Windows or Linux); exporting for the other one from
+the same computer comes in a later release.
 
 ## 9. The command line
 
@@ -376,3 +389,17 @@ exports/              exported games (not part of the project)
 ```
 
 Every file is canonical JSON, so git shows clear differences between versions.
+
+## 12. How the claims in this guide are checked
+
+Each of these commands runs from a checkout of the engine's source (the `cargo test` ones also run
+in CI on Windows and Linux).
+
+| Claim | Command |
+|---|---|
+| 12 languages | `wen edit --lang xx` names them in its error |
+| 34 tools, each with a way to do it by hand | `wen call` with an unknown tool name lists them; `cargo test -p wish_editor --test parity` |
+| The same scene, seed and keys play out the same way; replays of 10,000 ticks play back exactly | `cargo test -p wish_control --test script_tools` |
+| An exported game plays as it did in the editor | `cargo test -p wish_player --test export` (the same world hash, in a separate process) |
+| A file of format 1 looks and plays as it did; `wen migrate` keeps its meaning | `cargo test -p wish_control --test look_lock` |
+| What a release archive needs | the release workflow builds and uses each archive on a fresh GitHub runner ([.github/workflows/release.yml](../../../.github/workflows/release.yml)); the Visual C++ runtime note: [docs/design/M12-release-pipeline.md](../../design/M12-release-pipeline.md), section 6 |

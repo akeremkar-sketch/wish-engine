@@ -16,7 +16,7 @@ use crate::workspace::Workspace;
 pub(crate) const PROJECT_EXPORT: Tool = Tool {
     name: "project_export",
     title: "Export the game",
-    description: "Makes the game a folder that runs on a machine without the engine: exports/<name>/ inside the project, with <name>.exe (the player: no editor, no MCP server, no compiler), game/ (scenes, prefabs, assets, wish.json, input.json and the built game code) and LICENSES.txt. The project must pass check, and its game code (if any) must be built (script_build). Zip the folder to share it. An existing export of that name is replaced only with overwrite.",
+    description: "Makes the game a folder that runs on a machine without the engine: exports/<name>/ inside the project, with <name>(.exe) (the player: no editor, no MCP server, no compiler), game/ (scenes, prefabs, assets, wish.json, input.json and the built game code) and LICENSES.txt. The project must pass check, and its game code (if any) must be built (script_build). Zip the folder to share it. An existing export of that name is replaced only with overwrite.",
     params: &[
         Param::optional(
             "name",

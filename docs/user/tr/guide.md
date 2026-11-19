@@ -17,13 +17,25 @@ Bu kılavuz bir oyunu ilk açılıştan dışa aktarılmış hâline kadar izler
 - [9. Komut satırı](#9-komut-satırı)
 - [10. Bir şey ters gidince](#10-bir-şey-ters-gidince)
 - [11. Proje klasöründe neler var](#11-proje-klasöründe-neler-var)
+- [12. Bu kılavuzdaki iddialar nasıl doğrulanır](#12-bu-kılavuzdaki-iddialar-nasıl-doğrulanır)
 
 ## 1. Kurulum ve ilk açılış
 
-Wish Engine klasörünü istediğiniz yere açın ve `wish-engine.exe`'yi çalıştırın (kısayol için
-simge klasördeki `wish-engine.ico`). Başka bir şey kurmanız gerekmez: oyun kodunun derleyicisi
-klasörün içinde gelir. Bir proje klasörünü `wish-engine.exe`'nin üzerine bırakırsanız editör o
-projeyle açılır. Komut satırında aynı şey `wen edit`'tir.
+Henüz yayımlanmış bir sürüm yok: motoru kaynak koddan derleyin ya da sürüm arşivini
+[README](../../../README.md#getting-started)'de anlatıldığı gibi kendiniz yapın.
+
+Wish Engine arşivini istediğiniz yere açın; Windows'ta `wish-engine.exe`'yi (kısayol için simge
+klasördeki `wish-engine.ico`), Linux'ta `wish-engine`'i çalıştırın. Oyun kodunun derleyicisi
+klasörün içinde gelir; hiçbir geliştirici aracı kurmanız gerekmez. Bilgisayarın kendisinde olması
+gereken iki şey:
+- **Windows:** oyun kodunu derlemek şimdilik Visual C++ çalışma zamanını (`VCRUNTIME140.dll`)
+  ister; çoğu Windows bilgisayarında vardır. Motorun, editörün ve dışa aktarılan oyunların buna
+  ihtiyacı yoktur.
+- **Linux:** ALSA kitaplığı (`libasound2`), bir Vulkan sürücüsü ya da OpenGL, ve bir masaüstünde
+  bulunan X11 ya da Wayland kitaplıkları.
+
+Bir proje klasörünü `wish-engine.exe`'nin üzerine bırakırsanız editör o projeyle açılır. Komut
+satırında aynı şey `wen edit`'tir.
 
 Proje olmadan editör **karşılama ekranıyla** açılır:
 
@@ -169,8 +181,8 @@ asla yazılmaz.
   - Tuşlar girdi haritasındaki eylemleri sürer.
   - **Duraklat**, **Adım** (tek tick) ve **Durdur**: durdurunca sahne eski hâline döner.
   - Oynarken yaptığınız değişiklikler canlıdır ve saklanmaz.
-- **Zaman çizgisi:** oynarken önceki bir tick'e dönebilirsiniz. Oyun belirlenimcidir: aynı sahne ve
-  tohum her zaman aynı biçimde oynar.
+- **Zaman çizgisi:** oynarken önceki bir tick'e dönebilirsiniz. Oyun belirlenimcidir: aynı sahne,
+  tohum ve tuşlar, motorun aynı sürümünde her zaman aynı biçimde oynar.
 - **Tekrar kayıtları:**
   - *Kaydet* bir koşuyu, tuşlarıyla birlikte kaydeder.
   - Kaydedilen tekrarlar *Tekrar kayıtları* altında listelenir ve oynatılabilir.
@@ -253,7 +265,7 @@ Tasarım projede `design/game.json` dosyasındadır (git'e girer, varlık sayıl
   verin.
 - Proje klasöründeki Claude Code'un hiçbir şeye ihtiyacı yoktur: projenin `.mcp.json`'u `wen mcp`'yi
   kendisi başlatır.
-- Ajan, editörün kullandığı araçların aynısını kullanır (30 kadar). Hepsi elle de yapılabilir.
+- Ajan, editörün kullandığı araçların aynısını kullanır (34 araç). Hepsi elle de yapılabilir.
 
 Motor hiçbir yapay zekâ olmadan eksiksizdir. Yardımcı, aynı işleri yapmanın daha hızlı bir yoludur.
 
@@ -281,12 +293,14 @@ Proje menüsü, *Oyunu dışa aktar* (ya da `wen export`):
 - Önce proje denetlenir.
 - Oyun kodu derlenmiş olmalıdır.
 - Sonuç `exports/<ad>/` klasörüdür:
-  - `<ad>.exe`: oynatıcı;
+  - Windows'ta `<ad>.exe`, Linux'ta `<ad>`: oynatıcı;
   - `game/`: sahneler, varlıklar ve derlenmiş kod;
   - `LICENSES.txt`.
 
-Oyunu paylaşmak için bu klasörü sıkıştırın. Motoru, editörü ya da derleyicisi olmayan bir
-makinede çalışır ve editörde oynadığı gibi oynar.
+Oyunu paylaşmak için bu klasörü sıkıştırın. Oynatıcı içindedir; motora, editöre ya da bir
+derleyiciye ihtiyaç duymaz. Editörde oynadığı gibi oynar: aynı sayıda tick'ten sonra aynı dünya.
+Oyun, yapıldığı sistem için dışa aktarılır (Windows ya da Linux); aynı bilgisayardan öbür sistem
+için dışa aktarmak sonraki bir sürümde gelecek.
 
 ## 9. Komut satırı
 
@@ -378,3 +392,17 @@ exports/              dışa aktarılan oyunlar (projenin parçası değil)
 ```
 
 Her dosya kanonik JSON'dur; git sürümler arasındaki farkı açıkça gösterir.
+
+## 12. Bu kılavuzdaki iddialar nasıl doğrulanır
+
+Bu komutların her biri motorun kaynak kodunun bir kopyasında çalışır (`cargo test` olanlar CI'da
+Windows ve Linux'ta da çalışır).
+
+| İddia | Komut |
+|---|---|
+| 12 dil | `wen edit --lang xx` hata iletisinde hepsini sayar |
+| 34 araç, her birinin elle yapılış yolu | bilinmeyen bir araç adıyla `wen call` hepsini listeler; `cargo test -p wish_editor --test parity` |
+| Aynı sahne, tohum ve tuşlar aynı biçimde oynar; 10.000 tick'lik tekrarlar birebir oynar | `cargo test -p wish_control --test script_tools` |
+| Dışa aktarılan oyun editördeki gibi oynar | `cargo test -p wish_player --test export` (ayrı bir süreçte aynı dünya özeti) |
+| Biçim 1 olan bir dosya eskisi gibi görünür ve oynar; `wen migrate` anlamını korur | `cargo test -p wish_control --test look_lock` |
+| Bir sürüm arşivinin istedikleri | sürüm iş akışı her arşivi temiz bir GitHub makinesinde derler ve kullanır ([.github/workflows/release.yml](../../../.github/workflows/release.yml)); Visual C++ çalışma zamanı notu: [docs/design/M12-release-pipeline.md](../../design/M12-release-pipeline.md), bölüm 6 |
