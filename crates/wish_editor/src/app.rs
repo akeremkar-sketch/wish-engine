@@ -227,6 +227,16 @@ pub struct EditorApp {
     eye: RefCell<Option<FlyCamera>>,
     movement: Movement,
     looking: bool,
+    /// How far ahead of the scene view's eye it turns around and zooms
+    /// toward (meters): framing a selection sets it.
+    focus: f32,
+    /// Alt and the left button are held on the view: the eye orbits.
+    orbiting: bool,
+    /// The middle button is held on the view: the eye slides.
+    panning: bool,
+    /// The controls that float on the scene view (last frame's places): a
+    /// press on them is theirs, not the view's.
+    view_overlays: RefCell<Vec<Rect>>,
     pointer: Option<(f32, f32)>,
     modifiers: Modifiers,
     /// Where a primary-button press began over the view.
@@ -419,6 +429,8 @@ struct Actions {
     duplicate: bool,
     /// Make a new scene and open it.
     new_scene: bool,
+    /// Move the scene view's eye so the selection fills it.
+    frame: bool,
     delete: bool,
     /// Rename an entity: from, to.
     rename: Option<(String, String)>,
@@ -496,6 +508,7 @@ impl Actions {
             || self.create.is_some()
             || self.duplicate
             || self.new_scene
+            || self.frame
             || self.rename.is_some()
             || self.reparent.is_some()
             || self.inspector.any()
@@ -538,6 +551,10 @@ impl EditorApp {
             eye: RefCell::new(None),
             movement: Movement::default(),
             looking: false,
+            focus: 8.0,
+            orbiting: false,
+            panning: false,
+            view_overlays: RefCell::new(Vec::new()),
             pointer: None,
             modifiers: Modifiers::default(),
             press: None,
@@ -2008,6 +2025,7 @@ impl EditorApp {
             "agent.panel" => actions.toggle_cockpit = true,
             "view.game_view" => actions.toggle_game_view = true,
             "view.reset_camera" => actions.reset_camera = true,
+            "view.frame" => actions.frame |= self.play.is_none(),
             "project.check" => actions.show_problems = true,
             "project.build_code" => actions.build_code = true,
             "project.run_tests" => actions.run_tests = true,
@@ -3472,6 +3490,24 @@ impl EditorApp {
         Some(path)
     }
 
+    /// Moves the scene view's eye, looking the same way, so the selected
+    /// entity fills the view (its size from its scale: the shapes are a
+    /// metre across), and turns and zooms around it from then on.
+    fn frame_selection(&mut self) {
+        let Some((_, target)) = self.target.as_ref() else {
+            self.status = t("Select an entity to frame it").to_owned();
+            return;
+        };
+        let (scale, _, center) = target.world().to_scale_rotation_translation();
+        let radius = scale.abs().max_element().max(0.25) * 0.9;
+        // The scene view's lens; 50 degrees, as a new project's camera.
+        const FOV_Y: f32 = 50.0 * std::f32::consts::PI / 180.0;
+        if let Some(eye) = self.eye.borrow_mut().as_mut() {
+            self.focus = eye.frame(center, radius, FOV_Y);
+            self.picture_stale = true;
+        }
+    }
+
     /// An id that no entity has, built on `base`.
     fn unused_id(&self, base: &str) -> String {
         let taken: BTreeSet<&str> = self.rows.iter().map(|row| row.id.as_str()).collect();
@@ -3749,7 +3785,11 @@ impl EditorApp {
         }
         if actions.reset_camera {
             *self.eye.borrow_mut() = None;
+            self.focus = 8.0;
             self.picture_stale = true;
+        }
+        if actions.frame {
+            self.frame_selection();
         }
         if let Some(path) = actions.browser.select {
             self.select_asset(&path);
@@ -4122,9 +4162,13 @@ impl EditorApp {
     /// clicking to pick.
     fn view_input(&mut self, events: &[ShellEvent]) {
         for event in events {
+            // On the view, and not on a control floating over it.
             let over_view = |app: &Self| {
-                app.pointer
-                    .is_some_and(|(x, y)| app.viewport.contains(pos2(x, y)))
+                app.pointer.is_some_and(|(x, y)| {
+                    let at = pos2(x, y);
+                    app.viewport.contains(at)
+                        && !app.view_overlays.borrow().iter().any(|r| r.contains(at))
+                })
             };
             match event {
                 ShellEvent::Pointer { x, y } => self.pointer = Some((*x, *y)),
@@ -4182,6 +4226,24 @@ impl EditorApp {
                 }
                 continue;
             }
+            // Alt and the left button orbit the eye (the handles do not
+            // take that press).
+            if let ShellEvent::Button {
+                button: Button::Primary,
+                pressed,
+                modifiers,
+            } = event
+            {
+                if *pressed && (modifiers.alt || self.modifiers.alt) && over_view(self) {
+                    self.orbiting = true;
+                    self.press = None;
+                    continue;
+                }
+                if !*pressed && self.orbiting {
+                    self.orbiting = false;
+                    continue;
+                }
+            }
             // The handles first: a press on one is not a click on the view.
             let took = self.gizmo_input(event);
             match event {
@@ -4190,6 +4252,34 @@ impl EditorApp {
                     pressed,
                     ..
                 } => self.looking = *pressed && over_view(self),
+                ShellEvent::Button {
+                    button: Button::Middle,
+                    pressed,
+                    ..
+                } => self.panning = *pressed && over_view(self),
+                ShellEvent::Scroll { y, .. } if over_view(self) => {
+                    let focus = self.focus;
+                    if let Some(eye) = self.eye.borrow_mut().as_mut() {
+                        let pivot = eye.position + eye.forward() * focus;
+                        // One notch of a wheel (48) comes an eighth nearer.
+                        self.focus = eye.dolly(pivot, (*y / 48.0 * 0.125).clamp(-0.5, 0.5));
+                        self.picture_stale = true;
+                    }
+                }
+                ShellEvent::MouseDelta { x, y } if self.orbiting || self.panning => {
+                    let focus = self.focus;
+                    if let Some(eye) = self.eye.borrow_mut().as_mut() {
+                        if self.orbiting {
+                            let pivot = eye.position + eye.forward() * focus;
+                            eye.orbit(pivot, *x, *y);
+                        } else {
+                            // The world follows the pointer at the pivot's
+                            // distance.
+                            eye.pan(*x, *y, focus * 0.0015);
+                        }
+                        self.picture_stale = true;
+                    }
+                }
                 ShellEvent::Button {
                     button: Button::Primary,
                     pressed,
@@ -4450,6 +4540,110 @@ impl EditorApp {
     }
 
     /// The hierarchy panel: select, add, delete, rename, move.
+    /// The handles' tools, floating at the scene view's top left: move,
+    /// rotate, scale, their axes, snapping and the camera's reset.
+    fn view_tools(&self, ui: &mut Ui, area: Rect, actions: &mut Actions) -> Rect {
+        use crate::style::{Icon, tool_button};
+        let band = Rect::from_min_max(
+            area.min + vec2(8.0, 8.0),
+            pos2(area.max.x - 8.0, area.min.y + 44.0),
+        );
+        floating(ui, band, false, |ui| {
+            for (mode, icon, name) in [
+                (Mode::Translate, Icon::Move, t("Move")),
+                (Mode::Rotate, Icon::Rotate, t("Rotate")),
+                (Mode::Scale, Icon::Scale, t("Scale")),
+            ] {
+                if tool_button(ui, icon, name, false, self.mode == mode, true, None)
+                    .on_hover_text(format!("{name} ({})", t("Keys W, E, R")))
+                    .clicked()
+                {
+                    actions.mode = Some(mode);
+                }
+            }
+            ui.separator();
+            let space = if self.space == Space::World {
+                t("World")
+            } else {
+                t("Local")
+            };
+            if tool_button(ui, Icon::Globe, space, true, false, true, None)
+                .on_hover_text(t("The handles' axes: the world's or the entity's own"))
+                .clicked()
+            {
+                actions.toggle_space = true;
+            }
+            if tool_button(ui, Icon::Magnet, t("Snap"), false, self.snap, true, None)
+                .on_hover_text(t("Half metres, 15 degrees, steps of 10 % when on"))
+                .clicked()
+            {
+                actions.toggle_snap = true;
+            }
+            if tool_button(
+                ui,
+                Icon::Target,
+                t("Reset camera"),
+                false,
+                false,
+                true,
+                None,
+            )
+            .on_hover_text(t("Reset camera"))
+            .clicked()
+            {
+                actions.reset_camera = true;
+            }
+        })
+    }
+
+    /// What the scene view shows, floating at its top right: the debug
+    /// view (lit, ids, depth...) and the game view beside it.
+    fn view_shows(&self, ui: &mut Ui, area: Rect, actions: &mut Actions) -> Rect {
+        use crate::style::{Icon, tool_button};
+        let band = Rect::from_min_max(
+            pos2(area.min.x + 8.0, area.min.y + 8.0),
+            pos2(area.max.x - 8.0, area.min.y + 44.0),
+        );
+        floating(ui, band, true, |ui| {
+            if tool_button(
+                ui,
+                Icon::Screen,
+                t("Game view"),
+                false,
+                self.game_view,
+                true,
+                None,
+            )
+            .on_hover_text(t(
+                "The game as the player sees it (the scene's camera), beside the scene view",
+            ))
+            .clicked()
+            {
+                actions.toggle_game_view = true;
+            }
+            egui::ComboBox::from_id_salt("view")
+                .selected_text(view_label(self.view.name()))
+                // Every view in sight: the list is short, and one that
+                // has to be scrolled to is one nobody finds.
+                .height(400.0)
+                .show_ui(ui, |ui| {
+                    for name in View::NAMES {
+                        if ui
+                            .selectable_label(*name == self.view.name(), view_label(name))
+                            .on_hover_text(tf(
+                                "Called '{name}' by capture_frame and wen capture --view",
+                                &[("name", name)],
+                            ))
+                            .clicked()
+                            && let Ok(view) = View::parse(name)
+                        {
+                            actions.view = Some(view);
+                        }
+                    }
+                });
+        })
+    }
+
     /// The menu bar's menus: File, Edit, Create, View, Game, AI, Help.
     /// Each item is the same action as its button or shortcut elsewhere;
     /// the shortcut it has (from the command table, as the person set it)
@@ -4646,6 +4840,14 @@ impl EditorApp {
             {
                 actions.toggle_game_view = true;
                 ui.close();
+            }
+            if item(
+                ui,
+                t("Frame the selection"),
+                key("view.frame"),
+                editing && self.target.is_some(),
+            ) {
+                actions.frame = true;
             }
             if item(ui, t("Reset camera"), key("view.reset_camera"), true) {
                 actions.reset_camera = true;
@@ -4998,57 +5200,32 @@ impl EditorApp {
             ui.horizontal_wrapped(|ui| {
                 use crate::style::{Icon, tool_button, tool_group};
                 let editing = self.play.is_none();
-                if !self.ai_mode {
-                    tool_group(ui, 100.0, |ui| {
-                        for (mode, icon, name) in [
-                            (Mode::Translate, Icon::Move, t("Move")),
-                            (Mode::Rotate, Icon::Rotate, t("Rotate")),
-                            (Mode::Scale, Icon::Scale, t("Scale")),
-                        ] {
-                            if tool_button(ui, icon, name, false, self.mode == mode, true, None)
-                                .on_hover_text(format!("{name} ({})", t("Keys W, E, R")))
-                                .clicked()
-                            {
-                                actions.mode = Some(mode);
-                            }
-                        }
-                    });
-                    tool_group(ui, 160.0, |ui| {
-                        let space = if self.space == Space::World {
-                            t("World")
-                        } else {
-                            t("Local")
-                        };
-                        if tool_button(ui, Icon::Globe, space, true, false, true, None)
-                            .on_hover_text(t("The handles' axes: the world's or the entity's own"))
-                            .clicked()
-                        {
-                            actions.toggle_space = true;
-                        }
-                        if tool_button(ui, Icon::Magnet, t("Snap"), false, self.snap, true, None)
-                            .on_hover_text(t("Half metres, 15 degrees, steps of 10 % when on"))
-                            .clicked()
-                        {
-                            actions.toggle_snap = true;
-                        }
-                        if tool_button(ui, Icon::Target, t("Reset camera"), false, false, true, None)
-                            .on_hover_text(t("Reset camera"))
-                            .clicked()
-                        {
-                            actions.reset_camera = true;
-                        }
-                    });
-                }
                 tool_group(ui, 64.0, |ui| {
-                    if tool_button(ui, Icon::Undo, t("Undo"), false, false, self.can_undo && editing, None)
-                        .on_hover_text("Ctrl+Z")
-                        .clicked()
+                    if tool_button(
+                        ui,
+                        Icon::Undo,
+                        t("Undo"),
+                        false,
+                        false,
+                        self.can_undo && editing,
+                        None,
+                    )
+                    .on_hover_text("Ctrl+Z")
+                    .clicked()
                     {
                         actions.undo = true;
                     }
-                    if tool_button(ui, Icon::Redo, t("Redo"), false, false, self.can_redo && editing, None)
-                        .on_hover_text("Ctrl+Y")
-                        .clicked()
+                    if tool_button(
+                        ui,
+                        Icon::Redo,
+                        t("Redo"),
+                        false,
+                        false,
+                        self.can_redo && editing,
+                        None,
+                    )
+                    .on_hover_text("Ctrl+Y")
+                    .clicked()
                     {
                         actions.redo = true;
                     }
@@ -5071,28 +5248,6 @@ impl EditorApp {
                             }
                         }
                     });
-                if !self.ai_mode {
-                    egui::ComboBox::from_id_salt("view")
-                        .selected_text(view_label(self.view.name()))
-                        // Every view in sight: the list is short, and one that
-                        // has to be scrolled to is one nobody finds.
-                        .height(400.0)
-                        .show_ui(ui, |ui| {
-                            for name in View::NAMES {
-                                if ui
-                                    .selectable_label(*name == self.view.name(), view_label(name))
-                                    .on_hover_text(tf(
-                                        "Called '{name}' by capture_frame and wen capture --view",
-                                        &[("name", name)],
-                                    ))
-                                    .clicked()
-                                    && let Ok(view) = View::parse(name)
-                                {
-                                    actions.view = Some(view);
-                                }
-                            }
-                        });
-                }
                 tool_group(ui, 220.0, |ui| match &self.play {
                     None => {
                         if tool_button(
@@ -5111,11 +5266,19 @@ impl EditorApp {
                         {
                             actions.play_start = true;
                         }
-                        if tool_button(ui, Icon::Record, t("Record"), true, self.record, true, Some(crate::style::pal().red))
-                            .on_hover_text(t(
-                                "Record the next run as a replay (saved under replays/ when it stops)",
-                            ))
-                            .clicked()
+                        if tool_button(
+                            ui,
+                            Icon::Record,
+                            t("Record"),
+                            true,
+                            self.record,
+                            true,
+                            Some(crate::style::pal().red),
+                        )
+                        .on_hover_text(t(
+                            "Record the next run as a replay (saved under replays/ when it stops)",
+                        ))
+                        .clicked()
                         {
                             actions.toggle_record = true;
                         }
@@ -5130,7 +5293,17 @@ impl EditorApp {
                         } else {
                             (Icon::Pause, t("Pause"))
                         };
-                        if tool_button(ui, icon, pause, true, false, true, Some(crate::style::pal().go)).clicked() {
+                        if tool_button(
+                            ui,
+                            icon,
+                            pause,
+                            true,
+                            false,
+                            true,
+                            Some(crate::style::pal().go),
+                        )
+                        .clicked()
+                        {
                             actions.play_pause = true;
                         }
                         if tool_button(ui, Icon::Step, t("Step"), false, false, play.paused, None)
@@ -5139,7 +5312,17 @@ impl EditorApp {
                         {
                             actions.play_step = true;
                         }
-                        if tool_button(ui, Icon::Stop, t("Stop"), true, false, true, Some(crate::style::pal().red)).clicked() {
+                        if tool_button(
+                            ui,
+                            Icon::Stop,
+                            t("Stop"),
+                            true,
+                            false,
+                            true,
+                            Some(crate::style::pal().red),
+                        )
+                        .clicked()
+                        {
                             actions.play_stop = true;
                         }
                         ui.label(
@@ -5172,15 +5355,7 @@ impl EditorApp {
                 if self.ai_mode {
                     return;
                 }
-                tool_group(ui, 150.0, |ui| {
-                    if tool_button(ui, Icon::Screen, t("Game view"), false, self.game_view, true, None)
-                        .on_hover_text(t(
-                            "The game as the player sees it (the scene's camera), beside the scene view",
-                        ))
-                        .clicked()
-                    {
-                        actions.toggle_game_view = true;
-                    }
+                tool_group(ui, 100.0, |ui| {
                     if tool_button(
                         ui,
                         Icon::Chat,
@@ -5344,6 +5519,17 @@ impl EditorApp {
                     view_badge(ui, area, t("Scene"));
                     view_badge(ui, *game_area, t("Game"));
                 }
+                // The view's own controls float on it (the redesign, R3):
+                // the handles' tools at its top left, what it shows at its
+                // top right, how to move around at its bottom left. A press
+                // on them is theirs, not the view's.
+                let mut overlays = Vec::new();
+                if self.play.is_none() {
+                    overlays.push(self.view_tools(ui, area, &mut actions));
+                    view_hint(ui, area);
+                }
+                overlays.push(self.view_shows(ui, area, &mut actions));
+                *self.view_overlays.borrow_mut() = overlays;
                 // A file dragged from the browser is dropped on the view.
                 let target = ui.allocate_rect(area, Sense::hover());
                 if let Some(dropped) = target.dnd_release_payload::<AssetDrag>() {
@@ -5763,12 +5949,59 @@ fn copy_tree(
     id
 }
 
+/// A strip of controls floating on the view, at the left or the right end
+/// of the band `band` (framed like the panels, small corners); returns
+/// where it is.
+fn floating(ui: &mut Ui, band: Rect, right: bool, add: impl FnOnce(&mut Ui)) -> Rect {
+    let layout = if right {
+        Layout::right_to_left(Align::Min)
+    } else {
+        Layout::left_to_right(Align::Min)
+    };
+    ui.scope_builder(egui::UiBuilder::new().max_rect(band).layout(layout), |ui| {
+        egui::Frame::new()
+            .fill(crate::style::pal().panel)
+            .stroke(egui::Stroke::new(1.0, crate::style::pal().line))
+            .corner_radius(egui::CornerRadius::same(crate::style::pal().radius_widget))
+            .inner_margin(egui::Margin::same(2))
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                ui.horizontal(add);
+            })
+            .response
+            .rect
+    })
+    .inner
+}
+
+/// How to move around the view, quietly at its bottom left.
+fn view_hint(ui: &Ui, area: Rect) {
+    let font = egui::FontId::proportional(11.0);
+    let galley = ui.painter().layout_no_wrap(
+        t("Alt+drag: orbit · Middle drag: pan · Wheel: zoom · Right drag: fly (WASD) · F: frame")
+            .to_owned(),
+        font,
+        crate::style::pal().text,
+    );
+    let size = galley.size() + vec2(12.0, 6.0);
+    if size.x + 16.0 > area.width() {
+        return;
+    }
+    let rect = Rect::from_min_size(pos2(area.min.x + 8.0, area.max.y - 8.0 - size.y), size);
+    ui.painter()
+        .rect_filled(rect, 3.0, egui::Color32::from_black_alpha(130));
+    ui.painter()
+        .galley(rect.min + vec2(6.0, 3.0), galley, crate::style::pal().text);
+}
+
+/// The name of a view (Scene, Game) at its bottom right, when two show.
 fn view_badge(ui: &Ui, area: Rect, name: &str) {
     let font = egui::FontId::proportional(12.0);
     let galley = ui
         .painter()
         .layout_no_wrap(name.to_owned(), font, crate::style::pal().text);
-    let rect = Rect::from_min_size(area.min + vec2(8.0, 8.0), galley.size() + vec2(16.0, 6.0));
+    let size = galley.size() + vec2(16.0, 6.0);
+    let rect = Rect::from_min_size(area.max - size - vec2(8.0, 8.0), size);
     ui.painter()
         .rect_filled(rect, 6.0, egui::Color32::from_black_alpha(150));
     ui.painter()

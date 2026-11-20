@@ -143,6 +143,11 @@ pub(crate) const COMMANDS: &[Command] = &[
         keys: "",
     },
     Command {
+        id: "view.frame",
+        name: || t("Frame the selection"),
+        keys: "F",
+    },
+    Command {
         id: "project.check",
         name: || t("Check the project"),
         keys: "",

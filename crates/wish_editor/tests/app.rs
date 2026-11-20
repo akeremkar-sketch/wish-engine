@@ -82,9 +82,11 @@ fn menu_bar(app: &mut EditorApp, label: &str) {
     let rect = app
         .widgets()
         .iter()
-        .find(|w| w.role == "Button" && w.label.as_deref() == Some(label) && w.rect.max.y < 72.0)
+        .filter(|w| w.role == "Button" && w.label.as_deref() == Some(label))
+        // The bars' button first; the view's floating tools after it.
+        .min_by(|a, b| a.rect.min.y.total_cmp(&b.rect.min.y))
         .map(|w| w.rect)
-        .unwrap_or_else(|| panic!("no '{label}' in the menu bar"));
+        .unwrap_or_else(|| panic!("no '{label}' in the bars"));
     run_script(
         app,
         &json!({ "size": [1280, 720], "steps": [
