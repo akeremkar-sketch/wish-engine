@@ -36,3 +36,15 @@ Exit criterion (M4): Sonnet 5.5 · medium passes at least 80 %. First results (1
 - `11_walk_code` (make the player walk with the `move` action) and `12_collect_game` (a collecting game: `Coin`, `Score.points`, `GameState.won`). In these tasks the agent **may read and edit project files** (`Read`, `Edit`, `Write`, `Glob`, `Grep`; never `Bash`). It writes the game code, builds it with `script_build`, edits the scene with the tools, and proves the behaviour with its own scenario test.
 - Check: the game code builds, `check` passes, the agent's own tests (at least one) pass, and a hidden scenario test the agent **has not seen** (`tests/zz_check.test.json`, deleted after the check) plays the game: walking speed and direction, standing still with no input; collecting the coins, the score, winning.
 - For `wish-evals run`, the SDK pack must sit next to `wish-evals.exe`: `wen sdk` (the same `target/release` folder).
+
+## The AI scorecard (M12)
+
+`wish-evals` also measures the seven criteria of the AI scorecard (design: [docs/design/M12-ai-scorecard.md](../docs/design/M12-ai-scorecard.md)): correctness at the first attempt and in the end, with a replay of the result that must hold; errors, above all results the agent said were done (`RESULT: DONE`) that the hidden check refuted; a clean `check` and, optionally, a second agent asked to change the result; a change made by hand in the editor (headless); tokens and cost per passed try; the time to a proven result and the result's tick time at 10,000 entities; consistency across three tries. Task `42_lantern_night` is the long task (a one-paragraph brief to a finished mini game).
+
+```powershell
+C:\wish-build\target\release\wish-evals.exe selftest           # free: checks, measures and refutations on the reference solutions
+C:\wish-build\target\release\wish-evals.exe estimate           # free: what a baseline campaign costs, from results/
+C:\wish-build\target\release\wish-evals.exe campaign --label <name> --models sonnet:medium,haiku:medium --tries 3   # spends quota: ask first
+```
+
+A campaign writes `results/<name>.json` and `results/<name>.md` (the card with its inputs and the command that reproduces it). The held-out set lives outside the repository (`--held-out`); its runs print and keep numbers only.

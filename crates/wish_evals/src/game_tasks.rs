@@ -118,6 +118,12 @@ pub fn play_check(probe: &mut Probe, dir: &Path, hidden: &Value) -> Verdict {
     if mine["passed"] != true {
         return Err(format!("the project's tests fail: {}", mine["results"]));
     }
+    hidden_passes(probe, dir, hidden)
+}
+
+/// Runs one hidden scenario test the agent never saw (written, run and
+/// removed again).
+pub fn hidden_passes(probe: &mut Probe, dir: &Path, hidden: &Value) -> Verdict {
     write(dir, HIDDEN, &hidden.to_string())?;
     let checked = probe.call("test_run", json!({ "paths": [HIDDEN] }));
     let _ = std::fs::remove_file(dir.join(HIDDEN));

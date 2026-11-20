@@ -4649,6 +4649,7 @@ dependencies = [
  "wish_audio",
  "wish_control",
  "wish_core",
+ "wish_editor",
  "wish_import",
 ]
 

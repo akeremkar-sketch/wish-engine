@@ -73,12 +73,12 @@ fn cube(id: &str, at: [f64; 3]) -> Value {
         "Transform": { "translation": at }, "Primitive": { "shape": "Cube" } } })
 }
 
-fn bbox(element: &Value) -> [f64; 4] {
+pub(crate) fn bbox(element: &Value) -> [f64; 4] {
     let b = &element["bounding_box"];
     [num(&b[0]), num(&b[1]), num(&b[2]), num(&b[3])]
 }
 
-fn interface(probe: &mut Probe) -> Result<Vec<Value>, String> {
+pub(crate) fn interface(probe: &mut Probe) -> Result<Vec<Value>, String> {
     let seen = probe.call("describe_view", json!({ "width": 640, "height": 360 }))?;
     Ok(seen["interface"].as_array().cloned().unwrap_or_default())
 }
@@ -243,7 +243,7 @@ fn lift_check(probe: &mut Probe, dir: &Path, _: &Value) -> Verdict {
     )
 }
 
-const LIFT_CODE: &str = r#"
+pub(crate) const LIFT_CODE: &str = r#"
 use wish_sdk::prelude::*;
 
 /// Goes back and forth along X.

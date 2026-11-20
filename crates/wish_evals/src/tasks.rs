@@ -25,6 +25,47 @@ pub struct Task {
     pub files: bool,
 }
 
+/// What every task can do, whether written in code (the open set) or read
+/// from a task file (the held-out set, `held_out.rs`).
+pub trait EvalTask {
+    fn id(&self) -> &str;
+    fn prompt(&self) -> &str;
+    fn files(&self) -> bool;
+    fn setup(&self, dir: &Path) -> Result<(), String>;
+    fn baseline(&self, probe: &mut Probe) -> Result<Value, String>;
+    fn check(&self, probe: &mut Probe, dir: &Path, baseline: &Value) -> Verdict;
+    fn reference(&self, probe: &mut Probe) -> Result<(), String>;
+    /// The change a second agent is asked to make, if the task has one.
+    fn follow_up(&self) -> Option<&dyn crate::followups::FollowUpTask>;
+}
+
+impl EvalTask for Task {
+    fn id(&self) -> &str {
+        self.id
+    }
+    fn prompt(&self) -> &str {
+        self.prompt
+    }
+    fn files(&self) -> bool {
+        self.files
+    }
+    fn setup(&self, dir: &Path) -> Result<(), String> {
+        (self.setup)(dir)
+    }
+    fn baseline(&self, probe: &mut Probe) -> Result<Value, String> {
+        (self.baseline)(probe)
+    }
+    fn check(&self, probe: &mut Probe, dir: &Path, baseline: &Value) -> Verdict {
+        (self.check)(probe, dir, baseline)
+    }
+    fn reference(&self, probe: &mut Probe) -> Result<(), String> {
+        (self.reference)(probe)
+    }
+    fn follow_up(&self) -> Option<&dyn crate::followups::FollowUpTask> {
+        crate::followups::for_task(self.id).map(|f| f as &dyn crate::followups::FollowUpTask)
+    }
+}
+
 fn edit(probe: &mut Probe, ops: Value) -> Result<(), String> {
     probe.call("edit_apply", json!({ "ops": ops })).map(|_| ())
 }

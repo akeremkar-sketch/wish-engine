@@ -1,42 +1,76 @@
-//! `wish-evals`: agent evaluations (ADR-017 layer 4, design M4 §8).
+//! `wish-evals`: agent evaluations (ADR-017 layer 4, design M4 §8) and the
+//! AI scorecard (M12 package 10, design `docs/design/M12-ai-scorecard.md`).
 //!
 //! ```text
-//! wish-evals selftest                    every check fails on the prepared project and passes
-//!                                        after the reference solution (no AI, free)
-//! wish-evals run [--tasks 01,03] [--tries 3] [--model sonnet] [--effort medium]
-//!                                        each try: a fresh project, `claude -p` with only the
-//!                                        project's MCP tools, then the check; results in
-//!                                        evals/results/
+//! wish-evals selftest [--tasks 01,42]   free: every check fails before and passes after the
+//!                                       reference solution; every measure of the scorecard
+//!                                       runs on the references; deliberately wrong results
+//!                                       are refuted
+//! wish-evals selftest --held-out [dir]  free: validates the held-out set, prints counts only
+//! wish-evals selftest --task-file <f>   free: validates one task file, with details
+//! wish-evals campaign --label <name> [--models sonnet:medium,haiku:medium] [--tries 3]
+//!            [--repairs 1] [--second-agent] [--max-cost <dollars>] [--overwrite]
+//!            [--held-out [dir]] [--tasks 01,42]
+//!                                       SPENDS MODEL QUOTA (ask the user first): runs every
+//!                                       task with every model and writes the scorecard to
+//!                                       evals/results/<name>.json and .md
+//! wish-evals run --label <name> [--model sonnet] [--effort medium] [--tries 3] ...
+//!                                       SPENDS MODEL QUOTA: a campaign of one model
+//! wish-evals card --from <result.json>  free: writes the scorecard's Markdown again from its JSON
+//! wish-evals rescore --label <name>     free: reads a finished run's transcripts again
+//! wish-evals recheck --label <name>     free: runs the current checks on a finished run
+//! wish-evals estimate                   free: what a baseline campaign costs, from evals/results/
 //! ```
 
+mod card;
+mod estimate;
+mod followups;
 mod game_tasks;
+mod held_out;
+mod long_task;
 mod m6_tasks;
 mod m7_tasks;
+mod measures;
+mod people;
 mod probe;
 mod tasks;
+mod transcript;
 
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
+use crate::followups::FollowUpTask;
+use crate::held_out::DeclaredTask;
 use crate::probe::Probe;
-use crate::tasks::Task;
+use crate::tasks::{EvalTask, Task};
+use crate::transcript::{CLAIM_SUFFIX, Transcript, claim};
 
 /// Where the throwaway projects go (outside the repository).
 const WORK: &str = "C:/wish-build/evals";
-/// The longest one try may take.
+/// The longest one agent run may take (the long task needs more).
 const TRY_LIMIT: Duration = Duration::from_secs(15 * 60);
+const LONG_TRY_LIMIT: Duration = Duration::from_secs(40 * 60);
 
 fn wen_path() -> PathBuf {
     let exe = std::env::current_exe().unwrap_or_default();
     exe.with_file_name(if cfg!(windows) { "wen.exe" } else { "wen" })
 }
 
+/// The open set: the 41 tasks of M4 to M7 and the long task.
+fn open_set() -> Vec<Task> {
+    let mut all = tasks::all();
+    all.extend(m6_tasks::all());
+    all.extend(m7_tasks::all());
+    all.push(long_task::task());
+    all
+}
+
 /// A fresh project for a task: `wen new`, MCP on the software adapter, setup.
-fn prepare(task: &Task, dir: &Path) -> Result<Value, String> {
+fn prepare(task: &dyn EvalTask, dir: &Path) -> Result<Value, String> {
     let _ = std::fs::remove_dir_all(dir);
     let wen = wen_path();
     wish_control::scaffold::create_project(dir, "Eval", &wen.to_string_lossy())
@@ -48,59 +82,313 @@ fn prepare(task: &Task, dir: &Path) -> Result<Value, String> {
         serde_json::to_string_pretty(&mcp).unwrap_or_default(),
     )
     .map_err(|e| e.to_string())?;
-    (task.setup)(dir)?;
+    task.setup(dir)?;
     let mut probe = Probe::open(dir)?;
-    (task.baseline)(&mut probe)
+    task.baseline(&mut probe)
 }
 
-fn check(task: &Task, dir: &Path, baseline: &Value) -> Result<(), String> {
+fn check(task: &dyn EvalTask, dir: &Path, baseline: &Value) -> Result<(), String> {
     let mut probe = Probe::open(dir)?;
-    (task.check)(&mut probe, dir, baseline)
+    task.check(&mut probe, dir, baseline)
 }
 
-fn selftest(tasks: &[Task]) -> bool {
-    let mut all_good = true;
-    for task in tasks {
-        let dir = Path::new(WORK).join("selftest").join(task.id);
+fn follow_up_check(follow: &dyn FollowUpTask, dir: &Path) -> Result<(), String> {
+    let mut probe = Probe::open(dir)?;
+    follow.check(&mut probe, dir)
+}
+
+// --------------------------------------------------------------------------
+// The self-test (free).
+
+/// What the self-test found, for its summary line.
+#[derive(Default)]
+struct Tally {
+    tasks: (u32, u32),
+    follow_ups: (u32, u32),
+    replays: (u32, u32),
+    editor: (u32, u32),
+    clean: (u32, u32),
+    speed: Vec<(String, f64)>,
+    refutations: (u32, u32),
+}
+
+fn count(slot: &mut (u32, u32), ok: bool) {
+    slot.1 += 1;
+    slot.0 += u32::from(ok);
+}
+
+/// The task's checks, and every measure of the scorecard, on its reference
+/// solution. Returns notes for the report line, or what failed.
+fn selftest_task(task: &dyn EvalTask, dir: &Path, tally: &mut Tally) -> Result<String, String> {
+    let baseline = prepare(task, dir)?;
+    if check(task, dir, &baseline).is_ok() {
+        return Err("the check passes before anything is done".to_owned());
+    }
+    let before = people::scene_entities(dir);
+    let mut probe = Probe::open(dir)?;
+    task.reference(&mut probe)?;
+    drop(probe);
+    check(task, dir, &baseline)
+        .map_err(|reason| format!("the reference solution fails: {reason}"))?;
+    let mut notes = Vec::new();
+    // Quality: `check` on the result.
+    let quality = measures::quality(dir)?;
+    if quality.errors > 0 {
+        return Err(format!(
+            "check finds {} errors in the reference",
+            quality.errors
+        ));
+    }
+    count(&mut tally.clean, quality.clean());
+    if !quality.clean() {
+        notes.push(format!("{} warnings", quality.warnings));
+    }
+    // Replay, speed and the editor on a copy, as in a campaign.
+    let copy = dir.with_extension("measures");
+    people::copy_project(dir, &copy)?;
+    let replay = measures::replay_holds(&copy)?;
+    if task.files() {
+        let held = replay == Some(true);
+        count(&mut tally.replays, held);
+        if !held {
+            let _ = std::fs::remove_dir_all(&copy);
+            return Err(format!(
+                "a replay of the reference does not hold ({replay:?})"
+            ));
+        }
+        notes.push("replay holds".to_owned());
+    }
+    match measures::speed(&copy)? {
+        measures::Speed::Measured { ms_per_tick, .. } => {
+            tally.speed.push((task.id().to_owned(), ms_per_tick));
+            notes.push(format!("10k: {ms_per_tick:.2} ms/tick"));
+        }
+        measures::Speed::NotMeaningful(_) if task.files() => notes.push("10k: n/a".to_owned()),
+        measures::Speed::NotMeaningful(_) => {}
+    }
+    let edited = people::edit_by_hand(&copy, &before);
+    let _ = std::fs::remove_dir_all(&copy);
+    count(&mut tally.editor, edited.is_ok());
+    let edited =
+        edited.map_err(|reason| format!("the editor cannot change it by hand: {reason}"))?;
+    notes.push(format!("editor: {edited}"));
+    // The second agent's change.
+    if let Some(follow) = task.follow_up() {
         let outcome = (|| -> Result<(), String> {
-            let baseline = prepare(task, &dir)?;
-            if check(task, &dir, &baseline).is_ok() {
-                return Err("the check passes before anything is done".to_owned());
+            if follow_up_check(follow, dir).is_ok() {
+                return Err("the follow-up's check passes before the change".to_owned());
             }
-            let mut probe = Probe::open(&dir)?;
-            (task.reference)(&mut probe)?;
+            let mut probe = Probe::open(dir)?;
+            follow.reference(&mut probe)?;
             drop(probe);
-            check(task, &dir, &baseline)
-                .map_err(|reason| format!("the reference solution fails: {reason}"))
+            follow_up_check(follow, dir)
+                .map_err(|reason| format!("the follow-up's reference fails: {reason}"))
         })();
+        count(&mut tally.follow_ups, outcome.is_ok());
+        outcome?;
+        notes.push("follow-up ok".to_owned());
+    }
+    Ok(notes.join("; "))
+}
+
+/// A transcript that says `RESULT: DONE` for a try the check failed is a
+/// false success on the card.
+fn false_success_on_the_card() -> Result<(), String> {
+    let lines: Vec<String> = [
+        json!({ "type": "assistant", "message": { "content": [{ "type": "text", "text": "All works.\nRESULT: DONE" }] } }),
+        json!({ "type": "result", "is_error": false, "num_turns": 1, "result": "All works.\nRESULT: DONE", "usage": {} }),
+    ]
+    .iter()
+    .map(Value::to_string)
+    .collect();
+    let said = claim(transcript::read(&lines).final_message.as_deref());
+    let row = json!({ "task": "x", "passed_first": false, "passed": false,
+                      "claim_first": said.name(), "claim_final": said.name() });
+    let card = card::model_card("m", "e", &[row]);
+    if card["2_errors"]["false_successes_first"]["count"] == 1 {
+        Ok(())
+    } else {
+        Err(format!("the card shows {}", card["2_errors"]))
+    }
+}
+
+/// Deliberately wrong results that the scorecard's checks must refute.
+fn refutations(tally: &mut Tally) {
+    let base = Path::new(WORK).join("selftest").join("refute");
+    let mut run = |name: &str, outcome: Result<(), String>| {
+        count(&mut tally.refutations, outcome.is_ok());
         match outcome {
-            Ok(()) => println!("ok    {}", task.id),
-            Err(reason) => {
-                all_good = false;
-                println!("FAIL  {}: {reason}", task.id);
+            Ok(()) => println!("ok    refuted: {name}"),
+            Err(reason) => println!("FAIL  refuted: {name}: {reason}"),
+        }
+    };
+    // The long task's mutants: plausible wrong games.
+    let long = long_task::task();
+    let mutant_dirs: Vec<PathBuf> = (0..long_task::MUTANTS.len())
+        .map(|n| base.join(format!("long-mutant-{n}")))
+        .collect();
+    for ((name, make), dir) in long_task::MUTANTS.iter().zip(&mutant_dirs) {
+        let outcome = (|| {
+            let baseline = prepare(&long, dir)?;
+            let mut probe = Probe::open(dir)?;
+            make(&mut probe)?;
+            drop(probe);
+            match check(&long, dir, &baseline) {
+                Ok(()) => Err("the hidden checks accept it".to_owned()),
+                Err(_) => Ok(()),
             }
+        })();
+        run(&format!("the long task: {name}"), outcome);
+    }
+    // The first mutant's project has game code and a replay to tamper with.
+    let dir = mutant_dirs[0].clone();
+    // A replay whose recording was changed.
+    // The wrong long-task project has game code; its replay is fine until
+    // a hash is changed.
+    run(
+        "a replay whose recorded hash was changed",
+        measures::tampered_replay_is_refuted(&dir),
+    );
+    // A project whose scene file is broken cannot be edited by hand.
+    let broken = base.join("broken-scene");
+    run(
+        "a project with a broken scene file in the editor",
+        (|| {
+            people::copy_project(&dir, &broken)?;
+            std::fs::write(broken.join("scenes/main.scene.json"), "{ not json")
+                .map_err(|e| e.to_string())?;
+            match people::edit_by_hand(&broken, &Value::Null) {
+                Ok(done) => Err(format!("the editor changed it anyway: {done}")),
+                Err(_) => Ok(()),
+            }
+        })(),
+    );
+    // `check` errors are seen.
+    let unclean = base.join("bad-input");
+    run(
+        "a project with a broken input.json in check",
+        (|| {
+            people::copy_project(&dir, &unclean)?;
+            std::fs::write(
+                unclean.join("input.json"),
+                "{ \"format\": 1, \"actions\": 3 }",
+            )
+            .map_err(|e| e.to_string())?;
+            let quality = measures::quality(&unclean)?;
+            if quality.errors > 0 {
+                Ok(())
+            } else {
+                Err("check finds no error".to_owned())
+            }
+        })(),
+    );
+    // A claim of success that the check refutes is a false success on the card.
+    run(
+        "a claimed success that the check refuted, on the card",
+        false_success_on_the_card(),
+    );
+    for folder in mutant_dirs.iter().chain([&broken, &unclean]) {
+        let _ = std::fs::remove_dir_all(folder);
+    }
+}
+
+fn selftest(tasks: &[&dyn EvalTask], with_refutations: bool) -> bool {
+    let mut tally = Tally::default();
+    for task in tasks {
+        let dir = Path::new(WORK).join("selftest").join(task.id());
+        let outcome = selftest_task(*task, &dir, &mut tally);
+        count(&mut tally.tasks, outcome.is_ok());
+        match outcome {
+            Ok(notes) => println!("ok    {}  [{notes}]", task.id()),
+            Err(reason) => println!("FAIL  {}: {reason}", task.id()),
         }
     }
-    all_good
+    // The format of the held-out set, on its open example.
+    let example = DeclaredTask::parse(held_out::EXAMPLE);
+    let format_ok = match example {
+        Ok(example) => {
+            let dir = Path::new(WORK).join("selftest").join("held-out-format");
+            let outcome = selftest_task(&example, &dir, &mut tally);
+            count(&mut tally.tasks, outcome.is_ok());
+            match outcome {
+                Ok(notes) => {
+                    println!("ok    held-out format (the open example)  [{notes}]");
+                    true
+                }
+                Err(reason) => {
+                    println!("FAIL  held-out format (the open example): {reason}");
+                    false
+                }
+            }
+        }
+        Err(reason) => {
+            println!("FAIL  held-out format: the example does not parse: {reason}");
+            false
+        }
+    };
+    let guard = held_out::load(&held_out::repository_or_here().join("evals")).is_err();
+    println!(
+        "{}  held-out guard: a folder inside the repository is refused",
+        if guard { "ok   " } else { "FAIL " }
+    );
+    if with_refutations {
+        refutations(&mut tally);
+    }
+    let show = |(a, b): (u32, u32)| format!("{a}/{b}");
+    println!(
+        "\nselftest: tasks {}, follow-ups {}, replays hold {}, editor by hand {}, clean check {}, refutations {}",
+        show(tally.tasks),
+        show(tally.follow_ups),
+        show(tally.replays),
+        show(tally.editor),
+        show(tally.clean),
+        show(tally.refutations),
+    );
+    if !tally.speed.is_empty() {
+        let list: Vec<String> = tally
+            .speed
+            .iter()
+            .map(|(id, ms)| format!("{id} {ms:.2}"))
+            .collect();
+        println!("tick at 10,000 entities (ms): {}", list.join(", "));
+    }
+    tally.tasks.0 == tally.tasks.1
+        && tally.refutations.0 == tally.refutations.1
+        && format_ok
+        && guard
 }
 
-/// What one try of a task did.
-#[derive(Default)]
-struct Try {
-    passed: bool,
-    reason: String,
-    tool_calls: u64,
-    tool_errors: u64,
-    first_call_error: bool,
-    turns: u64,
-    input_tokens: u64,
-    output_tokens: u64,
-    cache_read_tokens: u64,
-    cache_write_tokens: u64,
-    cost_usd: f64,
-    seconds: f64,
-    agent_error: Option<String>,
+/// The held-out set's self-test: counts only.
+fn selftest_held_out(folder: &Path) -> bool {
+    let tasks = match held_out::load(folder) {
+        Ok(tasks) => tasks,
+        Err(reason) => {
+            println!("held-out: {reason}");
+            return false;
+        }
+    };
+    let mut tally = Tally::default();
+    for (n, task) in tasks.iter().enumerate() {
+        let dir = Path::new(WORK)
+            .join("held-out-selftest")
+            .join(format!("{n}"));
+        let ok = selftest_task(task, &dir, &mut tally).is_ok();
+        count(&mut tally.refutations, ok);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    let _ = std::fs::remove_dir_all(Path::new(WORK).join("held-out-selftest"));
+    println!(
+        "held-out: {} tasks, {} valid; follow-ups {}/{}",
+        tasks.len(),
+        tally.refutations.0,
+        tally.follow_ups.0,
+        tally.follow_ups.1
+    );
+    tally.refutations.0 as usize == tasks.len()
 }
+
+// --------------------------------------------------------------------------
+// Campaigns (spend model quota).
 
 fn claude_command() -> Command {
     Command::new(if cfg!(windows) {
@@ -110,27 +398,35 @@ fn claude_command() -> Command {
     })
 }
 
-fn run_try(task: &Task, dir: &Path, model: &str, effort: &str) -> Try {
-    let mut result = Try::default();
-    let baseline = match prepare(task, dir) {
-        Ok(baseline) => baseline,
-        Err(reason) => {
-            result.reason = format!("setup failed: {reason}");
-            return result;
-        }
-    };
-    // Kept with the try, so that a corrected check can be run again later
-    // without running the agent again (`wish-evals recheck`).
-    let _ = std::fs::write(dir.join("baseline.json"), baseline.to_string());
+/// One run of the Claude Code CLI in the project: a new session, or the
+/// given one resumed (a repair round). The harness's clock times it. The
+/// run's transcript goes to `log`, outside the project (a later agent in
+/// the same project must not read it).
+#[allow(clippy::too_many_arguments)]
+fn agent(
+    dir: &Path,
+    log: &Path,
+    prompt: &str,
+    model: &str,
+    effort: &str,
+    files: bool,
+    resume: Option<&str>,
+    limit: Duration,
+) -> (Transcript, f64) {
     let started = Instant::now();
-    let child = claude_command()
+    let mut command = claude_command();
+    command
         .current_dir(dir)
-        .args(["-p", task.prompt, "--model", model, "--effort", effort])
+        .args(["-p", prompt, "--model", model, "--effort", effort])
         .args(["--output-format", "stream-json", "--verbose"])
-        .args(["--mcp-config", ".mcp.json", "--strict-mcp-config"])
-        // Game code tasks may read and edit the project's files; the others
-        // have the engine's tools only. Bash is never allowed.
-        .args(if task.files {
+        .args(["--mcp-config", ".mcp.json", "--strict-mcp-config"]);
+    if let Some(session) = resume {
+        command.args(["--resume", session]);
+    }
+    // Game code tasks may read and edit the project's files; the others
+    // have the engine's tools only. Bash is never allowed.
+    command
+        .args(if files {
             &[
                 "--allowedTools",
                 "mcp__wish",
@@ -144,7 +440,7 @@ fn run_try(task: &Task, dir: &Path, model: &str, effort: &str) -> Try {
             &["--allowedTools", "mcp__wish"][..]
         })
         .arg("--disallowedTools")
-        .args(if task.files {
+        .args(if files {
             &["Bash"][..]
         } else {
             &["Bash", "Edit", "Write", "Read", "Glob", "Grep"][..]
@@ -153,17 +449,20 @@ fn run_try(task: &Task, dir: &Path, model: &str, effort: &str) -> Try {
         .args(["--setting-sources", "project"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn();
-    let mut child = match child {
+        .stderr(Stdio::piped());
+    let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
-            result.reason = format!("could not start claude: {error}");
-            return result;
+            return (
+                Transcript {
+                    agent_error: Some(format!("could not start claude: {error}")),
+                    ..Transcript::default()
+                },
+                0.0,
+            );
         }
     };
     let stdout = child.stdout.take();
-    let transcript_path = dir.join("transcript.jsonl");
     let reader = std::thread::spawn(move || {
         let mut lines = Vec::new();
         if let Some(stdout) = stdout {
@@ -173,102 +472,640 @@ fn run_try(task: &Task, dir: &Path, model: &str, effort: &str) -> Try {
         }
         lines
     });
-    // Wait, but not for ever.
+    let mut stopped = None;
     loop {
         match child.try_wait() {
             Ok(Some(_)) => break,
-            Ok(None) if started.elapsed() > TRY_LIMIT => {
+            Ok(None) if started.elapsed() > limit => {
                 let _ = child.kill();
-                result.agent_error = Some("timed out".to_owned());
+                stopped = Some("timed out".to_owned());
                 break;
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(500)),
             Err(error) => {
-                result.agent_error = Some(error.to_string());
+                stopped = Some(error.to_string());
                 break;
             }
         }
     }
-    result.seconds = started.elapsed().as_secs_f64();
+    let seconds = started.elapsed().as_secs_f64();
     let lines = reader.join().unwrap_or_default();
-    let _ = std::fs::write(&transcript_path, lines.join("\n"));
-    let mut tool_ids: Vec<String> = Vec::new();
-    for line in &lines {
-        let Ok(event) = serde_json::from_str::<Value>(line) else {
-            continue;
+    // One run per file, beside the project (removed again for held-out
+    // tasks).
+    if let Some(folder) = log.parent() {
+        let _ = std::fs::create_dir_all(folder);
+    }
+    let _ = std::fs::write(log, lines.join("\n") + "\n");
+    let mut read = transcript::read(&lines);
+    if stopped.is_some() {
+        read.agent_error = stopped;
+        read.final_message = None;
+    }
+    if !read.has_result {
+        // Cut off before the client's report: the cost is estimated from
+        // the tokens seen, and marked so.
+        read.cost_usd = estimate::list_cost(model, &read);
+        read.cost_estimated = true;
+    }
+    (read, seconds)
+}
+
+/// How a campaign runs.
+struct Options {
+    repairs: u32,
+    second_agent: bool,
+    held_out: bool,
+    /// Stop between tries before the running cost would pass this.
+    max_cost: Option<f64>,
+}
+
+/// Where a try's transcripts and baseline go: beside its project, never in
+/// it.
+fn logs_of(dir: &Path) -> PathBuf {
+    dir.with_extension("logs")
+}
+
+fn round1(x: f64) -> f64 {
+    (x * 10.0).round() / 10.0
+}
+
+/// One try of a task: the agent, the check at the first attempt, repair
+/// rounds, then every measure of the card on the result.
+fn run_try(task: &dyn EvalTask, dir: &Path, model: &str, effort: &str, opts: &Options) -> Value {
+    let mut row = Map::new();
+    row.insert("task".to_owned(), json!(task.id()));
+    row.insert("game".to_owned(), json!(task.files()));
+    let baseline = match prepare(task, dir) {
+        Ok(baseline) => baseline,
+        Err(reason) => {
+            row.insert("passed_first".to_owned(), json!(false));
+            row.insert("passed".to_owned(), json!(false));
+            row.insert(
+                "agent_error".to_owned(),
+                json!(format!("setup failed: {reason}")),
+            );
+            return Value::Object(row);
+        }
+    };
+    // Kept beside the try, so that a corrected check can be run again later
+    // without running the agent again (`wish-evals recheck`).
+    let logs = logs_of(dir);
+    let _ = std::fs::remove_dir_all(&logs);
+    let _ = std::fs::create_dir_all(&logs);
+    let _ = std::fs::write(logs.join("baseline.json"), baseline.to_string());
+    let before = people::scene_entities(dir);
+    let limit = if task.id() == long_task::ID {
+        LONG_TRY_LIMIT
+    } else {
+        TRY_LIMIT
+    };
+    let prompt = format!("{}{CLAIM_SUFFIX}", task.prompt());
+    let (mut t, mut seconds) = agent(
+        dir,
+        &logs.join("run-1.jsonl"),
+        &prompt,
+        model,
+        effort,
+        task.files(),
+        None,
+        limit,
+    );
+    let mut sessions: Vec<String> = t.session_id.iter().cloned().collect();
+    let mut verdict = check(task, dir, &baseline);
+    let passed_first = verdict.is_ok();
+    let claim_first = claim(t.final_message.as_deref());
+    let mut seconds_to_result = passed_first.then_some(seconds);
+    let mut rounds = 0;
+    while let Err(reason) = &verdict {
+        if rounds >= opts.repairs || t.agent_error.is_some() {
+            break;
+        }
+        let Some(session) = t.session_id.clone() else {
+            break;
         };
-        match event["type"].as_str() {
-            Some("assistant") => {
-                for block in event["message"]["content"].as_array().into_iter().flatten() {
-                    if block["type"] == "tool_use" {
-                        result.tool_calls += 1;
-                        tool_ids.push(block["id"].as_str().unwrap_or_default().to_owned());
-                    }
-                }
-            }
-            Some("user") => {
-                for block in event["message"]["content"].as_array().into_iter().flatten() {
-                    if block["type"] == "tool_result" && block["is_error"] == true {
-                        result.tool_errors += 1;
-                        if tool_ids.first().map(String::as_str) == block["tool_use_id"].as_str() {
-                            result.first_call_error = true;
-                        }
-                    }
-                }
-            }
-            Some("result") => {
-                result.turns = event["num_turns"].as_u64().unwrap_or(0);
-                result.cost_usd = event["total_cost_usd"].as_f64().unwrap_or(0.0);
-                let usage = &event["usage"];
-                result.input_tokens = usage["input_tokens"].as_u64().unwrap_or(0);
-                result.output_tokens = usage["output_tokens"].as_u64().unwrap_or(0);
-                result.cache_read_tokens = usage["cache_read_input_tokens"].as_u64().unwrap_or(0);
-                result.cache_write_tokens =
-                    usage["cache_creation_input_tokens"].as_u64().unwrap_or(0);
-                if event["is_error"] == true {
-                    result.agent_error = Some(
-                        event["result"]
-                            .as_str()
-                            .unwrap_or("error")
-                            .chars()
-                            .take(300)
-                            .collect(),
-                    );
-                }
-            }
-            _ => {}
+        rounds += 1;
+        let feedback = format!(
+            "A check of the result failed: {reason}\nFix the project so that the task is done.{CLAIM_SUFFIX}"
+        );
+        let (again, more) = agent(
+            dir,
+            &logs.join(format!("run-{}.jsonl", rounds + 1)),
+            &feedback,
+            model,
+            effort,
+            task.files(),
+            Some(&session),
+            limit,
+        );
+        sessions.extend(again.session_id.clone());
+        t.absorb(&again);
+        seconds += more;
+        verdict = check(task, dir, &baseline);
+        if verdict.is_ok() {
+            seconds_to_result = Some(seconds);
         }
     }
-    match check(task, dir, &baseline) {
-        Ok(()) => result.passed = true,
-        Err(reason) => result.reason = reason,
+    let passed = verdict.is_ok();
+    let claim_final = claim(t.final_message.as_deref());
+    row.insert("passed_first".to_owned(), json!(passed_first));
+    row.insert("passed".to_owned(), json!(passed));
+    if !opts.held_out {
+        row.insert(
+            "reason".to_owned(),
+            json!(verdict.err().unwrap_or_default()),
+        );
     }
-    result
+    row.insert("claim_first".to_owned(), json!(claim_first.name()));
+    row.insert("claim_final".to_owned(), json!(claim_final.name()));
+    row.insert("repair_rounds".to_owned(), json!(rounds));
+    for (key, value) in [
+        ("tool_calls", t.tool_calls),
+        ("tool_errors", t.tool_errors),
+        ("compile_failures", t.compile_failures),
+        ("compile_errors", t.compile_errors),
+        ("failed_test_runs", t.failed_test_runs),
+        ("repair_turns", t.repair_turns),
+        ("turns", t.turns),
+        ("input_tokens", t.input_tokens),
+        ("output_tokens", t.output_tokens),
+        ("cache_read_tokens", t.cache_read_tokens),
+        ("cache_write_tokens", t.cache_write_tokens),
+    ] {
+        row.insert(key.to_owned(), json!(value));
+    }
+    row.insert("first_call_error".to_owned(), json!(t.first_call_error));
+    row.insert("cost_usd".to_owned(), json!(t.cost_usd));
+    row.insert("cost_estimated".to_owned(), json!(t.cost_estimated));
+    row.insert("model_ids".to_owned(), json!(t.model_ids));
+    row.insert("seconds".to_owned(), json!(round1(seconds)));
+    row.insert(
+        "seconds_to_result".to_owned(),
+        json!(seconds_to_result.map(round1)),
+    );
+    row.insert("agent_error".to_owned(), json!(t.agent_error));
+    // 3. Quality: check on the result as it is.
+    match measures::quality(dir) {
+        Ok(quality) => {
+            row.insert("check_errors".to_owned(), json!(quality.errors));
+            row.insert("check_warnings".to_owned(), json!(quality.warnings));
+        }
+        // Not clean: the card counts a check that could not run.
+        Err(reason) => {
+            row.insert("check_errors".to_owned(), Value::Null);
+            if !opts.held_out {
+                row.insert("check_error".to_owned(), json!(reason));
+            }
+        }
+    }
+    // 1, 4 and 6 on a copy of a passed result (the measures write files).
+    let mut replay = Value::Null;
+    let mut people_ok = Value::Null;
+    let mut tick = Value::Null;
+    if passed {
+        let copy = dir.with_extension("measures");
+        if people::copy_project(dir, &copy).is_ok() {
+            if task.files() {
+                replay = match measures::replay_holds(&copy) {
+                    Ok(Some(held)) => json!(held),
+                    Ok(None) => Value::Null,
+                    Err(_) => json!(false),
+                };
+                match measures::speed(&copy) {
+                    Ok(measures::Speed::Measured { ms_per_tick, .. }) => tick = json!(ms_per_tick),
+                    Ok(measures::Speed::NotMeaningful(why)) => {
+                        if !opts.held_out {
+                            row.insert("tick_note".to_owned(), json!(why));
+                        }
+                    }
+                    // A trap or a failure at 10,000 entities is a result.
+                    Err(reason) => {
+                        row.insert(
+                            "tick_error".to_owned(),
+                            json!(if opts.held_out {
+                                "failed".to_owned()
+                            } else {
+                                reason
+                            }),
+                        );
+                    }
+                }
+            }
+            let edited = people::edit_by_hand(&copy, &before);
+            people_ok = json!(edited.is_ok());
+            if !opts.held_out {
+                row.insert(
+                    "people_note".to_owned(),
+                    json!(edited.unwrap_or_else(|e| e)),
+                );
+            }
+            let _ = std::fs::remove_dir_all(&copy);
+        }
+    }
+    row.insert("replay".to_owned(), replay);
+    row.insert("people".to_owned(), people_ok);
+    row.insert("tick_ms_10k".to_owned(), tick);
+    // 3. The second agent's change (optional, spends quota).
+    let mut second = Value::Null;
+    if opts.second_agent
+        && passed
+        && let Some(follow) = task.follow_up()
+    {
+        let prompt = format!("{}{CLAIM_SUFFIX}", follow.prompt());
+        let (s, secs) = agent(
+            dir,
+            &logs.join("second.jsonl"),
+            &prompt,
+            model,
+            effort,
+            task.files(),
+            None,
+            limit,
+        );
+        sessions.extend(s.session_id.clone());
+        let ok = follow_up_check(follow, dir);
+        second = json!({
+            "passed": ok.is_ok(),
+            "claim": claim(s.final_message.as_deref()).name(),
+            "cost_usd": s.cost_usd, "cost_estimated": s.cost_estimated,
+            "tokens": s.tokens(), "output_tokens": s.output_tokens,
+            "tool_calls": s.tool_calls, "tool_errors": s.tool_errors,
+            "seconds": round1(secs), "agent_error": s.agent_error,
+        });
+        if !opts.held_out {
+            second["reason"] = json!(ok.err().unwrap_or_default());
+        }
+    }
+    row.insert("second".to_owned(), second);
+    row.insert("session_ids".to_owned(), json!(sessions));
+    Value::Object(row)
 }
+
+/// What a try cost in all (its runs and the second agent's).
+fn row_cost(row: &Value) -> f64 {
+    row["cost_usd"].as_f64().unwrap_or(0.0) + row["second"]["cost_usd"].as_f64().unwrap_or(0.0)
+}
+
+/// A label is a plain name: it becomes a folder and a file name.
+fn valid_label(label: &str) -> bool {
+    !label.is_empty()
+        && label.len() <= 80
+        && !label.contains("..")
+        && label
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
+fn git(args: &[&str]) -> Option<String> {
+    let out = Command::new("git")
+        .args(args)
+        .current_dir(held_out::repository_or_here())
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_owned())
+}
+
+/// Today's date (UTC) as YYYY-MM-DD.
+fn today() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let days = (secs / 86_400) as i64;
+    // Howard Hinnant's civil_from_days.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// The machine, without anything personal (no user or host name).
+fn machine() -> String {
+    let cpu = if cfg!(windows) {
+        std::env::var("PROCESSOR_IDENTIFIER").unwrap_or_default()
+    } else {
+        std::fs::read_to_string("/proc/cpuinfo")
+            .unwrap_or_default()
+            .lines()
+            .find(|l| l.starts_with("model name"))
+            .and_then(|l| l.split(':').nth(1))
+            .unwrap_or_default()
+            .trim()
+            .to_owned()
+    };
+    let threads = std::thread::available_parallelism().map_or(0, std::num::NonZero::get);
+    format!(
+        "{} {}, {threads} threads, {cpu}, software render adapter",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    )
+}
+
+fn client_version() -> String {
+    claude_command()
+        .arg("--version")
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+        .filter(|v| !v.is_empty())
+        .map_or("Claude Code CLI (version unknown)".to_owned(), |v| {
+            format!("Claude Code CLI {v}")
+        })
+}
+
+fn results_dir() -> PathBuf {
+    held_out::repository_or_here().join("evals").join("results")
+}
+
+fn write_card(label: &str, card: &Value) -> Result<(PathBuf, PathBuf), String> {
+    let folder = results_dir();
+    std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
+    let json_path = folder.join(format!("{label}.json"));
+    let md_path = folder.join(format!("{label}.md"));
+    std::fs::write(
+        &json_path,
+        serde_json::to_string_pretty(card).unwrap_or_default() + "\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(&md_path, card::markdown(card)).map_err(|e| e.to_string())?;
+    Ok((json_path, md_path))
+}
+
+/// A campaign: every task, every model, `tries` tries; then the scorecard.
+///
+/// Order: the long task's first try with the first model runs first (it is
+/// the largest unknown of the cost; with `--max-cost` a first measured long
+/// try shows early whether the cap holds), then every task in order, model
+/// by model. With `--max-cost`, the campaign stops between tries when the
+/// cost so far plus the mean cost of a try so far would pass the cap, and
+/// the card says so; what was measured is kept.
+fn campaign(
+    tasks: &[&dyn EvalTask],
+    models: &[(String, String)],
+    tries: u32,
+    label: &str,
+    opts: &Options,
+    command: &str,
+) -> bool {
+    let run_dir = Path::new(WORK).join(label);
+    // The schedule: (model, task, try).
+    let mut plan: Vec<(usize, usize, u32)> = Vec::new();
+    let long = tasks.iter().position(|t| t.id() == long_task::ID);
+    if let Some(long) = long {
+        plan.push((0, long, 1));
+    }
+    for m in 0..models.len() {
+        for t in 0..tasks.len() {
+            for attempt in 1..=tries {
+                if !(m == 0 && Some(t) == long && attempt == 1) {
+                    plan.push((m, t, attempt));
+                }
+            }
+        }
+    }
+    let total = plan.len();
+    let mut rows: Vec<Vec<Value>> = vec![Vec::new(); models.len()];
+    let mut resolved: Vec<Vec<String>> = vec![Vec::new(); models.len()];
+    let mut spent = 0.0f64;
+    let mut done = 0usize;
+    let mut stopped_at_cap = false;
+    let client = held_out::client_folder();
+    for &(m, t, attempt) in &plan {
+        if let Some(cap) = opts.max_cost {
+            let mean = if done > 0 { spent / done as f64 } else { 0.0 };
+            if spent + mean > cap {
+                stopped_at_cap = true;
+                println!(
+                    "stopped at the cost cap: ${spent:.2} spent after {done} of {total} tries; the next would pass ${cap:.2}"
+                );
+                break;
+            }
+        }
+        let (model, effort) = &models[m];
+        let task = tasks[t];
+        let dir = run_dir.join(model).join(format!(
+            "{}-{attempt}",
+            if opts.held_out {
+                format!("h{done}")
+            } else {
+                task.id().to_owned()
+            }
+        ));
+        let mut row = run_try(task, &dir, model, effort, opts);
+        done += 1;
+        spent += row_cost(&row);
+        for id in row["model_ids"].as_array().into_iter().flatten() {
+            if let Some(id) = id.as_str()
+                && !resolved[m].iter().any(|r| r == id)
+            {
+                resolved[m].push(id.to_owned());
+            }
+        }
+        if opts.held_out {
+            // Nothing of the task is kept: not its project, not its
+            // transcripts, not its failure, and not what the client kept of
+            // its sessions (they hold the prompt and the repair message).
+            let sessions: Vec<String> = row["session_ids"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|s| s.as_str().map(str::to_owned))
+                .collect();
+            if let Some(client) = &client {
+                held_out::forget_sessions(client, &dir, &sessions);
+            }
+            if let Some(map) = row.as_object_mut() {
+                map.remove("session_ids");
+                map.remove("model_ids");
+                map.insert("task".to_owned(), json!(format!("h{t}")));
+            }
+            let _ = std::fs::remove_dir_all(&dir);
+            let _ = std::fs::remove_dir_all(logs_of(&dir));
+            println!("held-out: try {done} of {total} done");
+        } else {
+            println!(
+                "{} {model} {}#{attempt}: first {}, {} calls ({} errors, {} failed builds, {} repair turns), {} rounds, {:.0}s, ${:.3}{}",
+                if row["passed"] == true {
+                    "PASS"
+                } else {
+                    "FAIL"
+                },
+                task.id(),
+                if row["passed_first"] == true {
+                    "pass"
+                } else {
+                    "fail"
+                },
+                row["tool_calls"],
+                row["tool_errors"],
+                row["compile_failures"],
+                row["repair_turns"],
+                row["repair_rounds"],
+                row["seconds"].as_f64().unwrap_or(0.0),
+                row_cost(&row),
+                row["reason"]
+                    .as_str()
+                    .filter(|r| !r.is_empty())
+                    .map_or(String::new(), |r| format!(" -- {r}")),
+            );
+        }
+        rows[m].push(row);
+    }
+    if opts.held_out {
+        let _ = std::fs::remove_dir_all(&run_dir);
+    }
+    let runs: Vec<(String, String, Vec<Value>)> = models
+        .iter()
+        .zip(rows)
+        .map(|((model, effort), rows)| (model.clone(), effort.clone(), rows))
+        .collect();
+    let inputs = json!({
+        "label": label,
+        "set": if opts.held_out { "held-out" } else { "open" },
+        "tasks": tasks.len(),
+        "tries_per_task": tries,
+        "repair_rounds": opts.repairs,
+        "second_agent": opts.second_agent,
+        "engine_version": env!("CARGO_PKG_VERSION"),
+        "engine_commit": git(&["rev-parse", "HEAD"]),
+        "engine_dirty": git(&["status", "--porcelain"]).map(|s| !s.is_empty()),
+        "date": today(),
+        "machine": machine(),
+        "client": client_version(),
+        "models": models.iter().map(|(m, e)| json!({ "model": m, "effort": e })).collect::<Vec<_>>(),
+        "resolved_models": models.iter().zip(&resolved)
+            .map(|((m, _), ids)| format!("{m} = {}", if ids.is_empty() { "unknown".to_owned() } else { ids.join(" + ") }))
+            .collect::<Vec<_>>().join("; "),
+        "command": command,
+        "method": {
+            "claim_sentence": CLAIM_SUFFIX.trim(),
+            "repair_rounds": opts.repairs,
+            "repair_feedback": "the hidden check's reason, in the resumed session",
+            "second_agent": opts.second_agent,
+            "order": if long.is_some() { "the long task's first try with the first model, then every task in order, model by model" } else { "every task in order, model by model" },
+            "max_cost_usd": opts.max_cost,
+            "stopped_at_cap": stopped_at_cap,
+            "tries_run": done,
+            "tries_planned": total,
+            "spent_usd": (spent * 1000.0).round() / 1000.0,
+            "client_sessions": if opts.held_out { "deleted after each try" } else { "kept by the client" },
+        },
+    });
+    let card = card::scorecard(&inputs, &runs, !opts.held_out);
+    for c in card["cards"].as_array().into_iter().flatten() {
+        println!(
+            "{} · {}: first attempt {}, in the end {}, believed right but refuted {}, ${} per pass",
+            c["model"].as_str().unwrap_or_default(),
+            c["effort"].as_str().unwrap_or_default(),
+            c["1_correctness"]["first_attempt_rate"],
+            c["1_correctness"]["final_rate"],
+            c["2_errors"]["false_successes_first"]["count"],
+            c["5_efficiency"]["cost_per_pass_usd"],
+        );
+    }
+    match write_card(label, &card) {
+        Ok((json_path, md_path)) => {
+            println!(
+                "scorecard: {} and {}",
+                json_path.display(),
+                md_path.display()
+            );
+            true
+        }
+        Err(reason) => {
+            eprintln!("could not write the scorecard: {reason}");
+            false
+        }
+    }
+}
+
+// --------------------------------------------------------------------------
 
 fn flag<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
     args.iter()
         .position(|a| a == name)
         .and_then(|i| args.get(i + 1))
         .map(String::as_str)
+        .filter(|v| !v.starts_with("--"))
+}
+
+fn has(args: &[String], name: &str) -> bool {
+    args.iter().any(|a| a == name)
+}
+
+/// The held-out folder of `--held-out [dir]`, if the flag is given.
+fn held_out_folder(args: &[String]) -> Option<PathBuf> {
+    has(args, "--held-out").then(|| {
+        flag(args, "--held-out")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(held_out::DEFAULT_FOLDER))
+    })
+}
+
+fn exit(ok: bool) -> std::process::ExitCode {
+    if ok {
+        std::process::ExitCode::SUCCESS
+    } else {
+        std::process::ExitCode::FAILURE
+    }
 }
 
 fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let mut tasks = tasks::all();
-    tasks.extend(m6_tasks::all());
-    tasks.extend(m7_tasks::all());
+    let mut open = open_set();
+    let filtered = flag(&args, "--tasks").is_some();
     if let Some(wanted) = flag(&args, "--tasks") {
         let wanted: Vec<&str> = wanted.split(',').collect();
-        tasks.retain(|task| wanted.iter().any(|w| task.id.starts_with(w)));
+        open.retain(|task| wanted.iter().any(|w| task.id.starts_with(w)));
     }
+    let open_refs: Vec<&dyn EvalTask> = open.iter().map(|t| t as &dyn EvalTask).collect();
+    let held = held_out_folder(&args);
     match args.first().map(String::as_str) {
         Some("selftest") => {
-            if selftest(&tasks) {
-                std::process::ExitCode::SUCCESS
-            } else {
-                std::process::ExitCode::FAILURE
+            if let Some(file) = flag(&args, "--task-file") {
+                let path = Path::new(file);
+                // Never details of a held-out task: the default folder and
+                // any folder given with --held-out, at any depth.
+                let mut folders = vec![PathBuf::from(held_out::DEFAULT_FOLDER)];
+                folders.extend(held.clone());
+                if held_out::in_held_out(path, &folders) {
+                    println!(
+                        "refused: this file is in a held-out folder (its details are never printed)"
+                    );
+                    return exit(false);
+                }
+                let task = std::fs::read_to_string(path)
+                    .map_err(|e| e.to_string())
+                    .and_then(|t| DeclaredTask::parse(&t));
+                return match task {
+                    Ok(task) => {
+                        let dir = Path::new(WORK).join("selftest").join("task-file");
+                        let outcome = selftest_task(&task, &dir, &mut Tally::default());
+                        match &outcome {
+                            Ok(notes) => println!("ok    {}  [{notes}]", task.id()),
+                            Err(reason) => println!("FAIL  {}: {reason}", task.id()),
+                        }
+                        exit(outcome.is_ok())
+                    }
+                    Err(reason) => {
+                        println!("FAIL  {file}: {reason}");
+                        exit(false)
+                    }
+                };
             }
+            if let Some(folder) = held {
+                return exit(selftest_held_out(&folder));
+            }
+            exit(selftest(
+                &open_refs,
+                !filtered || open.iter().any(|t| t.id == long_task::ID),
+            ))
         }
         Some("recheck") => {
             // Checks the projects a run left behind again (after a check was
@@ -277,105 +1114,219 @@ fn main() -> std::process::ExitCode {
             let run_dir = Path::new(WORK).join(label);
             let mut passed = 0;
             let mut total = 0;
-            for task in &tasks {
-                for attempt in 1.. {
-                    let dir = run_dir.join(format!("{}-{attempt}", task.id));
-                    if !dir.is_dir() {
-                        break;
-                    }
-                    let baseline = std::fs::read_to_string(dir.join("baseline.json"))
-                        .ok()
-                        .and_then(|text| serde_json::from_str(&text).ok())
-                        .unwrap_or(Value::Null);
-                    total += 1;
-                    match check(task, &dir, &baseline) {
-                        Ok(()) => {
-                            passed += 1;
-                            println!("PASS {}#{attempt}", task.id);
+            let mut folders = vec![run_dir.clone()];
+            folders.extend(
+                std::fs::read_dir(&run_dir)
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .map(|e| e.path())
+                    .filter(|p| p.is_dir()),
+            );
+            for task in &open {
+                for folder in &folders {
+                    for attempt in 1.. {
+                        let dir = folder.join(format!("{}-{attempt}", task.id));
+                        if !dir.is_dir() {
+                            break;
                         }
-                        Err(reason) => println!("FAIL {}#{attempt} -- {reason}", task.id),
+                        let baseline = std::fs::read_to_string(logs_of(&dir).join("baseline.json"))
+                            .or_else(|_| std::fs::read_to_string(dir.join("baseline.json")))
+                            .ok()
+                            .and_then(|text| serde_json::from_str(&text).ok())
+                            .unwrap_or(Value::Null);
+                        total += 1;
+                        match check(task, &dir, &baseline) {
+                            Ok(()) => {
+                                passed += 1;
+                                println!("PASS {}#{attempt}", task.id);
+                            }
+                            Err(reason) => println!("FAIL {}#{attempt} -- {reason}", task.id),
+                        }
                     }
                 }
             }
             println!("\n{passed}/{total} pass the current checks");
-            std::process::ExitCode::SUCCESS
+            exit(true)
         }
-        Some("run") => {
+        Some("rescore") => {
+            // Reads a finished run's transcripts again (free).
+            let label = flag(&args, "--label").unwrap_or("run");
+            let run_dir = Path::new(WORK).join(label);
+            let mut found: Vec<PathBuf> = Vec::new();
+            let mut stack = vec![run_dir];
+            while let Some(folder) = stack.pop() {
+                for entry in std::fs::read_dir(&folder).into_iter().flatten().flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        stack.push(path);
+                    } else if path.file_name().is_some_and(|n| {
+                        let n = n.to_string_lossy();
+                        n == "transcript.jsonl"
+                            || n == "second.jsonl"
+                            || (n.starts_with("run-") && n.ends_with(".jsonl"))
+                    }) {
+                        // One run per file (the M4 to M7 runs kept one
+                        // `transcript.jsonl` per try).
+                        found.push(path);
+                    }
+                }
+            }
+            found.sort();
+            let mut sum = Transcript::default();
+            let mut claims = std::collections::BTreeMap::<&str, u32>::new();
+            for path in &found {
+                let lines: Vec<String> = std::fs::read_to_string(path)
+                    .unwrap_or_default()
+                    .lines()
+                    .map(str::to_owned)
+                    .collect();
+                let t = transcript::read(&lines);
+                let said = claim(t.final_message.as_deref());
+                *claims.entry(said.name()).or_default() += 1;
+                println!(
+                    "{}/{}: {} calls, {} errors, {} failed builds ({} compiler errors), {} failed test runs, {} repair turns, claim {}",
+                    path.parent()
+                        .and_then(Path::file_name)
+                        .unwrap_or_default()
+                        .to_string_lossy(),
+                    path.file_name().unwrap_or_default().to_string_lossy(),
+                    t.tool_calls,
+                    t.tool_errors,
+                    t.compile_failures,
+                    t.compile_errors,
+                    t.failed_test_runs,
+                    t.repair_turns,
+                    said.name()
+                );
+                sum.absorb(&t);
+            }
+            println!(
+                "\n{} transcripts: {} calls, {} errors, {} failed builds, {} failed test runs, {} repair turns; claims {:?}; ${:.2}",
+                found.len(),
+                sum.tool_calls,
+                sum.tool_errors,
+                sum.compile_failures,
+                sum.failed_test_runs,
+                sum.repair_turns,
+                claims,
+                sum.cost_usd
+            );
+            exit(true)
+        }
+        Some("card") => {
+            let Some(from) = flag(&args, "--from") else {
+                eprintln!("usage: wish-evals card --from evals/results/<label>.json");
+                return exit(false);
+            };
+            let card = std::fs::read_to_string(from)
+                .ok()
+                .and_then(|t| serde_json::from_str::<Value>(&t).ok());
+            match card {
+                Some(card) if card["scorecard"] == 1 => {
+                    let md = Path::new(from).with_extension("md");
+                    let ok = std::fs::write(&md, card::markdown(&card)).is_ok();
+                    println!("{}", md.display());
+                    exit(ok)
+                }
+                _ => {
+                    eprintln!("{from} is not a scorecard");
+                    exit(false)
+                }
+            }
+        }
+        Some("estimate") => {
+            let all = open_set();
+            let ids: Vec<String> = all
+                .iter()
+                .filter(|t| t.id != long_task::ID)
+                .map(|t| t.id.to_owned())
+                .collect();
+            let game: Vec<String> = all
+                .iter()
+                .filter(|t| t.files && t.id != long_task::ID)
+                .map(|t| t.id.to_owned())
+                .collect();
+            let follow: Vec<String> = followups::ALL.iter().map(|f| f.task.to_owned()).collect();
+            print!(
+                "{}",
+                estimate::estimate(&results_dir(), &ids, &game, &follow, long_task::ID)
+            );
+            exit(true)
+        }
+        Some(command @ ("campaign" | "run")) => {
             let tries: u32 = flag(&args, "--tries")
                 .and_then(|t| t.parse().ok())
                 .unwrap_or(3);
-            let model = flag(&args, "--model").unwrap_or("sonnet");
-            let effort = flag(&args, "--effort").unwrap_or("medium");
+            let repairs: u32 = flag(&args, "--repairs")
+                .and_then(|t| t.parse().ok())
+                .unwrap_or(1);
             let label = flag(&args, "--label").unwrap_or("run");
-            let run_dir = Path::new(WORK).join(label);
-            let mut rows = Vec::new();
-            let (mut passed, mut total, mut cost) = (0u32, 0u32, 0.0f64);
-            for task in &tasks {
-                for attempt in 1..=tries {
-                    let dir = run_dir.join(format!("{}-{attempt}", task.id));
-                    let r = run_try(task, &dir, model, effort);
-                    total += 1;
-                    passed += u32::from(r.passed);
-                    cost += r.cost_usd;
-                    println!(
-                        "{} {}#{attempt}: {} calls ({} errors{}), {} turns, {:.0}s, ${:.3}{}",
-                        if r.passed { "PASS" } else { "FAIL" },
-                        task.id,
-                        r.tool_calls,
-                        r.tool_errors,
-                        if r.first_call_error {
-                            ", first call failed"
-                        } else {
-                            ""
-                        },
-                        r.turns,
-                        r.seconds,
-                        r.cost_usd,
-                        if r.passed {
-                            String::new()
-                        } else {
-                            format!(" -- {}", r.reason)
-                        }
-                    );
-                    rows.push(json!({
-                        "task": task.id, "try": attempt, "passed": r.passed, "reason": r.reason,
-                        "tool_calls": r.tool_calls, "tool_errors": r.tool_errors, "first_call_error": r.first_call_error,
-                        "turns": r.turns, "seconds": (r.seconds * 10.0).round() / 10.0,
-                        "input_tokens": r.input_tokens, "output_tokens": r.output_tokens,
-                        "cache_read_tokens": r.cache_read_tokens, "cache_write_tokens": r.cache_write_tokens,
-                        "cost_usd": r.cost_usd, "agent_error": r.agent_error,
-                    }));
+            if !valid_label(label) {
+                eprintln!(
+                    "--label must be a plain name (letters, digits, - _ .; no '..', no folders)"
+                );
+                return exit(false);
+            }
+            let existing = results_dir().join(format!("{label}.json"));
+            if existing.exists() && !has(&args, "--overwrite") {
+                eprintln!(
+                    "{} exists: choose another --label, or pass --overwrite",
+                    existing.display()
+                );
+                return exit(false);
+            }
+            let max_cost = match flag(&args, "--max-cost").map(str::parse::<f64>) {
+                None => None,
+                Some(Ok(cap)) if cap > 0.0 => Some(cap),
+                Some(_) => {
+                    eprintln!("--max-cost takes a number of dollars, such as 30");
+                    return exit(false);
                 }
-            }
-            let summary = json!({
-                "model": model, "effort": effort, "tries_per_task": tries,
-                "passed": passed, "total": total,
-                "pass_rate": if total > 0 { f64::from(passed) / f64::from(total) } else { 0.0 },
-                "cost_usd_equivalent": (cost * 1000.0).round() / 1000.0,
-                "tries": rows,
-            });
-            println!(
-                "\n{passed}/{total} passed ({:.0}%), API-equivalent cost ${cost:.2}",
-                100.0 * f64::from(passed) / f64::from(total.max(1))
-            );
-            let out = flag(&args, "--out")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from(format!("evals/results/{label}.json")));
-            if let Some(folder) = out.parent() {
-                let _ = std::fs::create_dir_all(folder);
-            }
-            let _ = std::fs::write(
-                &out,
-                serde_json::to_string_pretty(&summary).unwrap_or_default() + "\n",
-            );
-            println!("results: {}", out.display());
-            std::process::ExitCode::SUCCESS
+            };
+            let models: Vec<(String, String)> = if command == "run" {
+                vec![(
+                    flag(&args, "--model").unwrap_or("sonnet").to_owned(),
+                    flag(&args, "--effort").unwrap_or("medium").to_owned(),
+                )]
+            } else {
+                flag(&args, "--models")
+                    .unwrap_or("sonnet:medium,haiku:medium")
+                    .split(',')
+                    .map(|m| {
+                        let (model, effort) = m.split_once(':').unwrap_or((m, "medium"));
+                        (model.to_owned(), effort.to_owned())
+                    })
+                    .collect()
+            };
+            let opts = Options {
+                repairs,
+                second_agent: has(&args, "--second-agent"),
+                held_out: held.is_some(),
+                max_cost,
+            };
+            let held_tasks;
+            let tasks: Vec<&dyn EvalTask> = match &held {
+                Some(folder) => match held_out::load(folder) {
+                    Ok(loaded) => {
+                        held_tasks = loaded;
+                        held_tasks.iter().map(|t| t as &dyn EvalTask).collect()
+                    }
+                    Err(reason) => {
+                        eprintln!("{reason}");
+                        return exit(false);
+                    }
+                },
+                None => open_refs,
+            };
+            let line = format!("wish-evals {}", args.join(" "));
+            exit(campaign(&tasks, &models, tries, label, &opts, &line))
         }
         _ => {
             eprintln!(
-                "usage: wish-evals selftest | run [--tasks 01,02] [--tries 3] [--model sonnet] [--effort medium] [--label name]"
+                "usage: wish-evals selftest [--tasks 01,42] [--held-out [dir]] [--task-file f]\n       wish-evals campaign --label name [--models sonnet:medium,haiku:medium] [--tries 3] [--repairs 1] [--second-agent] [--max-cost 30] [--overwrite] [--held-out [dir]]   (spends quota)\n       wish-evals run --label name [--model sonnet] [--effort medium] [--tries 3]   (spends quota)\n       wish-evals card --from file | rescore --label name | recheck --label name | estimate"
             );
-            std::process::ExitCode::FAILURE
+            exit(false)
         }
     }
 }
