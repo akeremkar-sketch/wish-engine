@@ -1,7 +1,7 @@
 # M12: the editor redesign before 1.0
 
-**Status:** mockups drawn, waiting for the user's choice of direction
-(20 November 2026).
+**Status:** direction A (Workshop) chosen by the user, 20 November 2026;
+package R1 in progress.
 
 ## 1. Request and scope
 
@@ -86,11 +86,43 @@ shared by every direction:
   shortcut; empty panels that say the next step; a short notice for saves
   and undo; panel changes animated briefly and never with "reduce motion".
 
-## 5. Next
+## 5. Decision and packages
 
-The user picks a direction (or a mix). Then: a package plan (the theme
-tokens, the menu bar and command ids, the scene camera, the inspector, the
-dock, the AI surface), the recommended model, and the code, with the
-editor's rules kept (every action a `Workspace::call`, `t("...")` texts in
-all 11 languages, commands in `COMMANDS`, tests that find widgets by name,
-golden images refreshed and looked at).
+**The user chose A · Workshop** (20 November 2026), with the opening and the
+start screen of section 4. Five packages, each verified, committed and
+pushed on its own; the editor's rules hold throughout (every action a
+`Workspace::call`; new texts with `t("...")` in all 11 languages; a new
+action gets a command id in `COMMANDS`; tests find widgets by name; golden
+images refreshed with `UPDATE_GOLDEN=1` and looked at).
+
+1. **R1 · The look.** *Revised the same day after the user's review:* the
+   first pass (a vivid purple accent, large rounded cards, pills, roomy rows)
+   "looks made by AI; it should look like professional work". A first code
+   attempt of that pass was taken back before any commit. The professional
+   pass, redrawn as board A: neutral graphite greys with no tint (`#1C1D20`
+   ground and fields, `#25262A` panels, `#2C2D32` headers, `#36373D` lines),
+   one calm blue for selection and the active tool (`#2F4E85` rows,
+   `#3D6FD0` checks), green only on the play icon, red only on record and
+   errors, the axis colours; 3 px corners; 22 px rows, 24 px section
+   headers, 20 px fields; panels with tab strips, collapsible inspector
+   sections instead of cards, numbers in a monospace face; purple only in
+   the mark. Atelier and `packages/wish.theme.atelier/atelier.json` change
+   together (a test compares them); Midnight and High contrast stay.
+2. **R2 · The top bar and menus.** A menu bar (File, Edit, Create, View,
+   Game, Help) from `COMMANDS`; Play, Step and Record in the middle; the
+   command palette as a search field (Ctrl+K); Manual | With AI on the
+   right. The Create menu (empty, shapes, camera, lights, text, sprite,
+   sound, particles), Duplicate and New scene are `edit_apply` and
+   `asset_create` calls (the editor's first hour).
+3. **R3 · The scene view.** The tool strip floats in the view (move, rotate,
+   scale, world/local, snap); camera, shading and Scene | Game at its top
+   right; an orbit camera (drag, right-drag to pan, wheel to zoom, F to
+   frame the selection) and a hint line.
+4. **R4 · Panels.** The hierarchy with a filter and counts on groups; the
+   inspector as cards with plain labels, units, axis colours on vectors, an
+   "advanced" fold and prefab changes marked; assets as picture tiles; a
+   status bar that says what was saved.
+5. **R5 · Opening, Hub and details.** The opening animation with the name
+   and a progress line, the Hub of section 4, tooltips that name shortcuts,
+   focus rings, empty states with a next step, notices for saves and undo,
+   "reduce motion" respected; README pictures and both guides updated.
