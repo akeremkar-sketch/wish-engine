@@ -2,9 +2,11 @@
 //! renaming, dragging to change a parent, and picking in the view. Every one
 //! is a control-plane call by `human`, and one entry of the one history.
 //!
-//! The coordinates are the layout of a 1280x720 window over a new project:
-//! hierarchy rows at y = 93 (camera), 119 (ground), 144 (sun); the "+"
-//! button at (156, 55) and "Delete" at (195, 55).
+//! The coordinates are the layout of a 1280x720 window over a new project
+//! with a one-row top bar: hierarchy rows at y = 93 (camera), 119 (ground),
+//! 144 (sun); the "+" button at (156, 55) and "Delete" at (195, 55). The
+//! redesign's menu bar and toolbar move everything down by the same amount:
+//! [`dy`] measures it from where the camera's row is, and [`pos`] adds it.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -21,6 +23,22 @@ const GROUND: [f32; 2] = [58.0, 119.0];
 const SUN: [f32; 2] = [50.0, 144.0];
 const ADD: [f32; 2] = [156.0, 55.0];
 const DELETE: [f32; 2] = [195.0, 55.0];
+
+/// How far below the one-row layout the hierarchy is now.
+fn dy(app: &EditorApp) -> f32 {
+    let row = app
+        .widgets()
+        .iter()
+        .find(|w| w.label.as_deref() == Some("camera") && w.rect.min.x < 220.0)
+        .map(|w| w.rect)
+        .expect("the camera's row");
+    row.center().y - CAMERA[1]
+}
+
+/// A place of the one-row layout, where it is now.
+fn pos(at: [f32; 2], dy: f32) -> [f32; 2] {
+    [at[0], at[1] + dy]
+}
 
 fn app(name: &str) -> (EditorApp, PathBuf) {
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("editor-h-{name}"));
@@ -64,7 +82,7 @@ fn project_menu(app: &mut EditorApp, item: &str) {
     let menu = app
         .widgets()
         .iter()
-        .find(|w| w.role == "Button" && w.label.as_deref() == Some("Editor Test"))
+        .find(|w| w.role == "Button" && w.label.as_deref() == Some(top_menu(item)))
         .map(|w| w.rect)
         .expect("the project menu");
     run_script(
@@ -93,7 +111,7 @@ fn menu_bar(app: &mut EditorApp, label: &str) {
     let rect = app
         .widgets()
         .iter()
-        .find(|w| w.role == "Button" && w.label.as_deref() == Some(label) && w.rect.max.y < 40.0)
+        .find(|w| w.role == "Button" && w.label.as_deref() == Some(label) && w.rect.max.y < 72.0)
         .map(|w| w.rect)
         .unwrap_or_else(|| panic!("no '{label}' in the menu bar"));
     run_script(
@@ -112,14 +130,15 @@ fn clicking_rows_selects_and_ctrl_adds() {
         app.rows().iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
         ["camera", "ground", "sun"]
     );
-    play(&mut app, json!([click(GROUND), { "idle": 1 }]));
+    let dy = dy(&app);
+    play(&mut app, json!([click(pos(GROUND, dy)), { "idle": 1 }]));
     assert_eq!(app.selection(), ["ground"]);
-    play(&mut app, ctrl_click(SUN));
+    play(&mut app, ctrl_click(pos(SUN, dy)));
     assert_eq!(app.selection(), ["ground", "sun"]);
     // Ctrl-click again takes it out; a plain click on another replaces.
-    play(&mut app, ctrl_click(SUN));
+    play(&mut app, ctrl_click(pos(SUN, dy)));
     assert_eq!(app.selection(), ["ground"]);
-    play(&mut app, json!([click(CAMERA), { "idle": 1 }]));
+    play(&mut app, json!([click(pos(CAMERA, dy)), { "idle": 1 }]));
     assert_eq!(app.selection(), ["camera"]);
     // The empty part of the panel selects nothing. Selecting does not touch
     // the scene: no history.
@@ -132,15 +151,16 @@ fn clicking_rows_selects_and_ctrl_adds() {
 fn add_and_delete_are_single_undoable_calls_by_a_human() {
     let (mut app, _dir) = app("add");
     play(&mut app, json!([{ "idle": 2 }]));
-    play(&mut app, json!([click(ADD), { "idle": 1 }]));
+    let dy = dy(&app);
+    play(&mut app, json!([click(pos(ADD, dy)), { "idle": 1 }]));
     assert!(ids(app.rows()).contains("entity_1"), "{:?}", app.rows());
     assert_eq!(app.selection(), ["entity_1"]);
     assert_eq!(app.status(), "added entity_1");
     // A second one gets the next free name.
-    play(&mut app, json!([click(ADD), { "idle": 1 }]));
+    play(&mut app, json!([click(pos(ADD, dy)), { "idle": 1 }]));
     assert!(ids(app.rows()).contains("entity_2"));
     // Delete removes the selected one.
-    play(&mut app, json!([click(DELETE), { "idle": 1 }]));
+    play(&mut app, json!([click(pos(DELETE, dy)), { "idle": 1 }]));
     assert!(!ids(app.rows()).contains("entity_2"), "{:?}", app.rows());
     assert!(ids(app.rows()).contains("entity_1"));
     assert!(app.selection().is_empty());
@@ -159,10 +179,9 @@ fn add_and_delete_are_single_undoable_calls_by_a_human() {
 #[test]
 fn the_delete_key_deletes_the_selection() {
     let (mut app, _dir) = app("delete-key");
-    play(
-        &mut app,
-        json!([{ "idle": 2 }, click(GROUND), { "idle": 1 }]),
-    );
+    play(&mut app, json!([{ "idle": 2 }]));
+    let dy = dy(&app);
+    play(&mut app, json!([click(pos(GROUND, dy)), { "idle": 1 }]));
     play(
         &mut app,
         json!([{ "events": [{ "key": "Delete" }] }, { "idle": 1 }]),
@@ -174,11 +193,12 @@ fn the_delete_key_deletes_the_selection() {
 fn double_click_renames() {
     let (mut app, _dir) = app("rename");
     play(&mut app, json!([{ "idle": 2 }]));
+    let dy = dy(&app);
     play(
         &mut app,
         json!([
-            click(GROUND),
-            click(GROUND),
+            click(pos(GROUND, dy)),
+            click(pos(GROUND, dy)),
             { "idle": 2 },
             { "events": [{ "key": "A", "ctrl": true }] },
             { "events": [{ "text": "floor" }] },
@@ -199,16 +219,17 @@ fn double_click_renames() {
 fn dragging_a_row_onto_another_changes_its_parent() {
     let (mut app, _dir) = app("drag");
     play(&mut app, json!([{ "idle": 2 }]));
+    let dy = dy(&app);
     play(
         &mut app,
         json!([
-            { "events": [{ "pointer": SUN }] },
+            { "events": [{ "pointer": pos(SUN, dy) }] },
             { "events": [{ "press": "primary" }] },
-            { "events": [{ "pointer": [50, 136] }] },
-            { "events": [{ "pointer": [52, 124] }] },
-            { "events": [{ "pointer": [55, 108] }] },
-            { "events": [{ "pointer": [58, 95] }] },
-            { "events": [{ "pointer": [58, 93] }] },
+            { "events": [{ "pointer": pos([50.0, 136.0], dy) }] },
+            { "events": [{ "pointer": pos([52.0, 124.0], dy) }] },
+            { "events": [{ "pointer": pos([55.0, 108.0], dy) }] },
+            { "events": [{ "pointer": pos([58.0, 95.0], dy) }] },
+            { "events": [{ "pointer": pos([58.0, 93.0], dy) }] },
             { "events": [{ "release": "primary" }] },
             { "idle": 2 }
         ]),
@@ -222,10 +243,10 @@ fn dragging_a_row_onto_another_changes_its_parent() {
     play(
         &mut app,
         json!([
-            { "events": [{ "pointer": [72, 119] }] },
+            { "events": [{ "pointer": pos([72.0, 119.0], dy) }] },
             { "events": [{ "press": "primary" }] },
-            { "events": [{ "pointer": [72, 130] }] },
-            { "events": [{ "pointer": [70, 200] }] },
+            { "events": [{ "pointer": pos([72.0, 130.0], dy) }] },
+            { "events": [{ "pointer": pos([70.0, 200.0], dy) }] },
             { "events": [{ "pointer": [80, 400] }] },
             { "events": [{ "release": "primary" }] },
             { "idle": 2 },
@@ -287,7 +308,8 @@ fn a_change_made_since_the_editor_looked_is_not_overwritten() {
     // ...and the person, still looking at the old hierarchy, deletes
     // "ground" (selected before the agent's change).
     app.select(&["ground"]);
-    play(&mut app, json!([click(DELETE)]));
+    let dy = dy(&app);
+    play(&mut app, json!([click(pos(DELETE, dy))]));
     // Nothing the person did overwrote the agent's work: "terrain" is there,
     // and the person is told what happened.
     play(&mut app, json!([{ "seconds": 0.5 }, { "idle": 2 }]));
@@ -298,4 +320,19 @@ fn a_change_made_since_the_editor_looked_is_not_overwritten() {
         "the person is told: {}",
         app.status()
     );
+}
+
+/// The menu bar's menu that holds `item` (the editor redesign, R2: File,
+/// Edit, Create, View, Game, AI, Help replaced the project menu).
+#[allow(dead_code)]
+fn top_menu(item: &str) -> &'static str {
+    match item {
+        "Settings..." | "Packages..." | "Export game" | "Save picture" | "New scene" | "Quit" => {
+            "File"
+        }
+        "Checkpoints" | "Duplicate" | "Rename" | "Undo" | "Redo" => "Edit",
+        "Permissions" | "Connect an outside agent..." => "AI",
+        "Theme" | "Language" | "Reset camera" | "Shading" => "View",
+        _ => "Game",
+    }
 }

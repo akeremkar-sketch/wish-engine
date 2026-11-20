@@ -43,6 +43,66 @@ pub(crate) const COMMANDS: &[Command] = &[
         keys: "Ctrl+Y, Ctrl+Shift+Z",
     },
     Command {
+        id: "edit.duplicate",
+        name: || t("Duplicate"),
+        keys: "Ctrl+D",
+    },
+    Command {
+        id: "scene.new",
+        name: || t("New scene"),
+        keys: "Ctrl+N",
+    },
+    Command {
+        id: "create.empty",
+        name: || t("Create an empty entity"),
+        keys: "Ctrl+Shift+N",
+    },
+    Command {
+        id: "create.cube",
+        name: || t("Create a cube"),
+        keys: "",
+    },
+    Command {
+        id: "create.sphere",
+        name: || t("Create a sphere"),
+        keys: "",
+    },
+    Command {
+        id: "create.plane",
+        name: || t("Create a plane"),
+        keys: "",
+    },
+    Command {
+        id: "create.camera",
+        name: || t("Create a camera"),
+        keys: "",
+    },
+    Command {
+        id: "create.directional_light",
+        name: || t("Create a directional light"),
+        keys: "",
+    },
+    Command {
+        id: "create.point_light",
+        name: || t("Create a point light"),
+        keys: "",
+    },
+    Command {
+        id: "create.spot_light",
+        name: || t("Create a spot light"),
+        keys: "",
+    },
+    Command {
+        id: "create.sprite",
+        name: || t("Create a sprite"),
+        keys: "",
+    },
+    Command {
+        id: "create.particles",
+        name: || t("Create particles"),
+        keys: "",
+    },
+    Command {
         id: "mode.switch",
         name: || t("Switch between manual and AI mode"),
         keys: "Ctrl+M",
@@ -205,6 +265,17 @@ pub(crate) fn keys_of<'a>(
     overrides
         .get(command.id)
         .map_or(command.keys, String::as_str)
+}
+
+/// The first shortcut of the command `id` as the person has it, as people
+/// read it (for a menu item); none when it has none.
+pub(crate) fn first_key(overrides: &BTreeMap<String, String>, id: &str) -> Option<String> {
+    let command = COMMANDS.iter().find(|command| command.id == id)?;
+    keys_of(command, overrides)
+        .split(',')
+        .map(str::trim)
+        .find_map(parse_shortcut)
+        .map(|shortcut| shortcut_text(&shortcut))
 }
 
 /// The `keys` preference: the person's shortcuts by command id.

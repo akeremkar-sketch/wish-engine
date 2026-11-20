@@ -413,6 +413,12 @@ struct Actions {
     deselect: bool,
     /// Add an entity (under this parent, or at the root).
     add: Option<Option<String>>,
+    /// Create a ready-made entity from the Create menu (`cube`, `camera`).
+    create: Option<&'static str>,
+    /// Copy the selected entities (with their children) beside themselves.
+    duplicate: bool,
+    /// Make a new scene and open it.
+    new_scene: bool,
     delete: bool,
     /// Rename an entity: from, to.
     rename: Option<(String, String)>,
@@ -487,6 +493,9 @@ impl Actions {
             || self.view.is_some()
             || self.select.is_some()
             || self.add.is_some()
+            || self.create.is_some()
+            || self.duplicate
+            || self.new_scene
             || self.rename.is_some()
             || self.reparent.is_some()
             || self.inspector.any()
@@ -1981,6 +1990,16 @@ impl EditorApp {
             }
             "editor.undo" => actions.undo |= self.can_undo && self.play.is_none(),
             "editor.redo" => actions.redo |= self.can_redo && self.play.is_none(),
+            "edit.duplicate" => actions.duplicate |= self.play.is_none(),
+            "scene.new" => actions.new_scene |= self.play.is_none(),
+            create if create.starts_with("create.") => {
+                if self.play.is_none() {
+                    actions.create = CREATE_KINDS
+                        .iter()
+                        .map(|(kind, _, _)| *kind)
+                        .find(|kind| create.strip_prefix("create.") == Some(*kind));
+                }
+            }
             "mode.switch" => actions.switch_mode = Some(!self.ai_mode),
             "mode.manual" => actions.switch_mode = Some(false),
             "mode.ai" => actions.switch_mode = Some(true),
@@ -3349,6 +3368,110 @@ impl EditorApp {
         }
     }
 
+    /// Copies the selected entities, each with its children, beside itself
+    /// (under the same parent) with new ids, in one change; the copies
+    /// become the selection. A selected entity inside another selected one
+    /// is copied with it, not twice; parts of prefab instances are the
+    /// prefab's and are not copied on their own.
+    fn duplicate_selected(&mut self) {
+        let chosen: BTreeSet<&str> = self
+            .selected
+            .iter()
+            .filter(|id| !id.contains('/'))
+            .map(String::as_str)
+            .collect();
+        let parent_of = |id: &str| {
+            self.rows
+                .iter()
+                .find(|row| row.id == id)
+                .and_then(|row| row.parent.clone())
+        };
+        let originals: Vec<String> = chosen
+            .iter()
+            .filter(|id| {
+                let mut up = parent_of(id);
+                while let Some(parent) = up {
+                    if chosen.contains(parent.as_str()) {
+                        return false;
+                    }
+                    up = parent_of(&parent);
+                }
+                true
+            })
+            .map(|id| (*id).to_owned())
+            .collect();
+        if originals.is_empty() {
+            self.status = t("Select an entity to duplicate it").to_owned();
+            return;
+        }
+        let parents: Vec<Option<String>> = originals.iter().map(|id| parent_of(id)).collect();
+        let mut taken: BTreeSet<String> = self.rows.iter().map(|row| row.id.clone()).collect();
+        let mut ops = Vec::new();
+        let mut copies = Vec::new();
+        let scene = self.scene.clone();
+        for (id, parent) in originals.iter().zip(parents) {
+            let got = self.call(
+                "scene_get",
+                &json!({ "scene": scene, "detail": "full", "root": id, "depth": 64 }),
+            );
+            let Some(node) = got["tree"].get(0).filter(|_| got["ok"] == true).cloned() else {
+                continue;
+            };
+            copies.push(copy_tree(&node, parent.as_deref(), &mut taken, &mut ops));
+        }
+        if ops.is_empty() {
+            self.status = t("Select an entity to duplicate it").to_owned();
+            return;
+        }
+        let what = tf("duplicated {id}", &[("id", &copies.join(", "))]);
+        if self.edit(&what, ops) {
+            self.selected = copies;
+            self.picture_stale = true;
+        }
+    }
+
+    /// Makes a new scene with what a new project starts with (a camera,
+    /// the ground and the sun) under the first free `scenes/scene_<n>`
+    /// name, as one `edit_apply` that creates the file; the path to open,
+    /// or none (the status says why).
+    fn new_scene(&mut self) -> Option<String> {
+        let path = (1..)
+            .map(|n| format!("scenes/scene_{n}.scene.json"))
+            .find(|path| !self.scenes.contains(path))?;
+        let ops = json!([
+            { "op": "spawn", "id": "camera", "components": {
+                "Camera": { "fov_y_deg": 50 },
+                "Transform": { "translation": [0, 2, 7], "rotation": [-0.0871557, 0, 0, 0.9961947] }
+            } },
+            { "op": "spawn", "id": "ground", "components": {
+                "Primitive": { "shape": "Plane" },
+                "Material": { "base_color": [0.45, 0.45, 0.42, 1], "roughness": 0.9 },
+                "Transform": { "scale": [30, 1, 30] }
+            } },
+            { "op": "spawn", "id": "sun", "components": {
+                "DirectionalLight": { "illuminance_lux": 100000 },
+                "Transform": { "rotation": [-0.4545195, 0.3304543, 0.1786597, 0.8067046] }
+            } }
+        ]);
+        let made = self.call(
+            "edit_apply",
+            &json!({ "scene": path.clone(), "create": true, "ops": ops }),
+        );
+        if made["ok"] != true {
+            let message = made["error"]["message"]
+                .as_str()
+                .unwrap_or(t("it did not work"));
+            let hint = made["error"]["hint"].as_str().unwrap_or("");
+            self.status = tf(
+                "new scene failed: {message} {hint}",
+                &[("message", &message), ("hint", &hint)],
+            );
+            return None;
+        }
+        self.refresh_project();
+        Some(path)
+    }
+
     /// An id that no entity has, built on `base`.
     fn unused_id(&self, base: &str) -> String {
         let taken: BTreeSet<&str> = self.rows.iter().map(|row| row.id.as_str()).collect();
@@ -3387,6 +3510,15 @@ impl EditorApp {
             actions.undo = false;
             actions.redo = false;
             actions.scene = None;
+            actions.new_scene = false;
+            actions.create = None;
+            actions.duplicate = false;
+        }
+        // A new scene is opened like one chosen from the list.
+        if actions.new_scene
+            && let Some(path) = self.new_scene()
+        {
+            actions.scene = Some(path);
         }
         if actions.quit {
             self.exit = true;
@@ -3868,6 +4000,19 @@ impl EditorApp {
                 self.selected = vec![id];
             }
         }
+        if let Some(kind) = actions.create
+            && let Some((_, _, components)) = CREATE_KINDS.iter().find(|(k, _, _)| *k == kind)
+        {
+            let id = self.unused_id(kind);
+            let op = json!({ "op": "spawn", "id": id, "components": components() });
+            if self.edit(&tf("added {id}", &[("id", &id)]), vec![op]) {
+                self.selected = vec![id];
+                self.picture_stale = true;
+            }
+        }
+        if actions.duplicate {
+            self.duplicate_selected();
+        }
         // A part of a prefab instance is the prefab's: not deleted here.
         let doomed: Vec<String> = self
             .selected
@@ -4305,6 +4450,369 @@ impl EditorApp {
     }
 
     /// The hierarchy panel: select, add, delete, rename, move.
+    /// The menu bar's menus: File, Edit, Create, View, Game, AI, Help.
+    /// Each item is the same action as its button or shortcut elsewhere;
+    /// the shortcut it has (from the command table, as the person set it)
+    /// is shown beside it.
+    fn menus(&self, ui: &mut Ui, actions: &mut Actions) {
+        // The menu bar's words stand on the bar without an outline or a
+        // fill until the pointer is on them (the menus themselves keep the
+        // theme's widgets).
+        let bar = &mut ui.style_mut().visuals.widgets.inactive;
+        bar.bg_stroke = egui::Stroke::NONE;
+        bar.bg_fill = egui::Color32::TRANSPARENT;
+        bar.weak_bg_fill = egui::Color32::TRANSPARENT;
+        let editing = self.play.is_none();
+        let key = |id: &str| crate::commands::first_key(&self.keys, id).unwrap_or_default();
+        // A menu item: its words, its shortcut, whether it can be used now.
+        // Its accessible name is its words alone (tests and screen readers
+        // find it by them), not the words and the shortcut together.
+        let item = |ui: &mut Ui, name: &str, shortcut: String, enabled: bool| {
+            let mut button = egui::Button::new(name);
+            if !shortcut.is_empty() {
+                button = button.shortcut_text(shortcut);
+            }
+            let response = ui.add_enabled(enabled, button);
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, name));
+            let clicked = response.clicked();
+            if clicked {
+                ui.close();
+            }
+            clicked
+        };
+        ui.menu_button(t("File"), |ui| {
+            if item(ui, t("New scene"), key("scene.new"), editing) {
+                actions.new_scene = true;
+            }
+            ui.menu_button(t("Open scene"), |ui| {
+                for scene in &self.scenes {
+                    if ui
+                        .add_enabled(editing, egui::Button::selectable(*scene == self.scene, scene))
+                        .clicked()
+                    {
+                        actions.scene = Some(scene.clone());
+                        ui.close();
+                    }
+                }
+                if !self.prefabs.is_empty() {
+                    ui.separator();
+                    ui.weak(t("Prefabs"));
+                }
+                for prefab in &self.prefabs {
+                    if ui
+                        .add_enabled(editing, egui::Button::selectable(*prefab == self.scene, prefab))
+                        .clicked()
+                    {
+                        actions.scene = Some(prefab.clone());
+                        ui.close();
+                    }
+                }
+            });
+            ui.separator();
+            if ui
+                .button(t("Save picture"))
+                .on_hover_text(t("The view's picture, as a PNG under captures/"))
+                .clicked()
+            {
+                actions.save_picture = true;
+                ui.close();
+            }
+            if ui
+                .button(t("Export game"))
+                .on_hover_text(t(
+                    "A folder under exports/ that runs on a machine without the engine (no editor, no compiler)",
+                ))
+                .clicked()
+            {
+                actions.export = true;
+                ui.close();
+            }
+            ui.separator();
+            if ui
+                .button(t("Settings..."))
+                .on_hover_text(t("The project's name, default scene and input map"))
+                .clicked()
+            {
+                actions.open_settings = true;
+                ui.close();
+            }
+            if ui
+                .button(t("Packages..."))
+                .on_hover_text(t("Themes, workspaces, languages, recipes and templates: install, remove"))
+                .clicked()
+            {
+                actions.open_packages = true;
+                ui.close();
+            }
+            ui.separator();
+            if item(ui, t("Quit"), key("app.quit"), true) {
+                actions.quit = true;
+            }
+        });
+        ui.menu_button(t("Edit"), |ui| {
+            if item(ui, t("Undo"), key("editor.undo"), self.can_undo && editing) {
+                actions.undo = true;
+            }
+            if item(ui, t("Redo"), key("editor.redo"), self.can_redo && editing) {
+                actions.redo = true;
+            }
+            ui.separator();
+            let chosen = editing && self.selected.iter().any(|id| !id.contains('/'));
+            if item(ui, t("Duplicate"), key("edit.duplicate"), chosen) {
+                actions.duplicate = true;
+            }
+            if item(ui, t("Rename"), "F2".to_owned(), chosen)
+                && let Some(first) = self.selected.iter().find(|id| !id.contains('/'))
+            {
+                self.ui_state.borrow_mut().rename = Some((first.clone(), first.clone()));
+            }
+            if item(ui, t("Delete"), "Delete".to_owned(), chosen) {
+                actions.delete = true;
+            }
+            ui.separator();
+            ui.menu_button(t("Checkpoints"), |ui| {
+                if ui
+                    .button(t("Save checkpoint"))
+                    .on_hover_text(t("Keeps the scenes, prefabs and settings as they are now"))
+                    .clicked()
+                {
+                    actions.save_checkpoint = true;
+                    ui.close();
+                }
+                ui.separator();
+                if self.checkpoints.is_empty() {
+                    ui.weak(t("No checkpoints yet."));
+                }
+                for checkpoint in self.checkpoints.iter().rev().take(12) {
+                    let name = checkpoint["name"].as_str().unwrap_or("?").to_owned();
+                    let label = match checkpoint["note"].as_str() {
+                        Some(note) => format!("{name}: {note}"),
+                        None => name.clone(),
+                    };
+                    ui.menu_button(label, |ui| {
+                        if ui
+                            .add_enabled(editing, egui::Button::new(t("Go back to this")))
+                            .clicked()
+                        {
+                            actions.restore_checkpoint = Some(name.clone());
+                            ui.close();
+                        }
+                        if ui.button(t("Compare with now")).clicked() {
+                            actions.compare_checkpoint = Some(name.clone());
+                            ui.close();
+                        }
+                        if ui.button(t("Delete")).clicked() {
+                            actions.delete_checkpoint = Some(name.clone());
+                            ui.close();
+                        }
+                    });
+                }
+            });
+        });
+        ui.menu_button(t("Create"), |ui| {
+            for (index, (kind, name, _)) in CREATE_KINDS.iter().enumerate() {
+                if matches!(index, 1 | 4 | 8) {
+                    ui.separator();
+                }
+                let id = format!("create.{kind}");
+                if item(ui, name(), key(&id), editing) {
+                    actions.create = Some(*kind);
+                }
+            }
+        });
+        ui.menu_button(t("View"), |ui| {
+            ui.menu_button(t("Shading"), |ui| {
+                for name in View::NAMES {
+                    if ui
+                        .selectable_label(*name == self.view.name(), view_label(name))
+                        .on_hover_text(tf(
+                            "Called '{name}' by capture_frame and wen capture --view",
+                            &[("name", name)],
+                        ))
+                        .clicked()
+                        && let Ok(view) = View::parse(name)
+                    {
+                        actions.view = Some(view);
+                        ui.close();
+                    }
+                }
+            });
+            if ui
+                .add(egui::Button::selectable(self.game_view, t("Game view")))
+                .on_hover_text(t(
+                    "The game as the player sees it (the scene's camera), beside the scene view",
+                ))
+                .clicked()
+            {
+                actions.toggle_game_view = true;
+                ui.close();
+            }
+            if item(ui, t("Reset camera"), key("view.reset_camera"), true) {
+                actions.reset_camera = true;
+            }
+            ui.separator();
+            ui.menu_button(t("Theme"), |ui| {
+                for theme in &self.themes {
+                    if ui
+                        .selectable_label(self.theme_key == theme.key, &theme.name)
+                        .on_hover_text(&theme.key)
+                        .clicked()
+                    {
+                        actions.theme = Some(theme.key.clone());
+                        ui.close();
+                    }
+                }
+                ui.separator();
+                ui.weak(t("More themes come in packages (Packages...)"));
+            });
+            ui.menu_button(t("Language"), |ui| {
+                for language in crate::i18n::all_languages() {
+                    if ui
+                        .selectable_label(self.language == language.code, language.name)
+                        .clicked()
+                    {
+                        actions.language = Some(language.code);
+                        ui.close();
+                    }
+                }
+            });
+        });
+        ui.menu_button(t("Game"), |ui| {
+            let can_play = !self.scene.ends_with(".prefab.json");
+            let word = if editing { t("Play") } else { t("Stop") };
+            let run = ui.add_enabled(
+                can_play,
+                egui::Button::new(word).shortcut_text(key("game.play")),
+            );
+            run.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, can_play, word));
+            if run.clicked() {
+                if editing {
+                    actions.play_start = true;
+                } else {
+                    actions.play_stop = true;
+                }
+                ui.close();
+            }
+            if ui
+                .add_enabled(editing, egui::Button::selectable(self.record, t("Record")))
+                .on_hover_text(t(
+                    "Record the next run as a replay (saved under replays/ when it stops)",
+                ))
+                .clicked()
+            {
+                actions.toggle_record = true;
+                ui.close();
+            }
+            ui.menu_button(t("Replays"), |ui| {
+                let replays = self.replays();
+                if replays.is_empty() {
+                    ui.weak(t("No replays yet: turn on Record, then Play."));
+                }
+                for name in replays {
+                    if ui
+                        .button(&name)
+                        .on_hover_text(t("Play it back: does the game still play the same?"))
+                        .clicked()
+                    {
+                        actions.replay = Some(name);
+                        ui.close();
+                    }
+                }
+            });
+            ui.separator();
+            if ui
+                .button(t("Edit code"))
+                .on_hover_text(t("Open scripts/src/lib.rs in your code editor (WISH_EDITOR, or the system's)"))
+                .clicked()
+            {
+                actions.edit_code = true;
+                ui.close();
+            }
+            let build = ui
+                .add(egui::Button::new(t("Build code")).shortcut_text(key("project.build_code")))
+                .on_hover_text(t("Build the game code; a running game switches to it"));
+            build.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, t("Build code")));
+            if build.clicked() {
+                actions.build_code = true;
+                ui.close();
+            }
+            ui.separator();
+            if ui
+                .button(t("Run tests"))
+                .on_hover_text(t("The project's scenario tests (tests/*.test.json)"))
+                .clicked()
+            {
+                actions.run_tests = true;
+                ui.close();
+            }
+            if ui
+                .button(t("Update golden pictures"))
+                .on_hover_text(t(
+                    "Run the tests and keep the pictures they take as the golden ones (look at them first)",
+                ))
+                .clicked()
+            {
+                actions.update_golden = true;
+                ui.close();
+            }
+            if ui.button(t("Check")).on_hover_text(t("Look for problems in the whole project")).clicked() {
+                actions.check = true;
+                ui.close();
+            }
+        });
+        ui.menu_button(t("AI"), |ui| {
+            if ui
+                .add(egui::Button::selectable(
+                    self.cockpit.open,
+                    t("Show or hide the agent panel"),
+                ))
+                .on_hover_text(t("The agent's panel: ask, point at things, watch it work"))
+                .clicked()
+            {
+                actions.toggle_cockpit = true;
+                ui.close();
+            }
+            if ui
+                .button(t("Connect an outside agent..."))
+                .on_hover_text(t("Let Claude Code (or any MCP client) work in this editor"))
+                .clicked()
+            {
+                actions.connect = Some(true);
+                ui.close();
+            }
+            ui.menu_button(t("Permissions"), |ui| {
+                for (mode, hover) in [
+                    (
+                        "suggest",
+                        t("An agent's change to the project waits for you in the Activity tab"),
+                    ),
+                    (
+                        "apply",
+                        t("Agents' changes are made; you review them in the Activity tab"),
+                    ),
+                    (
+                        "autonomous",
+                        t("As apply, and the cockpit does not ask between an agent's tasks"),
+                    ),
+                ] {
+                    if ui
+                        .selectable_label(self.permission_mode == mode, mode_label(mode))
+                        .on_hover_text(hover)
+                        .clicked()
+                    {
+                        actions.permission = Some(mode);
+                        ui.close();
+                    }
+                }
+            });
+        });
+        ui.menu_button(t("Help"), |ui| {
+            if item(ui, t("Command palette"), key("app.palette"), true) {
+                actions.command = Some("app.palette");
+            }
+        });
+    }
+
     fn hierarchy(&self, ui: &mut Ui, actions: &mut Actions) {
         ui.horizontal(|ui| {
             crate::style::panel_title(ui, t("Hierarchy"));
@@ -4461,196 +4969,90 @@ impl EditorApp {
                     actions.command = Some(id);
                 }
             }
+            // The menu bar: the mark, the menus, the project and scene, and
+            // the search that opens the command palette.
+            ui.horizontal(|ui| {
+                let (mark, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
+                crate::style::paint_logo(ui.painter(), mark);
+                self.menus(ui, &mut actions);
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let search = egui::Button::new(
+                        egui::RichText::new(format!("{}    Ctrl+K", t("Search everything")))
+                            .color(crate::style::pal().weak),
+                    )
+                    .fill(crate::style::pal().field)
+                    .min_size(vec2(210.0, 0.0));
+                    if ui.add(search).on_hover_text(t("Command palette")).clicked() {
+                        actions.command = Some("app.palette");
+                    }
+                    ui.add_space(12.0);
+                    ui.label(
+                        egui::RichText::new(format!("{} — {}", self.project, self.scene))
+                            .color(crate::style::pal().weak),
+                    );
+                });
+            });
+        });
+        egui::Panel::top("toolbar").show(ui, |ui| {
             // A narrow window puts the rest of the bar on a second line.
             ui.horizontal_wrapped(|ui| {
-                ui.menu_button(self.project.as_str(), |ui| {
-                    if ui
-                        .button(t("Settings..."))
-                        .on_hover_text(t("The project's name, default scene and input map"))
-                        .clicked()
-                    {
-                        actions.open_settings = true;
-                        ui.close();
-                    }
-                    if ui.button(t("Check")).on_hover_text(t("Look for problems in the whole project")).clicked() {
-                        actions.check = true;
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui
-                        .button(t("Edit code"))
-                        .on_hover_text(t("Open scripts/src/lib.rs in your code editor (WISH_EDITOR, or the system's)"))
-                        .clicked()
-                    {
-                        actions.edit_code = true;
-                        ui.close();
-                    }
-                    if ui
-                        .button(t("Build code"))
-                        .on_hover_text(t("Build the game code; a running game switches to it"))
-                        .clicked()
-                    {
-                        actions.build_code = true;
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui
-                        .button(t("Run tests"))
-                        .on_hover_text(t("The project's scenario tests (tests/*.test.json)"))
-                        .clicked()
-                    {
-                        actions.run_tests = true;
-                        ui.close();
-                    }
-                    if ui
-                        .button(t("Update golden pictures"))
-                        .on_hover_text(t(
-                            "Run the tests and keep the pictures they take as the golden ones (look at them first)",
-                        ))
-                        .clicked()
-                    {
-                        actions.update_golden = true;
-                        ui.close();
-                    }
-                    ui.menu_button(t("Replays"), |ui| {
-                        let replays = self.replays();
-                        if replays.is_empty() {
-                            ui.weak(t("No replays yet: turn on Record, then Play."));
-                        }
-                        for name in replays {
-                            if ui
-                                .button(&name)
-                                .on_hover_text(t("Play it back: does the game still play the same?"))
-                                .clicked()
-                            {
-                                actions.replay = Some(name);
-                                ui.close();
-                            }
-                        }
-                    });
-                    if ui
-                        .button(t("Save picture"))
-                        .on_hover_text(t("The view's picture, as a PNG under captures/"))
-                        .clicked()
-                    {
-                        actions.save_picture = true;
-                        ui.close();
-                    }
-                    ui.menu_button(t("Permissions"), |ui| {
-                        for (mode, hover) in [
-                            ("suggest", t("An agent's change to the project waits for you in the Activity tab")),
-                            ("apply", t("Agents' changes are made; you review them in the Activity tab")),
-                            ("autonomous", t("As apply, and the cockpit does not ask between an agent's tasks")),
+                use crate::style::{Icon, tool_button, tool_group};
+                let editing = self.play.is_none();
+                if !self.ai_mode {
+                    tool_group(ui, 100.0, |ui| {
+                        for (mode, icon, name) in [
+                            (Mode::Translate, Icon::Move, t("Move")),
+                            (Mode::Rotate, Icon::Rotate, t("Rotate")),
+                            (Mode::Scale, Icon::Scale, t("Scale")),
                         ] {
-                            if ui
-                                .selectable_label(self.permission_mode == mode, mode_label(mode))
-                                .on_hover_text(hover)
+                            if tool_button(ui, icon, name, false, self.mode == mode, true, None)
+                                .on_hover_text(format!("{name} ({})", t("Keys W, E, R")))
                                 .clicked()
                             {
-                                actions.permission = Some(mode);
-                                ui.close();
+                                actions.mode = Some(mode);
                             }
                         }
                     });
-                    if ui
-                        .button(t("Export game"))
-                        .on_hover_text(t(
-                            "A folder under exports/ that runs on a machine without the engine (no editor, no compiler)",
-                        ))
-                        .clicked()
-                    {
-                        actions.export = true;
-                        ui.close();
-                    }
-                    if ui
-                        .button(t("Connect an outside agent..."))
-                        .on_hover_text(t("Let Claude Code (or any MCP client) work in this editor"))
-                        .clicked()
-                    {
-                        actions.connect = Some(true);
-                        ui.close();
-                    }
-                    if ui
-                        .button(t("Packages..."))
-                        .on_hover_text(t("Themes, workspaces, languages, recipes and templates: install, remove"))
-                        .clicked()
-                    {
-                        actions.open_packages = true;
-                        ui.close();
-                    }
-                    ui.menu_button(t("Checkpoints"), |ui| {
-                        if ui
-                            .button(t("Save checkpoint"))
-                            .on_hover_text(t("Keeps the scenes, prefabs and settings as they are now"))
+                    tool_group(ui, 160.0, |ui| {
+                        let space = if self.space == Space::World {
+                            t("World")
+                        } else {
+                            t("Local")
+                        };
+                        if tool_button(ui, Icon::Globe, space, true, false, true, None)
+                            .on_hover_text(t("The handles' axes: the world's or the entity's own"))
                             .clicked()
                         {
-                            actions.save_checkpoint = true;
-                            ui.close();
+                            actions.toggle_space = true;
                         }
-                        ui.separator();
-                        if self.checkpoints.is_empty() {
-                            ui.weak(t("No checkpoints yet."));
+                        if tool_button(ui, Icon::Magnet, t("Snap"), false, self.snap, true, None)
+                            .on_hover_text(t("Half metres, 15 degrees, steps of 10 % when on"))
+                            .clicked()
+                        {
+                            actions.toggle_snap = true;
                         }
-                        for checkpoint in self.checkpoints.iter().rev().take(12) {
-                            let name = checkpoint["name"].as_str().unwrap_or("?").to_owned();
-                            let label = match checkpoint["note"].as_str() {
-                                Some(note) => format!("{name}: {note}"),
-                                None => name.clone(),
-                            };
-                            ui.menu_button(label, |ui| {
-                                if ui
-                                    .add_enabled(self.play.is_none(), egui::Button::new(t("Go back to this")))
-                                    .clicked()
-                                {
-                                    actions.restore_checkpoint = Some(name.clone());
-                                    ui.close();
-                                }
-                                if ui.button(t("Compare with now")).clicked() {
-                                    actions.compare_checkpoint = Some(name.clone());
-                                    ui.close();
-                                }
-                                if ui.button(t("Delete")).clicked() {
-                                    actions.delete_checkpoint = Some(name.clone());
-                                    ui.close();
-                                }
-                            });
+                        if tool_button(ui, Icon::Target, t("Reset camera"), false, false, true, None)
+                            .on_hover_text(t("Reset camera"))
+                            .clicked()
+                        {
+                            actions.reset_camera = true;
                         }
                     });
-                    ui.separator();
-                    ui.menu_button(t("Language"), |ui| {
-                        for language in crate::i18n::all_languages() {
-                            if ui
-                                .selectable_label(self.language == language.code, language.name)
-                                .clicked()
-                            {
-                                actions.language = Some(language.code);
-                                ui.close();
-                            }
-                        }
-                    });
-                    ui.menu_button(t("Theme"), |ui| {
-                        for theme in &self.themes {
-                            if ui
-                                .selectable_label(self.theme_key == theme.key, &theme.name)
-                                .on_hover_text(&theme.key)
-                                .clicked()
-                            {
-                                actions.theme = Some(theme.key.clone());
-                                ui.close();
-                            }
-                        }
-                        ui.separator();
-                        ui.weak(t("More themes come in packages (Packages...)"));
-                    });
-                    ui.separator();
-                    if ui.button(t("Quit")).clicked() {
-                        actions.quit = true;
-                        ui.close();
+                }
+                tool_group(ui, 64.0, |ui| {
+                    if tool_button(ui, Icon::Undo, t("Undo"), false, false, self.can_undo && editing, None)
+                        .on_hover_text("Ctrl+Z")
+                        .clicked()
+                    {
+                        actions.undo = true;
+                    }
+                    if tool_button(ui, Icon::Redo, t("Redo"), false, false, self.can_redo && editing, None)
+                        .on_hover_text("Ctrl+Y")
+                        .clicked()
+                    {
+                        actions.redo = true;
                     }
                 });
-                if let Some(on) = crate::ai_mode::switch(ui, self.ai_mode) {
-                    actions.switch_mode = Some(on);
-                }
                 egui::ComboBox::from_id_salt("scene")
                     .selected_text(&self.scene)
                     .show_ui(ui, |ui| {
@@ -4669,43 +5071,27 @@ impl EditorApp {
                             }
                         }
                     });
-                use crate::style::{Icon, tool_button, tool_group};
-                let editing = self.play.is_none();
-                tool_group(ui, 64.0, |ui| {
-                    if tool_button(ui, Icon::Undo, t("Undo"), false, false, self.can_undo && editing, None)
-                        .on_hover_text("Ctrl+Z")
-                        .clicked()
-                    {
-                        actions.undo = true;
-                    }
-                    if tool_button(ui, Icon::Redo, t("Redo"), false, false, self.can_redo && editing, None)
-                        .on_hover_text("Ctrl+Y")
-                        .clicked()
-                    {
-                        actions.redo = true;
-                    }
-                });
                 if !self.ai_mode {
-                egui::ComboBox::from_id_salt("view")
-                    .selected_text(view_label(self.view.name()))
-                    // Every view in sight: the list is short, and one that
-                    // has to be scrolled to is one nobody finds.
-                    .height(400.0)
-                    .show_ui(ui, |ui| {
-                        for name in View::NAMES {
-                            if ui
-                                .selectable_label(*name == self.view.name(), view_label(name))
-                                .on_hover_text(tf(
-                                    "Called '{name}' by capture_frame and wen capture --view",
-                                    &[("name", name)],
-                                ))
-                                .clicked()
-                                && let Ok(view) = View::parse(name)
-                            {
-                                actions.view = Some(view);
+                    egui::ComboBox::from_id_salt("view")
+                        .selected_text(view_label(self.view.name()))
+                        // Every view in sight: the list is short, and one that
+                        // has to be scrolled to is one nobody finds.
+                        .height(400.0)
+                        .show_ui(ui, |ui| {
+                            for name in View::NAMES {
+                                if ui
+                                    .selectable_label(*name == self.view.name(), view_label(name))
+                                    .on_hover_text(tf(
+                                        "Called '{name}' by capture_frame and wen capture --view",
+                                        &[("name", name)],
+                                    ))
+                                    .clicked()
+                                    && let Ok(view) = View::parse(name)
+                                {
+                                    actions.view = Some(view);
+                                }
                             }
-                        }
-                    });
+                        });
                 }
                 tool_group(ui, 220.0, |ui| match &self.play {
                     None => {
@@ -4780,47 +5166,13 @@ impl EditorApp {
                         }
                     }
                 });
+                if let Some(on) = crate::ai_mode::switch(ui, self.ai_mode) {
+                    actions.switch_mode = Some(on);
+                }
                 if self.ai_mode {
                     return;
                 }
-                tool_group(ui, 250.0, |ui| {
-                    for (mode, icon, name) in [
-                        (Mode::Translate, Icon::Move, t("Move")),
-                        (Mode::Rotate, Icon::Rotate, t("Rotate")),
-                        (Mode::Scale, Icon::Scale, t("Scale")),
-                    ] {
-                        if tool_button(ui, icon, name, false, self.mode == mode, true, None)
-                            .on_hover_text(format!("{name} ({})", t("Keys W, E, R")))
-                            .clicked()
-                        {
-                            actions.mode = Some(mode);
-                        }
-                    }
-                    let space = if self.space == Space::World {
-                        t("World")
-                    } else {
-                        t("Local")
-                    };
-                    if tool_button(ui, Icon::Globe, space, true, false, true, None)
-                        .on_hover_text(t("The handles' axes: the world's or the entity's own"))
-                        .clicked()
-                    {
-                        actions.toggle_space = true;
-                    }
-                    if tool_button(ui, Icon::Magnet, t("Snap"), false, self.snap, true, None)
-                        .on_hover_text(t("Half metres, 15 degrees, steps of 10 % when on"))
-                        .clicked()
-                    {
-                        actions.toggle_snap = true;
-                    }
-                    if tool_button(ui, Icon::Target, t("Reset camera"), false, false, true, None)
-                        .on_hover_text(t("Reset camera"))
-                        .clicked()
-                    {
-                        actions.reset_camera = true;
-                    }
-                });
-                tool_group(ui, 40.0, |ui| {
+                tool_group(ui, 150.0, |ui| {
                     if tool_button(ui, Icon::Screen, t("Game view"), false, self.game_view, true, None)
                         .on_hover_text(t(
                             "The game as the player sees it (the scene's camera), beside the scene view",
@@ -4829,8 +5181,6 @@ impl EditorApp {
                     {
                         actions.toggle_game_view = true;
                     }
-                });
-                tool_group(ui, 150.0, |ui| {
                     if tool_button(
                         ui,
                         Icon::Chat,
@@ -5300,6 +5650,119 @@ const GAME_VIEW_MIN_WIDTH: f32 = 900.0;
 const VIEW_GAP: f32 = 4.0;
 
 /// A view's name in its top-left corner ("Scene", "Game").
+/// One entry of the Create menu: its id (its command is `create.<id>`, and
+/// new entities are named `<id>_<n>`), the menu's word for it, and the
+/// components it is made with (as `edit_apply`'s `spawn` takes them).
+type CreateKind = (&'static str, fn() -> &'static str, fn() -> Value);
+
+/// The Create menu, in its order (separators after the first, the shapes
+/// and the camera and lights).
+const CREATE_KINDS: &[CreateKind] = &[
+    ("empty", || t("Empty"), || json!({ "Transform": {} })),
+    (
+        "cube",
+        || t("Cube"),
+        || json!({ "Transform": {}, "Primitive": { "shape": "Cube" } }),
+    ),
+    (
+        "sphere",
+        || t("Sphere"),
+        || json!({ "Transform": {}, "Primitive": { "shape": "Sphere" } }),
+    ),
+    (
+        "plane",
+        || t("Plane"),
+        || json!({ "Transform": { "scale": [10, 1, 10] }, "Primitive": { "shape": "Plane" } }),
+    ),
+    (
+        "camera",
+        || t("Camera"),
+        || json!({ "Transform": { "translation": [0, 2, 7] }, "Camera": {} }),
+    ),
+    (
+        "directional_light",
+        || t("Directional light"),
+        || {
+            json!({
+                "Transform": { "rotation": [-0.4545195, 0.3304543, 0.1786597, 0.8067046] },
+                "DirectionalLight": {}
+            })
+        },
+    ),
+    (
+        "point_light",
+        || t("Point light"),
+        || json!({ "Transform": { "translation": [0, 2, 0] }, "PointLight": {} }),
+    ),
+    (
+        "spot_light",
+        || t("Spot light"),
+        || {
+            // Turned a quarter round X, so it shines straight down.
+            let half = std::f64::consts::FRAC_1_SQRT_2;
+            json!({
+                "Transform": { "translation": [0, 3, 0], "rotation": [-half, 0, 0, half] },
+                "SpotLight": {}
+            })
+        },
+    ),
+    (
+        "sprite",
+        || t("Sprite"),
+        || json!({ "Transform": {}, "Sprite": {} }),
+    ),
+    (
+        "particles",
+        || t("Particles"),
+        || json!({ "Transform": {}, "ParticleEmitter": {} }),
+    ),
+];
+
+/// The operations that copy `node` (a `scene_get` node with full detail)
+/// and its children under new ids, each next to the old name (`crate_3`
+/// for `crate_1` when `crate_2` is taken); returns the copy's id. A prefab
+/// instance is copied as an instance of the same prefab, with its changes.
+fn copy_tree(
+    node: &Value,
+    parent: Option<&str>,
+    taken: &mut BTreeSet<String>,
+    ops: &mut Vec<Value>,
+) -> String {
+    let own = node["id"].as_str().unwrap_or("entity");
+    let base = own
+        .trim_end_matches(|c: char| c.is_ascii_digit())
+        .trim_end_matches('_');
+    let base = if base.is_empty() { "entity" } else { base };
+    let id = (1u32..)
+        .map(|n| format!("{base}_{n}"))
+        .find(|id| !taken.contains(id))
+        .unwrap_or_else(|| format!("{own}_copy"));
+    taken.insert(id.clone());
+    let mut op = match node.get("prefab") {
+        Some(prefab) => {
+            let mut op = json!({
+                "op": "instantiate", "id": id, "prefab": prefab, "components": node["components"]
+            });
+            if let Some(overrides) = node.get("overrides") {
+                op["overrides"] = overrides.clone();
+            }
+            op
+        }
+        None => json!({ "op": "spawn", "id": id, "components": node["components"] }),
+    };
+    if let Some(notes) = node.get("notes") {
+        op["notes"] = notes.clone();
+    }
+    if let Some(parent) = parent {
+        op["parent"] = json!(parent);
+    }
+    ops.push(op);
+    for child in node["children"].as_array().into_iter().flatten() {
+        copy_tree(child, Some(&id), taken, ops);
+    }
+    id
+}
+
 fn view_badge(ui: &Ui, area: Rect, name: &str) {
     let font = egui::FontId::proportional(12.0);
     let galley = ui

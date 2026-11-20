@@ -74,7 +74,7 @@ fn a_theme_is_chosen_drawn_and_kept() {
     assert!(names.contains(&"High contrast".to_owned()), "{names:?}");
     let atelier = pixel(&app, 2, 715);
     // Project menu → Theme → Midnight.
-    click(&mut app, "Theme Test");
+    click(&mut app, "View");
     hover(&mut app, "Theme");
     click(&mut app, "Midnight");
     assert_eq!(

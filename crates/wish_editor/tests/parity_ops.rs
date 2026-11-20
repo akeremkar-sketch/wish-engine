@@ -78,7 +78,7 @@ fn right_click(app: &mut EditorApp, rect: Rect) {
 /// Opens the project menu (named after the project) and clicks `item`; a
 /// submenu is opened by pointing at it first.
 fn project_menu(app: &mut EditorApp, path: &[&str]) {
-    let menu = named(app, "Editor Test");
+    let menu = named(app, top_menu(path[0]));
     click(app, menu);
     for item in path {
         let rect = named(app, item);
@@ -641,7 +641,7 @@ fn one_change_is_taken_back_from_the_history_tab() {
         .widgets()
         .iter()
         .filter(|w| w.role == "Button" && w.label.as_deref() == Some("Undo"))
-        .find(|w| w.rect.min.y < 30.0)
+        .find(|w| w.rect.min.y < 72.0)
         .map(|w| w.rect)
         .unwrap();
     click(&mut app, undo);
@@ -719,7 +719,7 @@ fn a_checkpoint_is_saved_compared_and_gone_back_to() {
         .widgets()
         .iter()
         .filter(|w| w.role == "Button" && w.label.as_deref() == Some("Undo"))
-        .find(|w| w.rect.min.y < 30.0)
+        .find(|w| w.rect.min.y < 72.0)
         .map(|w| w.rect)
         .unwrap();
     click(&mut app, undo);
@@ -1446,4 +1446,19 @@ fn a_surface_is_made_see_through_by_hand() {
         .collect();
     assert_eq!(by_hand.len(), 6, "{activity}");
     assert!(by_hand.iter().all(|entry| entry["actor"] == "human"));
+}
+
+/// The menu bar's menu that holds `item` (the editor redesign, R2: File,
+/// Edit, Create, View, Game, AI, Help replaced the project menu).
+#[allow(dead_code)]
+fn top_menu(item: &str) -> &'static str {
+    match item {
+        "Settings..." | "Packages..." | "Export game" | "Save picture" | "New scene" | "Quit" => {
+            "File"
+        }
+        "Checkpoints" | "Duplicate" | "Rename" | "Undo" | "Redo" => "Edit",
+        "Permissions" | "Connect an outside agent..." => "AI",
+        "Theme" | "Language" | "Reset camera" | "Shading" => "View",
+        _ => "Game",
+    }
 }

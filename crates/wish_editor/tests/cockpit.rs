@@ -218,7 +218,7 @@ fn an_outside_agent_and_the_cockpit_agent_work_together() {
     use wish_agent::Adapter;
     let mut app = app("together");
     // Project menu > Connect an outside agent...
-    let menu = named(&app, "Editor Test");
+    let menu = named(&app, "AI");
     click(&mut app, menu);
     let connect = named(&app, "Connect an outside agent...");
     click(&mut app, connect);

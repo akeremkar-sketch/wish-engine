@@ -98,7 +98,7 @@ fn project_menu(app: &mut EditorApp, item: &str) {
     let menu = app
         .widgets()
         .iter()
-        .find(|w| w.role == "Button" && w.label.as_deref() == Some("Editor Test"))
+        .find(|w| w.role == "Button" && w.label.as_deref() == Some(top_menu(item)))
         .map(|w| w.rect)
         .expect("the project menu");
     run_script(
@@ -127,7 +127,7 @@ fn menu_bar(app: &mut EditorApp, label: &str) {
     let rect = app
         .widgets()
         .iter()
-        .find(|w| w.role == "Button" && w.label.as_deref() == Some(label) && w.rect.max.y < 40.0)
+        .find(|w| w.role == "Button" && w.label.as_deref() == Some(label) && w.rect.max.y < 72.0)
         .map(|w| w.rect)
         .unwrap_or_else(|| panic!("no '{label}' in the menu bar"));
     run_script(
@@ -228,9 +228,24 @@ fn a_new_action_is_added_and_the_project_renamed() {
         serde_json::from_str(&std::fs::read_to_string(dir.join("wish.json")).unwrap()).unwrap();
     assert_eq!(project["name"], "Island Hopper");
     play(&mut app, json!([{ "idle": 2 }]));
-    assert!(
-        app.widgets()
-            .iter()
-            .any(|w| w.role == "Button" && w.label.as_deref() == Some("Island Hopper"))
-    );
+    assert!(app.widgets().iter().any(|w| {
+        w.value
+            .as_deref()
+            .is_some_and(|v| v.starts_with("Island Hopper"))
+    }));
+}
+
+/// The menu bar's menu that holds `item` (the editor redesign, R2: File,
+/// Edit, Create, View, Game, AI, Help replaced the project menu).
+#[allow(dead_code)]
+fn top_menu(item: &str) -> &'static str {
+    match item {
+        "Settings..." | "Packages..." | "Export game" | "Save picture" | "New scene" | "Quit" => {
+            "File"
+        }
+        "Checkpoints" | "Duplicate" | "Rename" | "Undo" | "Redo" => "Edit",
+        "Permissions" | "Connect an outside agent..." => "AI",
+        "Theme" | "Language" | "Reset camera" | "Shading" => "View",
+        _ => "Game",
+    }
 }

@@ -58,7 +58,7 @@ fn packages_are_installed_and_removed_by_hand() {
     workspace.set_software(true);
     let mut app = EditorApp::new(workspace);
     play(&mut app, json!([{ "idle": 2 }]));
-    click(&mut app, "Package Test");
+    click(&mut app, "File");
     click(&mut app, "Packages...");
     let field = named(&app, "The package's folder (with wish-package.json)");
     play(
@@ -145,7 +145,7 @@ fn packages_are_found_in_the_index_added_and_updated_by_hand() {
     workspace.set_software(true);
     let mut app = EditorApp::new(workspace);
     play(&mut app, json!([{ "idle": 2 }]));
-    click(&mut app, "Index Test");
+    click(&mut app, "File");
     click(&mut app, "Packages...");
     type_into(
         &mut app,

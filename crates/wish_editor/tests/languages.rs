@@ -185,7 +185,7 @@ fn the_interface_fits_and_is_translated_in_every_language() {
         let bar: Vec<_> = app
             .widgets()
             .iter()
-            .filter(|w| w.role == "Button" && w.rect.max.y < 40.0)
+            .filter(|w| w.role == "Button" && w.rect.max.y < 72.0)
             .collect();
         if !bar.iter().any(|w| w.label.as_deref() == Some(undo)) {
             problems.push(format!("{}: no '{undo}' in the menu bar", language.code));
@@ -240,7 +240,7 @@ fn the_choice_of_language_is_kept_in_the_preferences() {
             .map(|w| w.rect.center())
             .unwrap_or_else(|| panic!("no '{label}'"))
     };
-    let menu = find(&app, "Editor Test");
+    let menu = find(&app, wish_editor::i18n::t("View"));
     step(&mut app, json!([{ "click": [menu.x, menu.y] }]));
     let language = find(&app, wish_editor::i18n::t("Language"));
     step(&mut app, json!([{ "pointer": [language.x, language.y] }]));

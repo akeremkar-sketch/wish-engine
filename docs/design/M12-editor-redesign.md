@@ -1,7 +1,7 @@
 # M12: the editor redesign before 1.0
 
 **Status:** direction A (Workshop) chosen by the user, 20 November 2026;
-package R1 done; R2 in progress.
+packages R1 and R2 done; R3 in progress.
 
 ## 1. Request and scope
 

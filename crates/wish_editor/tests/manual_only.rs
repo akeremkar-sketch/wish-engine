@@ -199,7 +199,7 @@ fn add_component(app: &mut EditorApp, name: &str) {
 }
 
 fn project_menu(app: &mut EditorApp, path: &[&str]) {
-    let menu = named(app, "Islands");
+    let menu = named(app, top_menu(path[0]));
     click(app, menu);
     for item in path {
         let rect = named(app, item);
@@ -411,4 +411,19 @@ fn a_part_of_the_showcase_is_built_played_and_readied_by_hand_only() {
         "{saved}"
     );
     assert_eq!(saved["resources"]["Ambient"]["source"], "Color", "{saved}");
+}
+
+/// The menu bar's menu that holds `item` (the editor redesign, R2: File,
+/// Edit, Create, View, Game, AI, Help replaced the project menu).
+#[allow(dead_code)]
+fn top_menu(item: &str) -> &'static str {
+    match item {
+        "Settings..." | "Packages..." | "Export game" | "Save picture" | "New scene" | "Quit" => {
+            "File"
+        }
+        "Checkpoints" | "Duplicate" | "Rename" | "Undo" | "Redo" => "Edit",
+        "Permissions" | "Connect an outside agent..." => "AI",
+        "Theme" | "Language" | "Reset camera" | "Shading" => "View",
+        _ => "Game",
+    }
 }

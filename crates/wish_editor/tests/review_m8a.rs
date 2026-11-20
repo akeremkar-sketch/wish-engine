@@ -252,7 +252,7 @@ fn rewinding_cuts_the_timeline() {
 fn a_comma_can_be_typed_in_a_key_list() {
     let dir = project("comma");
     let mut app = open(&dir);
-    let menu = named(&app, "Editor Test");
+    let menu = named(&app, "File");
     click(&mut app, menu);
     let settings = named(&app, "Settings...");
     click(&mut app, settings);
