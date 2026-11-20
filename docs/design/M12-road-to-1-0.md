@@ -52,6 +52,11 @@ camera, a Create menu, new scene: none of these exist today) and scene
 switching with save games. The user is asked once more before the 1.0 label
 goes on.
 
+**Changed, 20 November 2026 (user request): the editor is redesigned before
+1.0**, look and layout, and the editor's first hour comes with it. This grows
+the 1.0 scope; it runs before the beta. Design note:
+[M12-editor-redesign.md](M12-editor-redesign.md).
+
 Expected scores at 1.0: graphics 3 → 5, platforms 1 → 3, maturity 2 → 3, the
 others as today; "AI with small games" 64 → about 67, "commercial release"
 36 → about 44. Section 6 is the full scope.
