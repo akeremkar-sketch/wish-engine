@@ -49,6 +49,9 @@ pub const FAST: f32 = 4.0;
 /// Radians of turning per pixel of mouse movement.
 pub const LOOK_SENSITIVITY: f32 = 0.0025;
 const MAX_PITCH: f32 = 89.0 * std::f32::consts::PI / 180.0;
+/// The nearest an orbiting or zooming eye comes to what it turns around,
+/// meters.
+pub const NEAREST: f32 = 0.3;
 
 /// World space to the space of an eye at `position` looking along `forward`
 /// (unit length, not straight up or down), +Y up.
@@ -113,6 +116,40 @@ impl FlyCamera {
         self.position += direction.normalize_or_zero() * speed * seconds;
     }
 
+    /// Turns the eye around `pivot` by a mouse movement in pixels, at the
+    /// same distance from it (an orbit: the pivot stays in the middle).
+    pub fn orbit(&mut self, pivot: Vec3, dx: f32, dy: f32) {
+        let distance = (self.position - pivot).length().max(NEAREST);
+        self.look(dx, dy);
+        self.position = pivot - self.forward() * distance;
+    }
+
+    /// Slides the eye sideways and up by a mouse movement in pixels,
+    /// `per_pixel` meters for each, so the world follows the pointer.
+    pub fn pan(&mut self, dx: f32, dy: f32, per_pixel: f32) {
+        let up = self.right().cross(self.forward());
+        self.position += (up * dy - self.right() * dx) * per_pixel;
+    }
+
+    /// Moves toward `pivot` by `share` of the distance to it (negative:
+    /// away), never nearer than [`NEAREST`]; returns the new distance.
+    pub fn dolly(&mut self, pivot: Vec3, share: f32) -> f32 {
+        let distance = (self.position - pivot).length();
+        let next = (distance * (1.0 - share.clamp(-1.0, 0.9))).max(NEAREST);
+        self.position = pivot - self.forward() * next;
+        next
+    }
+
+    /// Places the eye, looking the same way, so that a ball at `center`
+    /// of `radius` fills the view of a lens `fov_y` radians tall; returns
+    /// the distance to the centre.
+    pub fn frame(&mut self, center: Vec3, radius: f32, fov_y: f32) -> f32 {
+        let half = (fov_y * 0.5).clamp(0.05, 1.5);
+        let distance = (radius.max(0.1) / half.sin() * 1.2).max(NEAREST);
+        self.position = center - self.forward() * distance;
+        distance
+    }
+
     /// `camera` seen from this eye (same lens, new placement).
     pub fn apply(&self, camera: &CameraView) -> CameraView {
         CameraView {
@@ -156,6 +193,35 @@ mod tests {
         let mut keys = Movement::default();
         set(&mut keys);
         keys
+    }
+
+    #[test]
+    fn orbit_pan_zoom_and_frame_keep_the_pivot_in_sight() {
+        let pivot = Vec3::new(1.0, 0.5, -2.0);
+        let mut eye = eye(0.3, -0.2);
+        eye.position = pivot - eye.forward() * 6.0;
+        // An orbit keeps the distance and still looks at the pivot.
+        eye.orbit(pivot, 120.0, -40.0);
+        assert!(((eye.position - pivot).length() - 6.0).abs() < 1e-3);
+        assert!(close((pivot - eye.position).normalize(), eye.forward()));
+        // A zoom in comes nearer, never past the nearest distance.
+        let near = eye.dolly(pivot, 0.5);
+        assert!((near - 3.0).abs() < 1e-3, "{near}");
+        assert!((eye.dolly(pivot, 0.9) - 0.3).abs() < 1e-3);
+        assert!(eye.dolly(pivot, -1.0) > 0.3, "a zoom out goes away");
+        // A pan slides without turning.
+        let before = eye.forward();
+        let start = eye.position;
+        eye.pan(10.0, 0.0, 0.1);
+        assert!(close(eye.forward(), before));
+        assert!(close(eye.position - start, -eye.right()));
+        // Framing a ball puts it ahead, far enough to fit.
+        let distance = eye.frame(Vec3::new(5.0, 1.0, 5.0), 1.0, 0.8);
+        assert!(close(
+            eye.position + eye.forward() * distance,
+            Vec3::new(5.0, 1.0, 5.0)
+        ));
+        assert!(distance > 1.0 / 0.4_f32.sin());
     }
 
     #[test]

@@ -1,8 +1,8 @@
 # Agent evaluations
 
-Tasks an AI agent does in a fresh Wish Engine project **through MCP only**, checked afterwards by the engine's own tools (no person looks at the result). ADR-017 layer 4; design: [docs/design/M4-kontrol-duzlemi.md](../docs/design/M4-kontrol-duzlemi.md) §8.
+Tasks an AI agent does in a fresh Wish Engine project **through MCP only**, checked afterwards by the engine's own tools (no person looks at the result). ADR-017 layer 4; design: [docs/design/M4-control-plane.md](../docs/design/M4-control-plane.md) §8.
 
-The tasks, their setup, their checks and a reference solution for each live in [`crates/wish_evals/src/tasks.rs`](../crates/wish_evals/src/tasks.rs). Prompts are written in the user's language (Turkish), the way a person would ask.
+The tasks, their setup, their checks and a reference solution for each live in [`crates/wish_evals/src/tasks.rs`](../crates/wish_evals/src/tasks.rs). Prompts are written the way a person would ask.
 
 | Task | What the agent is asked | How it is checked |
 |---|---|---|
@@ -31,8 +31,20 @@ C:\wish-build\target\release\wish-evals.exe run --tries 3 --model sonnet --effor
 
 Exit criterion (M4): Sonnet 5.5 · medium passes at least 80 %. First results (16 November 2026): 30/30 twice; see `results/` and the design note §14 WP7.
 
-## Oyun kodu görevleri (M5)
+## Game code tasks (M5)
 
-- `11_walk_code` (oyuncuyu `move` eylemiyle yürüt) ve `12_collect_game` (toplama oyunu: `Coin`, `Score.points`, `GameState.won`). Bu görevlerde ajan proje dosyalarını **okuyup düzenleyebilir** (`Read`, `Edit`, `Write`, `Glob`, `Grep`; `Bash` asla), oyun kodunu yazar, `script_build` ile derler, sahneyi araçlarla düzenler ve davranışı kendi senaryo testiyle kanıtlar.
-- Denetim: oyun kodu derlenir, `check` geçer, ajanın kendi testleri (en az bir tane) geçer, ve ajanın **görmediği** gizli bir senaryo testi (`tests/zz_check.test.json`, denetimden sonra silinir) oyunu oynar: yürüme hızı/yönü, girdi yokken durma; paraların toplanması, puan, kazanma.
-- `wish-evals run` için SDK paketi `wish-evals.exe`'nin yanında olmalı: `wen sdk` (aynı `target/release` klasörü).
+- `11_walk_code` (make the player walk with the `move` action) and `12_collect_game` (a collecting game: `Coin`, `Score.points`, `GameState.won`). In these tasks the agent **may read and edit project files** (`Read`, `Edit`, `Write`, `Glob`, `Grep`; never `Bash`). It writes the game code, builds it with `script_build`, edits the scene with the tools, and proves the behaviour with its own scenario test.
+- Check: the game code builds, `check` passes, the agent's own tests (at least one) pass, and a hidden scenario test the agent **has not seen** (`tests/zz_check.test.json`, deleted after the check) plays the game: walking speed and direction, standing still with no input; collecting the coins, the score, winning.
+- For `wish-evals run`, the SDK pack must sit next to `wish-evals.exe`: `wen sdk` (the same `target/release` folder).
+
+## The AI scorecard (M12)
+
+`wish-evals` also measures the seven criteria of the AI scorecard (design: [docs/design/M12-ai-scorecard.md](../docs/design/M12-ai-scorecard.md)): correctness at the first attempt and in the end, with a replay of the result that must hold; errors, above all results the agent said were done (`RESULT: DONE`) that the hidden check refuted; a clean `check` and, optionally, a second agent asked to change the result; a change made by hand in the editor (headless); tokens and cost per passed try; the time to a proven result and the result's tick time at 10,000 entities; consistency across three tries. Task `42_lantern_night` is the long task (a one-paragraph brief to a finished mini game).
+
+```powershell
+C:\wish-build\target\release\wish-evals.exe selftest           # free: checks, measures and refutations on the reference solutions
+C:\wish-build\target\release\wish-evals.exe estimate           # free: what a baseline campaign costs, from results/
+C:\wish-build\target\release\wish-evals.exe campaign --label <name> --models sonnet:medium,haiku:medium --tries 3   # spends quota: ask first
+```
+
+A campaign writes `results/<name>.json` and `results/<name>.md` (the card with its inputs and the command that reproduces it). The held-out set lives outside the repository (`--held-out`); its runs print and keep numbers only.

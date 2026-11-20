@@ -103,6 +103,64 @@ pub fn primitive(shape: Shape) -> MeshData {
     }
 }
 
+/// The mesh of a built-in shape for a material with textures: the triangles
+/// of [`primitive`], with texture coordinates that show a picture the right
+/// way round and tangents for normal maps.
+///
+/// Texture coordinates follow glTF: [0, 0] is the picture's top left corner.
+/// - **Cube:** every face shows the whole picture, upright on the four
+///   sides seen from outside; on the top its upper edge is at -Z, on the
+///   bottom at +Z.
+/// - **Plane:** the picture's left edge is at -X and its upper edge at -Z:
+///   seen from above by a camera that looks along -Z, it reads as it does
+///   in an image viewer.
+/// - **Sphere:** the picture wraps once around (its seam at +X, its middle
+///   at -X, running to the right seen from outside), its upper edge at the
+///   north pole.
+///
+/// Tangents point along the picture's width, with a bitangent sign of +1:
+/// `cross(normal, tangent)` points to the picture's upper edge, which is
+/// "up" in a glTF normal map.
+///
+/// [`primitive`] itself is left as it always was (other texture coordinates,
+/// no tangents): surfaces without textures are drawn from it, so they are
+/// drawn exactly as before there were textures on shapes.
+pub fn primitive_textured(shape: Shape) -> MeshData {
+    let mut mesh = primitive(shape);
+    match shape {
+        Shape::Cube => {
+            // Each face is four vertices: along u, then along v. Flipping v
+            // puts the picture's upper edge where the face's `v` axis ends.
+            for uv in &mut mesh.uvs {
+                uv.y = 1.0 - uv.y;
+            }
+            for (face, tangents) in mesh.tangents.chunks_mut(4).enumerate() {
+                let along = match (
+                    mesh.positions.get(face * 4),
+                    mesh.positions.get(face * 4 + 1),
+                ) {
+                    (Some(first), Some(second)) => (*second - *first).normalize_or_zero(),
+                    _ => Vec3::X,
+                };
+                tangents.fill(along.extend(1.0));
+            }
+        }
+        Shape::Plane => {
+            for (uv, position) in mesh.uvs.iter_mut().zip(&mesh.positions) {
+                *uv = Vec2::new(position.x + 0.5, position.z + 0.5);
+            }
+            mesh.tangents.fill(Vec4::new(1.0, 0.0, 0.0, 1.0));
+        }
+        Shape::Sphere => {
+            for (tangent, uv) in mesh.tangents.iter_mut().zip(&mesh.uvs) {
+                let phi = core::f32::consts::TAU * uv.x;
+                *tangent = Vec4::new(-phi.sin(), 0.0, -phi.cos(), 1.0);
+            }
+        }
+    }
+    mesh
+}
+
 fn plane() -> MeshData {
     let mut mesh = MeshData::default();
     let h = 0.5;
@@ -217,6 +275,58 @@ mod tests {
                 .iter()
                 .fold(0.0f32, |m, p| m.max(p.abs().max_element()));
             assert!((extent - 0.5).abs() < 1e-6, "{shape:?} is 1 m across");
+        }
+    }
+
+    #[test]
+    fn textured_shapes_keep_the_triangles_and_carry_a_right_handed_picture_frame() {
+        for shape in [Shape::Cube, Shape::Sphere, Shape::Plane] {
+            let plain = primitive(shape);
+            let mesh = primitive_textured(shape);
+            assert_eq!(mesh.positions, plain.positions, "{shape:?}");
+            assert_eq!(mesh.normals, plain.normals, "{shape:?}");
+            assert_eq!(mesh.indices, plain.indices, "{shape:?}");
+            // The untextured mesh is the one it always was.
+            assert!(plain.tangents.iter().all(|t| *t == Vec4::ZERO));
+            for (index, tangent) in mesh.tangents.iter().enumerate() {
+                let along = tangent.truncate();
+                assert!((along.length() - 1.0).abs() < 1e-5, "{shape:?} {index}");
+                assert!(along.dot(mesh.normals[index]).abs() < 1e-5);
+                assert_eq!(tangent.w, 1.0);
+            }
+            // Across every triangle the tangent is where u grows, and
+            // cross(normal, tangent) is where v shrinks (the picture's top).
+            for triangle in mesh.indices.chunks(3) {
+                let [a, b, c] = [triangle[0], triangle[1], triangle[2]].map(|i| i as usize);
+                let (e1, e2) = (
+                    mesh.positions[b] - mesh.positions[a],
+                    mesh.positions[c] - mesh.positions[a],
+                );
+                let (d1, d2) = (mesh.uvs[b] - mesh.uvs[a], mesh.uvs[c] - mesh.uvs[a]);
+                let det = d1.x * d2.y - d2.x * d1.y;
+                if det.abs() < 1e-6 {
+                    continue;
+                }
+                let along_u = (e1 * d2.y - e2 * d1.y) / det;
+                let along_v = (e2 * d1.x - e1 * d2.x) / det;
+                let tangent = mesh.tangents[a].truncate();
+                let up = mesh.normals[a].cross(tangent);
+                assert!(along_u.normalize().dot(tangent) > 0.9, "{shape:?} u");
+                assert!(along_v.normalize().dot(up) < -0.9, "{shape:?} v");
+            }
+        }
+        // A cube's side shows the picture upright: v is 0 at the top.
+        let cube = primitive_textured(Shape::Cube);
+        for ((position, normal), uv) in cube.positions.iter().zip(&cube.normals).zip(&cube.uvs) {
+            if normal.y == 0.0 {
+                assert_eq!(uv.y, if position.y > 0.0 { 0.0 } else { 1.0 });
+            }
+        }
+        // The plane reads like a picture seen from above: left at -X, top
+        // at -Z.
+        let plane = primitive_textured(Shape::Plane);
+        for (position, uv) in plane.positions.iter().zip(&plane.uvs) {
+            assert_eq!((uv.x, uv.y), (position.x + 0.5, position.z + 0.5));
         }
     }
 

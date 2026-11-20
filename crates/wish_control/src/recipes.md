@@ -4,7 +4,8 @@ Working pieces of games, each a complete `scripts/src/lib.rs` and the scene oper
 engine's own tests build each one, apply it and play it (the player runs and jumps, a coin is picked up, a checkpoint
 brings the player back...), so they work as written. Take what you need; rename freely.
 Steps for every recipe: write the code, `script_build`, apply the operations with `edit_apply`, then `sim_start` /
-`sim_step` with `input` and look (`entity_get` with `session`, `describe_view`).
+`sim_step` with `input` and look (`entity_get` with `session`, `describe_view`). A block of tool calls is run first,
+in its order.
 
 ## A platformer character
 
@@ -442,6 +443,80 @@ about X and Y. (A new project's 3D `ground` plane is removed first.)
 
 A sprite with an `image` (a PNG; `asset_create` makes placeholders) shows it at `pixels_per_unit` pixels per meter;
 `rect` picks a frame of a sprite sheet. `describe_view` lists the sprites with their boxes.
+
+## A texture on a box
+
+A shape's `Material` is four numbers for a plain look. A picture on its surface comes from a material file
+(`*.mat.json`): `asset_create` makes one from the fields of a `MaterialFile`, and the entity names the file in its
+`Material.file`. Every entity that names the file shares the look and changes when the file does. (The picture here
+is a placeholder made by `asset_create`; any PNG of the project works.)
+
+```json calls
+[
+  { "tool": "asset_create", "args": { "path": "assets/textures/tile.png",
+    "picture": { "width": 64, "height": 64, "shape": "diamond", "color": [0.9, 0.55, 0.2, 1], "background": [0.25, 0.2, 0.2, 1] } } },
+  { "tool": "asset_create", "args": { "path": "assets/materials/crate.mat.json",
+    "material": { "base_color_texture": "assets/textures/tile.png", "roughness": 0.6 } } },
+  { "tool": "asset_create", "args": { "path": "assets/materials/tiles.mat.json",
+    "material": { "base_color_texture": "assets/textures/tile.png", "roughness": 0.8, "uv_scale": [12, 12] } } }
+]
+```
+
+```json ops
+[
+  { "op": "spawn", "id": "crate", "components": {
+    "Primitive": { "shape": "Cube" },
+    "Transform": { "translation": [0, 0.5, 0] },
+    "Material": { "file": "assets/materials/crate.mat.json" } } },
+  { "op": "replace", "id": "ground", "component": "Material", "value": { "file": "assets/materials/tiles.mat.json" } }
+]
+```
+
+- The textures of a material file: `base_color_texture` (colour; its alpha cuts holes with `alpha_mode: "Mask"`),
+  `normal_texture` (bumps), `metallic_roughness_texture`, `occlusion_texture`, `emissive_texture` (set `emissive` to
+  `[1, 1, 1]` for it to show). Each multiplies the number it belongs to: `base_color` tints the picture.
+- `uv_scale: [12, 12]` repeats the picture 12 by 12 across each face; `uv_offset` slides it. On a cube every face shows
+  the picture upright; on a plane its top is at -Z; around a sphere it wraps once.
+- With `file` set the numbers of that entity's own `Material` are not used (`check` says so). To change a material
+  file, make it again with `asset_create` and `"overwrite": true`, or edit the file: it is read again when it changes.
+- On a `Model` entity a material file replaces every material of the model; without `file` a model keeps its own.
+- `capture_frame` warns (`texture_not_loaded`, `material_not_loaded`) when a file is missing or broken and draws
+  the surface without it.
+
+## A glass window
+
+A surface is see-through when its material blends: a material file with `alpha_mode: "Blend"`, or a plain `Material`
+whose `base_color` alpha is below 1. Its alpha is how much of it covers what is behind: 1 solid, 0.5 half, 0 nothing.
+
+```json calls
+[
+  { "tool": "asset_create", "args": { "path": "assets/materials/glass.mat.json",
+    "material": { "base_color": [0.7, 0.85, 0.95, 0.25], "roughness": 0.05, "alpha_mode": "Blend", "double_sided": true } } }
+]
+```
+
+```json ops
+[
+  { "op": "spawn", "id": "window", "components": {
+    "Primitive": { "shape": "Cube" },
+    "Transform": { "translation": [0, 1, 0], "scale": [2, 1.5, 0.05] },
+    "Material": { "file": "assets/materials/glass.mat.json" } } },
+  { "op": "spawn", "id": "ghost", "components": {
+    "Primitive": { "shape": "Sphere" },
+    "Transform": { "translation": [1.8, 0.6, 1] },
+    "Material": { "base_color": [0.85, 0.9, 1, 0.4], "emissive": [0.1, 0.1, 0.15] } } }
+]
+```
+
+- To fade something out, game code lowers `Material.base_color` alpha each tick; at 0 it is not drawn, not picked
+  and `describe_view` lists it as hidden.
+- See-through surfaces are lit, shadowed and fogged like any surface and bloom shows through them, but they cast no
+  shadow. They are drawn farthest first, one object at a time (by the middle of each one): two that cut through
+  each other are not sorted inside, and a small one over a large one (a bottle over water) can be drawn under it;
+  split the large one if it is.
+- A material file's alpha does nothing unless `alpha_mode` is `"Blend"`; glTF materials with `BLEND` are see-through.
+- `capture_frame` and `describe_view` count them in `stats.blended_surfaces`; `describe_view` marks each one
+  `"blended": true` and still lists what is seen through it as visible.
 
 ## Proving it: scenario tests and replays
 

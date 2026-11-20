@@ -1,0 +1,44 @@
+{
+  "format": 1,
+  "looks": [
+    {
+      "id": "plain",
+      "name": "Plain",
+      "description": "No effects: flat ambient light, no sun disc, fog, bloom or grading, jagged edges, one shadow map. The picture the engine drew before the look settings existed.",
+      "resources": {
+        "Ambient": { "source": "Color", "sky_strength": 1.0 },
+        "Bloom": { "spread": 0.5, "strength": 0.0, "threshold": 0.0 },
+        "ColorGrading": { "contrast": 1.0, "saturation": 1.0, "temperature": 0.0, "tint": 0.0, "vignette": 0.0 },
+        "Fog": { "base_height": 0.0, "density": 0.0, "height_falloff": 0.0, "max_opacity": 1.0, "start": 0.0, "tint": [1.0, 1.0, 1.0, 1.0] },
+        "RenderSettings": { "antialiasing": "Off", "shadow_cascades": 1, "shadow_distance": 100.0 },
+        "Sky": { "sun_size_deg": 0.0 }
+      }
+    },
+    {
+      "id": "natural",
+      "name": "Natural",
+      "description": "Daylight: the sky lights the scene, a sun disc, a light haze far away, a soft glow on bright light, gentle grading, smoothed edges and sharp shadows near the camera (four cascades to 100 m).",
+      "resources": {
+        "Ambient": { "source": "Sky", "sky_strength": 0.3 },
+        "Bloom": { "spread": 0.4, "strength": 0.05, "threshold": 0.0 },
+        "ColorGrading": { "contrast": 1.05, "saturation": 1.1, "temperature": 0.03, "tint": 0.0, "vignette": 0.1 },
+        "Fog": { "base_height": 0.0, "density": 0.0015, "height_falloff": 0.05, "max_opacity": 0.9, "start": 0.0, "tint": [1.0, 1.0, 1.0, 1.0] },
+        "RenderSettings": { "antialiasing": "Fxaa", "shadow_cascades": 4, "shadow_distance": 100.0 },
+        "Sky": { "sun_size_deg": 3.0 }
+      }
+    },
+    {
+      "id": "vivid",
+      "name": "Vivid",
+      "description": "Natural, stronger: thicker haze, a clear glow, punchier and warmer colours, darker corners. For a stylised game.",
+      "resources": {
+        "Ambient": { "source": "Sky", "sky_strength": 0.3 },
+        "Bloom": { "spread": 0.35, "strength": 0.12, "threshold": 0.0 },
+        "ColorGrading": { "contrast": 1.25, "saturation": 1.3, "temperature": 0.06, "tint": 0.0, "vignette": 0.25 },
+        "Fog": { "base_height": 0.0, "density": 0.004, "height_falloff": 0.06, "max_opacity": 0.95, "start": 0.0, "tint": [1.0, 1.0, 1.0, 1.0] },
+        "RenderSettings": { "antialiasing": "Fxaa", "shadow_cascades": 4, "shadow_distance": 100.0 },
+        "Sky": { "sun_size_deg": 4.0 }
+      }
+    }
+  ]
+}

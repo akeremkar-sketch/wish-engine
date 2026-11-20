@@ -10,6 +10,13 @@
 //!   now invalid leaves the last good document in place, and changes are
 //!   refused until the file is fixed: an agent must never overwrite a
 //!   person's half-finished edit.
+//! - A file of an older scene format is read as that format meant it
+//!   (`wish_scene::migrate`): the document holds the values the file relied
+//!   on, the file stays as it is. "Unchanged" is judged by the file's text,
+//!   so the difference between the two is never taken for a change made
+//!   outside the engine, never enters the history and never rewrites the
+//!   file by itself; the next change made through the engine writes the
+//!   document, which is the file migrated (what `wen migrate` writes).
 //! - Tools that read values (`entity_query`, `entity_get`) look at the
 //!   document instantiated into a world ([`WorldView`]): prefabs expanded,
 //!   defaults filled in, global transforms computed. Views are cached per
@@ -482,7 +489,13 @@ impl Workspace {
                 }
                 None => return Err(self.scene_not_found(path)),
             };
-            notes.extend(warnings.into_iter().filter(|w| w.code != "not_canonical"));
+            // How the file is written (its layout, an older format) is
+            // `check`'s to say, not every tool call's.
+            notes.extend(
+                warnings
+                    .into_iter()
+                    .filter(|w| w.code != "not_canonical" && w.code != "old_format"),
+            );
             self.docs.open.insert(
                 path.to_owned(),
                 OpenDocument {
@@ -747,6 +760,77 @@ impl Workspace {
         Ok(WorldView { world, ids })
     }
 
+    /// A document read from `text` as if it were the file `path`, without
+    /// opening it (a checkpoint's copy), its instances built from
+    /// `prefabs` (the checkpoint's: [`Self::prefab_library`] with the
+    /// prefabs it kept).
+    pub(crate) fn load_detached(
+        &self,
+        text: &str,
+        path: &str,
+        prefabs: &Arc<PrefabLibrary>,
+    ) -> Result<SceneDocument> {
+        load_document(text, path, self.registry(), prefabs).map(|(doc, _)| doc)
+    }
+
+    /// The prefabs as the project's prefab files are now (read again if
+    /// one changed, so a first call of a process has them too).
+    pub(crate) fn prefab_library(&mut self) -> Result<Arc<PrefabLibrary>> {
+        self.refresh_prefabs()?;
+        Ok(Arc::clone(&self.docs.prefabs))
+    }
+
+    /// Refuses a change of the open document `path` while its file is
+    /// invalid (changed outside the engine): `scene_file_invalid`, so a
+    /// person's half-finished edit is never overwritten.
+    pub(crate) fn refuse_if_file_invalid(&self, path: &str) -> Result<()> {
+        if let Some(problem) = &self.document(path)?.disk_problem {
+            let mut refusal = problem.clone();
+            refusal.severity = wish_core::Severity::Error;
+            refusal.code = "scene_file_invalid".into();
+            refusal.docs = "wish://docs/diagnostics/scene_file_invalid".to_owned();
+            return Err(refusal);
+        }
+        Ok(())
+    }
+
+    /// Makes the open document `path` equal to `target`: by one transaction
+    /// of `actor` (its history keeps it: undoable, revertible), or, when the
+    /// operations cannot express the difference, by replacing the content
+    /// (recorded as one change; earlier changes can no longer be undone).
+    /// Returns the new revision, or `None` if it was equal already.
+    pub(crate) fn make_document_match(
+        &mut self,
+        path: &str,
+        target: &SceneDocument,
+        actor: &Actor,
+        reason: &str,
+    ) -> Result<Option<u64>> {
+        let registry = self.registry().clone();
+        let current = self.document(path)?.doc.clone();
+        if current.to_value() == target.to_value() {
+            return Ok(None);
+        }
+        let ops = diff(&current, target);
+        let mut working = current.clone();
+        let applied = working.apply(
+            &Transaction {
+                actor: actor.clone(),
+                base_revision: None,
+                ops,
+                reason: Some(reason.to_owned()),
+            },
+            &registry,
+        );
+        if applied.is_err() || working.to_value() != target.to_value() {
+            working = current;
+            working.replace_content(target, actor.clone());
+        }
+        let revision = working.revision();
+        self.commit_document(path, working)?;
+        Ok(Some(revision))
+    }
+
     /// The document at `path` with `ops` applied on a copy (nothing is kept,
     /// nothing written), as a world: what the scene would look like after
     /// the change. For previews while a change is being made.
@@ -759,6 +843,7 @@ impl Workspace {
                 actor: Actor::Human,
                 base_revision: None,
                 ops,
+                reason: None,
             },
             &registry,
         )?;
@@ -825,7 +910,8 @@ pub(crate) fn normalize_output_path(path: &str) -> Result<String> {
 }
 
 /// The same rule for any of `extensions` (lowercase, without the dot): what
-/// `asset_create` may write (`.png`, `.wav`). Never a document's extension.
+/// `asset_create` may write (`.png`, `.wav`, `.mat.json`). Never the
+/// extension of a scene, a prefab or a meta file.
 pub(crate) fn normalize_asset_output(path: &str, extensions: &[&str]) -> Result<String> {
     let mut path = path.trim().replace('\\', "/");
     while let Some(rest) = path.strip_prefix("./") {

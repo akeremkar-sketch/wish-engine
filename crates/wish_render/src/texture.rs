@@ -65,7 +65,7 @@ pub(crate) fn upload(
     } else {
         wgpu::TextureFormat::Rgba8Unorm
     };
-    let gpu_texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+    let gpu_texture = gpu.create_texture(&wgpu::TextureDescriptor {
         label: Some(label),
         size: wgpu::Extent3d {
             width: texture.width.max(1),

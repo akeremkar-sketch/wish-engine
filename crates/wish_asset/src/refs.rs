@@ -1,4 +1,4 @@
-//! Finding asset references in scene and prefab files.
+//! Finding asset references in scene, prefab and material files.
 //!
 //! The component schemas say which fields are [`wish_core::AssetRef`]s, so a
 //! file is searched field by field, not by looking for strings that happen to
@@ -113,6 +113,36 @@ pub(crate) fn visit_document(registry: &Registry, document: &mut Value, visit: &
     }
 }
 
+/// Calls `visit` with the JSON pointer and a mutable string for every asset
+/// reference in a material file's JSON: the texture fields of its
+/// `material` (and its `file`, which a valid material file leaves empty).
+pub(crate) fn visit_material(document: &mut Value, visit: &mut Visitor<'_>) {
+    if let Some(material) = document.get_mut("material") {
+        walk(
+            &crate::material::material_schema(),
+            material,
+            "/material",
+            visit,
+        );
+    }
+}
+
+/// Every non-empty asset reference in a material file's JSON, in field
+/// order.
+pub fn refs_in_material(document: &Value) -> Vec<RefUse> {
+    let mut copy = document.clone();
+    let mut found = Vec::new();
+    visit_material(&mut copy, &mut |pointer, reference| {
+        if !reference.is_empty() {
+            found.push(RefUse {
+                pointer: pointer.to_owned(),
+                reference: reference.clone(),
+            });
+        }
+    });
+    found
+}
+
 /// Every non-empty asset reference in a scene or prefab file's JSON, in
 /// file order.
 pub fn refs_in_value(registry: &Registry, document: &Value) -> Vec<RefUse> {
@@ -132,7 +162,9 @@ pub fn refs_in_value(registry: &Registry, document: &Value) -> Vec<RefUse> {
 /// Checks every asset reference in a scene or prefab file against the
 /// project's assets. Returns one diagnostic per bad reference, with the
 /// file, line and column of the string; a syntax error is returned as the
-/// single diagnostic.
+/// single diagnostic. A reference of a `Material` to a file of the wrong
+/// kind (`Material.file` to something that is not a material file, a
+/// texture field to something that is not a PNG) is reported too.
 pub fn check_source(
     source: &str,
     file: &str,
@@ -146,7 +178,12 @@ pub fn check_source(
     let document = root.to_value();
     let mut diagnostics = Vec::new();
     for used in refs_in_value(registry, &document) {
-        let Err(problem) = index.check(&used.reference) else {
+        // A file that does not exist is one problem, not two.
+        let problem = index
+            .check(&used.reference)
+            .err()
+            .or_else(|| crate::material::kind_problem(&used.pointer, &used.reference));
+        let Some(problem) = problem else {
             continue;
         };
         let mut problem = problem.at_path(used.pointer.clone());

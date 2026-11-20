@@ -17,6 +17,7 @@ pub(crate) enum Tab {
     Problems,
     Performance,
     History,
+    Activity,
 }
 
 /// How many log entries are kept for the console.
@@ -47,6 +48,12 @@ pub(crate) struct PanelActions {
     pub select: Option<(String, String)>,
     pub undo: bool,
     pub redo: bool,
+    /// Take back one earlier change on its own (its revision).
+    pub revert: Option<u64>,
+    /// The same from the activity feed: the scene and the revision.
+    pub revert_in: Option<(String, u64)>,
+    /// Accept (true) or reject (false) an agent's proposal.
+    pub decide: Option<(u64, bool)>,
 }
 
 impl PanelActions {
@@ -57,6 +64,9 @@ impl PanelActions {
             || self.select.is_some()
             || self.undo
             || self.redo
+            || self.revert.is_some()
+            || self.revert_in.is_some()
+            || self.decide.is_some()
     }
 }
 
@@ -80,6 +90,7 @@ pub(crate) fn tabs(ui: &mut Ui, current: Tab, problems: usize, actions: &mut Pan
             ),
             (Tab::Performance, t("Performance").to_owned()),
             (Tab::History, t("History").to_owned()),
+            (Tab::Activity, t("Activity").to_owned()),
         ] {
             if ui.selectable_label(current == tab, name).clicked() && current != tab {
                 actions.tab = Some(tab);
@@ -278,18 +289,160 @@ pub(crate) fn history(
                 let action = match entry["action"].as_str() {
                     Some("undo") => t("undo"),
                     Some("redo") => t("redo"),
+                    Some("revert") => t("taken back"),
                     _ => t("edit"),
                 };
-                ui.label(tf(
-                    "r{revision}  {actor}  {action}  {entities} ({changes} change(s))",
-                    &[
-                        ("revision", &entry["revision"].as_u64().unwrap_or(0)),
-                        ("actor", &entry["actor"].as_str().unwrap_or("?")),
-                        ("action", &action),
-                        ("entities", &touched.join(", ")),
-                        ("changes", &entry["changes"].as_u64().unwrap_or(0)),
-                    ],
-                ));
+                let revision = entry["revision"].as_u64().unwrap_or(0);
+                ui.horizontal(|ui| {
+                    // A change, on its own: taken back if nothing later
+                    // touched what it changed.
+                    if entry["revertible"] == true
+                        && entry["action"] == "edit"
+                        && ui
+                            .add(egui::Button::new(t("Undo this")).small())
+                            .on_hover_text(t(
+                                "Takes back only this change; later changes stay (refused if one touched the same things)",
+                            ))
+                            .clicked()
+                    {
+                        actions.revert = Some(revision);
+                    }
+                    let text = tf(
+                        "r{revision}  {actor}  {action}  {entities} ({changes} change(s))",
+                        &[
+                            ("revision", &revision),
+                            ("actor", &entry["actor"].as_str().unwrap_or("?")),
+                            ("action", &action),
+                            ("entities", &touched.join(", ")),
+                            ("changes", &entry["changes"].as_u64().unwrap_or(0)),
+                        ],
+                    );
+                    if entry["reverted"] == true {
+                        ui.label(RichText::new(text).strikethrough().weak())
+                            .on_hover_text(t("Taken back"));
+                    } else {
+                        ui.label(text);
+                    }
+                    if let Some(reason) = entry["reason"].as_str() {
+                        ui.weak(format!("— {reason}"));
+                    }
+                });
+            }
+        });
+}
+
+/// The colour of an actor's name in the activity feed.
+fn actor_color(actor: &str) -> Color32 {
+    if actor.starts_with("agent") {
+        Color32::from_rgb(180, 140, 240)
+    } else if actor == "file" {
+        Color32::from_rgb(230, 190, 80)
+    } else {
+        Color32::from_rgb(170, 180, 190)
+    }
+}
+
+/// The activity feed (`activity_get`): what everyone did, newest first; an
+/// edit's card can be taken back on its own.
+pub(crate) fn activity(
+    ui: &mut Ui,
+    entries: &VecDeque<Value>,
+    proposals: &[Value],
+    agents_only: &mut bool,
+    actions: &mut PanelActions,
+) {
+    // What agents propose, waiting for a person ("only suggest").
+    let waiting: Vec<&Value> = proposals
+        .iter()
+        .filter(|p| p["status"] == "waiting")
+        .collect();
+    if !waiting.is_empty() {
+        ui.strong(tf("Waiting for you: {count}", &[("count", &waiting.len())]));
+        for proposal in waiting {
+            let id = proposal["id"].as_u64().unwrap_or(0);
+            ui.horizontal(|ui| {
+                if ui.add(egui::Button::new(t("Accept")).small()).clicked() {
+                    actions.decide = Some((id, true));
+                }
+                if ui.add(egui::Button::new(t("Reject")).small()).clicked() {
+                    actions.decide = Some((id, false));
+                }
+                let actor = proposal["actor"].as_str().unwrap_or("?");
+                ui.label(RichText::new(actor).color(actor_color(actor)).strong());
+                ui.label(proposal["tool"].as_str().unwrap_or("?"));
+                let ops: Vec<String> = proposal["args"]["ops"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .take(4)
+                    .map(|op| {
+                        format!(
+                            "{} {}",
+                            op["op"].as_str().unwrap_or("?"),
+                            op["id"].as_str().or(op["name"].as_str()).unwrap_or("")
+                        )
+                    })
+                    .collect();
+                if !ops.is_empty() {
+                    ui.weak(ops.join(", "));
+                }
+            });
+            if let Some(reason) = proposal["reason"].as_str() {
+                ui.weak(format!("    {reason}"));
+            }
+        }
+        ui.separator();
+    }
+    ui.horizontal(|ui| {
+        ui.checkbox(agents_only, t("Agents only"));
+        ui.weak(t(
+            "Every change by anyone, and everything agents do (also what they only look at).",
+        ));
+    });
+    egui::ScrollArea::vertical()
+        .id_salt("activity")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            let shown: Vec<&Value> = entries
+                .iter()
+                .rev()
+                .filter(|entry| {
+                    !*agents_only
+                        || entry["actor"]
+                            .as_str()
+                            .is_some_and(|actor| actor.starts_with("agent"))
+                })
+                .collect();
+            if shown.is_empty() {
+                ui.weak(t("Nothing yet."));
+            }
+            for entry in shown {
+                let actor = entry["actor"].as_str().unwrap_or("?");
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(actor).color(actor_color(actor)).strong());
+                    ui.label(entry["tool"].as_str().unwrap_or("?"));
+                    if let Some(summary) = entry["summary"].as_str() {
+                        ui.weak(summary);
+                    }
+                    if entry["ok"] != true {
+                        let message = entry["error"]["message"].as_str().unwrap_or("");
+                        ui.label(RichText::new(message).color(severity_color("error")));
+                    }
+                    if let (Some(scene), Some(revision)) =
+                        (entry["scene"].as_str(), entry["revision"].as_u64())
+                        && ui
+                            .add(egui::Button::new(t("Undo this")).small())
+                            .on_hover_text(t(
+                                "Takes back only this change; later changes stay (refused if one touched the same things)",
+                            ))
+                            .clicked()
+                    {
+                        actions.revert_in = Some((scene.to_owned(), revision));
+                    }
+                });
+                if let Some(reason) = entry["reason"].as_str() {
+                    ui.weak(format!("    {reason}"));
+                }
             }
         });
 }

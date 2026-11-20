@@ -11,6 +11,12 @@ publish.workspace = true
 name = "wen"
 path = "src/main.rs"
 
+# What a person starts (the desktop shortcut): `wen edit` without a console
+# window. Only the standard library.
+[[bin]]
+name = "wish-engine"
+path = "src/launcher.rs"
+
 [dependencies]
 serde_json.workspace = true
 wish_app.workspace = true
@@ -23,6 +29,7 @@ wish_ecs.workspace = true
 wish_editor.workspace = true
 wish_examples.workspace = true
 wish_import.workspace = true
+wish_player.workspace = true
 wish_render.workspace = true
 wish_scene.workspace = true
 wish_schema.workspace = true
@@ -33,9 +40,10 @@ wish_window.workspace = true
 [dev-dependencies]
 serde_json.workspace = true
 
-# Sound out of the speakers (`wen play`): Windows for now; ALSA and CoreAudio
-# come with the Linux and macOS packages (M9).
-[target.'cfg(windows)'.dependencies]
+# Sound out of the speakers (`wen play`): Windows and Linux (ALSA, so a Linux
+# build needs libasound2-dev and the program needs libasound.so.2). macOS
+# comes with its package (CoreAudio).
+[target.'cfg(any(windows, target_os = "linux"))'.dependencies]
 wish_audio = { workspace = true, features = ["output"] }
 
 [lints]

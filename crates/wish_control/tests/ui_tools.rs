@@ -33,7 +33,7 @@ fn project(name: &str) -> (PathBuf, Workspace) {
                     "padding": [20, 20, 20, 20], "background": [0.1, 0.3, 0.9, 1] },
                 "UiButton": {} } },
             { "op": "spawn", "id": "start_label", "parent": "start", "components": {
-                "UiNode": {}, "UiText": { "text": "Başla", "size": 32 } } }
+                "UiNode": {}, "UiText": { "text": "Start", "size": 32 } } }
         ] }),
     );
     (dir, ws)
@@ -127,7 +127,7 @@ fn describe_view_lists_the_interface_with_its_text() {
         .iter()
         .find(|e| e["entity"] == "start_label")
         .unwrap();
-    assert_eq!(label["text"], "Başla");
+    assert_eq!(label["text"], "Start");
     let button = interface.iter().find(|e| e["entity"] == "start").unwrap();
     assert_eq!(button["bounding_box"], json!([270, 150, 370, 190]));
     assert_eq!(button["button"]["hovered"], false);
@@ -364,11 +364,11 @@ fn count(clicks: EventReader<ButtonClicked>, mut score: ResMut<Score>) {
 fn show(score: Res<Score>, mut labels: Query<(&mut ScoreLabel, &mut UiText)>) {
     for (label, words) in labels.iter_mut() {
         if label.shown != score.points || words.text == Text::EMPTY {
-            words.text = text(&format!("Puan: {}", score.points));
+            words.text = text(&format!("Score: {}", score.points));
             label.shown = score.points;
         }
         // Reading a text back gives the same string.
-        assert_eq!(text_of(words.text), format!("Puan: {}", score.points));
+        assert_eq!(text_of(words.text), format!("Score: {}", score.points));
     }
 }
 
@@ -397,7 +397,7 @@ fn game_code_counts_clicks_and_writes_the_label() {
     let s = start(&mut ws);
     call(&mut ws, "sim_step", json!({ "session": s, "frames": 2 }));
     let label = |ws: &mut Workspace| components(ws, &s, "score")["UiText"]["text"].clone();
-    assert_eq!(label(&mut ws), "Puan: 0");
+    assert_eq!(label(&mut ws), "Score: 0");
     for _ in 0..3 {
         call(
             &mut ws,
@@ -410,7 +410,7 @@ fn game_code_counts_clicks_and_writes_the_label() {
             json!({ "session": s, "frames": 2, "input": { "pointer": [600, 340] } }),
         );
     }
-    assert_eq!(label(&mut ws), "Puan: 3");
+    assert_eq!(label(&mut ws), "Score: 3");
     // The label grew with its text, and the picture says so.
     let seen = call(
         &mut ws,
@@ -424,7 +424,7 @@ fn game_code_counts_clicks_and_writes_the_label() {
         .find(|e| e["entity"] == "score")
         .unwrap()
         .clone();
-    assert_eq!(shown["text"], "Puan: 3", "{seen}");
+    assert_eq!(shown["text"], "Score: 3", "{seen}");
     // Snapshots and replays keep the texts game code made.
     call(
         &mut ws,
@@ -441,11 +441,11 @@ fn game_code_counts_clicks_and_writes_the_label() {
         "sim_step",
         json!({ "session": s, "frames": 2, "input": { "pointer": [600, 340] } }),
     );
-    assert_eq!(label(&mut ws), "Puan: 4");
+    assert_eq!(label(&mut ws), "Score: 4");
     call(
         &mut ws,
         "sim_restore",
         json!({ "session": s, "snapshot": "three" }),
     );
-    assert_eq!(label(&mut ws), "Puan: 3");
+    assert_eq!(label(&mut ws), "Score: 3");
 }

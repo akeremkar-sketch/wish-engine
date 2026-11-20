@@ -15,6 +15,7 @@ use wish_core::math::{Mat4, Vec3, Vec4};
 
 use crate::extract::{CameraView, RenderScene, SpriteView};
 use crate::gpu::Gpu;
+use crate::renderer::{Pool, TextureKey};
 use crate::ui::{ATLAS_FORMAT, ATLAS_WIDTH, Atlas, Region, UiPicture, uv_of};
 
 /// Bytes per vertex: position (3 floats), texture coordinate (2), colour
@@ -104,6 +105,16 @@ pub(crate) struct Overlay {
     /// count.
     runs: Vec<(bool, u32, u32)>,
     view_proj: Mat4,
+}
+
+impl Overlay {
+    /// How many draw calls and how many triangles drawing it takes.
+    pub(crate) fn counts(&self) -> (u32, u64) {
+        (
+            u32::try_from(self.runs.len()).unwrap_or(u32::MAX),
+            self.vertices.len() as u64 / VERTEX_BYTES / 3,
+        )
+    }
 }
 
 /// Prepares the sprites and particles of `scene` seen through `camera` in
@@ -472,13 +483,16 @@ impl OverlayPipeline {
     }
 
     /// Records drawing `overlay` over `target`, tested against `depth`.
-    /// Call inside `Gpu::checked`.
-    pub fn draw(
+    /// The atlas texture, the uniform buffer and the vertex buffer come from
+    /// `pool` and are filled here, whole, every frame; the two bind groups
+    /// are this frame's (both over the one uniform buffer). Call inside
+    /// `Gpu::checked`.
+    pub(crate) fn draw(
         &self,
         gpu: &Gpu,
+        pool: &mut Pool,
         encoder: &mut wgpu::CommandEncoder,
-        target: &wgpu::TextureView,
-        depth: &wgpu::TextureView,
+        (target, depth): (&wgpu::TextureView, &wgpu::TextureView),
         overlay: &Overlay,
     ) {
         let device = &gpu.device;
@@ -487,19 +501,19 @@ impl OverlayPipeline {
             height: overlay.atlas_height,
             depth_or_array_layers: 1,
         };
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("sprite atlas"),
-            size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: ATLAS_FORMAT,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
+        let view = pool.texture(
+            gpu,
+            TextureKey {
+                name: "sprite atlas",
+                width: ATLAS_WIDTH,
+                height: overlay.atlas_height,
+                format: ATLAS_FORMAT,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            },
+        );
         gpu.queue.write_texture(
             wgpu::TexelCopyTextureInfo {
-                texture: &texture,
+                texture: view.texture(),
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
@@ -512,15 +526,13 @@ impl OverlayPipeline {
             },
             size,
         );
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let matrix: Vec<u8> = overlay
             .view_proj
             .to_cols_array()
             .iter()
             .flat_map(|v| v.to_le_bytes())
             .collect();
-        let uniform =
-            crate::renderer::buffer_with(gpu, "sprites", &matrix, wgpu::BufferUsages::UNIFORM);
+        let uniform = pool.buffer(gpu, "sprites", wgpu::BufferUsages::UNIFORM, &matrix);
         let group = |sampler: &wgpu::Sampler| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("sprites"),
@@ -528,7 +540,13 @@ impl OverlayPipeline {
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: uniform.as_entire_binding(),
+                        // At the matrix's size, whatever the pooled
+                        // buffer's capacity.
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &uniform,
+                            offset: 0,
+                            size: wgpu::BufferSize::new(UNIFORM_BYTES),
+                        }),
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
@@ -542,11 +560,11 @@ impl OverlayPipeline {
             })
         };
         let (smooth, sharp) = (group(&self.smooth), group(&self.sharp));
-        let vertices = crate::renderer::buffer_with(
+        let vertices = pool.buffer(
             gpu,
-            "sprites",
-            &overlay.vertices,
+            "sprite vertices",
             wgpu::BufferUsages::VERTEX,
+            &overlay.vertices,
         );
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("sprites"),
@@ -572,6 +590,8 @@ impl OverlayPipeline {
             multiview_mask: None,
         });
         pass.set_pipeline(&self.pipeline);
+        // The runs name only this frame's vertices: the pooled buffer may be
+        // larger and hold an earlier frame's beyond them.
         pass.set_vertex_buffer(0, vertices.slice(..));
         for (is_smooth, first, count) in &overlay.runs {
             pass.set_bind_group(0, if *is_smooth { &smooth } else { &sharp }, &[]);

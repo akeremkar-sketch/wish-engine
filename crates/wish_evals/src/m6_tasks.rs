@@ -405,7 +405,9 @@ fn lamp_setup(dir: &Path) -> Result<(), String> {
         json!([
             { "op": "despawn", "id": "sun" },
             { "op": "set_resource", "name": "Sky", "value": { "luminance": 0 } },
-            { "op": "set_resource", "name": "Ambient", "value": { "intensity": 0 } },
+            // No fill light at all: a flat ambient light of 0 (the sky,
+            // which lights a scene by default, is dark too).
+            { "op": "set_resource", "name": "Ambient", "value": { "source": "Color", "intensity": 0 } },
             { "op": "set_resource", "name": "Exposure", "value": { "ev100": 4 } },
             { "op": "spawn", "id": "table", "components": {
                 "Transform": { "translation": [0, 0.5, 0], "scale": [2, 1, 1] },
@@ -506,9 +508,9 @@ fn hud_check(probe: &mut Probe, _: &Path, _: &Value) -> Verdict {
     let shown = interface(probe, None)?;
     let label = shown
         .iter()
-        .find(|e| e["text"].as_str().is_some_and(|t| t.trim() == "Puan: 0"));
+        .find(|e| e["text"].as_str().is_some_and(|t| t.trim() == "Score: 0"));
     let Some(label) = label else {
-        return Err("no interface text says \"Puan: 0\"".to_owned());
+        return Err("no interface text says \"Score: 0\"".to_owned());
     };
     let [left, top, right, bottom] = bbox(label);
     if left > 160.0 || top > 90.0 {
@@ -527,7 +529,7 @@ fn hud_reference(probe: &mut Probe) -> Result<(), String> {
         probe,
         json!([{ "op": "spawn", "id": "score", "components": {
             "UiNode": { "position": "Absolute", "offset": [24, 24] },
-            "UiText": { "text": "Puan: 0", "size": 36 } } }]),
+            "UiText": { "text": "Score: 0", "size": 36 } } }]),
     )
 }
 
@@ -550,14 +552,14 @@ fn button_check(probe: &mut Probe, _: &Path, _: &Value) -> Verdict {
         let [x0, y0, x1, y1] = bbox(e);
         e["text"]
             .as_str()
-            .is_some_and(|text| text.trim() == "Başla")
+            .is_some_and(|text| text.trim() == "Start")
             && x0 >= l - 1.0
             && y0 >= t - 1.0
             && x1 <= r + 1.0
             && y1 <= b + 1.0
     });
     if !labelled {
-        return Err("the button does not say \"Başla\" inside it".to_owned());
+        return Err("the button does not say \"Start\" inside it".to_owned());
     }
     // It can be clicked: press and release on its middle.
     let id = button["entity"].as_str().unwrap_or_default().to_owned();
@@ -584,7 +586,7 @@ fn button_reference(probe: &mut Probe) -> Result<(), String> {
                 "UiNode": { "padding": [16, 40, 16, 40], "background": [0.1, 0.3, 0.9, 1] },
                 "UiButton": {} } },
             { "op": "spawn", "id": "start_label", "parent": "start", "components": {
-                "UiNode": {}, "UiText": { "text": "Başla", "size": 40 } } }
+                "UiNode": {}, "UiText": { "text": "Start", "size": 40 } } }
         ]),
     )
 }
@@ -620,7 +622,7 @@ fn count(clicks: EventReader<ButtonClicked>, mut total: ResMut<Clicks>) {
 fn show(total: Res<Clicks>, mut labels: Query<(&mut CountLabel, &mut UiText)>) {
     for (label, words) in labels.iter_mut() {
         if label.shown != total.count || text_of(words.text).is_empty() {
-            words.text = text(&format!("Tıklama: {}", total.count));
+            words.text = text(&format!("Clicks: {}", total.count));
             label.shown = total.count;
         }
     }
@@ -646,7 +648,7 @@ fn counter_setup(dir: &Path) -> Result<(), String> {
                 "UiNode": {}, "UiText": { "text": "+1", "size": 40 } } },
             { "op": "spawn", "id": "label", "components": {
                 "UiNode": { "position": "Absolute", "offset": [20, 20] },
-                "UiText": { "text": "Tıklama: 0", "size": 32 } } }
+                "UiText": { "text": "Clicks: 0", "size": 32 } } }
         ]),
     )
 }
@@ -668,7 +670,7 @@ fn counter_check(probe: &mut Probe, dir: &Path, _: &Value) -> Verdict {
     }
     steps.push(json!({ "frames": 1 }));
     steps.push(
-        json!({ "expect": "UiText.text == \"Tıklama: 3\"", "entity": "label",
+        json!({ "expect": "UiText.text == \"Clicks: 3\"", "entity": "label",
                        "message": "the label says how many clicks" }),
     );
     steps.push(json!({ "input": { "pointer": [100, 600], "click": true }, "frames": 1 }));
@@ -885,7 +887,7 @@ pub fn all() -> Vec<Task> {
     vec![
         task(
             "13_drop_box",
-            "'box' adlı küp havada asılı duruyor. Fizik ekle: oyun başlayınca yerçekimiyle düşsün ve zemine çarpıp üstünde dursun (zeminden geçip düşmesin). Kutuyu sahnede taşıma.",
+            "The cube named 'box' hangs in the air. Add physics: when the game starts it should fall with gravity, hit the ground and stay on top of it (not fall through the ground). Do not move the box in the scene.",
             drop_setup,
             drop_check,
             drop_reference,
@@ -893,7 +895,7 @@ pub fn all() -> Vec<Task> {
         ),
         task(
             "14_bouncy_ball",
-            "'ball' adlı top zemine düşüyor ama sekmiyor. Zemine çarptıktan sonra en az 1 metre yükseğe seksin (topun altı zeminden en az 1 m yukarı çıksın). Topu taşıma.",
+            "The ball named 'ball' falls to the ground but does not bounce. After it hits the ground it should bounce at least 1 meter high (the bottom of the ball should rise at least 1 m above the ground). Do not move the ball.",
             bounce_setup,
             bounce_check,
             bounce_reference,
@@ -901,7 +903,7 @@ pub fn all() -> Vec<Task> {
         ),
         task(
             "15_trigger_zone",
-            "'ball' adlı top düşüyor. Topun düştüğü yere, zeminin hemen üstüne 'goal' adlı bir tetikleme bölgesi koy: top içinden geçip zemine kadar düşsün ama girerken bir CollisionStarted olayı gelsin.",
+            "The ball named 'ball' falls. Where the ball falls, just above the ground, put a trigger zone named 'goal': the ball should pass through it and fall all the way to the ground, but a CollisionStarted event should come when it enters.",
             trigger_setup,
             trigger_check,
             trigger_reference,
@@ -909,7 +911,7 @@ pub fn all() -> Vec<Task> {
         ),
         task(
             "16_jump_code",
-            "'player' fizikli bir karakter (CharacterController). Oyun kodunu (scripts/src/lib.rs) yaz: input.json'daki 'move' eylemi onu saniyede 3 metre yürütsün (x sağa +X, y ileri -Z); 'jump' basılınca yerdeyse zıplasın (en az yarım metre yükselsin) ve yere geri insin; yerçekimini kod eklesin. script_build ile derle ve davranışı tests/ altına yazacağın bir senaryo testiyle kanıtla.",
+            "'player' is a physics character (CharacterController). Write the game code (scripts/src/lib.rs): the 'move' action in input.json should walk it at 3 meters per second (x right +X, y forward -Z); when 'jump' is pressed and it is on the ground, it should jump (rise at least half a meter) and land back on the ground; the code should add the gravity. Build it with script_build and prove the behaviour with a scenario test that you write under tests/.",
             jump_setup,
             jump_check,
             jump_reference,
@@ -917,7 +919,7 @@ pub fn all() -> Vec<Task> {
         ),
         task(
             "17_music",
-            "assets/sounds/music.wav müziği oyun başlar başlamaz çalsın ve bitince baştan başlasın (döngü). Kameraya da bir dinleyici (AudioListener) koy.",
+            "The music assets/sounds/music.wav should play as soon as the game starts and start again from the beginning when it ends (loop). Also put a listener (AudioListener) on the camera.",
             music_setup,
             music_check,
             music_reference,
@@ -925,7 +927,7 @@ pub fn all() -> Vec<Task> {
         ),
         task(
             "18_table_lamp",
-            "Sahne gece ve karanlık. Masanın ('table') üstünü aydınlatmak için, masanın üst yüzeyinin 1–2 metre yukarısına bir nokta ışığı (PointLight) koy.",
+            "The scene is at night and dark. To light the top of the table ('table'), put a point light (PointLight) 1–2 meters above the table's top surface.",
             lamp_setup,
             lamp_check,
             lamp_reference,
@@ -933,7 +935,7 @@ pub fn all() -> Vec<Task> {
         ),
         task(
             "19_play_animation",
-            "'bar' modelinin içindeki 'bend' animasyonunu oyun başlayınca oynat ve sürekli tekrar etsin (döngü).",
+            "Play the 'bend' animation inside the 'bar' model when the game starts, and have it repeat continuously (loop).",
             anim_setup,
             anim_check,
             anim_reference,
@@ -941,7 +943,7 @@ pub fn all() -> Vec<Task> {
         ),
         task(
             "20_hud_score",
-            "Oyun içi arayüzle ekranın sol üst köşesinde 'Puan: 0' yazan, okunabilir büyüklükte bir yazı göster.",
+            "Using the in-game interface, show a text that says 'Score: 0' in the top left corner of the screen, large enough to read.",
             |_| Ok(()),
             hud_check,
             hud_reference,
@@ -949,7 +951,7 @@ pub fn all() -> Vec<Task> {
         ),
         task(
             "21_start_button",
-            "Ekranın ortasında, üzerinde 'Başla' yazan, tıklanabilir bir düğme olsun.",
+            "In the middle of the screen there should be a clickable button with 'Start' written on it.",
             |_| Ok(()),
             button_check,
             button_reference,
@@ -957,7 +959,7 @@ pub fn all() -> Vec<Task> {
         ),
         task(
             "22_click_counter",
-            "'more' düğmesine her tıklanınca 'label' adlı yazı 'Tıklama: N' olsun (N o ana kadarki tıklama sayısı; başta 'Tıklama: 0'). Oyun kodunda (scripts/src/lib.rs) sayıyı Clicks kaynağının count alanında tut. Davranışı tests/ altına yazacağın bir senaryo testiyle kanıtla (testte tıklamak için input'ta pointer ve click kullanılır).",
+            "Each time the 'more' button is clicked, the text named 'label' should become 'Clicks: N' (N is the number of clicks so far; 'Clicks: 0' at the start). In the game code (scripts/src/lib.rs), keep the number in the count field of the Clicks resource. Prove the behaviour with a scenario test that you write under tests/ (to click in the test, use pointer and click in input).",
             counter_setup,
             counter_check,
             counter_reference,
@@ -965,7 +967,7 @@ pub fn all() -> Vec<Task> {
         ),
         task(
             "23_two_d",
-            "Sahneyi 2D'ye çevir: kamera ortografik olsun ve assets/sprites/hero.png resmini gösteren 'hero' adlı bir sprite ekle; kameradan görünsün ve en az 8x8 piksel olsun (640x360 bir resimde).",
+            "Turn the scene into 2D: the camera should be orthographic, and add a sprite named 'hero' that shows the picture assets/sprites/hero.png; it should be visible from the camera and at least 8x8 pixels (in a 640x360 picture).",
             two_d_setup,
             two_d_check,
             two_d_reference,
@@ -973,7 +975,7 @@ pub fn all() -> Vec<Task> {
         ),
         task(
             "24_campfire",
-            "'campfire' adlı kamp ateşinin üstünden yukarı doğru yükselen turuncu kıvılcımlar çıksın: saniyede en az 20 parçacık veren bir parçacık yayıcı ekle.",
+            "Orange sparks should rise upward from the top of the campfire named 'campfire': add a particle emitter that emits at least 20 particles per second.",
             fire_setup,
             fire_check,
             fire_reference,
@@ -981,7 +983,7 @@ pub fn all() -> Vec<Task> {
         ),
         task(
             "25_center_ray",
-            "Kameranın baktığı yöne, görüntünün tam ortasından bir ışın gönderildiğini düşün. Bu ışının ilk çarptığı varlığa sahnede 'hit' notunu ekle; başka hiçbir varlığa not ekleme.",
+            "Imagine a ray sent from the exact middle of the picture, in the direction the camera looks. Add the note 'hit' in the scene to the first entity this ray hits; do not add notes to any other entity.",
             ray_setup,
             ray_check,
             ray_reference,

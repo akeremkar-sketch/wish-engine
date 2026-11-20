@@ -46,6 +46,13 @@ pub struct Workspace {
     pub(crate) cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     /// The game code (M5).
     pub(crate) scripts: crate::script::Scripts,
+    /// What everyone did (M8b): the activity feed's source.
+    pub(crate) activity: crate::activity::Activity,
+    /// How much agents may change by themselves, and what waits (M8b).
+    pub(crate) policy: crate::policy::Policy,
+    /// The player program `project_export` copies, if not the one next to
+    /// the running program (M9).
+    pub(crate) player_path: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for Workspace {
@@ -102,6 +109,9 @@ impl Workspace {
             software: std::env::var_os("WISH_SOFTWARE").is_some(),
             cancel: None,
             scripts: crate::script::Scripts::default(),
+            activity: crate::activity::Activity::default(),
+            policy: crate::policy::Policy::default(),
+            player_path: None,
         };
         workspace.load_built_module();
         Ok(workspace)
@@ -156,6 +166,37 @@ impl Workspace {
         Ok(())
     }
 
+    /// Writes the project's package requirements into `wish.json` (M10).
+    pub(crate) fn write_packages(
+        &mut self,
+        packages: std::collections::BTreeMap<String, String>,
+    ) -> Result<()> {
+        let Some(config) = self.config.as_mut() else {
+            return Ok(());
+        };
+        let mut next = config.clone();
+        next.packages = packages;
+        let text = next.to_canonical()?;
+        crate::documents::write_project_file(&self.root, crate::project::PROJECT_FILE, &text)?;
+        *config = next;
+        Ok(())
+    }
+
+    /// Reads `wish.json` again (after it was written by something other
+    /// than [`Self::write_config`], such as a checkpoint coming back).
+    pub(crate) fn reload_config(&mut self) {
+        match read_project(&self.root) {
+            Ok(config) => {
+                self.config = config;
+                self.config_problem = None;
+            }
+            Err(problem) => {
+                self.config = None;
+                self.config_problem = Some(problem);
+            }
+        }
+    }
+
     /// Why `wish.json` could not be read.
     pub fn config_problem(&self) -> Option<&Diagnostic> {
         self.config_problem.as_ref()
@@ -176,6 +217,55 @@ impl Workspace {
     /// out: a bug inside a tool comes back as an `internal_error` answer, so
     /// one bad call cannot take the server down.
     pub fn call(&mut self, tool: &str, args: &Value, actor: &Actor) -> Value {
+        // "Only suggest": an agent's change to the project waits for a
+        // person (with what it would change, where the tool can say).
+        if matches!(actor, Actor::Agent(_))
+            && self.policy.mode == crate::policy::Mode::Suggest
+            && crate::policy::changes_project(tool, args)
+        {
+            let preview = self.dry_run_of(tool, args, actor);
+            let id = self.policy.propose(actor, tool, args, preview.clone());
+            let mut answer = json!({
+                "ok": true,
+                "proposed": id,
+                "status": "waiting",
+                "message": "Nothing was changed yet: the person working with you decides (permission mode \"suggest\"). proposals with action list shows whether it was accepted.",
+            });
+            if let Some(preview) = preview {
+                answer["preview"] = preview;
+            }
+            self.activity.record(tool, args, actor, &answer);
+            return answer;
+        }
+        self.call_unheld(tool, args, actor)
+    }
+
+    /// What a call would change, from its dry run (`None` if the tool has
+    /// none). Not activity.
+    pub(crate) fn dry_run_of(&mut self, tool: &str, args: &Value, actor: &Actor) -> Option<Value> {
+        let found = find_tool(tool).ok()?;
+        if !found.params.iter().any(|param| param.name == "dry_run") {
+            return None;
+        }
+        let mut dry = args.clone();
+        dry.as_object_mut()?
+            .insert("dry_run".to_owned(), Value::Bool(true));
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.run(tool, &dry, actor)
+        }))
+        .unwrap_or_else(|_| {
+            Err(Diagnostic::error(
+                "internal_error",
+                format!("The tool '{tool}' failed unexpectedly."),
+                "This is a bug in the engine. The project is unchanged; please report the call that caused it.",
+            ))
+        });
+        Some(envelope(outcome))
+    }
+
+    /// [`Self::call`] without the permission check (a proposal a person
+    /// accepted).
+    pub(crate) fn call_unheld(&mut self, tool: &str, args: &Value, actor: &Actor) -> Value {
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             self.run(tool, args, actor)
         }))
@@ -186,7 +276,29 @@ impl Workspace {
                 "This is a bug in the engine. The project is unchanged; please report the call that caused it.",
             ))
         });
-        envelope(outcome)
+        let answer = envelope(outcome);
+        let mutates = find_tool(tool).is_ok_and(|found| found.mutates);
+        if crate::activity::worth_noting(tool, args, mutates, actor) {
+            self.activity.record(tool, args, actor, &answer);
+        }
+        answer
+    }
+
+    /// Runs a tool inside another one (not noted as activity, not held).
+    pub(crate) fn run_tool(
+        &mut self,
+        name: &str,
+        args: &Value,
+        actor: &Actor,
+    ) -> Result<Map<String, Value>> {
+        self.run(name, args, actor)
+    }
+
+    /// The player program exported games use (tests point at their own
+    /// build; otherwise `WISH_PLAYER` or the one next to the running
+    /// program).
+    pub fn set_player_path(&mut self, path: PathBuf) {
+        self.player_path = Some(path);
     }
 
     fn run(&mut self, name: &str, args: &Value, actor: &Actor) -> Result<Map<String, Value>> {

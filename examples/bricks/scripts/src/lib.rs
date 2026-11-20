@@ -218,7 +218,7 @@ fn show(
     let packed = game.score * 10 + game.lives;
     for (hud, words) in huds.iter_mut() {
         if hud.shown != packed || text_of(words.text).is_empty() {
-            words.text = text(&format!("Puan: {}   Can: {}", game.score, game.lives));
+            words.text = text(&format!("Score: {}   Lives: {}", game.score, game.lives));
             hud.shown = packed;
         }
     }
@@ -227,7 +227,7 @@ fn show(
             panel.shown = true;
             node.visible = true;
             for words in messages.iter_mut() {
-                words.text = text(if game.won { "Kazandın!" } else { "Oyun bitti" });
+                words.text = text(if game.won { "You win!" } else { "Game over" });
             }
         }
     }

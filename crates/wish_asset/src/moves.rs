@@ -2,8 +2,8 @@
 //!
 //! [`plan_move`] works out everything a move changes without touching the
 //! disk; [`apply_move`] then does it: the file or folder is renamed, and
-//! every scene and prefab that referred to something in it is rewritten, all
-//! or nothing (a failure half-way puts everything back, including folders
+//! every scene, prefab and material file that referred to something in it
+//! is rewritten, all or nothing (a failure half-way puts everything back, including folders
 //! the move created).
 //!
 //! References are asset references (fields of type `AssetRef`, found by
@@ -22,10 +22,11 @@ use wish_ecs::Registry;
 use wish_scene::json::to_canonical;
 
 use crate::index::{is_document, walk_files};
+use crate::material::is_material;
 use crate::meta::meta_path;
-use crate::refs::{path_and_suffix, read_document, visit_document};
+use crate::refs::{path_and_suffix, read_document, visit_document, visit_material};
 
-/// A scene or prefab file that a move rewrites.
+/// A scene, prefab or material file that a move rewrites.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DocumentEdit {
     /// The project-relative path of the file before the move.
@@ -149,11 +150,11 @@ pub fn plan_move(root: &Path, from: &str, to: &str, registry: &Registry) -> Resu
             hint,
         ));
     }
-    if is_file && is_document(from) != is_document(to) {
+    if is_file && (is_document(from) != is_document(to) || is_material(from) != is_material(to)) {
         return Err(failure(
             "kind_change",
             format!("Moving '{from}' to '{to}' would turn it into a different kind of file."),
-            "Keep the ending: assets stay assets, and a .scene.json, .prefab.json or .meta.json file keeps its ending.",
+            "Keep the ending: assets stay assets, and a .scene.json, .prefab.json, .meta.json or .mat.json file keeps its ending.",
         ));
     }
     if root.join(to).exists() {
@@ -180,24 +181,36 @@ pub fn plan_move(root: &Path, from: &str, to: &str, registry: &Registry) -> Resu
 
     let mut documents = Vec::new();
     for (file, path) in &listing {
-        if !(file.ends_with(".scene.json") || file.ends_with(".prefab.json")) {
+        let material = is_material(file);
+        if !(file.ends_with(".scene.json") || file.ends_with(".prefab.json") || material) {
             continue;
         }
-        let original = fs::read_to_string(path).map_err(|error| {
-            failure(
-                "file_unreadable",
-                format!("Could not read '{file}': {error}."),
-                "Check that the file can be read and is UTF-8 text.",
-            )
-        })?;
+        let original = if material {
+            // Read with its size cap, like everywhere a material is read.
+            crate::material::read_material_file(path, file)?
+        } else {
+            fs::read_to_string(path).map_err(|error| {
+                failure(
+                    "file_unreadable",
+                    format!("Could not read '{file}': {error}."),
+                    "Check that the file can be read and is UTF-8 text.",
+                )
+            })?
+        };
         let mut value = read_document(&original, file)?;
         let mut changes = 0;
-        visit_document(registry, &mut value, &mut |_, reference| {
+        let mut rewrite = |_: &str, reference: &mut String| {
             if let Some(new) = remap(reference, from, to) {
                 *reference = new;
                 changes += 1;
             }
-        });
+        };
+        if material {
+            // The textures a material file names.
+            visit_material(&mut value, &mut rewrite);
+        } else {
+            visit_document(registry, &mut value, &mut rewrite);
+        }
         visit_prefab_refs(&mut value, &mut |path| {
             if let Some(new) = remap(path, from, to) {
                 *path = new;

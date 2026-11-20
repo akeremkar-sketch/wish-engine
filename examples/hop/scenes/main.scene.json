@@ -131,7 +131,7 @@
         },
         "UiText": {
           "size": 44,
-          "text": "Puan: 0"
+          "text": "Score: 0"
         }
       }
     },
@@ -199,11 +199,11 @@
         "UiText": {
           "color": [1, 0.85, 0.3, 1],
           "size": 64,
-          "text": "Kazandın!"
+          "text": "You win!"
         }
       },
       "parent": "win_banner"
     }
   },
-  "format": 1
+  "format": 2
 }

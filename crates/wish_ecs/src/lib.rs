@@ -40,7 +40,7 @@
 //! # Ok::<(), wish_core::Diagnostic>(())
 //! ```
 //!
-//! Design: `docs/design/M1-cekirdek.md`, section 4.
+//! Design: `docs/design/M1-core.md`, section 4.
 
 mod archetype;
 mod column;

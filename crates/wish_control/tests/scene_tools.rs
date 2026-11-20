@@ -19,7 +19,7 @@ fn project(name: &str) -> PathBuf {
     std::fs::write(dir.join("wish.json"), PROJECT).unwrap();
     std::fs::write(
         dir.join("scenes/main.scene.json"),
-        r#"{ "format": 1, "entities": {
+        r#"{ "format": 2, "entities": {
             "cam": { "components": { "Camera": {}, "Transform": { "translation": [0, 1, 6] } } }
         } }"#,
     )
@@ -394,7 +394,7 @@ fn a_broken_hand_edit_is_never_overwritten() {
     let mut ws = open(&dir);
     let agent = parse_actor("claude-code");
     ok(&ws.call("scene_get", &json!({}), &agent));
-    hand_edit(&dir, "{ \"format\": 1, \"entities\": { \"cam\": ");
+    hand_edit(&dir, "{ \"format\": 2, \"entities\": { \"cam\": ");
     // Reading still works, with a warning.
     let outline = ok(&ws.call("scene_get", &json!({}), &agent)).clone();
     assert_eq!(outline["entities"], 1);
@@ -411,12 +411,12 @@ fn a_broken_hand_edit_is_never_overwritten() {
     assert_eq!(refused["error"]["code"], "scene_file_invalid");
     assert_eq!(
         scene_text(&dir),
-        "{ \"format\": 1, \"entities\": { \"cam\": "
+        "{ \"format\": 2, \"entities\": { \"cam\": "
     );
     // Once the person fixes it, work goes on.
     hand_edit(
         &dir,
-        "{ \"format\": 1, \"entities\": { \"cam\": { \"components\": { \"Camera\": {} } } } }",
+        "{ \"format\": 2, \"entities\": { \"cam\": { \"components\": { \"Camera\": {} } } } }",
     );
     ok(&ws.call(
         "edit_apply",
@@ -431,7 +431,7 @@ fn new_scenes_and_prefab_instances() {
     let dir = project("prefab");
     std::fs::write(
         dir.join("prefabs/cart.prefab.json"),
-        r#"{ "format": 1, "entities": {
+        r#"{ "format": 2, "entities": {
             "root": { "components": { "Transform": {} } },
             "wheel": { "parent": "root", "components": { "Primitive": { "shape": "Sphere" }, "Transform": { "translation": [1, 0, 0] } } }
         } }"#,
@@ -496,7 +496,7 @@ fn what_the_agent_evaluations_found() {
     let dir = project("evals");
     std::fs::write(
         dir.join("prefabs/crate.prefab.json"),
-        r#"{ "format": 1, "entities": { "root": { "components": { "Primitive": { "shape": "Cube" }, "Transform": {} } } } }"#,
+        r#"{ "format": 2, "entities": { "root": { "components": { "Primitive": { "shape": "Cube" }, "Transform": {} } } } }"#,
     )
     .unwrap();
     let mut ws = open(&dir);

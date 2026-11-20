@@ -15,17 +15,30 @@
 //!   Diagnostic }`, with keys in sorted order so that the same call gives
 //!   the same bytes everywhere.
 //!
-//! Design: `docs/design/M4-kontrol-duzlemi.md`.
+//! Design: `docs/design/M4-control-plane.md`.
 
+mod activity;
+pub mod archive;
 mod audio;
+mod checkpoints;
 mod concepts;
+pub mod crash;
 pub mod docs;
 mod documents;
+pub mod engines;
 pub mod expr;
+pub mod licenses;
 mod live;
+pub mod looks;
+pub mod migrate;
 pub mod ops;
+pub mod package_index;
+pub mod packages;
 pub mod param;
+pub mod pe;
+pub mod policy;
 pub mod project;
+pub mod release;
 pub mod render;
 mod replays;
 pub mod scaffold;
@@ -38,10 +51,20 @@ pub mod types;
 mod ui;
 pub mod workspace;
 
+/// The oldest engine version whose projects this engine opens unchanged; it
+/// moves with the file formats ([`SCENE_FORMAT`], [`PROJECT_FORMAT`] and the
+/// others: ADR-027, rule 3).
+pub use engines::OPENS_FROM;
 pub use param::{Args, Kind, Param, from_flags, input_schema};
 pub use project::{PROJECT_FILE, PROJECT_FORMAT, ProjectConfig, parse_project, read_project};
 pub use render::{base64, base64_decode};
 pub use script::PointerAt;
 pub use tool::{Tool, catalog};
-pub use tools::{IdPicture, Picture, PictureSource};
+pub use tools::{
+    BRIEF_FIELDS, CardField, DESIGN_FILE, IdPicture, Picture, PictureSource, card_fields,
+    design_summary, engines_act, engines_act_in, read_design,
+};
+/// The scene and prefab file format this build writes (`wish_scene::FORMAT`),
+/// for clients that write scene files themselves.
+pub use wish_scene::FORMAT as SCENE_FORMAT;
 pub use workspace::{Workspace, WorkspaceOptions, envelope, find_tool, parse_actor};

@@ -178,7 +178,7 @@ fn a_session_initializes_lists_tools_calls_one_and_ends() {
     assert_eq!(tools.status, 200);
     assert_eq!(
         tools.json()["result"]["tools"].as_array().unwrap().len(),
-        26
+        34
     );
     let info = call(server.address, &session, 3, "project_info", json!({}));
     assert_eq!(info.status, 200);

@@ -173,7 +173,12 @@ pub fn run_calls(args: &DoArgs) -> Outcome {
 
 /// Runs `wen new`: writes a project folder (the scaffold lives in the
 /// control plane; this only chooses how MCP clients will start `wen`).
-pub fn new_project(dir: &str, name: Option<&str>, as_json: bool) -> Result<String> {
+pub fn new_project(
+    dir: &str,
+    name: Option<&str>,
+    template: Option<&str>,
+    as_json: bool,
+) -> Result<String> {
     let path = std::path::Path::new(dir);
     let name = name.map_or_else(|| wish_control::scaffold::name_for(path), str::to_owned);
     // The full path of this program, so that `.mcp.json` works even when
@@ -182,7 +187,25 @@ pub fn new_project(dir: &str, name: Option<&str>, as_json: bool) -> Result<Strin
         .ok()
         .and_then(|exe| exe.to_str().map(str::to_owned))
         .unwrap_or_else(|| "wen".to_owned());
-    let written = wish_control::scaffold::create_project(path, &name, &command)?;
+    let written = match template {
+        None => wish_control::scaffold::create_project(path, &name, &command)?,
+        Some(template) => {
+            let known = wish_control::scaffold::all_templates();
+            let Some(found) = known.iter().find(|known| known.id == template) else {
+                let ids: Vec<&str> = known.iter().map(|known| known.id.as_str()).collect();
+                return Err(wish_core::Diagnostic::error(
+                    "invalid_template",
+                    format!("The engine has no template '{template}'."),
+                    if ids.is_empty() {
+                        "No templates were found: set WISH_TEMPLATES to a folder of project folders.".to_owned()
+                    } else {
+                        format!("Use one of: {}.", ids.join(", "))
+                    },
+                ));
+            };
+            wish_control::scaffold::create_from_template(path, &name, &command, &found.path)?
+        }
+    };
     Ok(if as_json {
         json!({ "ok": true, "root": dir, "name": name, "files": written, "mcp_command": command })
             .to_string()
@@ -203,7 +226,7 @@ pub fn shortcut(
     args: &Value,
     context: &ToolContext,
     as_json: bool,
-    human: fn(&Value) -> String,
+    human: &dyn Fn(&Value) -> String,
 ) -> Outcome {
     let value = match open(context) {
         Ok(mut workspace) => workspace.call(
@@ -379,7 +402,7 @@ pub fn describe(args: &crate::args::DescribeArgs, as_json: bool) -> Outcome {
         &tool_args,
         &context,
         as_json,
-        describe_text,
+        &describe_text,
     )
 }
 
@@ -511,15 +534,191 @@ fn serve_mcp_http(server: &mut wish_mcp::Server, address: &str) -> std::process:
     }
 }
 
-/// Text for a `script_build` answer.
-pub fn build_text(answer: &Value) -> String {
+/// Text for a `project_export` answer.
+pub fn export_text(answer: &Value) -> String {
+    format!(
+        "Exported to {} ({} files, {} bytes). Run {} to play; zip the folder to share it.",
+        answer["folder"].as_str().unwrap_or("?"),
+        answer["files"],
+        answer["bytes"],
+        answer["program"].as_str().unwrap_or("?"),
+    )
+}
+
+/// Text for an `engines` answer (`wen engines`).
+pub fn engines_text(answer: &Value) -> String {
+    let mut text = String::new();
+    let dry = answer["dry_run"] == true;
+    let row = |engine: &Value| {
+        format!(
+            "{}  {}  ({})",
+            engine["version"].as_str().unwrap_or("?"),
+            engine["folder"].as_str().unwrap_or("?"),
+            engine["source"].as_str().unwrap_or("?"),
+        )
+    };
+    for entry in answer["diagnostics"].as_array().into_iter().flatten() {
+        if let Ok(problem) = serde_json::from_value::<Diagnostic>(entry.clone()) {
+            text.push_str(&format!("{problem}\n"));
+        }
+    }
+    if let Some(all) = answer["engines"].as_array() {
+        for engine in all {
+            text.push_str(&format!("  {}\n", row(engine)));
+        }
+    }
+    let choice = if answer["opens_with"].is_object() {
+        Some(answer)
+    } else {
+        answer.get("project").filter(|p| p.is_object())
+    };
+    if let Some(choice) = choice {
+        text.push_str(&format!(
+            "The project was made with {}; it opens with {} ({}).\n",
+            choice["project_engine"]
+                .as_str()
+                .unwrap_or("an unknown version"),
+            row(&choice["opens_with"]),
+            choice["fit"].as_str().unwrap_or("?"),
+        ));
+    }
+    if answer["engine"].is_object() {
+        let verb = if answer.get("trash").is_some() {
+            if dry { "Would remove" } else { "Removed" }
+        } else if answer["known"] == true {
+            "Already known:"
+        } else if dry {
+            "Would add"
+        } else {
+            "Added"
+        };
+        text.push_str(&format!("{verb} {}\n", row(&answer["engine"])));
+        if let Some(trash) = answer["trash"].as_str() {
+            text.push_str(&format!("  (moved to {trash})\n"));
+        }
+    }
+    text
+}
+
+/// Text for a `packages` answer (`wen pkg`).
+pub fn pkg_text(answer: &Value) -> String {
+    let mut text = String::new();
+    let line = |package: &Value| {
+        format!(
+            "  {} {}  {}",
+            package["id"].as_str().unwrap_or("?"),
+            package["version"]
+                .as_str()
+                .or(package["latest"].as_str())
+                .unwrap_or("-"),
+            package["name"].as_str().unwrap_or(""),
+        )
+    };
+    let dry = answer["dry_run"] == true;
+    if let Some(found) = answer["packages"].as_array() {
+        if found.is_empty() {
+            text.push_str("No package in the index matches.\n");
+        }
+        for package in found {
+            let mut row = line(package);
+            let installed = &package["installed"];
+            for scope in ["project", "user"] {
+                if let Some(version) = installed[scope].as_str() {
+                    row.push_str(&format!("  [{scope} {version}]"));
+                }
+            }
+            for scope in ["project", "user"] {
+                if package["update"][scope] == true {
+                    row.push_str(&format!("  ({scope} update waiting)"));
+                }
+            }
+            text.push_str(&row);
+            text.push('\n');
+        }
+    } else if let Some(updated) = answer["updated"].as_array() {
+        for change in updated {
+            text.push_str(&format!(
+                "{} {} {} -> {}\n",
+                if dry { "Would update" } else { "Updated" },
+                change["id"].as_str().unwrap_or("?"),
+                change["from"].as_str().unwrap_or("?"),
+                change["to"].as_str().unwrap_or("?"),
+            ));
+        }
+        let current = answer["current"].as_array().map_or(0, Vec::len);
+        let missing = answer["not_in_index"].as_array().map_or(0, Vec::len);
+        text.push_str(&format!(
+            "{} updated, {current} already current, {missing} not in the index.\n",
+            updated.len()
+        ));
+    } else if answer["project"].is_array() || answer["user"].is_array() {
+        for scope in ["project", "user"] {
+            let list = answer[scope].as_array().cloned().unwrap_or_default();
+            text.push_str(&format!(
+                "{} packages: {}\n",
+                if scope == "project" {
+                    "Project"
+                } else {
+                    "Your"
+                },
+                list.len()
+            ));
+            for package in &list {
+                text.push_str(&line(package));
+                text.push('\n');
+            }
+        }
+    } else if answer["package"].is_object() {
+        let package = &answer["package"];
+        let what = if dry {
+            "Would install"
+        } else if answer["installed"] == true {
+            "Installed"
+        } else {
+            "Package"
+        };
+        text.push_str(&format!(
+            "{what} {} {} ({}).\n",
+            package["id"].as_str().unwrap_or("?"),
+            package["version"].as_str().unwrap_or("?"),
+            package["license"].as_str().unwrap_or("?"),
+        ));
+        if let Some(replaced) = answer["replaces"].as_str() {
+            text.push_str(&format!(
+                "It replaces {replaced} (the old one goes to the trash).\n"
+            ));
+        }
+    } else if answer["removed"] == true {
+        text.push_str(&format!(
+            "Removed {}; it is in {}.\n",
+            answer["id"].as_str().unwrap_or("?"),
+            answer["trash"].as_str().unwrap_or("the trash"),
+        ));
+    } else if answer["lock"].is_object() {
+        text.push_str(if dry {
+            "The lock would be written.\n"
+        } else {
+            "wish.lock written.\n"
+        });
+    }
+    for entry in answer["diagnostics"].as_array().into_iter().flatten() {
+        if let Ok(problem) = serde_json::from_value::<Diagnostic>(entry.clone()) {
+            text.push_str(&format!("{problem}\n"));
+        }
+    }
+    text.trim_end().to_owned()
+}
+
+/// Text for a `script_build` answer. The answer carries no duration
+/// (ADR-027, rule 2): `seconds` is what the command line measured around the
+/// call.
+pub fn build_text(answer: &Value, seconds: f64) -> String {
     let mut text = String::new();
     for entry in answer["diagnostics"].as_array().into_iter().flatten() {
         if let Ok(problem) = serde_json::from_value::<Diagnostic>(entry.clone()) {
             text.push_str(&format!("{problem}\n"));
         }
     }
-    let seconds = answer["seconds"].as_f64().unwrap_or(0.0);
     if answer["passed"] == true {
         let systems = answer["systems"]
             .as_array()
@@ -689,9 +888,91 @@ $results | ConvertTo-Json | Out-File C:\result\result.json
 "`n== done" | Out-File $log -Append
 "#;
 
+/// The engine's icon as a Windows `.ico` (for shortcuts): the mark on its
+/// tile at 16, 24, 32, 48, 64 and 256 pixels, each stored as a PNG.
+pub fn icon_file() -> wish_core::Result<Vec<u8>> {
+    let sizes: [u16; 6] = [16, 24, 32, 48, 64, 256];
+    let mut pictures = Vec::new();
+    for size in sizes {
+        let (pixels, width, height) = wish_editor::window_icon(size);
+        let png = wish_render::RgbaImage {
+            width,
+            height,
+            pixels,
+        }
+        .to_png()?;
+        pictures.push((size, png));
+    }
+    let count = u16::try_from(pictures.len()).unwrap_or(u16::MAX);
+    let mut ico = Vec::new();
+    // The header: reserved, type 1 (icon), how many.
+    ico.extend_from_slice(&0u16.to_le_bytes());
+    ico.extend_from_slice(&1u16.to_le_bytes());
+    ico.extend_from_slice(&count.to_le_bytes());
+    let mut offset = 6 + 16 * pictures.len();
+    for (size, png) in &pictures {
+        // 256 is written as 0.
+        let side = u8::try_from(*size).unwrap_or(0);
+        ico.extend_from_slice(&[side, side, 0, 0]);
+        ico.extend_from_slice(&1u16.to_le_bytes());
+        ico.extend_from_slice(&32u16.to_le_bytes());
+        ico.extend_from_slice(&u32::try_from(png.len()).unwrap_or(u32::MAX).to_le_bytes());
+        ico.extend_from_slice(&u32::try_from(offset).unwrap_or(u32::MAX).to_le_bytes());
+        offset += png.len();
+    }
+    for (_, png) in &pictures {
+        ico.extend_from_slice(png);
+    }
+    Ok(ico)
+}
+
+/// What `wen package` writes into its folder: the only names it replaces
+/// when it packages into the same folder again.
+const PACKAGE_ENTRIES: &[&str] = &[
+    "wen.exe",
+    "wen",
+    "wish_player.exe",
+    "wish_player",
+    "wish-engine.exe",
+    "wish-engine",
+    "wish-engine.ico",
+    wish_control::engines::ENGINE_FILE,
+    "packages",
+    "sdk",
+    "toolchain",
+    "templates",
+    "clean-test.ps1",
+    "clean-test.wsb",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+    "THIRD_PARTY_LICENSES.md",
+];
+
+/// The SDK's compile-time macro libraries (`sdk/host/*.dll`) that need the
+/// Visual C++ runtime DLL, by name.
+fn macros_needing_c_runtime(sdk: &std::path::Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(sdk.join("host"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".dll"))
+        .filter(|entry| {
+            wish_control::pe::needs_c_runtime_dll(&std::fs::read(entry.path()).unwrap_or_default())
+        })
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
 /// `wen package`: a folder with everything a machine without developer
-/// tools needs to build and run game code (engine development).
+/// tools needs to build and run game code (engine development), and beside
+/// it the release archive (`.zip` on Windows, `.tar.gz` elsewhere) and
+/// `SHA256SUMS` (M12 release pipeline). What is written depends on the host:
+/// the icon, the Windows Sandbox trial and the C runtime checks are
+/// Windows's.
 pub fn package(out: Option<&str>, as_json: bool) -> wish_core::Result<String> {
+    let windows = cfg!(windows);
     let exe = std::env::current_exe().map_err(|error| {
         Diagnostic::error(
             "package_failed",
@@ -703,7 +984,6 @@ pub fn package(out: Option<&str>, as_json: bool) -> wish_core::Result<String> {
         .parent()
         .map(std::path::Path::to_path_buf)
         .unwrap_or_default();
-    let out = out.map_or_else(|| beside.join("package"), std::path::PathBuf::from);
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml");
     if !manifest.is_file() {
         return Err(Diagnostic::error(
@@ -719,124 +999,252 @@ pub fn package(out: Option<&str>, as_json: bool) -> wish_core::Result<String> {
             "Check that the package folder can be written to.",
         )
     };
-    wish_script::build::clear_output_folder(
-        &out,
-        &[
-            "wen.exe",
-            "wen",
-            "sdk",
-            "toolchain",
-            "clean-test.ps1",
-            "clean-test.wsb",
-        ],
-    )?;
+    let out = out.map_or_else(|| beside.join("package"), std::path::PathBuf::from);
+    let out = std::path::absolute(&out).map_err(|e| failed("find the package folder", e))?;
+    // The archive and its checksum go beside the package folder.
+    let into = out
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .ok_or_else(|| {
+            Diagnostic::error(
+                "package_failed",
+                format!("'{}' has no parent folder for the archive.", out.display()),
+                "Choose a folder inside another folder for --out.",
+            )
+        })?;
+    let time = wish_control::release::source_date_epoch()?;
+    wish_script::build::clear_output_folder(&out, PACKAGE_ENTRIES)?;
     std::fs::create_dir_all(&out).map_err(|e| failed("create the package folder", e))?;
     std::fs::copy(&exe, out.join(exe.file_name().unwrap_or_default()))
         .map_err(|e| failed("copy wen", e))?;
+    // The player exported games ship (M9): built beside wen.
+    let player_name = if cfg!(windows) {
+        "wish_player.exe"
+    } else {
+        "wish_player"
+    };
+    let mut warnings = Vec::new();
+    let player = beside.join(player_name);
+    if player.is_file() {
+        std::fs::copy(&player, out.join(player_name)).map_err(|e| failed("copy the player", e))?;
+    } else {
+        warnings.push(Diagnostic::warning(
+            "package_without_player",
+            "The player (wish_player) is not built beside wen, so the package cannot export games.",
+            "Build it first: cargo build --release -p wish_player (with the same flags as wen), then package again.",
+        ));
+    }
+    // The program a person starts (a shortcut, a double-click): on Windows
+    // without a console window, and with an icon for shortcuts. On Linux
+    // the same program, built for Linux; its desktop entry and icon need an
+    // install step that does not exist yet.
+    let launcher_name = if windows {
+        "wish-engine.exe"
+    } else {
+        "wish-engine"
+    };
+    let launcher = beside.join(launcher_name);
+    if launcher.is_file() {
+        std::fs::copy(&launcher, out.join(launcher_name))
+            .map_err(|e| failed("copy the launcher", e))?;
+    } else {
+        warnings.push(Diagnostic::warning(
+            "package_without_launcher",
+            if windows {
+                "The launcher (wish-engine) is not built beside wen, so starting the editor from a shortcut also opens a console window."
+            } else {
+                "The launcher (wish-engine) is not built beside wen, so the package has no program that starts the editor from a double-click."
+            },
+            "Build it first: cargo build -p wish_cli builds both (with the same profile and flags as wen), then package again.",
+        ));
+    }
+    if windows {
+        std::fs::write(out.join("wish-engine.ico"), icon_file()?)
+            .map_err(|e| failed("write the icon", e))?;
+    }
+    // The engine's own packages (themes, workspaces...): `packages/` of the
+    // repository, each copied as a package (hidden files left out).
+    let engine_packages = std::path::Path::new(&manifest)
+        .parent()
+        .map(|root| root.join("packages"))
+        .unwrap_or_default();
+    for entry in std::fs::read_dir(&engine_packages)
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
+        let from = entry.path();
+        if !from.join(wish_control::packages::MANIFEST).is_file() {
+            continue;
+        }
+        let to = out.join("packages").join(entry.file_name());
+        for file in wish_control::packages::package_files(&from)? {
+            let target = to.join(&file);
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| failed("create a package folder", e))?;
+            }
+            std::fs::copy(from.join(&file), &target).map_err(|e| failed("copy a package", e))?;
+        }
+    }
+    // The templates the welcome screen offers: the engine's examples.
+    let examples = std::path::Path::new(&manifest)
+        .parent()
+        .map(|root| root.join("examples"))
+        .unwrap_or_default();
+    let templates = wish_control::scaffold::templates(&examples);
+    for template in &templates {
+        wish_control::scaffold::copy_template(
+            &template.path,
+            &out.join("templates").join(&template.id),
+        )?;
+    }
     let cargo = std::env::var_os("CARGO").map_or_else(|| "cargo".into(), std::path::PathBuf::from);
-    let sdk = wish_script::build::pack_sdk(
+    wish_script::build::pack_sdk(
         &cargo,
         &manifest,
         &beside.join("sdk-target"),
         &out.join("sdk"),
     )?;
+    // Without the path of this machine's compiler: the package uses its own
+    // (toolchain/, packed next).
+    let sdk = wish_script::build::sdk_for_package(&out.join("sdk"))?;
     let rustc = std::env::var_os("RUSTC").map_or_else(|| "rustc".into(), std::path::PathBuf::from);
     let toolchain = wish_script::build::pack_toolchain(&rustc, &out.join("toolchain"))?;
+    if !out
+        .join("toolchain")
+        .join(wish_script::build::TOOLCHAIN_NOTICES)
+        .is_dir()
+    {
+        warnings.push(Diagnostic::warning(
+            "package_without_compiler_notices",
+            "The packed compiler has no licence notices (share/doc/rust beside its bin folder), so the package ships it without them.",
+            "Package with a rustup toolchain (its rustc component installs them), or put the compiler's COPYRIGHT and licence files into toolchain/share/doc/rust before sharing the package.",
+        ));
+    }
+    // The engine's licences and the third-party notices.
+    wish_control::release::write_licenses(&out)?;
+    // The clean-machine trial (Windows Sandbox): a person's, on Windows.
     let result = out.with_file_name(format!(
         "{}-result",
         out.file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("package")
     ));
-    std::fs::create_dir_all(&result).map_err(|e| failed("create the result folder", e))?;
-    std::fs::write(out.join("clean-test.ps1"), SANDBOX_SCRIPT)
-        .map_err(|e| failed("write clean-test.ps1", e))?;
-    std::fs::write(out.join("clean-test.wsb"), sandbox_config(&out, &result))
-        .map_err(|e| failed("write clean-test.wsb", e))?;
+    if windows {
+        std::fs::create_dir_all(&result).map_err(|e| failed("create the result folder", e))?;
+        std::fs::write(out.join("clean-test.ps1"), SANDBOX_SCRIPT)
+            .map_err(|e| failed("write clean-test.ps1", e))?;
+        std::fs::write(out.join("clean-test.wsb"), sandbox_config(&out, &result))
+            .map_err(|e| failed("write clean-test.wsb", e))?;
+    }
     // A program linked against the Visual C++ runtime DLL does not start on a
     // Windows that lacks it; the package needs one linked statically.
-    let mut warnings = Vec::new();
-    let bytes = std::fs::read(&exe).unwrap_or_default();
-    let imports = imported_dlls(&bytes);
-    if imports
-        .iter()
-        .any(|dll| dll.to_ascii_lowercase().starts_with("vcruntime"))
-    {
-        warnings.push(Diagnostic::warning(
-            "package_needs_static_crt",
-            "This wen.exe needs VCRUNTIME140.dll, which a clean Windows may not have.",
-            "Build the packaged wen with the C runtime linked in: set RUSTFLAGS=-C target-feature=+crt-static, then cargo build -p wish_cli --release (into a separate --target-dir), and run that wen's `package`.",
-        ));
+    if windows {
+        let bytes = std::fs::read(&exe).unwrap_or_default();
+        if player.is_file()
+            && wish_control::pe::needs_c_runtime_dll(&std::fs::read(&player).unwrap_or_default())
+        {
+            warnings.push(Diagnostic::warning(
+                "package_needs_static_crt",
+                "This wish_player needs VCRUNTIME140.dll, so games exported with it may not start on a clean Windows.",
+                "Build the packaged player with the C runtime linked in: set RUSTFLAGS=-C target-feature=+crt-static, then cargo build -p wish_player --release (into the same --target-dir as wen).",
+            ));
+        }
+        if launcher.is_file()
+            && wish_control::pe::needs_c_runtime_dll(&std::fs::read(&launcher).unwrap_or_default())
+        {
+            warnings.push(Diagnostic::warning(
+                "package_needs_static_crt",
+                "This wish-engine (the launcher) needs VCRUNTIME140.dll, so it may not start on a clean Windows.",
+                "Build it with the C runtime linked in: set RUSTFLAGS=-C target-feature=+crt-static, then cargo build -p wish_cli --release (into the same --target-dir as wen).",
+            ));
+        }
+        if wish_control::pe::needs_c_runtime_dll(&bytes) {
+            warnings.push(Diagnostic::warning(
+                "package_needs_static_crt",
+                "This wen.exe needs VCRUNTIME140.dll, which a clean Windows may not have.",
+                "Build the packaged wen with the C runtime linked in: set RUSTFLAGS=-C target-feature=+crt-static, then cargo build -p wish_cli --release (into a separate --target-dir), and run that wen's `package`.",
+            ));
+        }
+        // The packed compiler loads these to build game code.
+        let macros = macros_needing_c_runtime(&out.join("sdk"));
+        if !macros.is_empty() {
+            warnings.push(Diagnostic::warning(
+                "package_needs_static_crt",
+                format!(
+                    "The SDK's compile-time macros ({}) need VCRUNTIME140.dll, so game code may not build on a Windows without the Visual C++ runtime.",
+                    macros.join(", ")
+                ),
+                "Not fixed yet: cargo builds them for the host, where RUSTFLAGS does not reach when the SDK is built for wasm32 (docs/design/M12-release-pipeline.md, section 6). Until then such a machine needs the Visual C++ Redistributable.",
+            ));
+        }
     }
+    // What makes the folder an engine the Hub can list beside others:
+    // written last, so a package that stopped half way is not one.
+    let version = wish_control::packages::Version::engine();
+    std::fs::write(
+        out.join(wish_control::engines::ENGINE_FILE),
+        wish_control::engines::engine_file_text(version)?,
+    )
+    .map_err(|e| failed("write the engine file", e))?;
+    // The release archive of the finished folder, and its checksum.
+    let release = wish_control::release::write(
+        &out,
+        &into,
+        &wish_control::release::archive_stem(&version.to_string()),
+        wish_control::archive::Format::for_host(),
+        time,
+    )?;
     let toolchain_mib = toolchain["bytes"].as_u64().unwrap_or(0) / (1024 * 1024);
     Ok(if as_json {
         serde_json::json!({
             "out": out.display().to_string(),
             "sdk": sdk,
             "toolchain": toolchain,
-            "sandbox": out.join("clean-test.wsb").display().to_string(),
-            "result": result.display().to_string(),
+            "archive": release.to_json(),
+            "sandbox": windows.then(|| out.join("clean-test.wsb").display().to_string()),
+            "result": windows.then(|| result.display().to_string()),
             "diagnostics": warnings,
         })
         .to_string()
     } else {
         let mut text: String = warnings.iter().map(|w| format!("{w}\n")).collect();
         text.push_str(&format!(
-            "Package written to {} (toolchain {toolchain_mib} MiB, {}).\nClean-machine test: open {} in Windows Sandbox; the result appears in {}.",
+            "Package written to {} (toolchain {toolchain_mib} MiB, {}).\nArchive: {} ({} MiB), SHA-256 {} (in {}).",
             out.display(),
             toolchain["rustc"].as_str().unwrap_or("?"),
-            out.join("clean-test.wsb").display(),
-            result.display()
+            release.archive.display(),
+            release.bytes / (1024 * 1024),
+            release.sha256,
+            release.sums.display(),
         ));
+        if windows {
+            text.push_str(&format!(
+                "\nClean-machine test: open {} in Windows Sandbox; the result appears in {}.",
+                out.join("clean-test.wsb").display(),
+                result.display()
+            ));
+        }
         text
     })
 }
 
-/// The DLLs a Windows program imports, read from its PE import table (an
-/// empty list for anything that is not a PE file).
-fn imported_dlls(bytes: &[u8]) -> Vec<String> {
-    let u16_at = |at: usize| -> Option<usize> {
-        Some(usize::from(u16::from_le_bytes(
-            bytes.get(at..at + 2)?.try_into().ok()?,
-        )))
-    };
-    let u32_at = |at: usize| -> Option<usize> {
-        usize::try_from(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?)).ok()
-    };
-    let read = || -> Option<Vec<String>> {
-        let pe = u32_at(0x3c)?;
-        if bytes.get(pe..pe + 4)? != b"PE\0\0" {
-            return None;
+#[cfg(test)]
+mod icon_tests {
+    #[test]
+    fn the_icon_file_holds_six_pngs_of_the_mark() {
+        let ico = super::icon_file().unwrap();
+        assert_eq!(&ico[0..6], &[0, 0, 1, 0, 6, 0]);
+        let mut sides = Vec::new();
+        for entry in 0..6 {
+            let at = 6 + entry * 16;
+            sides.push(ico[at]);
+            let size = u32::from_le_bytes(ico[at + 8..at + 12].try_into().unwrap()) as usize;
+            let offset = u32::from_le_bytes(ico[at + 12..at + 16].try_into().unwrap()) as usize;
+            assert_eq!(&ico[offset + 1..offset + 4], b"PNG");
+            assert!(offset + size <= ico.len());
         }
-        let sections = u16_at(pe + 6)?;
-        let optional = pe + 24;
-        let optional_size = u16_at(pe + 20)?;
-        // PE32+ (0x20b) keeps the data directories 16 bytes further on.
-        let directories = optional + if u16_at(optional)? == 0x20b { 112 } else { 96 };
-        let import_rva = u32_at(directories + 8)?;
-        let table = optional + optional_size;
-        let to_offset = |rva: usize| -> Option<usize> {
-            (0..sections).find_map(|i| {
-                let header = table + i * 40;
-                let start = u32_at(header + 12)?;
-                let size = u32_at(header + 8)?.max(u32_at(header + 16)?);
-                let raw = u32_at(header + 20)?;
-                (rva >= start && rva < start + size).then(|| raw + rva - start)
-            })
-        };
-        let mut names = Vec::new();
-        let mut descriptor = to_offset(import_rva)?;
-        while names.len() < 256 {
-            let name_rva = u32_at(descriptor + 12)?;
-            if name_rva == 0 {
-                break;
-            }
-            let at = to_offset(name_rva)?;
-            let end = bytes.get(at..)?.iter().position(|b| *b == 0)?;
-            names.push(String::from_utf8_lossy(&bytes[at..at + end]).to_string());
-            descriptor += 20;
-        }
-        Some(names)
-    };
-    read().unwrap_or_default()
+        assert_eq!(sides, [16, 24, 32, 48, 64, 0]);
+    }
 }

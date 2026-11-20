@@ -25,6 +25,47 @@ pub struct Task {
     pub files: bool,
 }
 
+/// What every task can do, whether written in code (the open set) or read
+/// from a task file (the held-out set, `held_out.rs`).
+pub trait EvalTask {
+    fn id(&self) -> &str;
+    fn prompt(&self) -> &str;
+    fn files(&self) -> bool;
+    fn setup(&self, dir: &Path) -> Result<(), String>;
+    fn baseline(&self, probe: &mut Probe) -> Result<Value, String>;
+    fn check(&self, probe: &mut Probe, dir: &Path, baseline: &Value) -> Verdict;
+    fn reference(&self, probe: &mut Probe) -> Result<(), String>;
+    /// The change a second agent is asked to make, if the task has one.
+    fn follow_up(&self) -> Option<&dyn crate::followups::FollowUpTask>;
+}
+
+impl EvalTask for Task {
+    fn id(&self) -> &str {
+        self.id
+    }
+    fn prompt(&self) -> &str {
+        self.prompt
+    }
+    fn files(&self) -> bool {
+        self.files
+    }
+    fn setup(&self, dir: &Path) -> Result<(), String> {
+        (self.setup)(dir)
+    }
+    fn baseline(&self, probe: &mut Probe) -> Result<Value, String> {
+        (self.baseline)(probe)
+    }
+    fn check(&self, probe: &mut Probe, dir: &Path, baseline: &Value) -> Verdict {
+        (self.check)(probe, dir, baseline)
+    }
+    fn reference(&self, probe: &mut Probe) -> Result<(), String> {
+        (self.reference)(probe)
+    }
+    fn follow_up(&self) -> Option<&dyn crate::followups::FollowUpTask> {
+        crate::followups::for_task(self.id).map(|f| f as &dyn crate::followups::FollowUpTask)
+    }
+}
+
 fn edit(probe: &mut Probe, ops: Value) -> Result<(), String> {
     probe.call("edit_apply", json!({ "ops": ops })).map(|_| ())
 }
@@ -282,7 +323,10 @@ fn crate_setup(dir: &Path) -> Result<(), String> {
     std::fs::create_dir_all(dir.join("prefabs")).map_err(|e| e.to_string())?;
     std::fs::write(
         dir.join(CRATE_PREFAB),
-        "{\n  \"entities\": {\n    \"root\": {\n      \"components\": {\n        \"Material\": {\n          \"base_color\": [0.6, 0.4, 0.2, 1]\n        },\n        \"Primitive\": {\n          \"shape\": \"Cube\"\n        },\n        \"Transform\": {}\n      }\n    }\n  },\n  \"format\": 1\n}\n",
+        format!(
+            "{{\n  \"entities\": {{\n    \"root\": {{\n      \"components\": {{\n        \"Material\": {{\n          \"base_color\": [0.6, 0.4, 0.2, 1]\n        }},\n        \"Primitive\": {{\n          \"shape\": \"Cube\"\n        }},\n        \"Transform\": {{}}\n      }}\n    }}\n  }},\n  \"format\": {}\n}}\n",
+            wish_control::SCENE_FORMAT
+        ),
     )
     .map_err(|e| e.to_string())
 }
@@ -655,7 +699,7 @@ pub fn all() -> Vec<Task> {
     vec![
         Task {
             id: "01_red_cube",
-            prompt: "Sahnenin ortasına, zeminin üstünde duran kırmızı bir küp koy. Kameradan görünsün.",
+            prompt: "Put a red cube in the middle of the scene, standing on the ground. It should be visible from the camera.",
             setup: plain,
             baseline: nothing,
             check: cube_check,
@@ -664,7 +708,7 @@ pub fn all() -> Vec<Task> {
         },
         Task {
             id: "02_stairs",
-            prompt: "Üç platformlu basit bir bölüm kur: platformlar merdiven gibi yükselsin; her biri bir öncekinden en az 1 m yüksekte ve yatayda öncekine 4 m'den yakın olsun ki zıplanabilsin. Üçü de kameradan görünsün.",
+            prompt: "Build a simple level with three platforms: the platforms rise like stairs; each one is at least 1 m higher than the previous one and closer than 4 m to it horizontally, so that it can be jumped to. All three should be visible from the camera.",
             setup: plain,
             baseline: nothing,
             check: stairs_check,
@@ -673,7 +717,7 @@ pub fn all() -> Vec<Task> {
         },
         Task {
             id: "03_sunset",
-            prompt: "Işığı gün batımı gibi yap: güneş ufka yakın, alçak bir açıdan gelsin (ufkun en çok 20 derece üstünden) ve rengi turuncu olsun; gökyüzünün ufku da sıcak (turuncu ya da kırmızı) renkte olsun.",
+            prompt: "Make the light look like a sunset: the sun should be close to the horizon and come in at a low angle (at most 20 degrees above the horizon), and its color should be orange; the horizon of the sky should also be a warm color (orange or red).",
             setup: plain,
             baseline: nothing,
             check: sunset_check,
@@ -682,7 +726,7 @@ pub fn all() -> Vec<Task> {
         },
         Task {
             id: "04_frame_statue",
-            prompt: "Kamerayı 'statue' adlı nesneye bakacak şekilde konumlandır: nesne görüntünün ortasına yakın olsun ve görüntünün en az %5'ini kaplasın. Statue'yu taşıma.",
+            prompt: "Position the camera so that it looks at the entity named 'statue': the entity should be near the middle of the picture and cover at least 5% of the picture. Do not move the statue.",
             setup: statue_setup,
             baseline: statue_baseline,
             check: framing_check,
@@ -691,7 +735,7 @@ pub fn all() -> Vec<Task> {
         },
         Task {
             id: "05_crate_row",
-            prompt: "prefabs/crate.prefab.json prefab'ından beş örnek yerleştir: x ekseni boyunca, aralarında 2 m olacak şekilde tek sıra halinde, hepsi zeminin üstünde dursun.",
+            prompt: "Place five instances of the prefab prefabs/crate.prefab.json: in a single row along the x axis, 2 m apart, all standing on the ground.",
             setup: crate_setup,
             baseline: nothing,
             check: row_check,
@@ -700,7 +744,7 @@ pub fn all() -> Vec<Task> {
         },
         Task {
             id: "06_hidden_lamp",
-            prompt: "Sahnedeki 'lamp' kameradan görünmüyor. Nedenini bul ve onu görünür hale getir; başka hiçbir varlığı değiştirme.",
+            prompt: "The 'lamp' in the scene is not visible from the camera. Find out why and make it visible; do not change any other entity.",
             setup: lamp_setup,
             baseline: others_baseline,
             check: lamp_check,
@@ -709,7 +753,7 @@ pub fn all() -> Vec<Task> {
         },
         Task {
             id: "07_who_falls",
-            prompt: "Simülasyonu 120 tick çalıştır. Bu süre içinde Position.value.y değeri sıfırın altına inen varlığı bul ve sahnede o varlığa 'falls' notunu ekle. Diğer varlıklara not ekleme.",
+            prompt: "Run the simulation for 120 ticks. Find the entity whose Position.value.y goes below zero during that time, and add the note 'falls' to that entity in the scene. Do not add notes to the other entities.",
             setup: falling_setup,
             baseline: nothing,
             check: falling_check,
@@ -718,7 +762,7 @@ pub fn all() -> Vec<Task> {
         },
         Task {
             id: "08_behind_wall",
-            prompt: "'target' adlı küre kameradan görünmüyor, önünde bir duvar var. Duvarı silmeden ve target'ı taşımadan target'ı kameradan görünür yap.",
+            prompt: "The sphere named 'target' is not visible from the camera: there is a wall in front of it. Make target visible from the camera without deleting the wall and without moving target.",
             setup: wall_setup,
             baseline: target_baseline,
             check: wall_check,
@@ -727,7 +771,7 @@ pub fn all() -> Vec<Task> {
         },
         Task {
             id: "09_import_model",
-            prompt: "assets/statue.glb modelini sahneye ekle: zeminin üstüne otursun (içine gömülmesin, havada da durmasın) ve kameradan görünsün.",
+            prompt: "Add the model assets/statue.glb to the scene: it should sit on the ground (not sunk into it and not floating in the air) and be visible from the camera.",
             setup: model_setup,
             baseline: nothing,
             check: model_check,
@@ -736,7 +780,7 @@ pub fn all() -> Vec<Task> {
         },
         Task {
             id: "10_night_scene",
-            prompt: "scenes/night.scene.json adında ikinci bir sahne oluştur: ana sahnedeki kamera ve zemin aynen olsun, güneş yerine loş, mavimsi bir ay ışığı olsun (tek bir DirectionalLight, en çok 1000 lux). Ana sahneyi değiştirme.",
+            prompt: "Create a second scene named scenes/night.scene.json: it should have the same camera and ground as the main scene, and instead of the sun, a dim, bluish moonlight (a single DirectionalLight, at most 1000 lux). Do not change the main scene.",
             setup: plain,
             baseline: main_scene_baseline,
             check: night_check,
@@ -745,7 +789,7 @@ pub fn all() -> Vec<Task> {
         },
         Task {
             id: "11_walk_code",
-            prompt: "'player' adlı küpü oyuncu yürütebilsin: oyun kodunu (scripts/src/lib.rs) yaz. input.json'daki 'move' eylemi oyuncuyu zeminde saniyede 4 metre yürütsün (move'un x'i sağa, +X; y'si ileri, yani -Z yönü); girdi yokken dursun. script_build ile derle ve davranışı tests/ altına yazacağın bir senaryo testiyle kanıtla.",
+            prompt: "Make the cube named 'player' walkable by the player: write the game code (scripts/src/lib.rs). The 'move' action in input.json should walk the player on the ground at 4 meters per second (move's x is right, +X; its y is forward, that is the -Z direction); with no input it should stop. Build it with script_build and prove the behaviour with a scenario test that you write under tests/.",
             setup: crate::game_tasks::walk_setup,
             baseline: nothing,
             check: crate::game_tasks::walk_check,
@@ -754,7 +798,7 @@ pub fn all() -> Vec<Task> {
         },
         Task {
             id: "12_collect_game",
-            prompt: "Bir toplama oyunu yap. Sahnede 'player' ve üç para var (coin_a, coin_b, coin_c). Oyun kodunda (scripts/src/lib.rs) Coin bileşeni, Score kaynağı (points alanı) ve GameState kaynağı (won alanı) olsun. Oyuncu input.json'daki 'move' eylemiyle saniyede 4 metre yürüsün (x sağa +X, y ileri -Z). Oyuncu bir paraya 0,8 metreden yakın gelince para yok olsun ve Score.points bir artsın; hiç para kalmayınca GameState.won true olsun. Sahnedeki paralara Coin bileşenini ekle. Oyunun kazanılabildiğini tests/ altına yazacağın bir senaryo testiyle kanıtla.",
+            prompt: "Make a collecting game. The scene has 'player' and three coins (coin_a, coin_b, coin_c). In the game code (scripts/src/lib.rs) there should be a Coin component, a Score resource (field points) and a GameState resource (field won). The player walks at 4 meters per second with the 'move' action in input.json (x right +X, y forward -Z). When the player comes closer than 0.8 meters to a coin, the coin disappears and Score.points goes up by one; when no coins are left, GameState.won becomes true. Add the Coin component to the coins in the scene. Prove that the game can be won with a scenario test that you write under tests/.",
             setup: crate::game_tasks::collect_setup,
             baseline: nothing,
             check: crate::game_tasks::collect_check,

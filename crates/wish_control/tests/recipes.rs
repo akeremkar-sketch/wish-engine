@@ -174,11 +174,13 @@ fn recipes() -> Vec<(String, Vec<Block>)> {
 #[test]
 fn every_recipe_builds_and_applies() {
     let all = recipes();
-    assert!(all.len() >= 8, "{} recipes", all.len());
+    assert!(all.len() >= 9, "{} recipes", all.len());
     let mut built = 0;
     let mut applied = 0;
     let mut tests = 0;
     let mut played = 0;
+    let mut called = 0;
+    let mut drawn = 0;
     for (index, (title, blocks)) in all.iter().enumerate() {
         let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("recipe-{index}"));
         let _ = std::fs::remove_dir_all(&dir);
@@ -209,6 +211,20 @@ fn every_recipe_builds_and_applies() {
                     assert_eq!(answer["ok"], true, "'{title}': {answer}");
                     applied += 1;
                 }
+                "json calls" => {
+                    let calls: Value = serde_json::from_str(&block.text)
+                        .unwrap_or_else(|e| panic!("'{title}': the calls are not JSON: {e}"));
+                    for call in calls.as_array().expect("a list of calls") {
+                        let tool = call["tool"].as_str().expect("a tool name");
+                        let answer = ws.call(tool, &call["args"], &agent);
+                        assert_eq!(answer["ok"], true, "'{title}': {tool}: {answer}");
+                        assert!(
+                            answer.get("diagnostics").is_none(),
+                            "'{title}': {tool}: {answer}"
+                        );
+                    }
+                    called += 1;
+                }
                 "json test" => {
                     let test: Value = serde_json::from_str(&block.text)
                         .unwrap_or_else(|e| panic!("'{title}': the test is not JSON: {e}"));
@@ -235,6 +251,74 @@ fn every_recipe_builds_and_applies() {
                     .all(|d| d["severity"] != "error"),
             "'{title}': {stepped}"
         );
+        // A recipe about looks is drawn: nothing it names is missing, and
+        // its pictures are on the surfaces.
+        if title.starts_with("A texture on a box") {
+            ws.set_software(true);
+            assert_eq!(checked["warnings"], 0, "'{title}': {checked}");
+            let shot = ws.call(
+                "capture_frame",
+                &json!({ "width": 160, "height": 90 }),
+                &agent,
+            );
+            assert_eq!(shot["ok"], true, "'{title}': {shot}");
+            assert!(shot.get("diagnostics").is_none(), "'{title}': {shot}");
+            let picture = wish_render::RgbaImage::from_png(
+                &wish_control::render::base64_decode(shot["image"]["data"].as_str().unwrap())
+                    .unwrap(),
+            )
+            .unwrap();
+            // The tiles' two colours are both on the ground (a flat colour
+            // would be one), and the crate's picture is on the crate.
+            let mut colours = std::collections::BTreeSet::new();
+            for y in (60..90).step_by(2) {
+                for x in (0..160).step_by(2) {
+                    let [r, g, b, _] = picture.pixel(x, y).unwrap();
+                    colours.insert((r / 64, g / 64, b / 64));
+                }
+            }
+            assert!(colours.len() >= 2, "'{title}': the ground is one colour");
+            let info = ws.call(
+                "asset_info",
+                &json!({ "path": "assets/textures/tile.png" }),
+                &agent,
+            );
+            assert_eq!(
+                info["used_by"],
+                json!([
+                    "assets/materials/crate.mat.json",
+                    "assets/materials/tiles.mat.json"
+                ]),
+                "{info}"
+            );
+            drawn += 1;
+        }
+        // The see-through ones are drawn see-through, and said to be.
+        if title.starts_with("A glass window") {
+            ws.set_software(true);
+            assert_eq!(checked["warnings"], 0, "'{title}': {checked}");
+            let shot = ws.call(
+                "capture_frame",
+                &json!({ "width": 160, "height": 90 }),
+                &agent,
+            );
+            assert_eq!(shot["ok"], true, "'{title}': {shot}");
+            assert!(shot.get("diagnostics").is_none(), "'{title}': {shot}");
+            assert_eq!(shot["stats"]["blended_surfaces"], 2, "'{title}': {shot}");
+            let seen = ws.call(
+                "describe_view",
+                &json!({ "width": 160, "height": 90 }),
+                &agent,
+            );
+            let window = seen["visible"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|entry| entry["entity"] == "window")
+                .unwrap_or_else(|| panic!("'{title}': the window is not visible: {seen}"));
+            assert_eq!(window["blended"], true, "'{title}': {seen}");
+            drawn += 1;
+        }
         // And it does what it says.
         if let Some((ops, test)) = behaviour(title) {
             if ops.as_array().is_some_and(|o| !o.is_empty()) {
@@ -252,8 +336,8 @@ fn every_recipe_builds_and_applies() {
         }
     }
     assert!(
-        built >= 6 && applied >= 7 && tests >= 1 && played >= 7,
-        "{built} {applied} {tests} {played}"
+        built >= 6 && applied >= 9 && tests >= 1 && played >= 7 && called >= 2 && drawn == 2,
+        "{built} {applied} {tests} {played} {called} {drawn}"
     );
 }
 

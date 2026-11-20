@@ -264,7 +264,15 @@ fn a_change_applies_to_every_selected_entity() {
 fn a_rotation_is_edited_in_degrees() {
     let (mut app, _dir) = app("rotation");
     select_ground(&mut app);
-    let yaw = named(&app, "y: 0.0 deg");
+    // The three angles, X Y Z from the left: the second is the yaw.
+    let mut angles: Vec<Rect> = app
+        .widgets()
+        .iter()
+        .filter(|w| w.value.as_deref().is_some_and(|v| v.ends_with(" deg")))
+        .map(|w| w.rect)
+        .collect();
+    angles.sort_by(|a, b| a.min.x.total_cmp(&b.min.x));
+    let yaw = angles[1];
     type_into(&mut app, yaw, "90");
     let rotation = component(&mut app, "ground", "Transform")["rotation"].clone();
     // 90 degrees about Y: [0, sin 45, 0, cos 45].

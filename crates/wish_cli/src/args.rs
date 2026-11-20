@@ -10,8 +10,8 @@ use wish_core::{Diagnostic, Result};
 /// The commands `wen` understands.
 pub const COMMANDS: &[&str] = &[
     "run", "bench", "schema", "mv", "check", "fmt", "migrate", "watch", "capture", "describe",
-    "shaders", "view", "edit", "call", "do", "new", "build", "play", "replay", "test", "sdk",
-    "package", "mcp", "examples", "help", "version",
+    "shaders", "view", "edit", "call", "do", "new", "build", "export", "play", "replay", "test",
+    "pkg", "engines", "sdk", "package", "mcp", "examples", "help", "version",
 ];
 
 /// A parsed command line.
@@ -52,6 +52,12 @@ pub enum Command {
         seed: u64,
         /// Measure game code (WebAssembly) against native systems instead.
         script: bool,
+        /// Measure drawing instead: `entities` surfaces, `ticks` frames.
+        render: bool,
+        /// With `render`: the picture's width and height.
+        size: (u32, u32),
+        /// With `render`: use the software adapter even if there is hardware.
+        software: bool,
     },
     /// Move an asset file or folder and update the scenes that refer to it.
     Move {
@@ -132,6 +138,46 @@ pub enum Command {
         /// Only check that it compiles.
         dry_run: bool,
     },
+    /// Export the game as a folder that runs without the engine (the
+    /// `project_export` tool).
+    Export {
+        /// The project folder.
+        root: Option<String>,
+        /// The folder's and program's name.
+        name: Option<String>,
+        /// Replace an earlier export of that name.
+        overwrite: bool,
+    },
+    /// Find, add, update and remove packages (the `packages` tool).
+    Pkg {
+        /// list, search, add, remove, update, lock, check or install.
+        action: String,
+        /// The words, id or folder after the action.
+        rest: Vec<String>,
+        /// The project folder.
+        root: Option<String>,
+        /// The package index's folder.
+        index: Option<String>,
+        /// A version requirement.
+        version: Option<String>,
+        /// The person's own packages instead of the project's.
+        user: bool,
+        /// Replace the installed version.
+        replace: bool,
+        /// Say what would happen without doing it.
+        dry_run: bool,
+    },
+    /// The engine versions on this computer (the `engines` tool).
+    Engines {
+        /// list, pick, add or remove.
+        action: String,
+        /// The engine's folder (add, remove) or a project's (pick).
+        folder: Option<String>,
+        /// The project folder (list: which engine opens it).
+        root: Option<String>,
+        /// Say what would happen without doing it.
+        dry_run: bool,
+    },
     /// Build a package for machines without developer tools (engine development).
     Package {
         /// Where to put it (default: `package` next to wen).
@@ -148,6 +194,8 @@ pub enum Command {
         dir: String,
         /// The project's name (default: the folder's name).
         name: Option<String>,
+        /// The template to start from (`islands`), else an empty project.
+        template: Option<String>,
     },
     /// Serve the tools over MCP on standard input and output.
     Mcp(ToolContext),
@@ -192,7 +240,8 @@ pub struct CaptureArgs {
     pub camera: Option<String>,
     /// Image width and height in pixels.
     pub size: (u32, u32),
-    /// What to draw: `lit`, `ids`, `depth`, `normals` or `wireframe`.
+    /// What to draw: `lit`, `ids`, `depth`, `normals`, `wireframe`,
+    /// `colliders`, `lights` or `shadow_cascades`.
     pub view: String,
     /// Use the software adapter.
     pub software: bool,
@@ -221,6 +270,9 @@ pub struct EditArgs {
     /// The interface's language (`tr`, `de`...); else the saved choice,
     /// `WISH_LANG` or the system's.
     pub lang: Option<String>,
+    /// Open the project with the engine version it was made with, if
+    /// another engine of this computer is that one (the launcher asks).
+    pub pick_engine: bool,
 }
 
 /// The options of `wen play`.
@@ -463,6 +515,9 @@ fn flags_of(command: &str) -> &'static [(&'static str, bool)] {
             ("--ticks", true),
             ("--seed", true),
             ("--script", false),
+            ("--render", false),
+            ("--size", true),
+            ("--software", false),
             ("--json", false),
         ],
         "schema" => &[("--example", true), ("--json", false)],
@@ -500,8 +555,14 @@ fn flags_of(command: &str) -> &'static [(&'static str, bool)] {
             ("--json", false),
         ],
         "shaders" => &[("--dir", true), ("--json", false)],
-        "new" => &[("--name", true), ("--json", false)],
+        "new" => &[("--name", true), ("--template", true), ("--json", false)],
         "build" => &[("--root", true), ("--dry-run", false), ("--json", false)],
+        "export" => &[
+            ("--root", true),
+            ("--name", true),
+            ("--overwrite", false),
+            ("--json", false),
+        ],
         "replay" => &[("--root", true), ("--json", false)],
         "test" => &[
             ("--root", true),
@@ -524,9 +585,20 @@ fn flags_of(command: &str) -> &'static [(&'static str, bool)] {
             ("--headless-frame", true),
             ("--out", true),
             ("--lang", true),
+            ("--pick-engine", false),
             ("--json", false),
         ],
         "sdk" => &[("--out", true), ("--json", false)],
+        "engines" => &[("--root", true), ("--dry-run", false), ("--json", false)],
+        "pkg" => &[
+            ("--root", true),
+            ("--index", true),
+            ("--version", true),
+            ("--user", false),
+            ("--replace", false),
+            ("--dry-run", false),
+            ("--json", false),
+        ],
         "package" => &[("--out", true), ("--json", false)],
         "view" => &[
             ("--example", true),
@@ -607,7 +679,7 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
         index += 1;
         if matches!(
             command,
-            "mv" | "check" | "fmt" | "migrate" | "new" | "test" | "replay"
+            "mv" | "check" | "fmt" | "migrate" | "new" | "test" | "replay" | "pkg" | "engines"
         ) && !argument.starts_with('-')
         {
             positional.push(argument);
@@ -681,20 +753,37 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
             scene: value_of("--scene").map(str::to_owned),
             root: value_of("--root").map(str::to_owned),
         },
-        "bench" => Command::Bench {
-            entities: value_of("--entities")
-                .map_or(Ok(100_000), |value| parse_number("--entities", value))?
-                .try_into()
-                .map_err(|_| {
-                    usage_error(
-                        "--entities is too large.".to_owned(),
-                        "Use at most 4294967294 entities.".to_owned(),
-                    )
-                })?,
-            ticks: value_of("--ticks").map_or(Ok(600), |value| parse_number("--ticks", value))?,
-            seed: value_of("--seed").map_or(Ok(0), |value| parse_number("--seed", value))?,
-            script: values.iter().any(|(flag, _)| *flag == "--script"),
-        },
+        "bench" => {
+            let script = values.iter().any(|(flag, _)| *flag == "--script");
+            let render = values.iter().any(|(flag, _)| *flag == "--render");
+            if script && render {
+                return Err(usage_error(
+                    "'wen bench' measures one thing at a time: --script or --render.".to_owned(),
+                    "Run it once with --script and once with --render.".to_owned(),
+                ));
+            }
+            // Drawing is measured on a few thousand surfaces and a second of
+            // frames; the core on many more entities and ticks.
+            let (entities, ticks) = if render { (2500, 60) } else { (100_000, 600) };
+            Command::Bench {
+                entities: value_of("--entities")
+                    .map_or(Ok(entities), |value| parse_number("--entities", value))?
+                    .try_into()
+                    .map_err(|_| {
+                        usage_error(
+                            "--entities is too large.".to_owned(),
+                            "Use at most 4294967294 entities.".to_owned(),
+                        )
+                    })?,
+                ticks: value_of("--ticks")
+                    .map_or(Ok(ticks), |value| parse_number("--ticks", value))?,
+                seed: value_of("--seed").map_or(Ok(0), |value| parse_number("--seed", value))?,
+                script,
+                render,
+                size: value_of("--size").map_or(Ok((1280, 720)), parse_size)?,
+                software: values.iter().any(|(flag, _)| *flag == "--software"),
+            }
+        }
         "schema" => Command::Schema {
             example: value_of("--example").map(str::to_owned),
         },
@@ -800,6 +889,7 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
             headless_frame: value_of("--headless-frame").map(str::to_owned),
             out: value_of("--out").map(str::to_owned),
             lang: value_of("--lang").map(str::to_owned),
+            pick_engine: values.iter().any(|(flag, _)| *flag == "--pick-engine"),
         }),
         "play" => Command::Play(PlayArgs {
             root: value_of("--root").map(str::to_owned),
@@ -814,12 +904,95 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
             root: value_of("--root").map(str::to_owned),
             dry_run: values.iter().any(|(flag, _)| *flag == "--dry-run"),
         },
+        "export" => Command::Export {
+            root: value_of("--root").map(str::to_owned),
+            name: value_of("--name").map(str::to_owned),
+            overwrite: values.iter().any(|(flag, _)| *flag == "--overwrite"),
+        },
         "package" => Command::Package {
             out: value_of("--out").map(str::to_owned),
         },
         "sdk" => Command::Sdk {
             out: value_of("--out").map(str::to_owned),
         },
+        "pkg" => {
+            const ACTIONS: &[&str] = &[
+                "list", "search", "add", "remove", "update", "lock", "check", "install",
+            ];
+            let action = positional.first().copied().unwrap_or("list");
+            if !ACTIONS.contains(&action) {
+                return Err(usage_error(
+                    format!("'{action}' is not a wen pkg action."),
+                    unknown_name_hint(action, ACTIONS),
+                )
+                .with_candidates(ACTIONS.iter().copied()));
+            }
+            let rest: Vec<String> = positional.iter().skip(1).map(|w| (*w).to_owned()).collect();
+            let needs = match action {
+                "add" | "remove" => Some("the package's id"),
+                "check" | "install" => Some("the package's folder"),
+                _ => None,
+            };
+            if let Some(what) = needs
+                && rest.len() != 1
+            {
+                return Err(usage_error(
+                    format!("'wen pkg {action}' needs {what}."),
+                    format!("Write it like: wen pkg {action} <{}>.", if action == "add" || action == "remove" { "id" } else { "folder" }),
+                ));
+            }
+            if matches!(action, "list" | "lock") && !rest.is_empty() {
+                return Err(usage_error(
+                    format!("'wen pkg {action}' takes no more words."),
+                    format!("Write just: wen pkg {action}."),
+                ));
+            }
+            if action == "update" && rest.len() > 1 {
+                return Err(usage_error(
+                    "'wen pkg update' takes at most one package id.".to_owned(),
+                    "Write: wen pkg update (every package) or wen pkg update <id>.".to_owned(),
+                ));
+            }
+            Command::Pkg {
+                action: action.to_owned(),
+                rest,
+                root: value_of("--root").map(str::to_owned),
+                index: value_of("--index").map(str::to_owned),
+                version: value_of("--version").map(str::to_owned),
+                user: values.iter().any(|(flag, _)| *flag == "--user"),
+                replace: values.iter().any(|(flag, _)| *flag == "--replace"),
+                dry_run: values.iter().any(|(flag, _)| *flag == "--dry-run"),
+            }
+        }
+        "engines" => {
+            const ACTIONS: &[&str] = &["list", "pick", "add", "remove"];
+            let action = positional.first().copied().unwrap_or("list");
+            if !ACTIONS.contains(&action) {
+                return Err(usage_error(
+                    format!("'{action}' is not a wen engines action."),
+                    unknown_name_hint(action, ACTIONS),
+                )
+                .with_candidates(ACTIONS.iter().copied()));
+            }
+            let rest: Vec<&str> = positional.iter().skip(1).copied().collect();
+            let most = if action == "list" { 0 } else { 1 };
+            if rest.len() > most || (matches!(action, "add" | "remove") && rest.is_empty()) {
+                return Err(usage_error(
+                    format!("'wen engines {action}' takes {}.", match action {
+                        "list" => "no more words",
+                        "pick" => "at most a project's folder",
+                        _ => "one engine folder",
+                    }),
+                    "Write it like: wen engines add C:/Wish/0.2.0, wen engines remove <folder>, wen engines pick <project>.".to_owned(),
+                ));
+            }
+            Command::Engines {
+                action: action.to_owned(),
+                folder: rest.first().map(|w| (*w).to_owned()),
+                root: value_of("--root").map(str::to_owned),
+                dry_run: values.iter().any(|(flag, _)| *flag == "--dry-run"),
+            }
+        }
         "new" => {
             if positional.len() != 1 {
                 return Err(usage_error(
@@ -830,6 +1003,7 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
             Command::New {
                 dir: positional[0].to_owned(),
                 name: value_of("--name").map(str::to_owned),
+                template: value_of("--template").map(str::to_owned),
             }
         }
         "migrate" => Command::Migrate {
@@ -926,6 +1100,41 @@ mod tests {
     }
 
     #[test]
+    fn parses_pkg_actions() {
+        assert_eq!(
+            parse(&args(
+                "pkg add com.example.dusk --version ^1 --user --dry-run"
+            ))
+            .unwrap()
+            .command,
+            Command::Pkg {
+                action: "add".to_owned(),
+                rest: vec!["com.example.dusk".to_owned()],
+                root: None,
+                index: None,
+                version: Some("^1".to_owned()),
+                user: true,
+                replace: false,
+                dry_run: true,
+            }
+        );
+        let Command::Pkg { action, rest, .. } =
+            parse(&args("pkg search dark theme")).unwrap().command
+        else {
+            panic!("pkg");
+        };
+        assert_eq!((action.as_str(), rest.len()), ("search", 2));
+        let Command::Pkg { action, .. } = parse(&args("pkg")).unwrap().command else {
+            panic!("pkg");
+        };
+        assert_eq!(action, "list");
+        let wrong = parse(&args("pkg instal x")).unwrap_err();
+        assert!(wrong.hint.contains("install"), "{wrong:?}");
+        assert!(parse(&args("pkg add")).is_err());
+        assert!(parse(&args("pkg lock now")).is_err());
+    }
+
+    #[test]
     fn parses_run_with_defaults_and_both_value_styles() {
         assert_eq!(
             parse(&args("run --example bounce --json")).unwrap(),
@@ -993,5 +1202,32 @@ mod tests {
 
         let valued_switch = parse(&args("run --json=yes")).unwrap_err();
         assert_eq!(valued_switch.message, "--json does not take a value.");
+    }
+
+    #[test]
+    fn parses_engines_actions() {
+        let Command::Engines { action, folder, .. } =
+            parse(&args("engines add C:/Wish/0.2.0 --dry-run"))
+                .unwrap()
+                .command
+        else {
+            panic!("engines");
+        };
+        assert_eq!(action, "add");
+        assert_eq!(folder.as_deref(), Some("C:/Wish/0.2.0"));
+        let Command::Engines { action, .. } = parse(&args("engines")).unwrap().command else {
+            panic!("engines");
+        };
+        assert_eq!(action, "list");
+        assert!(parse(&args("engines remove")).is_err());
+        assert!(parse(&args("engines list extra")).is_err());
+        assert!(parse(&args("engines adopt")).is_err());
+        let Command::Edit(edit) = parse(&args("edit --pick-engine --root game"))
+            .unwrap()
+            .command
+        else {
+            panic!("edit");
+        };
+        assert!(edit.pick_engine);
     }
 }

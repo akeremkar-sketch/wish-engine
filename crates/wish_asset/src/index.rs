@@ -13,15 +13,43 @@ use wish_core::{Diagnostic, Result};
 pub const SCRIPTS_FOLDER: &str = "scripts/";
 
 /// Folders of the project that are not assets: game code, scenario tests
-/// (and their golden images) and replays.
-pub const NON_ASSET_FOLDERS: &[&str] = &[SCRIPTS_FOLDER, "tests/", "replays/"];
+/// (and their golden images), replays, exported games and the game's design
+/// (`design/game.json` and the pictures of play-test notes, M9c).
+pub const NON_ASSET_FOLDERS: &[&str] = &[
+    SCRIPTS_FOLDER,
+    "tests/",
+    "replays/",
+    EXPORTS_FOLDER,
+    "design/",
+    "packages/",
+];
 
-/// Whether a file name is an engine document rather than an asset: a scene,
-/// a prefab or a meta file.
+/// Where exported games go (M9): copies of the project's files, not the
+/// project's own documents or assets.
+pub const EXPORTS_FOLDER: &str = "exports/";
+
+/// Whether a file name is an engine document: a scene, a prefab, a meta file
+/// or a material file. Documents are strict, canonical JSON with a format
+/// number, which `wen check`, `wen fmt` and `wen migrate` work on.
+///
+/// Scenes, prefabs and meta files are not assets. A material file is both a
+/// document and an asset ([`AssetIndex`] lists it), because scenes refer to
+/// it the way they refer to a model.
 pub fn is_document(name: &str) -> bool {
     [".scene.json", ".prefab.json", ".meta.json"]
         .iter()
         .any(|suffix| name.ends_with(suffix))
+        || crate::material::is_material(name)
+}
+
+/// Whether a project file is an asset: anything that is not a scene, a
+/// prefab or a meta file (a material file is one), outside the folders that
+/// hold no assets.
+fn is_asset(path: &str) -> bool {
+    (!is_document(path) || crate::material::is_material(path))
+        && !NON_ASSET_FOLDERS
+            .iter()
+            .any(|folder| path.starts_with(folder))
 }
 
 /// Whether a file name is a temporary file of an editor or of the engine's
@@ -67,6 +95,11 @@ pub(crate) fn walk_files(root: &Path) -> Result<Vec<(String, PathBuf)>> {
             if name.starts_with('.') || kind.is_symlink() || is_temporary(name) {
                 continue;
             }
+            // Exported games are copies, not part of the project: check,
+            // fmt, moves and the watcher leave them alone.
+            if folder == root && kind.is_dir() && format!("{name}/") == EXPORTS_FOLDER {
+                continue;
+            }
             if kind.is_dir() {
                 folders.push(path);
             } else if let Ok(relative) = path.strip_prefix(root) {
@@ -84,17 +117,17 @@ pub(crate) fn walk_files(root: &Path) -> Result<Vec<(String, PathBuf)>> {
     Ok(found)
 }
 
-/// Every engine document (scene, prefab or meta file) below `root`, as
-/// project-relative paths with their real paths, in path order.
+/// Every engine document (scene, prefab, meta or material file) below
+/// `root`, as project-relative paths with their real paths, in path order.
 pub fn documents(root: &Path) -> Result<Vec<(String, PathBuf)>> {
     Ok(walk_files(root)?
         .into_iter()
-        .filter(|(name, _)| is_document(name))
+        .filter(|(name, _)| is_document(name) && !name.starts_with(EXPORTS_FOLDER))
         .collect())
 }
 
-/// The asset files of a project: everything except hidden folders and
-/// engine documents.
+/// The asset files of a project: everything except hidden folders, scenes,
+/// prefabs and meta files. Material files are assets.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AssetIndex {
     files: BTreeSet<String>,
@@ -106,12 +139,7 @@ impl AssetIndex {
     pub fn scan(root: &Path) -> Result<Self> {
         let files = walk_files(root)?
             .into_iter()
-            .filter(|(path, _)| {
-                !is_document(path)
-                    && !NON_ASSET_FOLDERS
-                        .iter()
-                        .any(|folder| path.starts_with(folder))
-            })
+            .filter(|(path, _)| is_asset(path))
             .map(|(path, _)| path)
             .collect();
         Ok(Self { files })

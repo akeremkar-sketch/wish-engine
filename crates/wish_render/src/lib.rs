@@ -16,7 +16,7 @@
 //! Rendering is outside the determinism boundary: nothing here reads from or
 //! writes to the simulation.
 //!
-//! Design: `docs/design/M3-ilk-piksel.md`.
+//! Design: `docs/design/M3-first-pixel.md`.
 
 pub mod capture;
 mod cluster;
@@ -34,18 +34,20 @@ pub mod ui;
 
 pub use capture::{MAX_CAPTURE_SIZE, draw_probe};
 pub use components::{
-    Ambient, Camera, DirectionalLight, Exposure, Material, Model, Primitive, Shape, Sky,
+    AlphaMode, Ambient, AmbientSource, Antialiasing, Bloom, Camera, ColorGrading, DirectionalLight,
+    Exposure, Fog, Material, MaterialFile, Model, Primitive, RenderSettings, Shape, Sky,
 };
 pub use extract::{
-    CameraView, ColliderView, Draw, EmitterView, LightView, LocalLightView, MaterialData, Mesh,
-    RenderScene, SkyData, SpriteView, UiBoxView, UiTextView, extract,
+    CameraView, ColliderView, Draw, EmitterView, LightView, LocalLightView, Look, MaterialData,
+    Mesh, RenderScene, SkyData, SpriteView, SurfaceData, TEXTURE_SLOTS, UiBoxView, UiTextView,
+    extract, slot_is_colour,
 };
-pub use gpu::{AdapterSummary, Gpu, GpuOptions};
+pub use gpu::{AdapterSummary, Created, Gpu, GpuOptions};
 pub use image::{ImageDiff, RgbaImage, Tolerance};
 pub use renderer::{
-    Description, ENTRY_SHADERS, Frame, IdBuffer, MAX_VISIBILITY_MEASUREMENTS, Renderer, View,
-    VisibleEntity, check_shaders, engine_shaders, engine_shaders_from_dir, exposure_multiplier,
-    project_to_pixel,
+    Description, ENTRY_SHADERS, Effects, Frame, IdBuffer, MAX_VISIBILITY_MEASUREMENTS, PoolCounts,
+    RenderStats, Renderer, View, VisibleEntity, check_shaders, engine_shaders,
+    engine_shaders_from_dir, exposure_multiplier, project_to_pixel,
 };
 pub use shader::{CheckedShader, ComposedShader, ShaderLibrary, SourceLine, check_wgsl};
 pub use sprites::OverlayElement;

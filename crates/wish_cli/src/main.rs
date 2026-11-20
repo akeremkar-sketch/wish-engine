@@ -11,6 +11,7 @@
 //! ```
 
 mod args;
+mod bench_render;
 mod bench_script;
 mod capture;
 mod edit;
@@ -41,24 +42,31 @@ USAGE:
     wen run --example <name> [--scene <file> [--root <folder>]] [--frames <n>] [--seed <n>]
             [--hash-every <n>] [--headless] [--json]
     wen bench [--entities <n>] [--ticks <n>] [--seed <n>] [--script] [--json]
+    wen bench --render [--entities <draws>] [--ticks <frames>] [--size <w>x<h>] [--software] [--json]
     wen check [files...] --example <name> [--root <folder>] [--json]
     wen fmt [files...] --example <name> [--root <folder>] [--check] [--json]
     wen migrate [files...] [--root <folder>] [--json]
     wen watch --example <name> --scene <file> [--root <folder>] [--seconds <n>] [--json]
     wen capture --example <name> --scene <file> --out <png> [--root <folder>] [--camera <id>]
-                [--size <w>x<h>] [--view lit|ids|depth|normals|wireframe] [--software] [--shaders <folder>] [--json]
+                [--size <w>x<h>] [--view <view>] [--software] [--shaders <folder>] [--json]
     wen describe --example <name> --scene <file> [--root <folder>] [--camera <id>]
                  [--size <w>x<h>] [--software] [--shaders <folder>] [--json]
     wen view --example <name> --scene <file> [--root <folder>] [--size <w>x<h>]
-             [--view lit|ids|depth|normals|wireframe] [--software] [--shaders <folder>] [--exit-after <frames>]
+             [--view <view>] [--software] [--shaders <folder>] [--exit-after <frames>]
     wen shaders [--dir <folder>] [--json]
-    wen new <folder> [--name <name>] [--json]
+    wen new <folder> [--name <name>] [--template <name>] [--json]
     wen build [--root <folder>] [--dry-run] [--json]
+    wen export [--root <folder>] [--name <name>] [--overwrite] [--json]
     wen test [files...] [--root <folder>] [--update-golden] [--json]
     wen replay <name> [--root <folder>] [--json]
     wen edit [--root <folder>] [--size <w>x<h>] [--software] [--exit-after <frames>]
              [--headless-frame <script.json> --out <picture.png>] [--lang <code>]
     wen play [--root <folder>] [--scene <file>] [--size <w>x<h>] [--software] [--exit-after <frames>]
+    wen pkg [list | search [words...] | add <id> | remove <id> | update [id] | lock | check <folder>
+            | install <folder>] [--index <folder>] [--version <requirement>] [--user] [--replace]
+            [--dry-run] [--root <folder>] [--json]
+    wen engines [list | pick [project] | add <folder> | remove <folder>] [--root <folder>]
+            [--dry-run] [--json]
     wen sdk [--out <folder>] [--json]
     wen package [--out <folder>] [--json]
     wen mcp [--root <folder>] [--software] [--http <port or address>]
@@ -79,12 +87,20 @@ COMMANDS:
     bench      Time the core on many moving entities (defaults: 100000 entities, 600 ticks).
                Build with --release for meaningful numbers. --script measures game code instead: the
                same system natively and as WebAssembly on 1, 1 000 and 10 000 entities (needs the SDK).
+               --render measures drawing instead: a built-in scene of 2500 surfaces (--entities), a sun
+               with shadows and sixteen lamps, drawn 60 times (--ticks) at 1280x720 (--size) on the
+               hardware adapter if there is one (--software: the CPU rasterizer). It prints the time
+               of a frame, drawn and read back, and the frame's counts (draw calls, triangles, lights).
     check      Check every prefab, scene and meta file of the project (syntax, schema,
                references, asset files) and report all problems with file, line and
                column. Exits with failure if there is any error.
     fmt        Rewrite documents in canonical form; --check only lists the ones that are
                not (for CI). Files with errors are skipped and reported.
-    migrate    Upgrade documents of older format versions (format 1 is the only one so far).
+    migrate    Upgrade scene and prefab files of an older format to the one this engine writes
+               (format 2). A file keeps its meaning: every value it relied on whose default
+               changed since is written into it, so it looks and plays as it did. Files of
+               format 1 are read without it too (check names them); the next change made
+               through the engine saves them migrated.
     watch      Load a scene and reload it when files change; an invalid change is reported
                and the last good scene stays. With --json, one JSON line per event.
     capture    Draw a scene into a PNG without a window (default 1280x720, from the first
@@ -92,14 +108,19 @@ COMMANDS:
                the same on every machine. Rendering never changes the simulation.
                --view picks what is drawn: lit (the picture), ids (each entity in its own
                colour), depth (white near, black far), normals (surface direction as
-               colour), wireframe (triangle edges, hidden ones left out).
+               colour), wireframe (triangle edges, hidden ones left out), colliders (the
+               wireframe with the physics shapes), lights (the wireframe with how far lights
+               reach), shadow_cascades (each surface in the colour of the shadow map it uses:
+               red, green, blue, yellow from the nearest cascade; white with one map; grey
+               where there is no shadow).
     describe   Say what a camera sees without looking at a picture: for each visible entity
                its pixel count, how much of it is not hidden by other things, its screen
                box and its distance; and the entities that are drawn but not visible
                (default size 640x360; each entity costs one extra render).
     view       Open a window onto a scene. Right mouse button + mouse looks around, W A S D move,
-               Q / E go down / up, Shift is faster, F returns to the scene's camera, 1-5 pick
-               the view (lit, ids, depth, normals, wireframe), a left click names the entity
+               Q / E go down / up, Shift is faster, F returns to the scene's camera, 1-8 pick
+               the view (lit, ids, depth, normals, wireframe, colliders, lights,
+               shadow_cascades), a left click names the entity
                under the cursor. Changed scene, prefab, model or shader files are reloaded; a
                mistake is reported and the last good picture stays. Needs a desktop session.
     shaders    Check every shader of the engine (syntax and validation, no GPU needed); --dir checks
@@ -123,11 +144,28 @@ COMMANDS:
     replay     Play a recorded replay (replays/<name>.replay.jsonl) back in a new session and compare
                the world after every tick with the recording: passes when the game plays out exactly
                as it did, otherwise says the first tick that differs. Exits with failure if it differs.
+    pkg        Packages bring themes, workspaces, languages, recipes and templates. list shows what
+               the project (packages/, wish.lock) and you have installed; search finds packages in
+               the package index (--index <folder>, or WISH_PACKAGE_INDEX: a folder of packages);
+               add installs the newest version that fits this engine (--version narrows it);
+               update brings installed packages to their newest compatible version; remove moves
+               one to the trash; lock writes wish.lock again; check and install take a package
+               folder. --user works on your own packages instead of the project's. Same as the
+               packages tool.
+    engines    Engine versions side by side. list shows the engines on this computer (this one,
+               the installed ones and folders you added) and which one opens the project here;
+               pick says it for another project; add remembers an engine folder where it is (a
+               folder with wen and wish-engine.json); remove forgets it (an installed one goes to
+               the trash). A project opens with the version it was made with, else the newest
+               compatible one. Same as the engines tool.
     sdk        Engine development: build the game SDK pack from the engine's sources (needs cargo).
                Packaged engines ship it; game builds look for it next to wen or in WISH_SDK.
     package    Engine development: a folder with wen, the game SDK and the packed compiler (no cargo,
-               rustup or Visual Studio needed to build game code), plus clean-test.wsb, which runs
-               a project build and its tests in Windows Sandbox (a machine with no developer tools).
+               rustup or Visual Studio needed to build game code) and the licence texts; beside
+               it the release archive wish-engine-<version>-<os>-<arch> (.zip on Windows,
+               .tar.gz on Linux; the same bytes every time, dated SOURCE_DATE_EPOCH if set) and
+               SHA256SUMS. On Windows also clean-test.wsb, which runs a project build and its
+               tests in Windows Sandbox (a machine with no developer tools).
     mcp        Serve the tools over MCP (Model Context Protocol, stdio). Claude Code and other MCP
                clients start it themselves from .mcp.json (wen new writes it); --software draws
                with the CPU adapter. Standard output carries only the protocol.
@@ -148,6 +186,18 @@ COMMANDS:
 Add --json to any command for a single machine-readable JSON document.";
 
 fn main() -> ExitCode {
+    // An unexpected error leaves a report on this computer (never sent).
+    wish_control::crash::install("wen", wish_control::crash::folder().into_iter().collect());
+    match wish_control::crash::guard(run_wen) {
+        Ok(code) => code,
+        Err(report) => {
+            eprintln!("{}", wish_control::crash::told("wen", report.as_deref()));
+            ExitCode::from(101)
+        }
+    }
+}
+
+fn run_wen() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let json = arguments.iter().any(|argument| argument == "--json");
     // The MCP server owns standard output: nothing else may be printed.
@@ -199,7 +249,7 @@ fn execute_any(args: Args) -> Result<Outcome> {
                 http: None,
             },
             args.json,
-            tool_cmds::check_text,
+            &tool_cmds::check_text,
         )),
         Command::Move {
             from,
@@ -218,7 +268,7 @@ fn execute_any(args: Args) -> Result<Outcome> {
                 http: None,
             },
             args.json,
-            tool_cmds::move_text,
+            &tool_cmds::move_text,
         )),
         Command::Format {
             paths,
@@ -229,25 +279,153 @@ fn execute_any(args: Args) -> Result<Outcome> {
         Command::Shaders { dir } => capture::shaders(dir.as_deref(), args.json),
         Command::Capture(capture) => Ok(tool_cmds::capture(capture, args.json)),
         Command::Describe(describe) => Ok(tool_cmds::describe(describe, args.json)),
-        Command::New { dir, name } => {
-            tool_cmds::new_project(dir, name.as_deref(), args.json).map(|text| Outcome {
+        Command::New {
+            dir,
+            name,
+            template,
+        } => tool_cmds::new_project(dir, name.as_deref(), template.as_deref(), args.json).map(
+            |text| Outcome {
                 text,
                 success: true,
-            })
-        }
-        Command::Build { root, dry_run } => Ok(tool_cmds::shortcut(
-            "script_build",
-            &serde_json::json!({ "dry_run": dry_run }),
-            &args::ToolContext {
-                root: root.clone(),
-                example: None,
-                actor: None,
-                software: false,
-                http: None,
             },
-            args.json,
-            tool_cmds::build_text,
-        )),
+        ),
+        Command::Build { root, dry_run } => {
+            // The answer carries no duration (ADR-027, rule 2): the command
+            // line measures the call itself.
+            let started = std::time::Instant::now();
+            Ok(tool_cmds::shortcut(
+                "script_build",
+                &serde_json::json!({ "dry_run": dry_run }),
+                &args::ToolContext {
+                    root: root.clone(),
+                    example: None,
+                    actor: None,
+                    software: false,
+                    http: None,
+                },
+                args.json,
+                &|answer| tool_cmds::build_text(answer, started.elapsed().as_secs_f64()),
+            ))
+        }
+        Command::Pkg {
+            action,
+            rest,
+            root,
+            index,
+            version,
+            user,
+            replace,
+            dry_run,
+        } => {
+            // Folders on the command line are relative to where wen runs.
+            let here = |path: &str| {
+                std::env::current_dir()
+                    .map(|dir| dir.join(path))
+                    .unwrap_or_else(|_| std::path::PathBuf::from(path))
+                    .display()
+                    .to_string()
+            };
+            let mut call = serde_json::json!({ "action": action });
+            match action.as_str() {
+                "search" => call["query"] = serde_json::json!(rest.join(" ")),
+                "check" | "install" => {
+                    call["path"] = serde_json::json!(rest.first().map(|path| here(path)));
+                }
+                _ => {
+                    if let Some(id) = rest.first() {
+                        call["id"] = serde_json::json!(id);
+                    }
+                }
+            }
+            if let Some(index) = index {
+                call["index"] = serde_json::json!(here(index));
+            }
+            if let Some(version) = version {
+                call["version"] = serde_json::json!(version);
+            }
+            if *user {
+                call["scope"] = serde_json::json!("user");
+            }
+            if *replace {
+                call["replace"] = serde_json::json!(true);
+            }
+            if *dry_run {
+                call["dry_run"] = serde_json::json!(true);
+            }
+            Ok(tool_cmds::shortcut(
+                "packages",
+                &call,
+                &args::ToolContext {
+                    root: root.clone(),
+                    example: None,
+                    actor: None,
+                    software: false,
+                    http: None,
+                },
+                args.json,
+                &tool_cmds::pkg_text,
+            ))
+        }
+        Command::Engines {
+            action,
+            folder,
+            root,
+            dry_run,
+        } => {
+            // Folders on the command line are relative to where wen runs.
+            let here = |path: &str| {
+                std::env::current_dir()
+                    .map(|dir| dir.join(path))
+                    .unwrap_or_else(|_| std::path::PathBuf::from(path))
+            };
+            let project = root
+                .as_deref()
+                .map(here)
+                .or_else(|| std::env::current_dir().ok())
+                .filter(|dir| dir.join(wish_control::PROJECT_FILE).is_file());
+            let folder = folder.as_deref().map(here);
+            let value = wish_control::envelope(wish_control::engines_act(
+                action,
+                folder.as_deref(),
+                project.as_deref(),
+                *dry_run,
+            ));
+            let success = value["ok"] == true;
+            let text = if args.json {
+                value.to_string()
+            } else if success {
+                tool_cmds::engines_text(&value)
+            } else {
+                match serde_json::from_value::<Diagnostic>(value["error"].clone()) {
+                    Ok(problem) => problem.to_string(),
+                    Err(_) => value.to_string(),
+                }
+            };
+            Ok(project_cmds::Outcome { text, success })
+        }
+        Command::Export {
+            root,
+            name,
+            overwrite,
+        } => {
+            let mut call = serde_json::json!({ "overwrite": overwrite });
+            if let Some(name) = name {
+                call["name"] = serde_json::json!(name);
+            }
+            Ok(tool_cmds::shortcut(
+                "project_export",
+                &call,
+                &args::ToolContext {
+                    root: root.clone(),
+                    example: None,
+                    actor: None,
+                    software: false,
+                    http: None,
+                },
+                args.json,
+                &tool_cmds::export_text,
+            ))
+        }
         Command::Test {
             paths,
             root,
@@ -263,7 +441,7 @@ fn execute_any(args: Args) -> Result<Outcome> {
                 http: None,
             },
             args.json,
-            tool_cmds::test_text,
+            &tool_cmds::test_text,
         )),
         Command::Replay { name, root } => Ok(tool_cmds::shortcut(
             "replay",
@@ -276,7 +454,7 @@ fn execute_any(args: Args) -> Result<Outcome> {
                 http: None,
             },
             args.json,
-            tool_cmds::replay_text,
+            &tool_cmds::replay_text,
         )),
         Command::Package { out } => {
             tool_cmds::package(out.as_deref(), args.json).map(|text| Outcome {
@@ -335,8 +513,24 @@ fn execute(args: Args) -> Result<String> {
         Command::Bench {
             entities,
             ticks,
+            render: true,
+            size,
+            software,
+            ..
+        } => bench_render::bench_render(
+            &bench_render::RenderBench {
+                draws: entities,
+                frames: ticks,
+                size,
+                software,
+            },
+            args.json,
+        ),
+        Command::Bench {
+            entities,
+            ticks,
             seed,
-            script: false,
+            ..
         } => bench(entities, ticks, seed, args.json),
         Command::Check { .. }
         | Command::Format { .. }
@@ -345,6 +539,9 @@ fn execute(args: Args) -> Result<String> {
         | Command::Shaders { .. }
         | Command::New { .. }
         | Command::Build { .. }
+        | Command::Export { .. }
+        | Command::Pkg { .. }
+        | Command::Engines { .. }
         | Command::Replay { .. }
         | Command::Test { .. }
         | Command::Sdk { .. }

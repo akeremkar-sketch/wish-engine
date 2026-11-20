@@ -37,7 +37,7 @@ const SHADERS: Param = Param::optional(
 pub(crate) const CAPTURE_FRAME: Tool = Tool {
     name: "capture_frame",
     title: "Take a picture",
-    description: "Draws the scene (or a session's live world) from a camera and returns the picture as a PNG (image content over MCP; image.data is base64 on the command line unless out is given). The default 512x288 keeps it cheap; ask for more only to inspect detail. view picks what is drawn: lit (the real picture), ids (each entity its own color), depth (white near, black far), normals (surface direction as color), wireframe (triangle edges), colliders (the wireframe with every physics collider over it: fixed green, moving cyan, sensors yellow), lights (the wireframe with how far each point and spot light reaches). Use describe_view to ask what is visible instead of reading pixels.",
+    description: "Draws the scene (or a session's live world) from a camera and returns the picture as a PNG (image content over MCP; image.data is base64 on the command line unless out is given). The default 512x288 keeps it cheap; ask for more only to inspect detail. view picks what is drawn: lit (the real picture), ids (each entity its own color), depth (white near, black far), normals (surface direction as color), wireframe (triangle edges), colliders (the wireframe with every physics collider over it: fixed green, moving cyan, sensors yellow), lights (the wireframe with how far each point and spot light reaches), shadow_cascades (each surface in the color of the shadow map its shadow is read from: red, green, blue, yellow from the cascade nearest the camera, mixed where two blend; white with one shadow map; gray where there is no shadow, as beyond RenderSettings.shadow_distance). stats says what drawing the picture took, in counts that are the same on every machine: draw_calls, triangles, shadow_casters (draws into the shadow maps), shadow_cascades (how many shadow maps: 0 none, 1 the one map around everything, 2 to 4 cascades, set with RenderSettings.shadow_cascades, 4 by default; the shadow_cascades view answers the number of the lit picture whose maps it shows, every other debug view 0), point_lights, spot_lights, blended_surfaces (see-through surfaces: a Material with base_color alpha below 1, or a material file or glTF material with alpha_mode Blend; drawn back to front over the rest, casting no shadow; the debug views draw them as any surface), and effects, the optional look effects the picture used (sky_light, sun_disc, fog, bloom, color_grading, fxaa; set with the Ambient, Sky, Fog, Bloom, ColorGrading and RenderSettings resources; a scene has all of them by default, the look natural, and edit_apply apply_look plain turns them all off). Use describe_view to ask what is visible instead of reading pixels.",
     params: &[
         SCENE,
         SESSION,
@@ -57,7 +57,7 @@ pub(crate) const CAPTURE_FRAME: Tool = Tool {
         Param::optional(
             "view",
             Kind::Choice(View::NAMES),
-            "lit, ids, depth, normals, wireframe, colliders or lights.",
+            "lit, ids, depth, normals, wireframe, colliders, lights or shadow_cascades.",
         )
         .or("\"lit\""),
         Param::optional(
@@ -70,6 +70,11 @@ pub(crate) const CAPTURE_FRAME: Tool = Tool {
             Kind::Boolean,
             "Replace the out file if it already exists.",
         ),
+        Param::optional(
+            "checkpoint",
+            Kind::String,
+            "Draw the scene as this checkpoint kept it (a \"before\" picture to compare with now), with the prefabs and material files it kept; textures are drawn as they are now (checkpoints keep no pictures).",
+        ),
         SHADERS,
     ],
     mutates: false,
@@ -79,7 +84,7 @@ pub(crate) const CAPTURE_FRAME: Tool = Tool {
 pub(crate) const DESCRIBE_VIEW: Tool = Tool {
     name: "describe_view",
     title: "What the camera sees",
-    description: "Says what a camera sees without a picture: for each visible entity its pixel count, how much of it is not hidden by other things (visible_percent), its box on screen [left, top, right, bottom] and its distance in meters; and the entities that are drawn but not visible (hidden behind something, or outside the picture); the sprites (their box in the picture and layer) and particle emitters (the box their particles cover, how many are alive); and the in-game interface (interface: each box that shows something, its box in the picture, its text, whether it is a button and if the pointer is over it). Use it to check that what you built is on screen and not blocked, and what the interface says.",
+    description: "Says what a camera sees without a picture: for each visible entity its pixel count, how much of it is not hidden by other things (visible_percent), its box on screen [left, top, right, bottom] and its distance in meters; and the entities that are drawn but not visible (hidden behind something, or outside the picture); the sprites (their box in the picture and layer) and particle emitters (the box their particles cover, how many are alive); and the in-game interface (interface: each box that shows something, its box in the picture, its text, whether it is a button and if the pointer is over it); and stats, what drawing the lit picture of this view takes (draw_calls, triangles, shadow_casters, shadow_cascades, point_lights, spot_lights: counts, the same on every machine; effects: which of sky_light, sun_disc, fog, bloom, color_grading and fxaa it uses). A see-through entity is marked blended: true, and what shows through it counts as visible too; stats.blended_surfaces counts them. Use it to check that what you built is on screen and not blocked, what the interface says, and what makes a scene heavy.",
     params: &[
         SCENE,
         SESSION,
@@ -108,6 +113,16 @@ pub(crate) const DESCRIBE_VIEW: Tool = Tool {
     run: describe_view,
 };
 
+/// How many bytes of render targets the renderer may keep after a tool
+/// call. The picture of a tool call is drawn now and then, not every frame:
+/// what the usual sizes take stays for the next call (the four shadow maps
+/// of the default look are 64 MiB by themselves; with a 1280x720 lit
+/// picture and the targets of its bloom and FXAA that is about 90 MiB), a
+/// larger capture does not sit in memory until some later call. The
+/// editor's views draw through the same renderer many times a second and
+/// keep their targets (`Workspace::render_picture`).
+const KEPT_AFTER_A_TOOL_CALL: u64 = 128 << 20;
+
 /// What drawing needs from the world, taken while it is borrowed.
 struct Prepared {
     scene: RenderScene,
@@ -115,10 +130,130 @@ struct Prepared {
     by_name: BTreeMap<String, Entity>,
     notes: Vec<Diagnostic>,
     source: Value,
+    /// For a picture of a checkpoint: its copy of the project's files,
+    /// whose material files the picture uses.
+    kept: Option<std::path::PathBuf>,
+}
+
+impl Prepared {
+    /// Puts the parts together and tells the scene what its entities are
+    /// called, so that what the renderer warns about is named the way the
+    /// scene file names it. Entities without a scene id (made while a
+    /// session runs) keep their `#<id>` form.
+    fn new(
+        mut scene: RenderScene,
+        by_name: BTreeMap<String, Entity>,
+        notes: Vec<Diagnostic>,
+        source: Value,
+    ) -> Self {
+        let names: BTreeMap<Entity, String> = by_name
+            .iter()
+            .map(|(name, entity)| (*entity, name.clone()))
+            .collect();
+        scene.names = names
+            .iter()
+            .filter(|(_, name)| !name.starts_with('#'))
+            .map(|(entity, name)| (*entity, name.clone()))
+            .collect();
+        Self {
+            scene,
+            names,
+            by_name,
+            notes,
+            source,
+            kept: None,
+        }
+    }
+
+    /// Gives the renderer's warnings about the scene's lights a place in
+    /// the scene file where there is one: the first light that is not
+    /// drawn, when the picture is of the scene file as it is now (not a
+    /// checkpoint's copy, not a preview) and the light is an entity of
+    /// that file (not one a prefab brought in); the sky's sun size, when a
+    /// disc is asked for and there is no light to give it a place; the
+    /// ambient colour or intensity the sky light does not use; and the
+    /// shadow distance, when cascades are asked for and it reaches nothing.
+    /// The place names the file, because a path without a file points
+    /// into the call's arguments.
+    fn locate(&self, mut warnings: Vec<Diagnostic>) -> Vec<Diagnostic> {
+        let file = self
+            .source
+            .get("scene")
+            .and_then(Value::as_str)
+            .filter(|_| {
+                self.source.get("checkpoint").is_none() && self.source.get("preview").is_none()
+            });
+        let extra = self
+            .scene
+            .lights
+            .get(1)
+            .and_then(|light| self.scene.names.get(&light.entity))
+            .filter(|name| !name.contains('/'));
+        if let (Some(file), Some(name)) = (file, extra) {
+            for warning in &mut warnings {
+                if warning.code == "extra_directional_lights" && warning.location.path.is_none() {
+                    warning.location.file = Some(file.to_owned());
+                    warning.location.path =
+                        Some(format!("/entities/{name}/components/DirectionalLight"));
+                }
+            }
+        }
+        // Only a scene file's own `Sky` resource can ask for a disc there,
+        // and only its own `RenderSettings` for cascades: the field to
+        // change is the distance (the field the hint names first). For an
+        // ambient colour or intensity the sky light does not use, it is the
+        // field the warning names.
+        if let Some(file) = file {
+            for warning in &mut warnings {
+                let field = match &*warning.code {
+                    "sun_disc_without_light" => "/resources/Sky/sun_size_deg".to_owned(),
+                    "shadows_out_of_range" => {
+                        "/resources/RenderSettings/shadow_distance".to_owned()
+                    }
+                    "ambient_color_unused" => match self.scene.ambient_unused {
+                        Some(field) => format!("/resources/Ambient/{field}"),
+                        None => continue,
+                    },
+                    _ => continue,
+                };
+                if warning.location.path.is_none() {
+                    warning.location.file = Some(file.to_owned());
+                    warning.location.path = Some(field);
+                }
+            }
+        }
+        warnings
+    }
 }
 
 fn prepare(workspace: &mut Workspace, args: &Args) -> Result<Prepared> {
+    if let Some(name) = args.str("checkpoint") {
+        return prepare_checkpoint(workspace, name, args.str("scene"));
+    }
     prepare_source(workspace, args.str("session"), args.str("scene"))
+}
+
+/// A scene as checkpoint `name` kept it (for "before" pictures).
+fn prepare_checkpoint(
+    workspace: &mut Workspace,
+    name: &str,
+    scene: Option<&str>,
+) -> Result<Prepared> {
+    let path = workspace.scene_path(scene)?;
+    let doc = workspace.checkpoint_document(name, &path)?;
+    let view = workspace.build_view(&doc)?;
+    let mut prepared_scene = extract(&view.world)?;
+    if path.ends_with(".prefab.json") {
+        stage(&mut prepared_scene);
+    }
+    let mut prepared = Prepared::new(
+        prepared_scene,
+        view.ids,
+        Vec::new(),
+        json!({ "scene": path, "checkpoint": name }),
+    );
+    prepared.kept = Some(workspace.checkpoint_files(name));
+    Ok(prepared)
 }
 
 /// [`prepare`] without the tool's arguments: a session's live world, or a
@@ -185,17 +320,7 @@ fn prepare_with(
     {
         stage(&mut scene);
     }
-    let names = by_name
-        .iter()
-        .map(|(name, entity)| (*entity, name.clone()))
-        .collect();
-    Ok(Prepared {
-        scene,
-        names,
-        by_name,
-        notes,
-        source,
-    })
+    Ok(Prepared::new(scene, by_name, notes, source))
 }
 
 /// Gives a scene with no camera one, and one with no light a sun: what a
@@ -257,14 +382,16 @@ fn drawing<'a>(
     workspace: &'a mut Workspace,
     args: &Args,
     scene: &RenderScene,
+    kept: Option<&std::path::Path>,
 ) -> Result<(&'a mut Drawing, Vec<Diagnostic>)> {
-    drawing_with(workspace, args.str("shaders"), scene)
+    drawing_with(workspace, args.str("shaders"), scene, kept)
 }
 
 fn drawing_with<'a>(
     workspace: &'a mut Workspace,
     shaders: Option<&str>,
     scene: &RenderScene,
+    kept: Option<&std::path::Path>,
 ) -> Result<(&'a mut Drawing, Vec<Diagnostic>)> {
     let shaders = shaders.map(std::path::PathBuf::from);
     let shaders = shaders.map(|dir| {
@@ -308,7 +435,7 @@ fn drawing_with<'a>(
             "This is a bug in the engine. Please report it.",
         ));
     };
-    let warnings = open.load_models(scene, &root);
+    let warnings = open.load_models(scene, &root, kept);
     Ok((open, warnings))
 }
 
@@ -317,6 +444,24 @@ fn size(args: &Args, width: i64, height: i64) -> (u32, u32) {
         u32::try_from(args.int("width").unwrap_or(width)).unwrap_or(512),
         u32::try_from(args.int("height").unwrap_or(height)).unwrap_or(288),
     )
+}
+
+/// The statistics of a picture as the tools give them: counts only, the same
+/// on every machine and in every run (no time is part of these answers:
+/// time is measured by `wen bench --render`, on the command line).
+fn stats_json(stats: &wish_render::RenderStats) -> Value {
+    json!({
+        "width": stats.width,
+        "height": stats.height,
+        "draw_calls": stats.draw_calls,
+        "triangles": stats.triangles,
+        "shadow_casters": stats.shadow_casters,
+        "shadow_cascades": stats.shadow_cascades,
+        "point_lights": stats.point_lights,
+        "spot_lights": stats.spot_lights,
+        "blended_surfaces": stats.blended_surfaces,
+        "effects": stats.effects.names(),
+    })
 }
 
 fn adapter_json(open: &Drawing) -> Value {
@@ -333,16 +478,18 @@ fn capture_frame(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
     };
     let prepared = prepare(workspace, args)?;
     let camera = camera_entity(&prepared, args)?;
-    let (open, model_warnings) = drawing(workspace, args, &prepared.scene)?;
+    let (open, model_warnings) =
+        drawing(workspace, args, &prepared.scene, prepared.kept.as_deref())?;
     let frame =
         open.renderer
             .render_view(&open.gpu, &prepared.scene, camera, width, height, view)?;
+    open.renderer.trim(KEPT_AFTER_A_TOOL_CALL);
     let png = frame.image.to_png()?;
     let adapter = adapter_json(open);
-    let mut warnings = prepared.notes;
+    let mut warnings = prepared.notes.clone();
     warnings.extend(model_warnings);
     warnings.extend(frame.warnings);
-    let warnings = without_repeats(warnings);
+    let warnings = without_repeats(prepared.locate(warnings));
 
     let mut image =
         json!({ "mime": "image/png", "width": width, "height": height, "bytes": png.len() });
@@ -385,6 +532,7 @@ fn capture_frame(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
         ),
     );
     out.insert("drawn".to_owned(), json!(frame.drawn));
+    out.insert("stats".to_owned(), stats_json(&frame.stats));
     out.insert("image".to_owned(), image);
     out.insert("adapter".to_owned(), adapter);
     if !warnings.is_empty() {
@@ -398,13 +546,15 @@ fn describe_view(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
     let limit = usize::try_from(args.int("limit").unwrap_or(50)).unwrap_or(50);
     let prepared = prepare(workspace, args)?;
     let camera = camera_entity(&prepared, args)?;
-    let (open, model_warnings) = drawing(workspace, args, &prepared.scene)?;
+    let (open, model_warnings) =
+        drawing(workspace, args, &prepared.scene, prepared.kept.as_deref())?;
     let description = open
         .renderer
         .describe(&open.gpu, &prepared.scene, camera, width, height)?;
     let overlay = open
         .renderer
         .overlay_elements(&prepared.scene, camera, width, height)?;
+    open.renderer.trim(KEPT_AFTER_A_TOOL_CALL);
     let adapter = adapter_json(open);
     let name = |entity: Entity| {
         prepared
@@ -421,13 +571,19 @@ fn describe_view(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
         .into_iter()
         .take(limit)
         .map(|entry| {
-            json!({
+            let mut listed = json!({
                 "entity": name(entry.entity),
                 "pixels": entry.pixels,
                 "visible_percent": entry.visible_fraction.map(|f| (f * 1000.0).round() / 10.0),
                 "bounding_box": entry.bounding_box,
                 "distance": round(entry.distance),
-            })
+            });
+            // Only see-through entities say so: other answers are as they
+            // were.
+            if entry.blended {
+                listed["blended"] = json!(true);
+            }
+            listed
         })
         .collect();
     let hidden: Vec<String> = description
@@ -456,10 +612,10 @@ fn describe_view(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
             entry
         })
         .collect();
-    let mut warnings = prepared.notes;
+    let mut warnings = prepared.notes.clone();
     warnings.extend(model_warnings);
     warnings.extend(description.warnings.iter().cloned());
-    let warnings = without_repeats(warnings);
+    let warnings = without_repeats(prepared.locate(warnings));
     let mut out = Map::new();
     if let Value::Object(source) = prepared.source {
         out.extend(source);
@@ -500,6 +656,7 @@ fn describe_view(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
     if !interface.is_empty() {
         out.insert("interface".to_owned(), json!(interface));
     }
+    out.insert("stats".to_owned(), stats_json(&description.stats));
     out.insert("adapter".to_owned(), adapter);
     if !warnings.is_empty() {
         out.insert("diagnostics".to_owned(), json!(warnings));
@@ -518,6 +675,9 @@ pub enum PictureSource<'a> {
     Preview(Option<&'a str>, &'a Value),
     /// A play session's live world.
     Session(&'a str),
+    /// A scene file as a checkpoint kept it (`None`: the project's scene):
+    /// the "before" of a before/after comparison.
+    Checkpoint(Option<&'a str>, &'a str),
 }
 
 /// A picture of a scene or session, as the editor's view shows it.
@@ -546,27 +706,41 @@ impl Workspace {
         height: u32,
         view: View,
     ) -> Result<Picture> {
-        let (session, scene, preview) = match source {
-            PictureSource::Scene(scene) => (None, scene, None),
-            PictureSource::Preview(scene, ops) => (None, scene, Some(ops)),
-            PictureSource::Session(id) => (Some(id), None, None),
+        let mut prepared = match source {
+            PictureSource::Scene(scene) => prepare_with(self, None, scene, None)?,
+            PictureSource::Preview(scene, ops) => prepare_with(self, None, scene, Some(ops))?,
+            PictureSource::Session(id) => prepare_with(self, Some(id), None, None)?,
+            PictureSource::Checkpoint(scene, name) => prepare_checkpoint(self, name, scene)?,
         };
-        let mut prepared = prepare_with(self, session, scene, preview)?;
         if let (Some(camera), Some(first)) = (camera, prepared.scene.cameras.first_mut()) {
             *first = camera(first);
         }
-        let (open, model_warnings) = drawing_with(self, None, &prepared.scene)?;
+        let (open, model_warnings) =
+            drawing_with(self, None, &prepared.scene, prepared.kept.as_deref())?;
         let frame =
             open.renderer
                 .render_view(&open.gpu, &prepared.scene, None, width, height, view)?;
-        let mut warnings = prepared.notes;
+        let mut warnings = prepared.notes.clone();
         warnings.extend(model_warnings);
         warnings.extend(frame.warnings);
+        let warnings = without_repeats(prepared.locate(warnings));
         Ok(Picture {
             image: frame.image,
             names: prepared.names,
-            warnings: without_repeats(warnings),
+            warnings,
         })
+    }
+}
+
+impl Workspace {
+    /// How many bytes of render targets this workspace's renderer keeps for
+    /// its next picture (0 before the first one): for tests of what a tool
+    /// call leaves behind in memory.
+    #[doc(hidden)]
+    pub fn kept_render_bytes(&self) -> u64 {
+        self.renderer
+            .as_ref()
+            .map_or(0, |open| open.renderer.kept_bytes())
     }
 }
 
@@ -589,16 +763,16 @@ impl Workspace {
         width: u32,
         height: u32,
     ) -> Result<IdPicture> {
-        let (session, scene, preview) = match source {
-            PictureSource::Scene(scene) => (None, scene, None),
-            PictureSource::Preview(scene, ops) => (None, scene, Some(ops)),
-            PictureSource::Session(id) => (Some(id), None, None),
+        let mut prepared = match source {
+            PictureSource::Scene(scene) => prepare_with(self, None, scene, None)?,
+            PictureSource::Preview(scene, ops) => prepare_with(self, None, scene, Some(ops))?,
+            PictureSource::Session(id) => prepare_with(self, Some(id), None, None)?,
+            PictureSource::Checkpoint(scene, name) => prepare_checkpoint(self, name, scene)?,
         };
-        let mut prepared = prepare_with(self, session, scene, preview)?;
         if let (Some(camera), Some(first)) = (camera, prepared.scene.cameras.first_mut()) {
             *first = camera(first);
         }
-        let (open, _) = drawing_with(self, None, &prepared.scene)?;
+        let (open, _) = drawing_with(self, None, &prepared.scene, prepared.kept.as_deref())?;
         let ids = open
             .renderer
             .id_buffer(&open.gpu, &prepared.scene, None, width, height)?;

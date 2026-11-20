@@ -12,7 +12,19 @@
 //! are fine. The engine never crashes, so all GPU work in a process takes
 //! one lock ([`gpu_lock`]). Normally a process has a single device anyway
 //! ([`Gpu::shared`]), and then the lock costs nothing.
+//!
+//! **A frame is finished under that lock.** Measured in M12 (the render
+//! foundation note, section 3.2): on WARP, making a bind group changes what
+//! the live bind groups of the same layout read their uniform buffer from,
+//! even for a frame that is still being executed. So a frame is submitted
+//! with `Gpu::finish`, which waits for it before the lock is let go.
+//!
+//! **Every texture and buffer is created here** (`Gpu::create_texture`,
+//! `Gpu::create_buffer`), so that [`Gpu::created`] counts them all and a test
+//! can prove that a frame creates none. `tests/rules.rs` reads the source and
+//! fails when another file creates one or submits commands on its own.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use wish_core::{Diagnostic, Result};
@@ -38,6 +50,19 @@ pub struct AdapterSummary {
     pub software: bool,
 }
 
+/// How many textures and buffers have been created on a device since it was
+/// opened, by everything that draws with it: render targets, uploaded meshes
+/// and textures, per-frame buffers, readback buffers. Two frames of the same
+/// scene and size create none, which is what tests and `wen bench --render`
+/// read these counts for. (Bind groups, views and samplers are not counted.)
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Created {
+    /// Textures.
+    pub textures: u64,
+    /// Buffers.
+    pub buffers: u64,
+}
+
 /// A GPU device ready to draw.
 pub struct Gpu {
     pub(crate) device: wgpu::Device,
@@ -46,6 +71,10 @@ pub struct Gpu {
     uncaptured: Arc<Mutex<Vec<String>>>,
     /// Why the device was lost, once it has been.
     lost: Arc<Mutex<Option<String>>>,
+    /// Textures created so far.
+    textures_created: AtomicU64,
+    /// Buffers created so far.
+    buffers_created: AtomicU64,
 }
 
 impl std::fmt::Debug for Gpu {
@@ -154,7 +183,38 @@ impl Gpu {
             adapter: summary,
             uncaptured,
             lost,
+            textures_created: AtomicU64::new(0),
+            buffers_created: AtomicU64::new(0),
         })
+    }
+
+    /// Creates a texture. Every texture of the crate is created through
+    /// this, so that [`Gpu::created`] counts it. Call inside
+    /// [`Gpu::checked`], like all GPU work.
+    pub(crate) fn create_texture(&self, descriptor: &wgpu::TextureDescriptor<'_>) -> wgpu::Texture {
+        self.textures_created.fetch_add(1, Ordering::Relaxed);
+        self.device.create_texture(descriptor)
+    }
+
+    /// Creates a buffer. Every buffer of the crate is created through this,
+    /// so that [`Gpu::created`] counts it. The engine never maps a buffer at
+    /// creation (that can panic): fill it through the queue. Call inside
+    /// [`Gpu::checked`], like all GPU work.
+    pub(crate) fn create_buffer(&self, descriptor: &wgpu::BufferDescriptor<'_>) -> wgpu::Buffer {
+        self.buffers_created.fetch_add(1, Ordering::Relaxed);
+        self.device.create_buffer(descriptor)
+    }
+
+    /// How many textures and buffers have been created on this device so
+    /// far, by anything: for tests and measurements that prove a frame
+    /// reuses what the frame before it made. A device shared between threads
+    /// counts all of them together.
+    #[doc(hidden)]
+    pub fn created(&self) -> Created {
+        Created {
+            textures: self.textures_created.load(Ordering::Relaxed),
+            buffers: self.buffers_created.load(Ordering::Relaxed),
+        }
     }
 
     /// Fails with `gpu_lost` once the device has been lost: everything after
@@ -218,6 +278,22 @@ impl Gpu {
             ));
         }
         Ok(value)
+    }
+
+    /// Submits a frame's commands and waits until the GPU has executed them.
+    /// Call it inside [`Gpu::checked`], as the last thing: the GPU lock is
+    /// then held until the frame is done.
+    ///
+    /// A frame that draws through bind groups must be finished before
+    /// another thread makes a bind group. On the software adapter of Windows
+    /// a new bind group changes what every live group of the same layout
+    /// reads its uniform buffer from, also for a command list that is still
+    /// executing, and two renderers on one device share their layouts
+    /// (measured: design note M12 render foundation, section 3.2). The
+    /// picture is read back after this anyway, so the wait costs nothing.
+    pub(crate) fn finish(&self, encoder: wgpu::CommandEncoder) -> Result<()> {
+        self.queue.submit([encoder.finish()]);
+        self.wait()
     }
 
     /// Waits until the GPU has finished all submitted work.

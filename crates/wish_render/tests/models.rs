@@ -398,3 +398,162 @@ fn a_texture_the_gpu_cannot_take_is_refused_with_its_real_cause() {
     assert_eq!(problem.location.file.as_deref(), Some("assets/huge.glb"));
     assert!(!problem.hint.is_empty());
 }
+
+/// The scene of `scene_with_model`, the quad's entity with `material` (the
+/// JSON of a `Material`).
+fn scene_with_material(material: &str) -> RenderScene {
+    let mut world = World::new();
+    wish_transform::register(&mut world).unwrap();
+    wish_render::components::register(&mut world).unwrap();
+    wish_scene::instantiate::register(&mut world).unwrap();
+    let source = format!(
+        r#"{{ "format": 1, "entities": {{
+        "camera": {{ "components": {{ "Camera": {{ "fov_y_deg": 40 }}, "Transform": {{ "translation": [0, 0, 5] }} }} }},
+        "sun": {{ "components": {{ "DirectionalLight": {{ "illuminance_lux": 100000 }}, "Transform": {{ "rotation": [0, 0, 0, 1] }} }} }},
+        "quad": {{ "components": {{ "Model": {{ "asset": "assets/quad.glb" }}, "Material": {material} }} }}
+    }} }}"#
+    );
+    let result = load(&source, "s.scene.json", world.registry());
+    assert!(!result.has_errors(), "{:?}", result.diagnostics);
+    result.document.unwrap().instantiate(&mut world).unwrap();
+    update_global_transforms(&mut world).unwrap();
+    extract(&world).unwrap()
+}
+
+/// A quad whose own material is a red and green texture.
+fn red_green_quad() -> wish_import::Model {
+    quad_model(
+        json!({ "pbrMetallicRoughness": { "baseColorTexture": { "index": 0 }, "metallicFactor": 0.0, "roughnessFactor": 1.0 } }),
+        Some([[230, 20, 20, 255], [20, 230, 20, 255]]),
+    )
+}
+
+#[test]
+fn a_material_without_a_file_leaves_a_model_as_it_was() {
+    // An old scene with a Material on a Model entity draws as it always
+    // did: byte for byte the picture of the model alone.
+    let gpu = Gpu::shared(GpuOptions { software: true }).unwrap();
+    let mut renderer = Renderer::new(&gpu).unwrap();
+    renderer
+        .upload_model(&gpu, "assets/quad.glb", &red_green_quad())
+        .unwrap();
+    let alone = renderer
+        .render(&gpu, &scene_with_model(), None, 160, 120)
+        .unwrap();
+    for material in [
+        r#"{ "base_color": [0, 0, 1, 1], "metallic": 1, "roughness": 0.1, "emissive": [3, 3, 3] }"#,
+        r#"{}"#,
+    ] {
+        let with = renderer
+            .render(&gpu, &scene_with_material(material), None, 160, 120)
+            .unwrap();
+        assert!(with.warnings.is_empty(), "{:?}", with.warnings);
+        assert_eq!(with.image.pixels, alone.image.pixels, "{material}");
+    }
+}
+
+#[test]
+fn a_material_file_replaces_every_material_of_a_model() {
+    let gpu = Gpu::shared(GpuOptions { software: true }).unwrap();
+    let mut renderer = Renderer::new(&gpu).unwrap();
+    renderer
+        .upload_model(&gpu, "assets/quad.glb", &red_green_quad())
+        .unwrap();
+    let scene = scene_with_material(r#"{ "file": "assets/blue.mat.json" }"#);
+    // The file is not there: the model's own look, and a warning.
+    let frame = renderer.render(&gpu, &scene, None, 160, 120).unwrap();
+    let codes: Vec<&str> = frame.warnings.iter().map(|w| w.code.as_ref()).collect();
+    assert_eq!(codes, ["material_not_loaded"]);
+    assert!(
+        frame.warnings[0]
+            .message
+            .contains("the model's own materials")
+    );
+    let (l, r) = (left(&frame.image), right(&frame.image));
+    assert!(l[0] > 2 * l[1] && r[1] > 2 * r[0], "{l:?} {r:?}");
+    // A flat blue look: both halves blue, the model's texture gone.
+    renderer.set_material(
+        "assets/blue.mat.json",
+        wish_render::Look {
+            material: wish_render::MaterialData {
+                base_color: [0.05, 0.1, 0.9, 1.0],
+                roughness: 1.0,
+                ..wish_render::MaterialData::default()
+            },
+            surface: wish_render::SurfaceData::default(),
+        },
+    );
+    let frame = renderer.render(&gpu, &scene, None, 160, 120).unwrap();
+    assert!(frame.warnings.is_empty(), "{:?}", frame.warnings);
+    for pixel in [left(&frame.image), right(&frame.image)] {
+        let wide = pixel.map(u16::from);
+        assert!(wide[2] > 2 * wide[0] && wide[2] > 2 * wide[1], "{pixel:?}");
+    }
+    // A look with a texture of its own, laid on the model's own texture
+    // coordinates: the picture's left half on the quad's left half.
+    let mut surface = wish_render::SurfaceData::default();
+    surface.textures[0] = Some("assets/halves.png".to_owned());
+    let mut rgba = Vec::new();
+    for _ in 0..16 {
+        for x in 0..32 {
+            rgba.extend_from_slice(if x < 16 {
+                &[20, 20, 230, 255]
+            } else {
+                &[230, 230, 20, 255]
+            });
+        }
+    }
+    renderer
+        .upload_texture(
+            &gpu,
+            "assets/halves.png",
+            true,
+            &wish_import::Texture {
+                width: 32,
+                height: 16,
+                rgba,
+            },
+        )
+        .unwrap();
+    renderer.set_material(
+        "assets/blue.mat.json",
+        wish_render::Look {
+            material: wish_render::MaterialData {
+                roughness: 1.0,
+                ..wish_render::MaterialData::default()
+            },
+            surface: surface.clone(),
+        },
+    );
+    let frame = renderer.render(&gpu, &scene, None, 160, 120).unwrap();
+    assert!(frame.warnings.is_empty(), "{:?}", frame.warnings);
+    let (l, r) = (
+        left(&frame.image).map(u16::from),
+        right(&frame.image).map(u16::from),
+    );
+    assert!(l[2] > 2 * l[0], "left is blue: {l:?}");
+    assert!(r[0] > 2 * r[2] && r[1] > 2 * r[2], "right is yellow: {r:?}");
+
+    // A model without texture coordinates cannot show a texture: it is
+    // drawn, in one colour, and the frame says why.
+    let mut bare = red_green_quad();
+    for mesh in &mut bare.meshes {
+        for primitive in &mut mesh.primitives {
+            primitive
+                .uvs
+                .iter_mut()
+                .for_each(|uv| *uv = wish_core::math::Vec2::ZERO);
+        }
+    }
+    renderer
+        .upload_model(&gpu, "assets/quad.glb", &bare)
+        .unwrap();
+    let frame = renderer.render(&gpu, &scene, None, 160, 120).unwrap();
+    let codes: Vec<&str> = frame.warnings.iter().map(|w| w.code.as_ref()).collect();
+    assert_eq!(codes, ["material_needs_uvs"]);
+    let (l, r) = (left(&frame.image), right(&frame.image));
+    assert!(
+        l.iter().zip(r).all(|(a, b)| a.abs_diff(b) <= 2),
+        "one colour: {l:?} {r:?}"
+    );
+}

@@ -1,0 +1,35 @@
+[package]
+name = "wish_player"
+description = "The Wish Engine player: runs a game (a project, or an exported one) in a window, with no editor, no MCP server and no compiler."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "wish_player"
+path = "src/main.rs"
+
+[dependencies]
+serde_json.workspace = true
+wish_audio.workspace = true
+wish_control.workspace = true
+wish_core.workspace = true
+wish_import.workspace = true
+wish_render.workspace = true
+wish_script.workspace = true
+wish_window.workspace = true
+
+# Sound out of the speakers: Windows and Linux (as wen play; on Linux through
+# ALSA, so the program needs libasound.so.2).
+[target.'cfg(any(windows, target_os = "linux"))'.dependencies]
+wish_audio = { workspace = true, features = ["output"] }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+wish_control.workspace = true
+wish_script.workspace = true

@@ -1,0 +1,14 @@
+{
+  "contents": {
+    "themes": [
+      "contrast.json"
+    ]
+  },
+  "description": "Black and white with strong yellow and cyan: for low vision and bright rooms.",
+  "engine": ">=0.1",
+  "format": 1,
+  "id": "wish.theme.contrast",
+  "license": "MIT OR Apache-2.0",
+  "name": "High contrast",
+  "version": "1.0.0"
+}

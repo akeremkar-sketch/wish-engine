@@ -82,7 +82,10 @@ fn line_of(source: &str, text: &str) -> u32 {
 fn game_code_builds_runs_and_reports_its_mistakes_on_its_own_lines() {
     let toolchain = toolchain();
     let root = project("game", GAME);
+    // The report carries no duration (ADR-027, rule 2): timed here.
+    let started = std::time::Instant::now();
     let report = build_game(toolchain, &root, true).unwrap();
+    let first = started.elapsed().as_secs_f64();
     assert!(report.passed, "{:?}", report.diagnostics);
     assert_eq!(report.errors, 0);
     // Only the bonus coin is in reach of a player who starts at 0 here.
@@ -92,13 +95,12 @@ fn game_code_builds_runs_and_reports_its_mistakes_on_its_own_lines() {
     // A one-line change rebuilds quickly (incremental).
     let edited = GAME.replace("Coin { value: 10 }", "Coin { value: 20 }");
     std::fs::write(root.join(SCRIPTS_ENTRY), &edited).unwrap();
+    let started = std::time::Instant::now();
     let again = build_game(toolchain, &root, true).unwrap();
+    let seconds = started.elapsed().as_secs_f64();
     assert!(again.passed);
-    println!(
-        "first build {:.2} s, after a one-line edit {:.2} s",
-        report.seconds, again.seconds
-    );
-    assert!(again.seconds < 10.0, "{} s", again.seconds);
+    println!("first build {first:.2} s, after a one-line edit {seconds:.2} s");
+    assert!(seconds < 10.0, "{seconds} s");
     assert_eq!(play(&root), json!({ "points": 20, "coins": 1 }));
     let good = std::fs::read(root.join(GAME_WASM)).unwrap_or(good);
 
@@ -165,4 +167,40 @@ fn a_project_without_game_code_or_a_mismatched_sdk_is_explained() {
     )
     .unwrap_err();
     assert_eq!(mismatch.code, "script_toolchain_mismatch");
+}
+
+/// M9: a project given by a relative path builds (the compiler runs in the
+/// project folder, so the paths it is given must not be relative to ours).
+#[test]
+fn a_project_given_by_a_relative_path_builds() {
+    let toolchain = toolchain();
+    let root = project("relative", GAME);
+    // The same folder, written relative to where the test runs (only when
+    // both are on the same drive: a relative path cannot cross drives).
+    let here = std::env::current_dir().unwrap();
+    let prefix = |path: &std::path::Path| {
+        path.components()
+            .next()
+            .map(|c| c.as_os_str().to_ascii_lowercase())
+    };
+    if prefix(&here) != prefix(&root) {
+        return;
+    }
+    let ups = here
+        .components()
+        .filter(|part| matches!(part, std::path::Component::Normal(_)))
+        .count();
+    let mut relative = PathBuf::new();
+    for _ in 0..ups {
+        relative.push("..");
+    }
+    for part in root.components() {
+        if let std::path::Component::Normal(name) = part {
+            relative.push(name);
+        }
+    }
+    assert!(relative.is_relative() && relative.join(SCRIPTS_ENTRY).is_file());
+    let report = build_game(toolchain, &relative, true).unwrap();
+    assert!(report.passed, "{:?}", report.diagnostics);
+    assert!(root.join(GAME_WASM).is_file());
 }

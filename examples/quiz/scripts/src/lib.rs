@@ -55,27 +55,27 @@ struct Question {
 
 const QUESTIONS: [Question; 5] = [
     Question {
-        text: "Wish Engine hangi dille yazıldı?",
+        text: "What language is Wish Engine written in?",
         answers: ["Rust", "C++", "Go", "Zig"],
         right: 0,
     },
     Question {
-        text: "Oyun mantığı hangi biçimde çalışır?",
-        answers: ["Lua", "WebAssembly", "Python", "Doğrudan makine kodu"],
+        text: "What form does game logic run in?",
+        answers: ["Lua", "WebAssembly", "Python", "Native machine code"],
         right: 1,
     },
     Question {
-        text: "Yapay zekâ motoru hangi protokolle sürer?",
+        text: "Which protocol does an AI drive the engine with?",
         answers: ["REST", "gRPC", "MCP", "SOAP"],
         right: 2,
     },
     Question {
-        text: "Simülasyonda aynı tohum ve girdi ne verir?",
-        answers: ["Aynı sonuç", "Her seferinde başka", "Yalnızca hata", "Yarısı aynı"],
+        text: "What do the same seed and input give in a simulation?",
+        answers: ["The same result", "Something else each time", "Only errors", "Half the same"],
         right: 0,
     },
     Question {
-        text: "Koordinat sisteminde yukarı yön hangisi?",
+        text: "Which way is up in the coordinate system?",
         answers: ["+Z", "-Y", "-Z", "+Y"],
         right: 3,
     },
@@ -139,8 +139,8 @@ fn show(
         let line = match (label.slot, current) {
             (0, Some(q)) => q.text.to_owned(),
             (slot @ 1..=4, Some(q)) => q.answers[slot as usize - 1].to_owned(),
-            (5, _) => format!("Soru {}/{} · Doğru: {}", (game.question + 1).min(total), total, game.score),
-            (6, _) => format!("{total} sorudan {} doğru!", game.score),
+            (5, _) => format!("Question {}/{} · Right: {}", (game.question + 1).min(total), total, game.score),
+            (6, _) => format!("{} of {total} right!", game.score),
             _ => String::new(),
         };
         words.text = text(&line);

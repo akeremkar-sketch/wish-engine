@@ -12,7 +12,7 @@
 //! loop forever, trap, panic, ask for gigabytes — the call returns a
 //! [`Diagnostic`](wish_core::Diagnostic) and the engine keeps running.
 //!
-//! Design: `docs/design/M5-oyun-mantigi.md` §3 (ABI) and §6 (sandbox).
+//! Design: `docs/design/M5-game-logic.md` §3 (ABI) and §6 (sandbox).
 
 pub mod build;
 mod engine;
@@ -30,7 +30,7 @@ pub use game::{
 pub use host::{
     HostServices, MAX_NEW_TEXTS_PER_CALL, MAX_TEXT_BYTES, MAX_WORLD_TEXT_BYTES, MAX_WORLD_TEXTS,
 };
-pub use module::{CallReport, GuestLog, ScriptModule};
+pub use module::{CallReport, GuestLog, ScriptModule, fingerprint_of};
 
 /// The ABI version this host speaks (design note §3). A module reports its
 /// own through the `wish_abi_version` export.

@@ -6,7 +6,7 @@
 //! component and resource types, and reports every problem it finds with the
 //! file, line and column of the offending key or value.
 //!
-//! # File format (version 1)
+//! # File format (version 2)
 //!
 //! ```json
 //! {
@@ -14,12 +14,20 @@
 //!     "camera": { "parent": "player", "components": { "Camera": { "fov_y_deg": 60.0 } } },
 //!     "player": { "components": { "Transform": { "translation": [0, 1, 0] } } }
 //!   },
-//!   "format": 1,
+//!   "format": 2,
 //!   "resources": { "Gravity": { "value": [0, -9.81, 0] } }
 //! }
 //! ```
 //!
 //! - `format` is required. The other top-level keys are optional.
+//! - A file of an older format is still read: the format number says which
+//!   defaults the file was written against, so the values it relied on whose
+//!   default changed since are filled in as it is read
+//!   ([`crate::migrate::upgrade`]) and the document means what the file
+//!   meant. It is reported with the warning `old_format`, and written back
+//!   in the current format the next time the document is saved. Formats 1
+//!   and 2 differ only in the defaults of the look (the look lock of 1.0:
+//!   `docs/design/M12-look-lock.md`).
 //! - An entity has `components`, and optionally `parent` (another entity's
 //!   id), `order` (an integer that sorts siblings; ties break by id) and
 //!   `notes` (free text for people; JSON has no comments).
@@ -41,6 +49,7 @@ use wish_ecs::Registry;
 
 use crate::edit::History;
 use crate::json::{self, Json, Member, Node, Span};
+use crate::migrate::{self, Defaults};
 use crate::prefab::{PREFAB_ROOT, PrefabLibrary};
 use crate::schema_check;
 
@@ -48,8 +57,9 @@ use crate::schema_check;
 /// entity id, then by component name.
 pub type Overrides = BTreeMap<String, BTreeMap<String, Value>>;
 
-/// The scene file format this build reads and writes.
-pub const FORMAT: u32 = 1;
+/// The scene file format this build writes. It also reads every older
+/// format [`crate::migrate::STEPS`] has a step from.
+pub const FORMAT: u32 = 2;
 
 /// The longest scene id.
 pub const MAX_SCENE_ID_LEN: usize = 64;
@@ -241,8 +251,14 @@ impl SceneDocument {
     /// Empty sections are left out, so that the canonical file of an empty
     /// scene is just its format number.
     pub fn to_value(&self) -> Value {
+        self.to_value_as(FORMAT)
+    }
+
+    /// [`Self::to_value`] with another format number: the content as it is,
+    /// labelled as a file of format `format`.
+    fn to_value_as(&self, format: u32) -> Value {
         let mut object = Map::new();
-        object.insert("format".to_owned(), Value::from(FORMAT));
+        object.insert("format".to_owned(), Value::from(format));
         if !self.entities.is_empty() {
             object.insert(
                 "entities".to_owned(),
@@ -278,9 +294,20 @@ impl SceneDocument {
 #[derive(Debug)]
 pub struct LoadResult {
     /// The document, if the file has no errors. Warnings do not prevent it.
+    /// For a file of an older format it is the document as the current
+    /// format holds it: every value the file relied on whose default changed
+    /// since is written in ([`crate::migrate::upgrade`]).
     pub document: Option<SceneDocument>,
     /// Every problem found, in file order, errors and warnings.
     pub diagnostics: Vec<Diagnostic>,
+    /// The file's own text in canonical form, in the format the file is in:
+    /// what `wen fmt` writes. For a file of the current format it is the
+    /// document's canonical text; for an older file it is the file tidied,
+    /// not migrated. `None` if the file has errors.
+    pub canonical: Option<String>,
+    /// The file's format when it is older than [`FORMAT`] (and was read
+    /// through a migration in memory); `None` for a current file.
+    pub older_format: Option<u32>,
 }
 
 impl LoadResult {
@@ -332,6 +359,8 @@ pub(crate) fn load_with(
             return LoadResult {
                 document: None,
                 diagnostics: vec![diagnostic],
+                canonical: None,
+                older_format: None,
             };
         }
     };
@@ -341,21 +370,60 @@ pub(crate) fn load_with(
         registry,
         prefabs: &prefabs,
         kind,
+        older_format: None,
         diagnostics: Vec::new(),
     };
     let document = validator.run().map(|mut document| {
         document.prefabs = Arc::clone(&prefabs);
         document
     });
+    let older = validator.older_format;
+    let older_format = older.map(|(format, _)| format);
     let mut diagnostics = validator.diagnostics;
-    let document = if diagnostics.iter().any(Diagnostic::is_error) {
+    let mut document = if diagnostics.iter().any(Diagnostic::is_error) {
         None
     } else {
         document
     };
-    if let Some(document) = &document
-        && document.to_canonical().ok().as_deref() != Some(source)
-    {
+    // At the file's format number.
+    let located = |diagnostic: Diagnostic| {
+        let span = older.map_or(Span { line: 1, column: 1 }, |(_, span)| span);
+        let diagnostic = diagnostic.at_line(span.line, Some(span.column));
+        if file.is_empty() {
+            diagnostic
+        } else {
+            diagnostic.at_file(file)
+        }
+    };
+    // The file's own canonical text, in the format it is in.
+    let canonical = document.as_ref().and_then(|document| {
+        json::to_canonical(&document.to_value_as(older_format.unwrap_or(FORMAT))).ok()
+    });
+    // An older file: the values it relied on are filled in, so the document
+    // means under this engine's defaults what the file meant under its own.
+    if let (Some(from), Some(read)) = (older_format, document.as_mut()) {
+        match fill_in_older(read, from, kind, registry) {
+            Ok(()) => diagnostics.push(located(
+                Diagnostic::warning(
+                    "old_format",
+                    format!(
+                        "This file is format {from}; this engine writes format {FORMAT}. It is read as format {from} meant it: where a default changed since, the file keeps the old value."
+                    ),
+                    format!(
+                        "Run `wen migrate` to rewrite it as format {FORMAT} with those values written in. The next change made through the engine or the editor does the same to this file."
+                    ),
+                )
+                .at_path("/format"),
+            )),
+            Err(problem) => {
+                diagnostics.push(located(problem));
+                document = None;
+            }
+        }
+    }
+    let canonical = if document.is_some() { canonical } else { None };
+    let loaded = document.is_some();
+    if loaded && canonical.as_deref() != Some(source) {
         let warning = Diagnostic::warning(
             "not_canonical",
             "This file is not in canonical form.",
@@ -371,7 +439,80 @@ pub(crate) fn load_with(
     LoadResult {
         document,
         diagnostics,
+        canonical,
+        older_format: older_format.filter(|_| loaded),
     }
+}
+
+/// Fills into `document`, read from a file of format `from`, every value
+/// the file relied on whose default changed between that format and
+/// [`FORMAT`] ([`crate::migrate::upgrade`], with the document's own prefabs
+/// saying what an instance takes from its prefab). The newest defaults are
+/// those of `registry`, for the types that are the engine's own (their
+/// defaults are the record's of the current format): a type of the same
+/// name that is someone else's is left alone.
+fn fill_in_older(
+    document: &mut SceneDocument,
+    from: u32,
+    kind: FileKind,
+    registry: &Registry,
+) -> Result<()> {
+    let current = Defaults::of_registry(registry)?
+        .agreeing_with(&Defaults::parse(migrate::CURRENT_DEFAULTS)?);
+    let mut value = document.to_value_as(from);
+    let prefabs = Arc::clone(&document.prefabs);
+    let prefab_has = |prefab: &str, entity: &str, component: &str| {
+        prefabs
+            .get(prefab)
+            .and_then(|prefab| prefab.entity(entity))
+            .is_some_and(|entity| entity.components.contains_key(component))
+    };
+    let kind = match kind {
+        FileKind::Scene => migrate::Kind::Scene,
+        FileKind::Prefab => migrate::Kind::Prefab,
+    };
+    let written = migrate::upgrade(
+        &mut value,
+        kind,
+        FORMAT,
+        migrate::STEPS,
+        &current,
+        &prefab_has,
+    )?;
+    if written.is_empty() {
+        return Ok(());
+    }
+    // Pinning only adds fields to patches that are there, and whole
+    // resources: the patches are taken back as they now are.
+    let patches = |from: Option<&Value>| -> Option<BTreeMap<String, Value>> {
+        from.and_then(Value::as_object).map(|components| {
+            components
+                .iter()
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect()
+        })
+    };
+    for (id, entity) in &mut document.entities {
+        let Some(filled) = value.get("entities").and_then(|entities| entities.get(id)) else {
+            continue;
+        };
+        if let Some(components) = patches(filled.get("components")) {
+            entity.components = components;
+        }
+        for (part, patch) in &mut entity.overrides {
+            let filled = filled
+                .get("overrides")
+                .and_then(|parts| parts.get(part))
+                .and_then(|part| part.get("components"));
+            if let Some(components) = patches(filled) {
+                *patch = components;
+            }
+        }
+    }
+    if let Some(resources) = patches(value.get("resources")) {
+        document.resources = resources;
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -384,6 +525,9 @@ struct Validator<'a> {
     registry: &'a Registry,
     prefabs: &'a PrefabLibrary,
     kind: FileKind,
+    /// The file's format and where it is written, when it is an older one
+    /// that can be migrated.
+    older_format: Option<(u32, Span)>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -501,7 +645,8 @@ impl<'a> Validator<'a> {
 
     fn run(&mut self) -> Option<SceneDocument> {
         let root = self.root;
-        let members = self.members(root, "", "a scene file", "{ \"format\": 1 }")?;
+        let example = format!("{{ \"format\": {FORMAT} }}");
+        let members = self.members(root, "", "a scene file", &example)?;
 
         self.check_format(root, members);
         let mut entities = BTreeMap::new();
@@ -566,11 +711,34 @@ impl<'a> Validator<'a> {
         let value = &member.value;
         match &value.value {
             Json::Number(number) if number.as_u64() == Some(u64::from(FORMAT)) => {}
+            // An older format every step up to this one exists for: read,
+            // and filled in afterwards ([`fill_in_older`]).
+            Json::Number(number)
+                if number
+                    .as_u64()
+                    .and_then(|format| u32::try_from(format).ok())
+                    .is_some_and(migrate::can_upgrade_from) =>
+            {
+                self.older_format = number
+                    .as_u64()
+                    .and_then(|format| u32::try_from(format).ok())
+                    .map(|format| (format, value.span));
+            }
             Json::Number(number) => {
+                let newer = number
+                    .as_f64()
+                    .is_some_and(|format| format > f64::from(FORMAT));
                 let diagnostic = Diagnostic::error(
                     "unsupported_format",
-                    format!("This file is format {number}; this version reads format {FORMAT}."),
-                    "Run `wen migrate` to upgrade an older file, or update the engine for a newer one.",
+                    format!(
+                        "This file is format {number}; this version reads formats {} to {FORMAT}.",
+                        migrate::oldest_readable()
+                    ),
+                    if newer {
+                        "The file was written by a newer engine: update the engine. A newer file cannot be downgraded (`wen migrate` only upgrades)."
+                    } else {
+                        "No engine version wrote this format, so `wen migrate` cannot upgrade it: restore the file from version control."
+                    },
                 );
                 self.push(diagnostic, value.span, "/format");
             }

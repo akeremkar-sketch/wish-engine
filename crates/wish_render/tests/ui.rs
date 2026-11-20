@@ -271,3 +271,58 @@ fn a_missing_picture_or_font_still_draws_the_rest() {
         .unwrap();
     assert!(count(&frame.image, title.bounding_box, bright) > 20);
 }
+
+#[test]
+fn the_interface_is_one_draw_call_in_the_statistics() {
+    let world = world_of(SCENE);
+    let scene = extract(&world).unwrap();
+    let gpu = gpu();
+    let mut renderer = Renderer::new(&gpu).unwrap();
+    renderer.set_ui_picture("ui/heart.png", heart());
+    let frame = renderer.render(&gpu, &scene, None, 640, 360).unwrap();
+    let meshes = u32::try_from(frame.drawn).unwrap();
+    // Whatever the scene's meshes take, plus the sky, tone mapping and the
+    // whole interface in one call.
+    assert_eq!(
+        frame.stats.draw_calls,
+        frame.stats.shadow_casters + meshes + 2 + 1
+    );
+    assert!(
+        frame.stats.triangles > 2 + 2 * 6,
+        "every box and every letter is two triangles: {:?}",
+        frame.stats
+    );
+    // A scene without an interface has no such call.
+    let mut bare = scene.clone();
+    bare.ui.clear();
+    let without = renderer.render(&gpu, &bare, None, 640, 360).unwrap();
+    assert_eq!(without.stats.draw_calls + 1, frame.stats.draw_calls);
+}
+
+#[test]
+fn a_second_frame_with_an_interface_creates_nothing_and_draws_only_its_own() {
+    // The interface pass takes its atlas texture and its vertex buffer from
+    // the renderer's pool and fills them every frame. The device counts
+    // every texture and buffer made on it, so "nothing" is nothing.
+    let world = world_of(SCENE);
+    let scene = extract(&world).unwrap();
+    let gpu = gpu();
+    let mut renderer = Renderer::new(&gpu).unwrap();
+    renderer.set_ui_picture("ui/heart.png", heart());
+    let first = renderer.render(&gpu, &scene, None, 640, 360).unwrap();
+    let made = gpu.created();
+    let second = renderer.render(&gpu, &scene, None, 640, 360).unwrap();
+    assert_eq!(gpu.created(), made, "a second frame creates nothing");
+    assert_eq!(second.image, first.image);
+
+    // Kept buffers are filled again, never read past what a frame filled: a
+    // frame with fewer boxes after one with more shows only its own.
+    let mut fewer = scene.clone();
+    fewer.ui.truncate(2);
+    let alone = render(&fewer, 640, 360);
+    assert_ne!(alone, first.image);
+    let after = renderer.render(&gpu, &fewer, None, 640, 360).unwrap();
+    assert_eq!(after.image, alone);
+    let back = renderer.render(&gpu, &scene, None, 640, 360).unwrap();
+    assert_eq!(back.image, first.image);
+}

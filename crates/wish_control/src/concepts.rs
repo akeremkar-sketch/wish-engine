@@ -76,11 +76,22 @@ pub fn explain(name: &str) -> Option<&'static str> {
         | "worldtransform" | "transform3d" | "node3d" => {
             "Placement is the Transform component: translation (meters), rotation (a quaternion; in edits also \"euler_deg\": [x, y, z]) and scale. GlobalTransform is the derived world placement."
         }
-        "color" | "colour" | "albedo" | "texture" | "shader" => {
-            "Surface looks are the Material component: base_color [r, g, b, a], metallic, roughness, emissive; textures come with Model assets."
+        "color" | "colour" | "albedo" | "texture" | "texture2d" | "textures" | "skin" | "tile"
+        | "tiling" | "uv" | "normalmap" | "bumpmap" | "decal" | "standardmaterial"
+        | "standardmaterial3d" | "meshmaterial" | "materialoverride" | "shader"
+        | "shadermaterial" => {
+            "Surface looks are the Material component: base_color [r, g, b, a], metallic, roughness, emissive for a plain look. Textures are in a material file: asset_create with a .mat.json path and material { base_color_texture: a PNG of the project, normal_texture, uv_scale (tiling), alpha_mode Mask (cut-outs), double_sided, ... } (schema_get MaterialFile), then name the file in the entity's Material.file. Every entity that names it shares the look; on a Model it replaces the model's materials. There are no custom shaders. wish://docs/recipes has \"A texture on a box\"."
+        }
+        "transparency" | "transparent" | "opacity" | "alpha" | "glass" | "translucent"
+        | "translucency" | "seethrough" | "fade" | "fader" | "canvasgroup" | "blend" => {
+            "See-through surfaces are the Material component: a base_color alpha below 1 blends the surface over what is behind it (0.5 half, 0 invisible; game code can change it every tick to fade something). In a material file it is alpha_mode Blend (glTF BLEND materials are see-through too). They are lit and fogged like any surface, cast no shadow and are drawn farthest first. wish://docs/recipes has \"A glass window\"."
         }
         "script" | "behaviour" | "behavior" | "monobehaviour" | "component" | "controller" => {
             "Behaviour is game code: Rust systems in scripts/src/lib.rs built with script_build (see wish://docs/sdk). Scenes hold data only."
+        }
+        "postprocess" | "postprocessing" | "postprocessvolume" | "globalvolume"
+        | "worldenvironment" | "lookpreset" | "lightingpreset" => {
+            "The look of a scene is resources, not a component: Ambient (source Sky), Sky (sun_size_deg), Fog, Bloom, ColorGrading and RenderSettings (antialiasing, shadow_cascades), each set with set_resource. edit_apply's { \"op\": \"apply_look\", \"look\": \"natural\" } (or plain, vivid) sets all of them at once."
         }
         "sky" | "skybox" | "environment" | "fog" => {
             "The sky is the Sky resource (zenith, horizon, ground colors and luminance), set with set_resource; there is no skybox component."
@@ -104,6 +115,9 @@ mod tests {
         assert!(explain("BoxCollider").unwrap().starts_with("Physics"));
         assert!(explain("NAME").unwrap().contains("id"));
         assert!(explain("MeshRenderer").unwrap().contains("Primitive"));
+        assert!(explain("Texture").unwrap().contains("base_color_texture"));
+        assert!(explain("Skin").unwrap().contains("Material.file"));
+        assert!(explain("Tiling").unwrap().contains("uv_scale"));
         assert!(explain("Banana").is_none());
         assert_eq!(
             quoted_names("There is no component called 'Collider'."),

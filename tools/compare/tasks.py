@@ -13,18 +13,18 @@ import subprocess
 from unity_scene import (BOX_COLLIDER, BUILTIN_CUBE, CAMERA, COLLIDERS, LIGHT, MESH_FILTER,
                          RIGIDBODY, Scene, in_view)
 
-NOTE = ("Sahne motorda açık; yalnızca motorun MCP araçlarını kullan. İşin bitince sahneyi kaydet. "
-        "Koordinatlar metre; +Y yukarı.")
+NOTE = ("The scene is open in the engine; use only the engine's MCP tools. When you are done, save the scene. "
+        "Coordinates are in metres; +Y is up.")
 
 TASKS = [
-    ("place_cube", "'crate' adında 1 metrelik bir küp ekle; merkezi (2, 0.5, 0) noktasında olsun."),
-    ("paint_red", "'barrel' nesnesini kırmızı yap."),
-    ("falling_box", "'box' nesnesi oyun başlayınca yerçekimiyle düşsün ve 'floor' zemininin üstünde dursun."),
-    ("point_light", "(0, 3, 0) noktasına 'lamp' adında bir nokta ışığı (point light) ekle."),
-    ("camera_view", "Kamera 'target' nesnesini görmüyor. Kamerayı ayarla ki 'target' görüntüde olsun; 'target'ı oynatma."),
-    ("reparent", "'wheel' nesnesini 'car' nesnesinin çocuğu yap; 'wheel' dünyadaki yerinden oynamasın."),
-    ("delete", "'old' nesnesini sil; başka bir şeye dokunma."),
-    ("scale_floor", "'floor' zeminini X ve Z yönünde iki katına büyüt; kalınlığı (Y) aynı kalsın."),
+    ("place_cube", "Add a 1-metre cube named 'crate'; its centre should be at (2, 0.5, 0)."),
+    ("paint_red", "Make the 'barrel' object red."),
+    ("falling_box", "When the game starts, the 'box' object should fall under gravity and come to rest on top of the 'floor' ground."),
+    ("point_light", "Add a point light named 'lamp' at (0, 3, 0)."),
+    ("camera_view", "The camera does not see the 'target' object. Adjust the camera so that 'target' is in the picture; do not move 'target'."),
+    ("reparent", "Make the 'wheel' object a child of the 'car' object; 'wheel' must not move from its place in the world."),
+    ("delete", "Delete the 'old' object; do not touch anything else."),
+    ("scale_floor", "Make the 'floor' ground twice as big in the X and Z directions; its thickness (Y) must stay the same."),
 ]
 
 # The shared starting scene, in Wish Engine coordinates (right-handed, the

@@ -3,7 +3,7 @@
 //! A thin client of the control plane (`wish_control`): every tool is a
 //! catalogue tool, every answer is the same JSON the command line prints.
 //! The transport is stdio: one JSON-RPC 2.0 message per line, stdout for
-//! protocol only (design: `docs/design/M4-kontrol-duzlemi.md` §7).
+//! protocol only (design: `docs/design/M4-control-plane.md` §7).
 //!
 //! Protocol version 2025-06-18 (older versions the client asks for are
 //! accepted and answered with the same behaviour). Requests are handled one
@@ -16,6 +16,7 @@
 
 pub mod http;
 
+use std::borrow::BorrowMut;
 use std::io::{BufRead, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
@@ -38,7 +39,7 @@ const RESOURCE_NOT_FOUND: i64 = -32002;
 
 /// Tools that never change files or state.
 /// Tools whose effect cannot be undone through `edit_history`.
-const DESTRUCTIVE: &[&str] = &["capture_frame", "sim_stop"];
+const DESTRUCTIVE: &[&str] = &["capture_frame", "sim_stop", "checkpoint", "project_export"];
 
 const READ_ONLY: &[&str] = &[
     "project_info",
@@ -52,13 +53,14 @@ const READ_ONLY: &[&str] = &[
     "asset_info",
     "describe_view",
     "logs_get",
+    "activity_get",
 ];
 
-const INSTRUCTIONS: &str = "Wish Engine: a deterministic 3D game engine driven by these tools. Start with project_info, then read the resource wish://docs/guide (short). Change scenes with edit_apply (many operations at once, all or nothing), run them with sim_start and sim_step, and check what is on screen with describe_view and capture_frame. Every error carries a hint that says how to fix the call; read it before retrying. Game code lives in scripts/src/lib.rs (Rust; read wish://docs/sdk, and wish://docs/recipes for working pieces of games): edit it, build with script_build, prove behaviour with a scenario test (test_run). A person may be editing the same project: mind changed_by_others.";
+const INSTRUCTIONS: &str = "Wish Engine: a deterministic 3D game engine driven by these tools; right-handed, +Y up, metres. project_info names the project's scene and types. A scene edit needs no guide: scene_get (detail normal) shows the entities and their values; edit_apply changes them, saves the file, and answers the changed entities as they are now (now), so there is no need to read them back. Common components: Transform { translation: [x,y,z], rotation: [x,y,z,w] or euler_deg: [x,y,z], scale: [x,y,z] }; Primitive { shape: Cube | Sphere | Plane } (1 m, sized by scale); Material { base_color: [r,g,b,a] } (a texture: asset_create a .mat.json with material { base_color_texture, uv_scale }, then Material { file }); RigidBody { kind: Dynamic | Fixed | Kinematic } with Collider { shape: Box | Sphere | Capsule | Cylinder }; PointLight / SpotLight / DirectionalLight; Camera. schema_get (names or search) gives any type's fields. To prove behaviour, sim_start then sim_step (frames, and watch: ids to get their positions) instead of reading entities one by one; describe_view tells what the camera sees. Every error carries a hint that says how to fix the call; read it before retrying. Game code lives in scripts/src/lib.rs (Rust; read wish://docs/sdk and wish://docs/recipes, and wish://docs/guide for the whole picture): edit it, build with script_build, prove behaviour with a scenario test (test_run). A person may be editing the same project: mind changed_by_others.";
 
 /// One MCP session over one workspace.
-pub struct Server {
-    workspace: Workspace,
+pub struct Server<W: BorrowMut<Workspace> = Workspace> {
+    workspace: W,
     actor: Actor,
     protocol: Option<String>,
     /// The call being worked on, for cancellations.
@@ -161,7 +163,7 @@ impl Busy {
     }
 }
 
-impl std::fmt::Debug for Server {
+impl<W: BorrowMut<Workspace>> std::fmt::Debug for Server<W> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Server")
             .field("actor", &self.actor)
@@ -278,9 +280,9 @@ happens. Report the cause, the fix and the evidence.",
     }
 }
 
-impl Server {
-    /// A server over `workspace`.
-    pub fn new(workspace: Workspace) -> Self {
+impl<W: BorrowMut<Workspace>> Server<W> {
+    /// A server over `workspace` (owned, or borrowed: `&mut Workspace`).
+    pub fn new(workspace: W) -> Self {
         Self {
             workspace,
             actor: Actor::Agent("mcp-client".to_owned()),
@@ -291,7 +293,7 @@ impl Server {
 
     /// The workspace (for tests).
     pub fn workspace(&mut self) -> &mut Workspace {
-        &mut self.workspace
+        self.workspace.borrow_mut()
     }
 
     /// Handles one line of input and returns the line to send back, if any
@@ -406,7 +408,10 @@ impl Server {
                     );
                 }
                 let arguments = params.get("arguments").cloned().unwrap_or(Value::Null);
-                let answer = self.workspace.call(name, &arguments, &self.actor);
+                let answer = self
+                    .workspace
+                    .borrow_mut()
+                    .call(name, &arguments, &self.actor);
                 response(id, tool_result(answer))
             }
             "resources/list" => response(id, self.resource_list()),
@@ -473,7 +478,7 @@ impl Server {
     }
 
     fn type_names(&self) -> Vec<String> {
-        let registry = self.workspace.registry();
+        let registry = self.workspace.borrow().registry();
         registry
             .components()
             .map(|(_, info)| info.name().to_owned())
@@ -489,6 +494,16 @@ impl Server {
             json!({ "uri": "wish://docs/recipes", "name": "recipes", "title": "Game recipes", "description": "Working pieces of games (character, camera, pickups, checkpoints, moving platforms, interface, 2D, tests): code and scene operations that are tested to work.", "mimeType": "text/markdown" }),
             json!({ "uri": "wish://project/status", "name": "status", "title": "Project status", "description": "The project's current overview (the project_info answer).", "mimeType": "application/json" }),
         ];
+        // Recipes the project's and the person's packages bring (M10a).
+        let root = self.workspace.borrow().root().to_path_buf();
+        for recipe in docs::package_recipes(&root) {
+            resources.push(json!({
+                "uri": recipe.uri,
+                "name": recipe.title,
+                "title": format!("Recipe from {}: {}", recipe.package, recipe.title),
+                "mimeType": "text/markdown"
+            }));
+        }
         for name in self.type_names() {
             resources.push(json!({
                 "uri": format!("wish://docs/components/{name}"),
@@ -510,14 +525,31 @@ impl Server {
         if uri == "wish://docs/recipes" {
             return Ok(("text/markdown", docs::recipes_page().to_owned()));
         }
+        if uri.starts_with("wish://docs/packages/") {
+            let root = self.workspace.borrow().root().to_path_buf();
+            let recipes = docs::package_recipes(&root);
+            return recipes
+                .iter()
+                .find(|recipe| recipe.uri == uri)
+                .map(|recipe| ("text/markdown", recipe.text.clone()))
+                .ok_or_else(|| {
+                    let known: Vec<&str> = recipes.iter().map(|r| r.uri.as_str()).collect();
+                    Diagnostic::error(
+                        "unknown_resource",
+                        format!("No package brings the page {uri}."),
+                        wish_core::suggest::unknown_name_hint(uri, &known),
+                    )
+                });
+        }
         if uri == "wish://project/status" {
-            let answer = self
-                .workspace
-                .call("project_info", &Value::Null, &self.actor);
+            let answer =
+                self.workspace
+                    .borrow_mut()
+                    .call("project_info", &Value::Null, &self.actor);
             return Ok(("application/json", answer.to_string()));
         }
         if let Some(name) = uri.strip_prefix("wish://docs/components/") {
-            if let Some(page) = docs::type_page(self.workspace.registry(), name) {
+            if let Some(page) = docs::type_page(self.workspace.borrow().registry(), name) {
                 return Ok(("text/markdown", page));
             }
             let names = self.type_names();
@@ -558,38 +590,40 @@ fn request_id(line: &str) -> Option<Value> {
 /// a long `sim_step` at the next tick boundary. Lines are read as bytes
 /// (invalid UTF-8 becomes a parse error for that line, not the end of the
 /// server) and a leading byte-order mark is dropped.
-pub fn serve(
-    server: &mut Server,
+pub fn serve<W: BorrowMut<Workspace>>(
+    server: &mut Server<W>,
     mut input: impl BufRead + Send + 'static,
     mut output: impl Write,
 ) -> std::io::Result<()> {
-    server
-        .workspace
-        .set_cancel_flag(Arc::clone(&server.busy.flag));
+    let flag = Arc::clone(&server.busy.flag);
+    server.workspace().set_cancel_flag(flag);
     let (lines, received) = mpsc::channel::<String>();
     let busy = Arc::clone(&server.busy);
-    let reader = std::thread::spawn(move || -> std::io::Result<()> {
-        let mut first = true;
-        loop {
-            let mut bytes = Vec::new();
-            if input.read_until(b'\n', &mut bytes)? == 0 {
-                return Ok(());
+    let reader = std::thread::spawn(move || {
+        wish_control::crash::thread(move || -> std::io::Result<()> {
+            let mut first = true;
+            loop {
+                let mut bytes = Vec::new();
+                if input.read_until(b'\n', &mut bytes)? == 0 {
+                    return Ok(());
+                }
+                let mut line = String::from_utf8_lossy(&bytes).into_owned();
+                if first {
+                    line = line.trim_start_matches('\u{feff}').to_owned();
+                    first = false;
+                }
+                if let Ok(message) = serde_json::from_str::<Value>(&line)
+                    && message.get("method").and_then(Value::as_str)
+                        == Some("notifications/cancelled")
+                    && let Some(wanted) = message.get("params").and_then(|p| p.get("requestId"))
+                {
+                    busy.cancel("", wanted);
+                }
+                if lines.send(line).is_err() {
+                    return Ok(());
+                }
             }
-            let mut line = String::from_utf8_lossy(&bytes).into_owned();
-            if first {
-                line = line.trim_start_matches('\u{feff}').to_owned();
-                first = false;
-            }
-            if let Ok(message) = serde_json::from_str::<Value>(&line)
-                && message.get("method").and_then(Value::as_str) == Some("notifications/cancelled")
-                && let Some(wanted) = message.get("params").and_then(|p| p.get("requestId"))
-            {
-                busy.cancel("", wanted);
-            }
-            if lines.send(line).is_err() {
-                return Ok(());
-            }
-        }
+        })
     });
     for line in received {
         server.busy.start("", request_id(&line).as_ref());
@@ -601,5 +635,11 @@ pub fn serve(
             output.flush()?;
         }
     }
-    reader.join().unwrap_or(Ok(()))
+    // A reader that stopped on an unexpected error is a failure, not a
+    // clean end of input.
+    reader.join().unwrap_or_else(|_| {
+        Err(std::io::Error::other(
+            "the input reader stopped on an unexpected error",
+        ))
+    })
 }

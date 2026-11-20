@@ -5,14 +5,17 @@
 //! so the same world always gives the same scene (and the same debug
 //! images).
 
+use std::collections::BTreeMap;
+
 use wish_core::math::{Mat4, Vec3};
 use wish_core::{AssetRef, Color, Diagnostic, Entity, Result};
 use wish_ecs::World;
 use wish_transform::GlobalTransform;
 
 use crate::components::{
-    Ambient, Camera, DirectionalLight, Exposure, Material, Model, PointLight, Primitive, Shape,
-    Sky, SpotLight,
+    AlphaMode, Ambient, AmbientSource, Bloom, Camera, ColorGrading, DirectionalLight, Exposure,
+    Fog, Material, MaterialFile, Model, PointLight, Primitive, RenderSettings, Shape, Sky,
+    SpotLight,
 };
 
 /// What a draw shows.
@@ -48,6 +51,155 @@ impl Default for MaterialData {
     }
 }
 
+/// The texture slots of a material, in the order the shaders bind them: the
+/// names of the `MaterialFile` fields.
+pub const TEXTURE_SLOTS: [&str; 5] = [
+    "base_color_texture",
+    "metallic_roughness_texture",
+    "normal_texture",
+    "occlusion_texture",
+    "emissive_texture",
+];
+
+/// Whether a texture slot holds colours (sRGB: base colour, emission) or
+/// numbers (metal and roughness, normals, occlusion), by its place in
+/// [`TEXTURE_SLOTS`]. The same file is decoded differently for the two.
+pub const fn slot_is_colour(slot: usize) -> bool {
+    slot == 0 || slot == 4
+}
+
+/// The rest of a surface's look: its textures and how they are laid on it.
+/// The default is what a surface without any of it has: no textures, solid,
+/// single-sided.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SurfaceData {
+    /// The project paths of the textures, in [`TEXTURE_SLOTS`] order; `None`
+    /// for a slot without one.
+    pub textures: [Option<String>; 5],
+    /// How strong the normal map is.
+    pub normal_scale: f32,
+    /// How much the occlusion texture darkens, 0 to 1.
+    pub occlusion_strength: f32,
+    /// How many times the textures repeat along u and v.
+    pub uv_scale: [f32; 2],
+    /// How far the textures are slid along u and v.
+    pub uv_offset: [f32; 2],
+    /// Alpha below this is a hole; 0 for a solid surface.
+    pub alpha_cutoff: f32,
+    /// Whether back faces are drawn too.
+    pub double_sided: bool,
+    /// Whether the surface is see-through: blended over what is behind it
+    /// by its alpha (`AlphaMode::Blend`).
+    pub blend: bool,
+}
+
+impl Default for SurfaceData {
+    fn default() -> Self {
+        Self {
+            textures: [None, None, None, None, None],
+            normal_scale: 1.0,
+            occlusion_strength: 1.0,
+            uv_scale: [1.0, 1.0],
+            uv_offset: [0.0, 0.0],
+            alpha_cutoff: 0.0,
+            double_sided: false,
+            blend: false,
+        }
+    }
+}
+
+impl SurfaceData {
+    /// Whether any slot names a texture.
+    pub fn textured(&self) -> bool {
+        self.textures.iter().any(Option::is_some)
+    }
+}
+
+/// A whole look: what a material file says ([`MaterialFile`]), with its
+/// texts resolved to paths and its numbers made safe for a shader.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Look {
+    /// The colour, metal, roughness and emission.
+    pub material: MaterialData,
+    /// The textures and how they are laid on the surface.
+    pub surface: SurfaceData,
+}
+
+/// `value` within `low..=high`: the nearer bound when it is outside,
+/// `fallback` when it is not a number. A look can be built by code as well as
+/// read from a checked file; a shader is given only numbers it can compute
+/// with.
+fn clean(value: f32, low: f32, high: f32, fallback: f32) -> f32 {
+    if value.is_nan() {
+        fallback
+    } else {
+        value.clamp(low, high)
+    }
+}
+
+impl Look {
+    /// The look a material file describes. `text_of` resolves the texture
+    /// fields' handles to project paths; an empty path is no texture.
+    pub fn of(material: &MaterialFile, text_of: &dyn Fn(AssetRef) -> Option<String>) -> Self {
+        let slot = |reference: AssetRef| {
+            if reference.is_none() {
+                return None;
+            }
+            text_of(reference).filter(|path| !path.is_empty())
+        };
+        // A scale of 0 (or one that is not a number) would collapse the
+        // picture to one texel: it is drawn once instead.
+        let scale = |value: f32| {
+            if value.is_finite() && value != 0.0 {
+                value.clamp(-4096.0, 4096.0)
+            } else {
+                1.0
+            }
+        };
+        let blend = material.alpha_mode == AlphaMode::Blend;
+        let mut base_color = material
+            .base_color
+            .to_array()
+            .map(|c| clean(c, 0.0, 1.0e4, 1.0));
+        // A blended surface's alpha is how much of it covers what is
+        // behind: at most all of it.
+        if blend {
+            base_color[3] = base_color[3].min(1.0);
+        }
+        Self {
+            material: MaterialData {
+                base_color,
+                metallic: clean(material.metallic, 0.0, 1.0, 0.0),
+                roughness: clean(material.roughness, 0.0, 1.0, 0.5),
+                emissive: material
+                    .emissive
+                    .to_array()
+                    .map(|c| clean(c, 0.0, 1.0e6, 0.0)),
+            },
+            surface: SurfaceData {
+                textures: [
+                    slot(material.base_color_texture),
+                    slot(material.metallic_roughness_texture),
+                    slot(material.normal_texture),
+                    slot(material.occlusion_texture),
+                    slot(material.emissive_texture),
+                ],
+                normal_scale: clean(material.normal_scale, 0.0, 8.0, 1.0),
+                occlusion_strength: clean(material.occlusion_strength, 0.0, 1.0, 1.0),
+                uv_scale: material.uv_scale.map(scale),
+                uv_offset: material.uv_offset.map(|v| clean(v, -4096.0, 4096.0, 0.0)),
+                alpha_cutoff: match material.alpha_mode {
+                    AlphaMode::Opaque | AlphaMode::Blend => 0.0,
+                    // Never 0, which means "no cutoff" to the shaders.
+                    AlphaMode::Mask => clean(material.alpha_cutoff, 1e-4, 1.0, 0.5),
+                },
+                double_sided: material.double_sided,
+                blend,
+            },
+        }
+    }
+}
+
 /// One thing to draw.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Draw {
@@ -60,8 +212,13 @@ pub struct Draw {
     /// For [`Mesh::Model`], the asset path (project-relative, possibly with
     /// a `#sub` part).
     pub model_path: Option<String>,
-    /// Its material.
+    /// Its material's numbers: the entity's `Material`, or the defaults.
     pub material: MaterialData,
+    /// The material file the entity's `Material` names (`Material.file`), if
+    /// any. When the renderer has that file
+    /// ([`crate::Renderer::set_material`]) its look replaces `material`; on
+    /// a model it replaces every material of the model.
+    pub material_file: Option<String>,
     /// For a model with an `AnimationPlayer`: the clip's name (empty: the
     /// first clip) and the time in it.
     pub animation: Option<(String, f32)>,
@@ -229,6 +386,8 @@ pub struct SkyData {
     pub ground: [f32; 3],
     /// cd/m² of a colour of 1.
     pub luminance: f32,
+    /// The width of the sun's disc in degrees; 0 for none.
+    pub sun_size_deg: f32,
 }
 
 /// Everything drawn in one frame, copied out of the world.
@@ -246,10 +405,30 @@ pub struct RenderScene {
     pub draws: Vec<Draw>,
     /// The sky.
     pub sky: SkyData,
-    /// Ambient light: linear RGB multiplied by its illuminance (lux).
+    /// Ambient light of one colour: linear RGB multiplied by its illuminance
+    /// (lux). Not used when [`RenderScene::sky_light`] is set.
     pub ambient: [f32; 3],
+    /// When the ambient light comes from the sky (`Ambient.source: Sky`):
+    /// its strength, 1 for what the sky gives by itself. It scales the sky's
+    /// light on surfaces, not the sky's reflection.
+    pub sky_light: Option<f32>,
+    /// When the ambient light comes from the sky and `Ambient` sets a
+    /// colour or an intensity of its own (other than the default), which
+    /// are then not used: the first such field's name (`"color"`, then
+    /// `"intensity"`), for the warning `ambient_color_unused`.
+    pub ambient_unused: Option<&'static str>,
+    /// The fog (the world's `Fog`, or the defaults: a faint low haze).
+    pub fog: Fog,
+    /// The colour grading (the world's `ColorGrading`, or the defaults: a
+    /// gentle grade).
+    pub grading: ColorGrading,
+    /// The bloom (the world's `Bloom`, or the defaults: a faint glow).
+    pub bloom: Bloom,
     /// Exposure value at ISO 100.
     pub ev100: f32,
+    /// How the picture is drawn (the world's `RenderSettings`, or the
+    /// defaults).
+    pub settings: RenderSettings,
     /// The interface's boxes, in drawing order.
     pub ui: Vec<UiBoxView>,
     /// The interface's virtual screen.
@@ -262,11 +441,45 @@ pub struct RenderScene {
     pub emitters: Vec<EmitterView>,
     /// The simulation time shown (`Time.elapsed`), for particles.
     pub time: f64,
+    /// What entities are called where the scene came from (their ids in the
+    /// scene file), for warnings: "entity 'sun'" can be acted on, "entity
+    /// 3v0" cannot. [`extract`] leaves it empty; whoever knows the names
+    /// fills it in (the control plane does). Nothing is drawn differently.
+    pub names: BTreeMap<Entity, String>,
+}
+
+impl RenderScene {
+    /// How a warning names `entity`: its name in quotes when
+    /// [`RenderScene::names`] has one, `#<id>` otherwise (the way the tools
+    /// write an entity that has no name).
+    pub fn name_of(&self, entity: Entity) -> String {
+        match self.names.get(&entity) {
+            Some(name) => format!("'{name}'"),
+            None => format!("#{entity}"),
+        }
+    }
 }
 
 fn rgb(color: Color) -> [f32; 3] {
     let [r, g, b, _] = color.to_array();
     [r, g, b]
+}
+
+/// With `source: Sky`, the first of `Ambient`'s own colour and intensity
+/// that is not its default: set, and not used. (Before the look lock the
+/// default source was `Color`, so a scene that sets only these fields now
+/// changes nothing; the warning says so.)
+fn ambient_unused(ambient: &Ambient) -> Option<&'static str> {
+    let default = Ambient::default();
+    if ambient.source != AmbientSource::Sky {
+        None
+    } else if ambient.color != default.color {
+        Some("color")
+    } else if ambient.intensity != default.intensity {
+        Some("intensity")
+    } else {
+        None
+    }
 }
 
 fn finite_matrix(matrix: &Mat4) -> bool {
@@ -288,6 +501,7 @@ fn bad_camera(entity: Entity, message: String, hint: &str) -> Diagnostic {
 /// `GlobalTransform` are drawn at the origin. A camera with `far <= near`, or
 /// whose placement is not finite, is an `invalid_camera` error.
 pub fn extract(world: &World) -> Result<RenderScene> {
+    let ambient = world.resource::<Ambient>().copied().unwrap_or_default();
     let mut scene = RenderScene {
         cameras: Vec::new(),
         lights: Vec::new(),
@@ -301,10 +515,10 @@ pub fn extract(world: &World) -> Result<RenderScene> {
                 horizon: rgb(sky.horizon),
                 ground: rgb(sky.ground),
                 luminance: sky.luminance,
+                sun_size_deg: sky.sun_size_deg,
             }
         },
         ambient: {
-            let ambient = world.resource::<Ambient>().copied().unwrap_or_default();
             let [r, g, b] = rgb(ambient.color);
             [
                 r * ambient.intensity,
@@ -312,11 +526,23 @@ pub fn extract(world: &World) -> Result<RenderScene> {
                 b * ambient.intensity,
             ]
         },
+        sky_light: (ambient.source == AmbientSource::Sky).then_some(ambient.sky_strength),
+        ambient_unused: ambient_unused(&ambient),
+        fog: world.resource::<Fog>().copied().unwrap_or_default(),
+        grading: world
+            .resource::<ColorGrading>()
+            .copied()
+            .unwrap_or_default(),
+        bloom: world.resource::<Bloom>().copied().unwrap_or_default(),
         ev100: world
             .resource::<Exposure>()
             .copied()
             .unwrap_or_default()
             .ev100,
+        settings: world
+            .resource::<RenderSettings>()
+            .copied()
+            .unwrap_or_default(),
         ui: Vec::new(),
         ui_settings: world
             .resource::<wish_types::ui::UiSettings>()
@@ -329,6 +555,7 @@ pub fn extract(world: &World) -> Result<RenderScene> {
         sprites: Vec::new(),
         emitters: Vec::new(),
         time: wish_particles::now(world),
+        names: BTreeMap::new(),
     };
     let global = |world: &World, entity: Entity| {
         world
@@ -492,14 +719,18 @@ pub fn extract(world: &World) -> Result<RenderScene> {
             })
         };
         if let Some((mesh, asset)) = mesh {
-            let material = world
-                .get::<Material>(entity)
-                .map_or_else(MaterialData::default, |m| MaterialData {
-                    base_color: m.base_color.to_array(),
-                    metallic: m.metallic,
-                    roughness: m.roughness,
-                    emissive: m.emissive.to_array(),
-                });
+            let component = world.get::<Material>(entity);
+            let material = component.map_or_else(MaterialData::default, |m| MaterialData {
+                base_color: m.base_color.to_array(),
+                metallic: m.metallic,
+                roughness: m.roughness,
+                emissive: m.emissive.to_array(),
+            });
+            let material_file = component
+                .filter(|m| !m.file.is_none())
+                .and_then(|m| world.text(m.file.text()))
+                .filter(|path| !path.is_empty())
+                .map(str::to_owned);
             let model_path = match asset {
                 Some(asset) => world.text(asset.text()).map(str::to_owned),
                 None => None,
@@ -521,6 +752,7 @@ pub fn extract(world: &World) -> Result<RenderScene> {
                 mesh,
                 model_path,
                 material,
+                material_file,
                 animation,
             });
         }

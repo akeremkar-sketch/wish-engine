@@ -63,7 +63,10 @@ pub fn clear_output_folder(out: &Path, known: &[&str]) -> Result<()> {
 /// What an SDK pack holds.
 pub const SDK_ENTRIES: &[&str] = &[SDK_FILE, "wasm", "host"];
 /// What a packed toolchain holds.
-pub const TOOLCHAIN_ENTRIES: &[&str] = &[TOOLCHAIN_FILE, "bin", "lib"];
+pub const TOOLCHAIN_ENTRIES: &[&str] = &[TOOLCHAIN_FILE, "bin", "lib", "share"];
+/// Where a packed toolchain keeps the compiler's licence notices (where
+/// rustup's rustc component puts them, relative to the sysroot).
+pub const TOOLCHAIN_NOTICES: &str = "share/doc/rust";
 
 fn io_failed(what: &str, error: &std::io::Error) -> Diagnostic {
     Diagnostic::error(
@@ -287,20 +290,19 @@ pub struct BuildReport {
     pub errors: usize,
     /// How many warnings.
     pub warnings: usize,
-    /// How long the compiler took.
-    pub seconds: f64,
     /// The built module (project-relative), when it passed.
     pub output: Option<String>,
 }
 
 impl BuildReport {
-    /// The report in tool-answer form.
+    /// The report in tool-answer form. It carries no duration: a tool's
+    /// answer is the same bytes in every process (ADR-027, rule 2); the
+    /// command line and the editor time the call themselves.
     pub fn to_json(&self) -> Value {
         json!({
             "passed": self.passed,
             "errors": self.errors,
             "warnings": self.warnings,
-            "seconds": (self.seconds * 1000.0).round() / 1000.0,
             "output": self.output,
             "diagnostics": self.diagnostics.iter().map(|d| serde_json::to_value(d).unwrap_or(Value::Null)).collect::<Vec<_>>(),
         })
@@ -431,13 +433,12 @@ pub fn build_game(toolchain: &Toolchain, root: &Path, install: bool) -> Result<B
 }
 
 /// A report for a build that never reached the compiler, or was stopped.
-fn refused_build(diagnostic: Diagnostic, seconds: f64) -> BuildReport {
+fn refused_build(diagnostic: Diagnostic) -> BuildReport {
     BuildReport {
         passed: false,
         diagnostics: vec![diagnostic],
         errors: 1,
         warnings: 0,
-        seconds,
         output: None,
     }
 }
@@ -449,6 +450,10 @@ pub fn build_game_within(
     install: bool,
     timeout: Duration,
 ) -> Result<BuildReport> {
+    // The compiler runs in the project folder: every path it is given must
+    // not depend on where this program runs (`wen build --root game`).
+    let absolute = std::path::absolute(root).unwrap_or_else(|_| root.to_path_buf());
+    let root = absolute.as_path();
     if !root.join(SCRIPTS_ENTRY).is_file() {
         return Err(Diagnostic::error(
             "script_sources_missing",
@@ -480,7 +485,7 @@ pub fn build_game_within(
     }
     // Game code is untrusted: it may not read the machine while it builds.
     if let Err(refusal) = crate::source_check::check_sources(root) {
-        return Ok(refused_build(refusal, 0.0));
+        return Ok(refused_build(refusal));
     }
     let build = root.join(".wish").join("build");
     std::fs::create_dir_all(&build).map_err(|e| io_failed("create .wish/build", &e))?;
@@ -490,14 +495,11 @@ pub fn build_game_within(
         .zip(std::fs::canonicalize(root).ok())
         .is_some_and(|(build, root)| build.starts_with(root));
     if !inside {
-        return Ok(refused_build(
-            Diagnostic::error(
-                "script_build_failed",
-                "The project's .wish/build folder leads outside the project.",
-                "Delete .wish/build (it is a link) and build again; the engine recreates it.",
-            ),
-            0.0,
-        ));
+        return Ok(refused_build(Diagnostic::error(
+            "script_build_failed",
+            "The project's .wish/build folder leads outside the project.",
+            "Delete .wish/build (it is a link) and build again; the engine recreates it.",
+        )));
     }
     let output = root.join(CHECKED_WASM);
     let _ = std::fs::remove_file(&output);
@@ -585,7 +587,6 @@ pub fn build_game_within(
     let stderr = reader
         .and_then(|thread| thread.join().ok())
         .unwrap_or_default();
-    let seconds = start.elapsed().as_secs_f64();
     let Some(status) = status else {
         let _ = std::fs::remove_file(&output);
         return Ok(refused_build(
@@ -598,7 +599,6 @@ pub fn build_game_within(
                 "Something in the game code makes compilation run for very long: look for a const or static computed by a long loop, or a deeply recursive macro. The previous build stays in use.",
             )
             .at_file(SCRIPTS_ENTRY),
-            seconds,
         ));
     };
     let mut diagnostics = Vec::new();
@@ -628,10 +628,14 @@ pub fn build_game_within(
             "script_compile_error",
             format!(
                 "The compiler failed without a message it could explain: {}",
-                String::from_utf8_lossy(&stderr)
-                    .chars()
-                    .take(2000)
-                    .collect::<String>()
+                if stderr.is_empty() {
+                    format!("it exited with {status} and wrote no module to {CHECKED_WASM}")
+                } else {
+                    String::from_utf8_lossy(&stderr)
+                        .chars()
+                        .take(2000)
+                        .collect::<String>()
+                }
             ),
             "Report this with the message; the previous build stays in use.",
         ));
@@ -641,7 +645,6 @@ pub fn build_game_within(
         diagnostics,
         errors,
         warnings,
-        seconds,
         output: passed.then(|| if install { GAME_WASM } else { CHECKED_WASM }.to_owned()),
     })
 }
@@ -674,9 +677,12 @@ fn copy_tree(from: &Path, to: &Path, skip: &dyn Fn(&str) -> bool) -> Result<u64>
 
 /// Copies the parts of the compiler `rustc` that a game build needs into
 /// `out` (ADR-025): the compiler and its libraries, the WebAssembly linker,
-/// and the standard library for wasm32. Nothing else: no cargo, no rustup,
-/// no host standard library, no debug databases. The folder works on its
-/// own: `out/bin/rustc` finds its standard library relative to itself.
+/// and the standard library for wasm32, with the compiler's licence notices
+/// ([`TOOLCHAIN_NOTICES`]: `COPYRIGHT*` and `licenses/`, when the compiler
+/// has them; a package redistributes the compiler). Nothing else: no cargo,
+/// no rustup, no host standard library, no debug databases, no
+/// documentation. The folder works on its own: `out/bin/rustc` finds its
+/// standard library relative to itself.
 pub fn pack_toolchain(rustc: &Path, out: &Path) -> Result<Value> {
     let real = real_rustc(rustc)?;
     let version = rustc_version(&real)?;
@@ -742,6 +748,15 @@ pub fn pack_toolchain(rustc: &Path, out: &Path) -> Result<Value> {
             !wanted || name.ends_with(".pdb")
         },
     )?;
+    // The compiler's notices (the Rust project's and those of what it is
+    // built from: LLVM and others): COPYRIGHT*.html and licenses/.
+    let notices = sysroot.join(TOOLCHAIN_NOTICES);
+    if notices.is_dir() {
+        bytes += copy_tree(&notices, &out.join(TOOLCHAIN_NOTICES), &|name| {
+            !(name.starts_with("COPYRIGHT") || name.starts_with("LICENSE") || name == "licenses")
+                && !name.ends_with(".txt")
+        })?;
+    }
     let description = json!({
         "format": 1,
         "rustc": version,
@@ -754,4 +769,78 @@ pub fn pack_toolchain(rustc: &Path, out: &Path) -> Result<Value> {
     )
     .map_err(|e| io_failed("write toolchain.json", &e))?;
     Ok(description)
+}
+
+/// Makes the SDK pack in `sdk` one that can be shipped: its `sdk.json`
+/// without `rustc_path`, the absolute path of the compiler on the machine
+/// that made it (the path names that machine's user, and a package finds its
+/// own compiler in `toolchain/` first; see [`Toolchain::locate`]). Returns
+/// the description as written.
+pub fn sdk_for_package(sdk: &Path) -> Result<Value> {
+    let path = sdk.join(SDK_FILE);
+    let text = std::fs::read_to_string(&path).map_err(|e| io_failed("read sdk.json", &e))?;
+    let mut description: Value = serde_json::from_str(&text).map_err(|e| {
+        Diagnostic::error(
+            "script_sdk_missing",
+            format!("The SDK's sdk.json cannot be read: {e}."),
+            "Build the SDK pack again (`wen sdk`, or `wen package`).",
+        )
+    })?;
+    if let Some(map) = description.as_object_mut() {
+        map.remove("rustc_path");
+    }
+    std::fs::write(
+        &path,
+        serde_json::to_string_pretty(&description).unwrap_or_default(),
+    )
+    .map_err(|e| io_failed("write sdk.json", &e))?;
+    Ok(description)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+
+    fn absolute_paths(value: &Value) -> Vec<String> {
+        match value {
+            Value::String(text) if Path::new(text).is_absolute() || text.contains(":\\") => {
+                vec![text.clone()]
+            }
+            Value::Array(items) => items.iter().flat_map(absolute_paths).collect(),
+            Value::Object(map) => map.values().flat_map(absolute_paths).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Closing review of 1.0: a package's `sdk.json` carried the absolute
+    /// path of the packaging machine's compiler (with its user name).
+    #[test]
+    fn a_packaged_sdk_names_no_path_of_the_machine_that_made_it() {
+        let sdk = std::env::temp_dir().join("wish-script-test-sdk-for-package");
+        let _ = std::fs::remove_dir_all(&sdk);
+        std::fs::create_dir_all(&sdk).unwrap();
+        let compiler = std::env::temp_dir()
+            .join("someone")
+            .join(".rustup")
+            .join("bin")
+            .join("rustc");
+        let made = json!({
+            "format": 1,
+            "rustc": "rustc 1.100.0",
+            "rustc_path": compiler.display().to_string(),
+            "externs": { "wish_sdk": "wasm/libwish_sdk.rlib" },
+        });
+        std::fs::write(sdk.join(SDK_FILE), made.to_string()).unwrap();
+        let shipped = sdk_for_package(&sdk).unwrap();
+        let written: Value =
+            serde_json::from_str(&std::fs::read_to_string(sdk.join(SDK_FILE)).unwrap()).unwrap();
+        assert_eq!(shipped, written);
+        assert_eq!(absolute_paths(&written), Vec::<String>::new());
+        assert!(written.get("rustc_path").is_none());
+        assert_eq!(written["rustc"], made["rustc"]);
+        assert_eq!(written["externs"], made["externs"]);
+        let _ = std::fs::remove_dir_all(&sdk);
+    }
 }

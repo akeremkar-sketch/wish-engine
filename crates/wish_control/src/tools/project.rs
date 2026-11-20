@@ -122,11 +122,26 @@ fn project_info(workspace: &mut Workspace, _: &Args, _: &Actor) -> Result<Map<St
     Ok(out)
 }
 
-/// One type found by `schema_get`.
-struct Found<'a> {
+/// One type found by `schema_get`: a component, resource or event of the
+/// world, or the type a kind of file holds (`docs::file_types`).
+struct Found {
     kind: &'static str,
-    info: &'a TypeInfo,
+    name: String,
+    doc: String,
+    managed: bool,
     schema: Value,
+}
+
+impl Found {
+    fn of(kind: &'static str, info: &TypeInfo) -> Self {
+        Self {
+            kind,
+            name: info.name().to_owned(),
+            doc: info.schema().doc.clone(),
+            managed: info.is_managed(),
+            schema: wish_schema::json_schema::json_schema(info.schema()),
+        }
+    }
 }
 
 fn first_sentence(doc: &str) -> String {
@@ -179,37 +194,35 @@ fn field_detail(name: &str, field: &Value) -> Value {
 
 fn schema_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<String, Value>> {
     let registry = workspace.registry();
-    let mut all: Vec<Found<'_>> = Vec::new();
+    let mut all: Vec<Found> = Vec::new();
     for (_, info) in registry.components() {
-        all.push(Found {
-            kind: "component",
-            info,
-            schema: wish_schema::json_schema::json_schema(info.schema()),
-        });
+        all.push(Found::of("component", info));
     }
     for (_, info) in registry.resources() {
-        all.push(Found {
-            kind: "resource",
-            info,
-            schema: wish_schema::json_schema::json_schema(info.schema()),
-        });
+        all.push(Found::of("resource", info));
     }
     for (_, info) in registry.events() {
+        all.push(Found::of("event", info));
+    }
+    // What a kind of file holds: not in any world, written in a file.
+    for schema in crate::docs::file_types() {
         all.push(Found {
-            kind: "event",
-            info,
-            schema: wish_schema::json_schema::json_schema(info.schema()),
+            kind: "file",
+            name: schema.name.clone(),
+            doc: schema.doc.clone(),
+            managed: false,
+            schema: wish_schema::json_schema::json_schema(&schema),
         });
     }
-    all.sort_by(|a, b| a.info.name().cmp(b.info.name()));
+    all.sort_by(|a, b| a.name.cmp(&b.name));
 
     let names = args.strings("names");
-    let all_names: Vec<&str> = all.iter().map(|found| found.info.name()).collect();
+    let all_names: Vec<&str> = all.iter().map(|found| found.name.as_str()).collect();
     for name in &names {
         if !all_names.contains(&name.as_str()) {
             return Err(Diagnostic::error(
                 "unknown_type",
-                format!("There is no component, resource or event type called '{name}'."),
+                format!("There is no component, resource, event or file type called '{name}'."),
                 wish_core::suggest::unknown_name_hint(name, &all_names),
             )
             .at_path("/names")
@@ -218,9 +231,10 @@ fn schema_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<S
     }
     let search = args.str("search").map(str::to_lowercase);
     let selected = all.iter().filter(|found| {
-        let named = names.is_empty() || names.iter().any(|name| name == found.info.name());
+        let named = names.is_empty() || names.contains(&found.name);
         let matched = search.as_deref().is_none_or(|words| {
-            let mut haystack = format!("{} {}", found.info.name(), found.info.schema().doc);
+            let mut haystack =
+                format!("{} {} {}", found.name, found.doc, search_words(&found.name));
             for (field, detail) in fields_of(&found.schema) {
                 haystack.push(' ');
                 haystack.push_str(&field);
@@ -239,9 +253,9 @@ fn schema_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<S
     let types: Vec<Value> = selected
         .map(|found| {
             let mut out = Map::new();
-            out.insert("name".to_owned(), json!(found.info.name()));
+            out.insert("name".to_owned(), json!(found.name));
             out.insert("kind".to_owned(), json!(found.kind));
-            if found.info.is_managed() {
+            if found.managed {
                 out.insert("read_only".to_owned(), json!(true));
             }
             match detail {
@@ -249,10 +263,7 @@ fn schema_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<S
                     out.insert("schema".to_owned(), found.schema.clone());
                 }
                 "normal" => {
-                    out.insert(
-                        "doc".to_owned(),
-                        json!(one_paragraph(&found.info.schema().doc)),
-                    );
+                    out.insert("doc".to_owned(), json!(one_paragraph(&found.doc)));
                     let fields: Vec<Value> = fields_of(&found.schema)
                         .iter()
                         .map(|(name, field)| field_detail(name, field))
@@ -260,10 +271,7 @@ fn schema_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<S
                     out.insert("fields".to_owned(), json!(fields));
                 }
                 _ => {
-                    out.insert(
-                        "doc".to_owned(),
-                        json!(first_sentence(&found.info.schema().doc)),
-                    );
+                    out.insert("doc".to_owned(), json!(first_sentence(&found.doc)));
                     let fields: Vec<String> = fields_of(&found.schema)
                         .into_iter()
                         .map(|(name, _)| name)
@@ -320,12 +328,12 @@ pub(crate) fn resolve_documents(paths: &[String], root: &std::path::Path) -> Res
                 documents.iter().map(String::as_str),
             ) {
                 Some(closest) => format!("Did you mean '{closest}'?"),
-                None => "Give a scene, prefab or meta file path relative to the project folder."
+                None => "Give a scene, prefab, meta or material file path relative to the project folder."
                     .to_owned(),
             };
             Err(Diagnostic::error(
                 "file_not_found",
-                format!("'{path}' is not a scene, prefab or meta file of the project."),
+                format!("'{path}' is not a scene, prefab, meta or material file of the project."),
                 hint,
             )
             .at_path(format!("/paths/{index}")))
@@ -343,6 +351,12 @@ fn check(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<String
         && selected(PROJECT_FILE)
     {
         diagnostics.push(problem.clone());
+    }
+    // An `engine` that is not a version (ADR-027, rule 3).
+    if selected(PROJECT_FILE)
+        && let Ok(source) = std::fs::read_to_string(root.join(PROJECT_FILE))
+    {
+        diagnostics.extend(crate::project::engine_problem(&source));
     }
     diagnostics.extend(
         project
@@ -423,7 +437,8 @@ pub(crate) const DOCS_SEARCH: Tool = Tool {
 fn docs_search(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<String, Value>> {
     let query = args.str("query").unwrap_or_default();
     let limit = usize::try_from(args.int("limit").unwrap_or(5)).unwrap_or(5);
-    let hits = crate::docs::search(workspace.registry(), query, limit);
+    let recipes = crate::docs::package_recipes(workspace.root());
+    let hits = crate::docs::search_with(workspace.registry(), query, limit, &recipes);
     let mut out = Map::new();
     if hits.is_empty() {
         out.insert(
@@ -437,4 +452,67 @@ fn docs_search(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<
     }
     out.insert("results".to_owned(), json!(hits));
     Ok(out)
+}
+
+/// Words people (and agents) use for a type that its name and docs do not
+/// say, so that a search for them finds it (M10b efficiency work: an agent
+/// searched "mesh" and found nothing).
+const SEARCH_WORDS: &[(&str, &str)] = &[
+    (
+        "Transform",
+        "position location place move moved rotate rotation orientation scale size resize",
+    ),
+    (
+        "Primitive",
+        "mesh shape geometry cube box sphere ball plane quad",
+    ),
+    ("Model", "mesh gltf glb 3d model asset import"),
+    (
+        "Material",
+        "color colour paint texture textures textured skin surface appearance look shiny metal rough glow glass transparent transparency see-through translucent opacity alpha fade fading invisible ghost water window",
+    ),
+    (
+        "MaterialFile",
+        "color colour paint texture textures textured image picture skin tile tiles tiling repeat uv bump bumps normal map cutout cut-out transparent transparency hole holes alpha mask leaves fence shared mat.json look surface appearance shiny metal rough glow glass see-through translucent blend blended opacity fade water window",
+    ),
+    (
+        "RigidBody",
+        "physics gravity fall falling dynamic static fixed kinematic mass",
+    ),
+    ("Collider", "collision hitbox physics shape trigger sensor"),
+    ("PointLight", "lamp bulb light omni"),
+    ("SpotLight", "spotlight flashlight torch cone light"),
+    ("DirectionalLight", "sun sunlight light"),
+    (
+        "RenderSettings",
+        "graphics quality performance shadow shadows resolution settings options antialiasing anti-aliasing aa fxaa jagged jaggies edges smooth cascade cascades cascaded csm blurry blocky sharp sharper distance",
+    ),
+    (
+        "Ambient",
+        "ambient skylight indirect environment fill light shade shadows dark",
+    ),
+    ("Sky", "background horizon sun disc sunset skybox"),
+    (
+        "Fog",
+        "mist haze atmosphere distance depth weather smog fade far",
+    ),
+    (
+        "Bloom",
+        "glow glowing glare halo shine shining neon emissive bright light lens post processing dreamy",
+    ),
+    (
+        "ColorGrading",
+        "color colour grade grading contrast saturation vivid white balance temperature warm cool tint vignette post processing filter look mood tone",
+    ),
+    ("Camera", "view viewpoint eye lens fov"),
+    ("Sprite", "2d image picture texture"),
+    ("AudioSource", "sound music sfx"),
+    ("ParticleEmitter", "particles fire smoke sparks effect vfx"),
+];
+
+fn search_words(name: &str) -> &'static str {
+    SEARCH_WORDS
+        .iter()
+        .find(|(type_name, _)| *type_name == name)
+        .map_or("", |(_, words)| words)
 }

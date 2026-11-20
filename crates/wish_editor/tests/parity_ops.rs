@@ -78,7 +78,7 @@ fn right_click(app: &mut EditorApp, rect: Rect) {
 /// Opens the project menu (named after the project) and clicks `item`; a
 /// submenu is opened by pointing at it first.
 fn project_menu(app: &mut EditorApp, path: &[&str]) {
-    let menu = named(app, "Editor Test");
+    let menu = named(app, top_menu(path[0]));
     click(app, menu);
     for item in path {
         let rect = named(app, item);
@@ -181,7 +181,11 @@ fn notes_are_written_and_cleared() {
     let heading = app
         .widgets()
         .iter()
-        .find(|w| w.value.as_deref() == Some("Inspector"))
+        .find(|w| {
+            w.value
+                .as_deref()
+                .is_some_and(|v| v.eq_ignore_ascii_case("Inspector"))
+        })
         .map(|w| w.rect)
         .unwrap();
     play(
@@ -224,7 +228,7 @@ fn notes_are_written_and_cleared() {
 fn app_widgets_multiline(app: &EditorApp) -> Vec<Rect> {
     app.widgets()
         .iter()
-        .filter(|w| w.role == "MultilineTextInput" || w.role == "TextInput")
+        .filter(|w| w.role == "MultilineTextInput")
         .filter(|w| w.rect.min.x > 880.0)
         .map(|w| w.rect)
         .collect()
@@ -372,6 +376,163 @@ fn a_placeholder_sound_and_picture_are_made() {
     );
 }
 
+/// The 1.0 closing review: a material file that someone broke after the
+/// browser showed it is not made again from the one field changed by hand
+/// (that would wipe everything else it wrote); the change is refused and
+/// the file stays as it is.
+#[test]
+fn a_broken_material_file_is_not_overwritten_by_hand() {
+    let dir = project("material-broken");
+    let mut app = open(&dir);
+    let new = named(&app, "New...");
+    click(&mut app, new);
+    let material = named(&app, "Material file");
+    click(&mut app, material);
+    let path = "assets/materials/material.mat.json";
+    type_number(&mut app, "alpha_cutoff", "0.25");
+    assert_eq!(app.status(), format!("set alpha_cutoff in {path}"));
+    // Someone half-way through editing the file by hand.
+    let broken = "{\n  \"format\": 1,\n  \"material\": {\n    \"alpha_cutoff\": 0.25,\n    \"roughness\": 0.8,\n";
+    std::fs::write(dir.join(path), broken).unwrap();
+    type_number(&mut app, "alpha_cutoff", "0.5");
+    assert_eq!(std::fs::read_to_string(dir.join(path)).unwrap(), broken);
+    assert!(
+        app.status()
+            .starts_with(&format!("could not make {path}: ")),
+        "{}",
+        app.status()
+    );
+}
+
+#[test]
+fn a_material_file_is_made_and_changed_by_hand() {
+    let dir = project("material");
+    let mut app = open(&dir);
+    let new = named(&app, "New...");
+    click(&mut app, new);
+    let material = named(&app, "Material file");
+    click(&mut app, material);
+    let path = "assets/materials/material.mat.json";
+    assert_eq!(app.status(), format!("made {path}"));
+    assert_eq!(
+        std::fs::read_to_string(dir.join(path)).unwrap(),
+        "{
+  \"format\": 1
+}
+",
+        "the default look"
+    );
+    // The new file is selected, and its fields are where the browser shows
+    // it: a number is typed, a box is ticked. Each is one call by a human
+    // that writes the file again, the earlier change kept.
+    type_number(&mut app, "alpha_cutoff", "0.25");
+    assert_eq!(app.status(), format!("set alpha_cutoff in {path}"));
+    // The fields are a column under the file's name: scrolled to the box.
+    let first = field_of(&app, "alpha_cutoff", "SpinButton");
+    for _ in 0..20 {
+        if field_of(&app, "double_sided", "CheckBox").center().y < 680.0 {
+            break;
+        }
+        play(
+            &mut app,
+            json!([{ "events": [{ "pointer": [first.center().x, first.center().y] }, { "scroll": [0, -40] }] },
+                   { "seconds": 0.2 }, { "idle": 2 }]),
+        );
+    }
+    // Meanwhile someone else changes the file (an agent, a text editor):
+    // the next change by hand keeps what they wrote.
+    std::fs::write(
+        dir.join(path),
+        "{
+  \"format\": 1,
+  \"material\": {
+    \"alpha_cutoff\": 0.25,
+    \"roughness\": 0.8
+  }
+}
+",
+    )
+    .unwrap();
+    let tick = field_of(&app, "double_sided", "CheckBox");
+    click(&mut app, tick);
+    assert_eq!(app.status(), format!("set double_sided in {path}"));
+    assert_eq!(
+        std::fs::read_to_string(dir.join(path)).unwrap(),
+        "{
+  \"format\": 1,
+  \"material\": {
+    \"alpha_cutoff\": 0.25,
+    \"double_sided\": true,
+    \"roughness\": 0.8
+  }
+}
+"
+    );
+    // The file's colour, its first number typed where the browser shows it.
+    let red = browser_box(&mut app, "base_color", Pick::First);
+    play(
+        &mut app,
+        json!([
+            { "events": [{ "click": [red.center().x, red.center().y] }] },
+            { "idle": 1 },
+            { "events": [{ "key": "A", "ctrl": true }] },
+            { "events": [{ "text": "0.5" }] },
+            { "events": [{ "key": "Enter" }] },
+            { "idle": 2 }
+        ]),
+    );
+    assert_eq!(app.status(), format!("set base_color in {path}"));
+    let written: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join(path)).unwrap()).unwrap();
+    let colour: Vec<f64> = written["material"]["base_color"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c.as_f64().unwrap())
+        .collect();
+    assert_eq!(colour, [0.5, 1.0, 1.0, 1.0], "{written}");
+    assert_eq!(
+        written["material"]["roughness"], 0.8,
+        "the agent's change is kept"
+    );
+    let activity = app.call("activity_get", &json!({}));
+    let made: Vec<&Value> = activity["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|entry| entry["tool"] == "asset_create")
+        .collect();
+    assert_eq!(made.len(), 4, "{activity}");
+    assert!(made.iter().all(|entry| entry["actor"] == "human"));
+    // A material file cannot name another one: no such field is offered.
+    assert!(
+        !app.widgets()
+            .iter()
+            .any(|w| w.role == "Label" && w.value.as_deref() == Some("file")),
+        "no 'file' among a material file's fields"
+    );
+    // An entity takes the look by naming the file in its Material: the
+    // inspector's field, as any other.
+    let ground = named(&app, "ground");
+    click(&mut app, ground);
+    let file = field_of(&app, "file", "TextInput");
+    play(
+        &mut app,
+        json!([
+            { "events": [{ "click": [file.center().x, file.center().y] }] },
+            { "idle": 1 },
+            { "events": [{ "text": path }] },
+            { "events": [{ "key": "Enter" }] },
+            { "idle": 2 }
+        ]),
+    );
+    assert_eq!(app.status(), "set Material.file");
+    assert_eq!(
+        scene_file(&dir)["entities"]["ground"]["components"]["Material"]["file"],
+        path
+    );
+}
+
 #[test]
 fn the_view_is_saved_as_a_picture() {
     let dir = project("picture");
@@ -430,4 +591,874 @@ fn the_tests_run_from_the_menu() {
         "{:?}",
         app.problems()
     );
+}
+
+/// M8b WP1: a card of the history is taken back on its own; the person's
+/// later change stays (the hand-off of exit criterion 3).
+#[test]
+fn one_change_is_taken_back_from_the_history_tab() {
+    let dir = project("revert");
+    let mut app = open(&dir);
+    let agent = app.workspace().call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "spawn", "id": "crate", "components": { "Transform": {} } }],
+            "reason": "a crate to jump on" }),
+        &parse_actor("agent:helper"),
+    );
+    assert_eq!(agent["ok"], true, "{agent}");
+    app.call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "spawn", "id": "lamp", "components": { "Transform": {} } }] }),
+    );
+    play(&mut app, json!([{ "seconds": 0.5 }, { "idle": 2 }]));
+    let tab = named(&app, "History");
+    click(&mut app, tab);
+    assert!(
+        has_text(&app, "a crate to jump on"),
+        "the reason is on the card"
+    );
+    // Two cards can be taken back; the agent's is the lower (older) one.
+    let buttons: Vec<Rect> = app
+        .widgets()
+        .iter()
+        .filter(|w| w.role == "Button" && w.label.as_deref() == Some("Undo this"))
+        .map(|w| w.rect)
+        .collect();
+    assert_eq!(buttons.len(), 2, "{}", app.status());
+    let older = *buttons
+        .iter()
+        .max_by(|a, b| a.min.y.total_cmp(&b.min.y))
+        .unwrap();
+    click(&mut app, older);
+    assert!(app.status().starts_with("took back r"), "{}", app.status());
+    let names = wish_editor::ids(app.rows());
+    assert!(
+        !names.contains("crate") && names.contains("lamp"),
+        "{names:?}"
+    );
+    // The take-back is itself in the history, and Undo brings the crate back.
+    let undo = app
+        .widgets()
+        .iter()
+        .filter(|w| w.role == "Button" && w.label.as_deref() == Some("Undo"))
+        .find(|w| w.rect.min.y < 72.0)
+        .map(|w| w.rect)
+        .unwrap();
+    click(&mut app, undo);
+    assert!(wish_editor::ids(app.rows()).contains("crate"));
+}
+
+/// M8b WP2: the Activity tab shows what an agent did, with its reason, and
+/// takes its edit back on its own.
+#[test]
+fn the_activity_tab_shows_what_an_agent_did() {
+    let dir = project("activity");
+    let mut app = open(&dir);
+    app.workspace()
+        .call("scene_get", &json!({}), &parse_actor("agent:helper"));
+    let made = app.workspace().call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "spawn", "id": "crate", "components": { "Transform": {} } }],
+            "reason": "a crate to jump on" }),
+        &parse_actor("agent:helper"),
+    );
+    assert_eq!(made["ok"], true, "{made}");
+    play(&mut app, json!([{ "seconds": 0.5 }, { "idle": 2 }]));
+    let tab = named(&app, "Activity");
+    click(&mut app, tab);
+    play(&mut app, json!([{ "seconds": 0.6 }, { "idle": 2 }]));
+    assert!(has_text(&app, "agent:helper"), "{:?}", app.activity());
+    assert!(has_text(&app, "spawn crate"));
+    assert!(has_text(&app, "a crate to jump on"));
+    let only = named(&app, "Agents only");
+    click(&mut app, only);
+    let undo = named(&app, "Undo this");
+    click(&mut app, undo);
+    assert!(app.status().starts_with("took back r"), "{}", app.status());
+    assert!(!wish_editor::ids(app.rows()).contains("crate"));
+}
+
+/// M8b WP3: a checkpoint saved from the menu, compared with now in the
+/// before/after window, gone back to; Undo brings now back.
+#[test]
+fn a_checkpoint_is_saved_compared_and_gone_back_to() {
+    let dir = project("checkpoint");
+    let mut app = open(&dir);
+    project_menu(&mut app, &["Checkpoints", "Save checkpoint"]);
+    assert_eq!(app.status(), "checkpoint cp_1 saved", "{}", app.status());
+    assert_eq!(app.checkpoint_names(), ["cp_1"]);
+    let made = app.workspace().call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "spawn", "id": "crate", "components": {
+            "Transform": { "translation": [0, 1, 0] }, "Primitive": { "shape": "Cube" },
+            "Material": { "base_color": [1, 0, 0, 1] } } }] }),
+        &parse_actor("agent:helper"),
+    );
+    assert_eq!(made["ok"], true);
+    play(&mut app, json!([{ "seconds": 0.5 }, { "idle": 2 }]));
+    project_menu(
+        &mut app,
+        &[
+            "Checkpoints",
+            "cp_1: saved in the editor",
+            "Compare with now",
+        ],
+    );
+    assert_eq!(app.comparing(), Some("cp_1"), "{}", app.status());
+    assert!(has_text(&app, "Before (cp_1) and now"));
+    let back = named(&app, "Go back to this");
+    click(&mut app, back);
+    assert!(
+        app.status().starts_with("back to checkpoint cp_1"),
+        "{}",
+        app.status()
+    );
+    assert!(app.comparing().is_none());
+    assert!(!wish_editor::ids(app.rows()).contains("crate"));
+    let undo = app
+        .widgets()
+        .iter()
+        .filter(|w| w.role == "Button" && w.label.as_deref() == Some("Undo"))
+        .find(|w| w.rect.min.y < 72.0)
+        .map(|w| w.rect)
+        .unwrap();
+    click(&mut app, undo);
+    assert!(
+        wish_editor::ids(app.rows()).contains("crate"),
+        "now is back"
+    );
+}
+
+/// M8b WP4: in "Only suggest", an agent's changes wait in the Activity tab;
+/// one is accepted (made, as the agent's), one rejected.
+#[test]
+fn an_agents_proposal_is_accepted_and_rejected_by_hand() {
+    let dir = project("proposals");
+    let mut app = open(&dir);
+    project_menu(&mut app, &["Permissions", "Only suggest"]);
+    assert_eq!(app.permission_mode(), "suggest", "{}", app.status());
+    let agent = parse_actor("agent:helper");
+    let held = app.workspace().call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "spawn", "id": "crate", "components": { "Transform": {} } }],
+            "reason": "a crate to jump on" }),
+        &agent,
+    );
+    assert_eq!(held["proposed"], 1, "{held}");
+    app.workspace().call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "despawn", "id": "sun" }] }),
+        &agent,
+    );
+    let tab = named(&app, "Activity");
+    click(&mut app, tab);
+    play(&mut app, json!([{ "seconds": 0.6 }, { "idle": 2 }]));
+    assert!(
+        has_text(&app, "Waiting for you: 2"),
+        "{:?}",
+        app.waiting_proposals()
+    );
+    assert!(has_text(&app, "a crate to jump on"));
+    assert!(
+        !wish_editor::ids(app.rows()).contains("crate"),
+        "not made yet"
+    );
+    // The first Accept (the top one) is the crate's: oldest first.
+    let accept = app
+        .widgets()
+        .iter()
+        .filter(|w| w.role == "Button" && w.label.as_deref() == Some("Accept"))
+        .map(|w| w.rect)
+        .min_by(|a, b| a.min.y.total_cmp(&b.min.y))
+        .unwrap();
+    click(&mut app, accept);
+    assert_eq!(app.status(), "proposal 1 accepted and made");
+    assert!(wish_editor::ids(app.rows()).contains("crate"));
+    let reject = named(&app, "Reject");
+    click(&mut app, reject);
+    assert_eq!(app.status(), "proposal 2 rejected");
+    assert!(wish_editor::ids(app.rows()).contains("sun"));
+    assert!(app.waiting_proposals().is_empty());
+}
+
+/// M9 WP1: the game exported from the Project menu.
+#[test]
+fn the_game_is_exported_from_the_menu() {
+    let dir = project("export");
+    std::fs::remove_dir_all(dir.join("scripts")).unwrap();
+    let mut app = open(&dir);
+    // The player program: any file stands for it here (the player's own
+    // tests run the real one).
+    app.workspace()
+        .set_player_path(std::env::current_exe().unwrap());
+    project_menu(&mut app, &["Export game"]);
+    assert!(
+        app.status()
+            .starts_with("game exported: exports/editor_test/"),
+        "{}",
+        app.status()
+    );
+    assert!(
+        dir.join("exports/editor_test/game/scenes/main.scene.json")
+            .is_file()
+    );
+    assert!(dir.join("exports/editor_test/LICENSES.txt").is_file());
+    // The export is not part of the project.
+    assert!(
+        !app.call("asset_list", &json!({}))
+            .to_string()
+            .contains("exports/")
+    );
+    // The exported copies are not checked as the project's own files.
+    std::fs::write(
+        dir.join("exports/editor_test/game/scenes/main.scene.json"),
+        "not json",
+    )
+    .unwrap();
+    assert_eq!(app.call("check", &json!({}))["passed"], true);
+    // Exporting again asks before the earlier export is replaced.
+    std::fs::write(dir.join("exports/editor_test/mine.txt"), "mine").unwrap();
+    project_menu(&mut app, &["Export game"]);
+    assert!(
+        app.status().starts_with("an earlier export"),
+        "{}",
+        app.status()
+    );
+    let cancel = named(&app, "Cancel");
+    click(&mut app, cancel);
+    assert!(dir.join("exports/editor_test/mine.txt").is_file());
+    project_menu(&mut app, &["Export game"]);
+    let replace = named(&app, "Replace");
+    click(&mut app, replace);
+    assert!(
+        app.status().starts_with("game exported: "),
+        "{}",
+        app.status()
+    );
+    assert!(!dir.join("exports/editor_test/mine.txt").exists());
+    assert!(
+        std::fs::read_to_string(dir.join("exports/editor_test/game/scenes/main.scene.json"))
+            .unwrap()
+            .contains("\"format\"")
+    );
+}
+
+/// "Add resource...", type a name into its search box, click the match.
+fn add_resource(app: &mut EditorApp, name: &str) {
+    let add = named(app, "Add resource...");
+    click(app, add);
+    play(
+        app,
+        json!([{ "events": [{ "text": name }] }, { "idle": 2 }]),
+    );
+    let choice = app
+        .widgets()
+        .iter()
+        .find(|w| w.role == "Button" && w.label.as_deref() == Some(name))
+        .map(|w| w.rect)
+        .unwrap_or_else(|| panic!("'{name}' is not offered"));
+    click(app, choice);
+}
+
+/// Which number box of a row.
+#[derive(Clone, Copy)]
+enum Pick {
+    First,
+    Last,
+}
+
+/// A number box on the row of the material file's field `label` in the
+/// asset browser, after scrolling the row into view. The browser's label
+/// column is left of the inspector's, which can show a field of the same
+/// name. The asset panel shows a few rows at a time, between its tabs and
+/// the status bar (at 1280x720 about 90 pixels): a row below that band is
+/// under the status bar and takes no click, one above it is under the tabs,
+/// so the panel is scrolled until the row is inside, as a person would.
+fn browser_box(app: &mut EditorApp, label: &str, pick: Pick) -> Rect {
+    browser_widget(app, label, "SpinButton", pick)
+}
+
+/// [`browser_box`] for a widget of any role (`TextInput` for a texture).
+fn browser_widget(app: &mut EditorApp, label: &str, role: &str, pick: Pick) -> Rect {
+    let row_of = |app: &EditorApp| {
+        let widgets = app.widgets();
+        let row = widgets
+            .iter()
+            .filter(|w| w.role == "Label" && w.value.as_deref() == Some(label))
+            .min_by(|a, b| a.rect.min.x.total_cmp(&b.rect.min.x))
+            .map(|w| w.rect)
+            .unwrap_or_else(|| panic!("no '{label}' row in the browser"));
+        let boxes = widgets.iter().filter(|w| w.role == role).filter(|w| {
+            (w.rect.center().y - row.center().y).abs() < 8.0 && w.rect.min.x > row.max.x
+        });
+        let field = match pick {
+            Pick::First => boxes.min_by(|a, b| a.rect.min.x.total_cmp(&b.rect.min.x)),
+            Pick::Last => boxes.max_by(|a, b| a.rect.min.x.total_cmp(&b.rect.min.x)),
+        }
+        .map(|w| w.rect)
+        .unwrap_or_else(|| panic!("no {role} on the '{label}' row"));
+        (row, field)
+    };
+    let panel = app
+        .widgets()
+        .iter()
+        .find(|w| w.role == "ScrollBar" && w.rect.min.y > 500.0)
+        .map(|w| w.rect)
+        .expect("the asset panel's scroll bar");
+    for _ in 0..40 {
+        let (row, _) = row_of(app);
+        let y = row.center().y;
+        if y > panel.min.y + 12.0 && y < panel.max.y - 12.0 {
+            break;
+        }
+        let step = if y >= panel.max.y - 12.0 { -10.0 } else { 10.0 };
+        play(
+            app,
+            json!([{ "events": [{ "pointer": [row.min.x + 20.0, panel.center().y] }, { "scroll": [0, step] }] },
+                   { "seconds": 0.2 }, { "idle": 2 }]),
+        );
+    }
+    let (row, field) = row_of(app);
+    assert!(
+        row.center().y > panel.min.y && row.center().y < panel.max.y,
+        "the '{label}' row is in view: {row:?} in {panel:?}"
+    );
+    field
+}
+
+/// The widget of `role` on the row of the inspector's field `label`.
+fn field_of(app: &EditorApp, label: &str, role: &str) -> Rect {
+    let widgets = app.widgets();
+    let row = widgets
+        .iter()
+        .find(|w| w.role == "Label" && w.value.as_deref() == Some(label))
+        .map(|w| w.rect)
+        .unwrap_or_else(|| panic!("no field '{label}' in the inspector"));
+    widgets
+        .iter()
+        .filter(|w| w.role == role)
+        .filter(|w| (w.rect.center().y - row.center().y).abs() < 8.0 && w.rect.min.x > row.max.x)
+        .min_by(|a, b| a.rect.min.x.total_cmp(&b.rect.min.x))
+        .map(|w| w.rect)
+        .unwrap_or_else(|| panic!("no {role} next to '{label}'"))
+}
+
+/// Clicks a number box, types a value and presses Enter.
+fn type_number(app: &mut EditorApp, label: &str, text: &str) {
+    let field = field_of(app, label, "SpinButton");
+    play(
+        app,
+        json!([
+            { "events": [{ "click": [field.center().x, field.center().y] }] },
+            { "idle": 1 },
+            { "events": [{ "key": "A", "ctrl": true }] },
+            { "events": [{ "text": text }] },
+            { "events": [{ "key": "Enter" }] },
+            { "idle": 2 }
+        ]),
+    );
+}
+
+/// Opens a field's list of choices and clicks one.
+fn choose(app: &mut EditorApp, label: &str, choice: &str) {
+    let list = field_of(app, label, "ComboBox");
+    click(app, list);
+    let item = named(app, choice);
+    click(app, item);
+}
+
+/// Every look effect of the default look, in the order a frame draws them.
+const ALL_EFFECTS: [&str; 6] = [
+    "sky_light",
+    "sun_disc",
+    "fog",
+    "bloom",
+    "color_grading",
+    "fxaa",
+];
+
+/// The look settings of M12 (sky light, sun disc, fog, colour grading,
+/// anti-aliasing) are resources with a schema, so a person sets every one of
+/// them in the inspector, with no editor code written for them (invariant 9).
+/// A new scene has the default look; here a person changes each part of it,
+/// and switches two of them off.
+#[test]
+fn the_look_of_a_scene_is_set_by_hand() {
+    let dir = project("look");
+    let mut app = open(&dir);
+    let size = json!({ "width": 96, "height": 54 });
+    let before = app.call("capture_frame", &size);
+    assert_eq!(before["stats"]["effects"], json!(ALL_EFFECTS), "{before}");
+    assert!(has_text(&app, "Scene resources"));
+
+    // Each resource is added from the list, one of its fields is set, and
+    // its section is folded away again to keep the next one in view.
+    let fold = |app: &mut EditorApp, name: &str| {
+        let header = named(app, name);
+        click(app, header);
+    };
+    add_resource(&mut app, "Fog");
+    type_number(&mut app, "density", "0.02");
+    type_number(&mut app, "height_falloff", "0.1");
+    fold(&mut app, "Fog");
+    add_resource(&mut app, "RenderSettings");
+    choose(&mut app, "antialiasing", "Off");
+    fold(&mut app, "RenderSettings");
+    add_resource(&mut app, "Ambient");
+    choose(&mut app, "source", "Color");
+    type_number(&mut app, "sky_strength", "0.5");
+    fold(&mut app, "Ambient");
+    add_resource(&mut app, "ColorGrading");
+    type_number(&mut app, "contrast", "1.2");
+    type_number(&mut app, "saturation", "0.8");
+    type_number(&mut app, "temperature", "0.25");
+    type_number(&mut app, "vignette", "0.4");
+    fold(&mut app, "ColorGrading");
+    add_resource(&mut app, "Sky");
+    type_number(&mut app, "sun_size_deg", "4.5");
+
+    assert_eq!(
+        scene_file(&dir)["resources"],
+        json!({
+            "Ambient": { "sky_strength": 0.5, "source": "Color" },
+            "ColorGrading": { "contrast": 1.2, "saturation": 0.8, "temperature": 0.25, "vignette": 0.4 },
+            "Fog": { "density": 0.02, "height_falloff": 0.1 },
+            "RenderSettings": { "antialiasing": "Off" },
+            "Sky": { "sun_size_deg": 4.5 }
+        }),
+        "{}",
+        scene_file(&dir)
+    );
+    // The picture follows: the sky's light and the smoothing are off, the
+    // rest is drawn with the new numbers.
+    let after = app.call("capture_frame", &size);
+    assert_eq!(
+        after["stats"]["effects"],
+        json!(["sun_disc", "fog", "bloom", "color_grading"]),
+        "{after}"
+    );
+    assert_ne!(after["image"]["data"], before["image"]["data"]);
+    // Every step was one change by a human: five resources added, ten
+    // fields set.
+    let history = app.call("edit_history", &json!({ "action": "list", "limit": 50 }));
+    let entries = history["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 15, "{history}");
+    assert!(
+        entries
+            .iter()
+            .all(|entry| entry.to_string().contains("human")),
+        "{history}"
+    );
+}
+
+/// A named look (M12 package 9, the look lock) is applied by hand from the
+/// scene resources: one change by a human that writes every value of the
+/// look into the scene, and the picture uses all of it. Natural is the look
+/// a new scene has already, so it gives the first picture, to the byte;
+/// Plain switches every effect off (invariant 9).
+#[test]
+fn a_look_is_applied_by_hand() {
+    let dir = project("apply-look");
+    let mut app = open(&dir);
+    let size = json!({ "width": 96, "height": 54 });
+    let before = app.call("capture_frame", &size);
+    assert_eq!(before["stats"]["effects"], json!(ALL_EFFECTS), "{before}");
+    assert!(scene_file(&dir).get("resources").is_none());
+
+    let menu = named(&app, "Add resource...");
+    click(&mut app, menu);
+    let natural = named(&app, "Natural");
+    click(&mut app, natural);
+    assert_eq!(app.status(), "applied the look Natural");
+    let written = scene_file(&dir);
+    let look = wish_control::looks::find("natural").unwrap();
+    for (name, fields) in &look.resources {
+        for (field, value) in fields {
+            assert_eq!(
+                &written["resources"][name][field], value,
+                "{name}.{field} in {written}"
+            );
+        }
+    }
+    let after = app.call("capture_frame", &size);
+    assert_eq!(after["stats"]["effects"], json!(ALL_EFFECTS), "{after}");
+    assert_eq!(after["stats"]["shadow_cascades"], 4, "{after}");
+    // The default look written out: the same picture, to the byte.
+    assert_eq!(after["image"]["data"], before["image"]["data"]);
+
+    // Plain, by hand too: no effect is left, and one shadow map.
+    let menu = named(&app, "Add resource...");
+    click(&mut app, menu);
+    let plain = named(&app, "Plain");
+    click(&mut app, plain);
+    assert_eq!(app.status(), "applied the look Plain");
+    let again = app.call("capture_frame", &size);
+    assert_eq!(again["stats"]["effects"], json!([]), "{again}");
+    assert_eq!(again["stats"]["shadow_cascades"], 1, "{again}");
+    assert_ne!(again["image"]["data"], before["image"]["data"]);
+
+    // Each look was one change by a human.
+    let history = app.call("edit_history", &json!({ "action": "list", "limit": 50 }));
+    let entries = history["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 2, "{history}");
+    assert!(
+        entries
+            .iter()
+            .all(|entry| entry.to_string().contains("human")),
+        "{history}"
+    );
+}
+
+/// The look lock's audit of invariant 9 (M12 package 9): the look fields no
+/// other by-hand test types are set by hand too. In the scene resources,
+/// `Fog`'s colour, height, start and opacity, `ColorGrading`'s tint, and
+/// whether and how finely shadows are drawn; in the browser, a material
+/// file's texture, tiling and bump strength. Each is one call by a human.
+#[test]
+fn the_other_look_fields_are_set_by_hand() {
+    let dir = project("look-rest");
+    let mut app = open(&dir);
+    let fold = |app: &mut EditorApp, name: &str| {
+        let header = named(app, name);
+        click(app, header);
+    };
+    add_resource(&mut app, "Fog");
+    type_number(&mut app, "tint", "0.5");
+    type_number(&mut app, "base_height", "2");
+    type_number(&mut app, "start", "5");
+    type_number(&mut app, "max_opacity", "0.8");
+    fold(&mut app, "Fog");
+    add_resource(&mut app, "RenderSettings");
+    let shadows = field_of(&app, "shadows", "CheckBox");
+    click(&mut app, shadows);
+    type_number(&mut app, "shadow_map_size", "1024");
+    fold(&mut app, "RenderSettings");
+    add_resource(&mut app, "ColorGrading");
+    type_number(&mut app, "tint", "0.3");
+    assert_eq!(
+        scene_file(&dir)["resources"],
+        json!({
+            "ColorGrading": { "tint": 0.3 },
+            "Fog": { "base_height": 2.0, "max_opacity": 0.8, "start": 5.0, "tint": [0.5, 1.0, 1.0, 1.0] },
+            "RenderSettings": { "shadow_map_size": 1024, "shadows": false }
+        }),
+        "{}",
+        scene_file(&dir)
+    );
+
+    // A picture, a material file, and the file's texture, tiling and bumps
+    // typed where the browser shows the file.
+    let new = named(&app, "New...");
+    click(&mut app, new);
+    let circle = named(&app, "Circle picture");
+    click(&mut app, circle);
+    let new = named(&app, "New...");
+    click(&mut app, new);
+    let material = named(&app, "Material file");
+    click(&mut app, material);
+    let path = "assets/materials/material.mat.json";
+    let texture = browser_widget(&mut app, "base_color_texture", "TextInput", Pick::First);
+    play(
+        &mut app,
+        json!([
+            { "events": [{ "click": [texture.center().x, texture.center().y] }] },
+            { "idle": 1 },
+            { "events": [{ "text": "assets/images/picture.png" }] },
+            { "events": [{ "key": "Enter" }] },
+            { "idle": 2 }
+        ]),
+    );
+    assert_eq!(app.status(), format!("set base_color_texture in {path}"));
+    for (label, text) in [("uv_scale", "4"), ("normal_scale", "2")] {
+        let field = browser_box(&mut app, label, Pick::First);
+        play(
+            &mut app,
+            json!([
+                { "events": [{ "click": [field.center().x, field.center().y] }] },
+                { "idle": 1 },
+                { "events": [{ "key": "A", "ctrl": true }] },
+                { "events": [{ "text": text }] },
+                { "events": [{ "key": "Enter" }] },
+                { "idle": 2 }
+            ]),
+        );
+        assert_eq!(app.status(), format!("set {label} in {path}"));
+    }
+    let written: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join(path)).unwrap()).unwrap();
+    assert_eq!(
+        written["material"],
+        json!({
+            "base_color_texture": "assets/images/picture.png",
+            "normal_scale": 2.0,
+            "uv_scale": [4.0, 1.0]
+        }),
+        "{written}"
+    );
+    // Every change was a human's.
+    let activity = app.call("activity_get", &json!({ "limit": 50 }));
+    let entries = activity["entries"].as_array().unwrap();
+    assert!(entries.len() >= 12, "{activity}");
+    assert!(
+        entries.iter().all(|entry| entry["actor"] == "human"),
+        "{activity}"
+    );
+}
+
+/// Bloom (M12, the second look package) is a resource with a schema like
+/// the rest of the look, so a person adds it and sets its three numbers in
+/// the inspector, with no editor code written for it (invariant 9).
+#[test]
+fn bloom_is_set_by_hand() {
+    let dir = project("bloom");
+    let mut app = open(&dir);
+    let size = json!({ "width": 96, "height": 54 });
+    // A new scene has the default look's faint glow.
+    let before = app.call("capture_frame", &size);
+    assert_eq!(before["stats"]["effects"], json!(ALL_EFFECTS), "{before}");
+
+    add_resource(&mut app, "Bloom");
+    type_number(&mut app, "strength", "0.2");
+    type_number(&mut app, "spread", "0.7");
+    type_number(&mut app, "threshold", "0.5");
+
+    assert_eq!(
+        scene_file(&dir)["resources"],
+        json!({ "Bloom": { "spread": 0.7, "strength": 0.2, "threshold": 0.5 } }),
+        "{}",
+        scene_file(&dir)
+    );
+    // The picture uses it.
+    let after = app.call("capture_frame", &size);
+    assert_eq!(after["stats"]["effects"], json!(ALL_EFFECTS), "{after}");
+    assert_ne!(after["image"]["data"], before["image"]["data"]);
+    // And it is switched off by hand: a strength of 0.
+    type_number(&mut app, "strength", "0");
+    let off = app.call("capture_frame", &size);
+    assert_eq!(
+        off["stats"]["effects"],
+        json!(["sky_light", "sun_disc", "fog", "color_grading", "fxaa"]),
+        "{off}"
+    );
+    // Every step was one change by a human: the resource added, four
+    // fields set.
+    let history = app.call("edit_history", &json!({ "action": "list", "limit": 50 }));
+    let entries = history["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 5, "{history}");
+    assert!(
+        entries
+            .iter()
+            .all(|entry| entry.to_string().contains("human")),
+        "{history}"
+    );
+}
+
+/// Cascaded shadows (M12, the third look package) are two fields of
+/// `RenderSettings`, so a person sets them in the inspector, and the view
+/// that shows the cascades is in the view list beside the others
+/// (invariant 9).
+#[test]
+fn cascaded_shadows_are_set_by_hand() {
+    let dir = project("cascades");
+    let mut app = open(&dir);
+    let size = json!({ "width": 96, "height": 54 });
+    let before = app.call("capture_frame", &size);
+    assert_eq!(before["stats"]["shadow_cascades"], 4, "{before}");
+
+    add_resource(&mut app, "RenderSettings");
+    type_number(&mut app, "shadow_cascades", "2");
+    type_number(&mut app, "shadow_distance", "60");
+
+    assert_eq!(
+        scene_file(&dir)["resources"],
+        json!({ "RenderSettings": { "shadow_cascades": 2, "shadow_distance": 60.0 } }),
+        "{}",
+        scene_file(&dir)
+    );
+    // The picture uses them.
+    let after = app.call("capture_frame", &size);
+    assert_eq!(after["stats"]["shadow_cascades"], 2, "{after}");
+    // Every step was one change by a human: the resource added, two fields
+    // set.
+    let history = app.call("edit_history", &json!({ "action": "list", "limit": 50 }));
+    let entries = history["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 3, "{history}");
+    assert!(
+        entries
+            .iter()
+            .all(|entry| entry.to_string().contains("human")),
+        "{history}"
+    );
+
+    // The view of the cascades is picked from the view list in the top bar,
+    // under its own name.
+    let views = named(&app, "Shaded");
+    click(&mut app, views);
+    let cascades = named(&app, "Shadow cascades");
+    click(&mut app, cascades);
+    play(&mut app, json!([{ "idle": 2 }]));
+    assert!(
+        find(&app, "Shadow cascades").is_some(),
+        "the view list shows it"
+    );
+    assert!(
+        find(&app, "Shaded").is_none(),
+        "and no longer the shaded view"
+    );
+}
+
+/// See-through surfaces (M12 package 8) are asked for by hand both ways: a
+/// plain `Material`'s alpha typed in the inspector (the fourth box of its
+/// `base_color`), and a material file whose `alpha_mode` is set to `Blend`
+/// in the browser, put on the entity through the inspector's `file` field.
+/// The file's own alpha is then typed in the browser. Each step is one call
+/// by a human, and the count of see-through surfaces and the picture follow
+/// each one (invariant 9).
+#[test]
+fn a_surface_is_made_see_through_by_hand() {
+    let dir = project("see-through");
+    let mut app = open(&dir);
+    let size = json!({ "width": 96, "height": 54 });
+    let before = app.call("capture_frame", &size);
+    assert_eq!(before["stats"]["blended_surfaces"], 0, "{before}");
+
+    // 1. The ground's own Material at half alpha: see-through. Its alpha is
+    // the last number box of base_color.
+    let ground = named(&app, "ground");
+    click(&mut app, ground);
+    let widgets = app.widgets();
+    let row = widgets
+        .iter()
+        .find(|w| w.role == "Label" && w.value.as_deref() == Some("base_color"))
+        .map(|w| w.rect)
+        .expect("the base_color row");
+    let alpha = widgets
+        .iter()
+        .filter(|w| w.role == "SpinButton")
+        .filter(|w| (w.rect.center().y - row.center().y).abs() < 8.0 && w.rect.min.x > row.max.x)
+        .max_by(|a, b| a.rect.min.x.total_cmp(&b.rect.min.x))
+        .map(|w| w.rect)
+        .expect("the alpha box");
+    play(
+        &mut app,
+        json!([
+            { "events": [{ "click": [alpha.center().x, alpha.center().y] }] },
+            { "idle": 1 },
+            { "events": [{ "key": "A", "ctrl": true }] },
+            { "events": [{ "text": "0.5" }] },
+            { "events": [{ "key": "Enter" }] },
+            { "idle": 2 }
+        ]),
+    );
+    assert_eq!(app.status(), "set Material.base_color");
+    assert_eq!(
+        scene_file(&dir)["entities"]["ground"]["components"]["Material"]["base_color"][3],
+        0.5
+    );
+    let plain = app.call("capture_frame", &size);
+    assert_eq!(plain["stats"]["blended_surfaces"], 1, "{plain}");
+    assert_ne!(plain["image"]["data"], before["image"]["data"]);
+
+    // 2. A new material file (solid by default) named in the ground's
+    // Material by hand: the file is the whole look, so the ground is solid
+    // again.
+    let new = named(&app, "New...");
+    click(&mut app, new);
+    let material = named(&app, "Material file");
+    click(&mut app, material);
+    let path = "assets/materials/material.mat.json";
+    let ground = named(&app, "ground");
+    click(&mut app, ground);
+    let file = field_of(&app, "file", "TextInput");
+    play(
+        &mut app,
+        json!([
+            { "events": [{ "click": [file.center().x, file.center().y] }] },
+            { "idle": 1 },
+            { "events": [{ "text": path }] },
+            { "events": [{ "key": "Enter" }] },
+            { "idle": 2 }
+        ]),
+    );
+    assert_eq!(app.status(), "set Material.file");
+    let solid = app.call("capture_frame", &size);
+    assert_eq!(solid["stats"]["blended_surfaces"], 0, "{solid}");
+    assert_ne!(solid["image"]["data"], plain["image"]["data"]);
+
+    // 3. The file's alpha mode chosen from the list in the browser: the
+    // ground is see-through again, through the file.
+    choose(&mut app, "alpha_mode", "Blend");
+    assert_eq!(app.status(), format!("set alpha_mode in {path}"));
+    assert_eq!(
+        std::fs::read_to_string(dir.join(path)).unwrap(),
+        "{
+  \"format\": 1,
+  \"material\": {
+    \"alpha_mode\": \"Blend\"
+  }
+}
+"
+    );
+    let blended = app.call("capture_frame", &size);
+    assert_eq!(blended["stats"]["blended_surfaces"], 1, "{blended}");
+
+    // 4. The file's own alpha, typed in the browser: the last box of its
+    // base_color row (the browser's label column is left of the
+    // inspector's). The asset panel shows a few rows at a time between its
+    // tabs and the status bar, so the row is scrolled into that band first,
+    // as a person would.
+    let field = browser_box(&mut app, "base_color", Pick::Last);
+    play(
+        &mut app,
+        json!([
+            { "events": [{ "click": [field.center().x, field.center().y] }] },
+            { "idle": 1 },
+            { "events": [{ "key": "A", "ctrl": true }] },
+            { "events": [{ "text": "0.3" }] },
+            { "events": [{ "key": "Enter" }] },
+            { "idle": 2 }
+        ]),
+    );
+    assert_eq!(app.status(), format!("set base_color in {path}"));
+    let written: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join(path)).unwrap()).unwrap();
+    assert_eq!(written["material"]["alpha_mode"], "Blend", "{written}");
+    assert_eq!(written["material"]["base_color"][3], 0.3, "{written}");
+    let fainter = app.call("capture_frame", &size);
+    assert_eq!(fainter["stats"]["blended_surfaces"], 1, "{fainter}");
+    assert_ne!(fainter["image"]["data"], blended["image"]["data"]);
+
+    // 5. Back to solid by hand: with `Opaque` the file's alpha does
+    // nothing, and the picture is the solid one to the byte.
+    choose(&mut app, "alpha_mode", "Opaque");
+    let again = app.call("capture_frame", &size);
+    assert_eq!(again["stats"]["blended_surfaces"], 0, "{again}");
+    assert_eq!(again["image"]["data"], solid["image"]["data"]);
+
+    // Every step was one call by a human: the ground's alpha, the file
+    // made and named, its mode set twice and its alpha once.
+    let activity = app.call("activity_get", &json!({}));
+    let by_hand: Vec<&Value> = activity["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|entry| entry["tool"] == "asset_create" || entry["tool"] == "edit_apply")
+        .collect();
+    assert_eq!(by_hand.len(), 6, "{activity}");
+    assert!(by_hand.iter().all(|entry| entry["actor"] == "human"));
+}
+
+/// The menu bar's menu that holds `item` (the editor redesign, R2: File,
+/// Edit, Create, View, Game, AI, Help replaced the project menu).
+#[allow(dead_code)]
+fn top_menu(item: &str) -> &'static str {
+    match item {
+        "Settings..." | "Packages..." | "Export game" | "Save picture" | "New scene" | "Quit" => {
+            "File"
+        }
+        "Checkpoints" | "Duplicate" | "Rename" | "Undo" | "Redo" => "Edit",
+        "Permissions" | "Connect an outside agent..." => "AI",
+        "Theme" | "Language" | "Reset camera" | "Shading" => "View",
+        _ => "Game",
+    }
 }

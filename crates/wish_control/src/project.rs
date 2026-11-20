@@ -24,7 +24,7 @@ pub const PROJECT_FILE: &str = "wish.json";
 /// The format version this engine writes and reads.
 pub const PROJECT_FORMAT: u64 = 1;
 
-const KEYS: &[&str] = &["engine", "format", "name", "scene", "types"];
+const KEYS: &[&str] = &["engine", "format", "name", "packages", "scene", "types"];
 const TYPE_KEYS: &[&str] = &["example"];
 
 /// What `wish.json` says.
@@ -38,6 +38,9 @@ pub struct ProjectConfig {
     pub scene: String,
     /// The built-in example whose types the scenes use, if any.
     pub example: Option<String>,
+    /// The project's packages (M10): id → version requirement. Written
+    /// only when there is one, so older projects stay byte-identical.
+    pub packages: std::collections::BTreeMap<String, String>,
 }
 
 impl ProjectConfig {
@@ -48,6 +51,7 @@ impl ProjectConfig {
             engine: env!("CARGO_PKG_VERSION").to_owned(),
             scene: "scenes/main.scene.json".to_owned(),
             example: None,
+            packages: std::collections::BTreeMap::new(),
         }
     }
 
@@ -61,6 +65,17 @@ impl ProjectConfig {
         object.insert("engine".to_owned(), Value::String(self.engine.clone()));
         object.insert("format".to_owned(), Value::from(PROJECT_FORMAT));
         object.insert("name".to_owned(), Value::String(self.name.clone()));
+        if !self.packages.is_empty() {
+            object.insert(
+                "packages".to_owned(),
+                Value::Object(
+                    self.packages
+                        .iter()
+                        .map(|(id, req)| (id.clone(), Value::String(req.clone())))
+                        .collect(),
+                ),
+            );
+        }
         object.insert("scene".to_owned(), Value::String(self.scene.clone()));
         object.insert("types".to_owned(), Value::Object(types));
         Value::Object(object)
@@ -129,6 +144,43 @@ fn text(
             hint,
         )),
     }
+}
+
+/// A warning when `engine` in `wish.json` (its text, `source`) is there but
+/// is not a version: the project opens and plays, but no engine can be
+/// chosen for it, so the running one opens it with no word (ADR-027,
+/// rule 3). `None` when the key is a version, is missing, or the file
+/// cannot be read as JSON (its own error says that).
+pub fn engine_problem(source: &str) -> Option<Diagnostic> {
+    let node = wish_scene::json::parse(source, PROJECT_FILE).ok()?;
+    let value = node.to_value();
+    let engine = value.get("engine")?;
+    if engine
+        .as_str()
+        .is_some_and(|text| crate::packages::Version::parse(text).is_ok())
+    {
+        return None;
+    }
+    let shown = engine
+        .as_str()
+        .map_or_else(|| engine.to_string(), |text| format!("'{text}'"));
+    let mut diagnostic = Diagnostic::warning(
+        "invalid_version",
+        format!(
+            "'engine' in '{PROJECT_FILE}' is {shown}, which is not a version; no engine can be chosen for the project, so whichever one opens it does."
+        ),
+        format!(
+            "Write the version of the engine that made the project: three numbers, such as \"{}\" (this engine's).",
+            env!("CARGO_PKG_VERSION")
+        ),
+    )
+    .at_file(PROJECT_FILE)
+    .at_path("/engine");
+    if let Some(found) = node.locate("/engine") {
+        let span = found.value;
+        diagnostic = diagnostic.at_line(span.line, Some(span.column));
+    }
+    Some(diagnostic)
 }
 
 /// Reads `source` (the text of `wish.json`).
@@ -216,11 +268,54 @@ pub fn parse_project(source: &str) -> Result<ProjectConfig> {
             ));
         }
     }
+    let mut packages = std::collections::BTreeMap::new();
+    match object.get("packages") {
+        None => {}
+        Some(Value::Object(listed)) => {
+            for (id, req) in listed {
+                let pointer = format!("/packages/{id}");
+                if !crate::packages::valid_id(id) {
+                    return Err(problem(
+                        &node,
+                        &pointer,
+                        format!("'{id}' is not a package id."),
+                        "An id is lowercase parts of a-z, 0-9 and -, joined with dots, such as \"com.example.dusk\".",
+                    ));
+                }
+                let Some(text) = req.as_str() else {
+                    return Err(problem(
+                        &node,
+                        &pointer,
+                        format!("The version of '{id}' must be a text."),
+                        "Write it like \"com.example.dusk\": \"^1.0.0\".",
+                    ));
+                };
+                if crate::packages::VersionReq::parse(text).is_err() {
+                    return Err(problem(
+                        &node,
+                        &pointer,
+                        format!("'{text}' is not a version requirement."),
+                        "Write it like \"^1.0.0\" or \">=1.0, <2.0\".",
+                    ));
+                }
+                packages.insert(id.clone(), text.to_owned());
+            }
+        }
+        Some(_) => {
+            return Err(problem(
+                &node,
+                "/packages",
+                "'packages' must be an object.".to_owned(),
+                "Write it like \"packages\": { \"com.example.dusk\": \"^1.0.0\" }; the packages tool keeps it for you.",
+            ));
+        }
+    }
     Ok(ProjectConfig {
         name,
         engine,
         scene,
         example,
+        packages,
     })
 }
 

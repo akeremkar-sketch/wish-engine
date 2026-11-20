@@ -36,8 +36,9 @@ pub use physics::{
     RigidBody,
 };
 pub use render::{
-    Ambient, Camera, DirectionalLight, EMISSIVE_NITS, Exposure, Material, Model, PointLight,
-    Primitive, Projection, Shape, Sky, SpotLight,
+    AlphaMode, Ambient, AmbientSource, Antialiasing, Bloom, Camera, ColorGrading, DirectionalLight,
+    EMISSIVE_NITS, Exposure, Fog, Material, MaterialFile, Model, PointLight, Primitive, Projection,
+    RenderSettings, Shape, Sky, SpotLight,
 };
 pub use sprite::Sprite;
 pub use time::Time;

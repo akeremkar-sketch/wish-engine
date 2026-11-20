@@ -82,4 +82,17 @@ fn a_skinned_model_is_drawn_in_its_clips_pose() {
     // The lit picture draws it too, without warnings.
     let frame = renderer.render(&gpu, &bent, None, width, height).unwrap();
     assert!(frame.warnings.is_empty(), "{:?}", frame.warnings);
+    // A posed frame uploads the bent vertices, one buffer for each skinned
+    // primitive (the bar is one), and nothing else: the triangles and edges
+    // are the uploaded model's, and the targets are the frame before's.
+    let before = gpu.created();
+    renderer.render(&gpu, &bent, None, width, height).unwrap();
+    let after = gpu.created();
+    assert_eq!(
+        (
+            after.textures - before.textures,
+            after.buffers - before.buffers
+        ),
+        (0, 1)
+    );
 }

@@ -19,46 +19,15 @@ pub(crate) fn scene_id_of(world: &wish_ecs::World, entity: Entity) -> String {
         .map_or_else(|| entity.to_string(), str::to_owned)
 }
 
-/// Loads every model the scene's Model entities name from the project and
-/// uploads it. A model that cannot be loaded is reported as a warning and not
-/// drawn (the rest of the scene still is); its import warnings are passed on.
+/// Loads every model the scene's Model entities name (the player's loader:
+/// one way models are read everywhere).
 pub(crate) fn load_models(
     scene: &RenderScene,
     root: &Path,
     gpu: &wish_render::Gpu,
     renderer: &mut Renderer,
 ) -> Vec<Diagnostic> {
-    let mut warnings = Vec::new();
-    let mut paths: Vec<&str> = scene
-        .draws
-        .iter()
-        .filter_map(|draw| draw.model_path.as_deref())
-        .map(|path| path.split('#').next().unwrap_or(path))
-        .collect();
-    paths.sort_unstable();
-    paths.dedup();
-    for path in paths {
-        let loaded = wish_import::load_model_file(&root.join(path), path)
-            .and_then(|model| renderer.upload_model(gpu, path, &model).map(|()| model));
-        match loaded {
-            Ok(model) => warnings.extend(model.warnings),
-            Err(problem) => warnings.push(
-                Diagnostic::warning(
-                    "model_not_loaded",
-                    format!("The model '{path}' was not drawn: {}", problem.message),
-                    problem.hint.clone(),
-                )
-                .at_file(path),
-            ),
-        }
-    }
-    warnings.extend(wish_control::render::load_ui_pictures(
-        renderer,
-        scene,
-        root,
-        &mut std::collections::BTreeMap::new(),
-    ));
-    warnings
+    wish_player::load_models(scene, root, gpu, renderer)
 }
 /// Runs `wen shaders`: checks every shader of the engine (with the files of
 /// `dir` in place of the built-in ones) without a GPU.

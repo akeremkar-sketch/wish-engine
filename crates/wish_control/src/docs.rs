@@ -13,8 +13,16 @@ use crate::tool::catalog;
 /// sorted by code. A test checks that every code the source creates is here.
 pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
-        "alpha_blend_not_blended",
-        "A model has materials that blend alpha (glass, smoke); blending is not drawn yet, so they are drawn opaque. Use alpha mode MASK for cut-outs.",
+        "already_reverted",
+        "That change was taken back already (edit_history revert). Undo the revert to bring it back.",
+    ),
+    (
+        "ambient_color_unused",
+        "A scene's Ambient sets color or intensity, but its light comes from the sky (Ambient.source Sky, the default since scene format 2), which uses neither: the setting changes nothing. Set Ambient.source to \"Color\" for a flat ambient light (or apply the look plain), or remove the two fields and use sky_strength. Given by check (at the field in the scene file) and by capture_frame.",
+    ),
+    (
+        "archive_failed",
+        "An archive could not be written or read (the engine's release archives, `wen package`): a link or a name that is not UTF-8 in the folder, a file too large for the format, a damaged archive, or a checksum list that is not one. The message names the file.",
     ),
     (
         "asset_exists",
@@ -57,6 +65,30 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "An entity has a CharacterController but its RigidBody is not Kinematic (or it has none); the controller only moves kinematic bodies. Set RigidBody.kind to Kinematic.",
     ),
     (
+        "checkpoint_damaged",
+        "A checkpoint's description in .wish/checkpoints cannot be read or names a path that is not a document of the project, so nothing is brought back. Delete it and save a new one.",
+    ),
+    (
+        "checkpoint_exists",
+        "A checkpoint of that name exists already. Choose another name or pass overwrite.",
+    ),
+    (
+        "checkpoint_lacks_document",
+        "The checkpoint was made before that scene existed, so it has no copy of it. Pick a later checkpoint or another scene.",
+    ),
+    (
+        "checkpoint_not_found",
+        "There is no checkpoint of that name. checkpoint with action list shows them.",
+    ),
+    (
+        "checkpoint_restore_incomplete",
+        "Going back to a checkpoint stopped half-way (a file could not be written). The message lists what was brought back; scenes and prefabs can be undone in their history, and the files written over are in the trash folder it names. Fix the problem and restore again.",
+    ),
+    (
+        "checkpoint_textures_current",
+        "A checkpoint's picture is drawn with the textures as they are now: checkpoints keep scenes, prefabs and material files, not pictures. To compare a change of a picture, save the new picture under another name.",
+    ),
+    (
         "component_not_found",
         "The entity does not have the component the operation needs. Add it first (set adds a missing component) or check the name with schema_get.",
     ),
@@ -69,8 +101,20 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "The project's default scene was moved, and wish.json was updated to name its new path (a note, not a problem).",
     ),
     (
+        "defaults_record_invalid",
+        "The engine's record of the defaults an older file format was written against could not be read, so the file cannot be migrated. It is part of the engine: reinstall it.",
+    ),
+    (
         "degenerate_transform",
         "An entity was not drawn because its scale is zero or not a finite number. Give its Transform (and its parents') a non-zero, finite scale.",
+    ),
+    (
+        "design_file_invalid",
+        "design/game.json, the game's design (card, decisions, plan, notes, questions), is not valid JSON of format 1. It is never overwritten while broken: fix it, or delete it to start the design again.",
+    ),
+    (
+        "design_item_not_found",
+        "game_design was given the id of a decision, plan step, note or question that does not exist. game_design get lists them with their ids.",
     ),
     (
         "duplicate_system",
@@ -79,6 +123,34 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "empty_transaction",
         "An edit had no operations. Send at least one operation such as spawn, set or despawn.",
+    ),
+    (
+        "engine_folder_invalid",
+        "A folder given as an engine is not one: an engine folder has wen and wish-engine.json (a packaged engine; `wen package` writes both). In a listing, an added folder that is no longer an engine is a warning; remove it to forget it.",
+    ),
+    (
+        "engine_not_found",
+        "No engine of this computer is in the folder given. `engines` with action list (or the Hub's Engine versions tab) shows their folders.",
+    ),
+    (
+        "engine_registry_invalid",
+        "The person's list of added engines (engines.json in the settings folder) cannot be read, so it is read as empty. Adding an engine again writes it anew.",
+    ),
+    (
+        "engine_remove_failed",
+        "An installed engine could not be moved to the trash, usually because it is running or a file of it is open. Close it and try again.",
+    ),
+    (
+        "engine_running",
+        "The engine that is running cannot remove itself. Remove it from another engine, or delete its folder after closing it.",
+    ),
+    (
+        "engine_start_failed",
+        "The engine version a project was made with is installed, but could not be started. Check that its folder is complete (wen, sdk, toolchain), or open the project with this engine (`wen edit --root <project>`).",
+    ),
+    (
+        "engine_too_many",
+        "A person can keep at most 64 engines side by side. Remove the ones no longer used.",
     ),
     (
         "entity_exists",
@@ -93,6 +165,26 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "An entity in a running session went far out of the world (|y| over 1000 m); it probably fell. Add a floor under it or remove entities that fall too far.",
     ),
     (
+        "export_exists",
+        "An export of that name exists already; pass overwrite to replace it.",
+    ),
+    (
+        "export_has_errors",
+        "The project has errors (check), so it was not exported. Fix them first.",
+    ),
+    (
+        "export_needs_build",
+        "The project's game code is not built, so it was not exported. Build it first (script_build).",
+    ),
+    (
+        "export_needs_c_runtime",
+        "The player needs the Visual C++ runtime DLL, which a clean Windows may lack.",
+    ),
+    (
+        "export_outside_project",
+        "The exports folder is a link or lies outside the project.",
+    ),
+    (
         "expr_syntax",
         "A where or until condition could not be read. The column says where; write paths like Transform.translation.y, comparisons with ==, and join conditions with && or ||.",
     ),
@@ -103,6 +195,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "external_change_rejected",
         "A scene file was changed outside the engine and is now invalid. The last valid scene is kept and changes are refused until the file is fixed.",
+    ),
+    (
+        "extra_directional_lights",
+        "The scene has more than one DirectionalLight; only the first (in entity order; in a scene file: parents before their children, siblings by `order`, then by id; a prefab's entities follow their instance) lights the picture and casts shadows, the others are not drawn. The message names the one that is used and the ones that are not. Keep one as the sun and remove the rest, or turn them into PointLight or SpotLight entities.",
     ),
     (
         "file_changed_during_edit",
@@ -217,8 +313,16 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "A picture size is outside what can be drawn. Use a width and height within the allowed range, such as 512 x 288.",
     ),
     (
+        "invalid_checkpoint_name",
+        "A checkpoint's name is 1 to 40 of a-z, 0-9, _ and -.",
+    ),
+    (
         "invalid_cursor",
         "A paging cursor does not belong to the query. Pass the previous answer's next_cursor unchanged, with the same other parameters.",
+    ),
+    (
+        "invalid_design",
+        "A game_design call would put something the design file does not hold: an unknown card field, a list where text belongs, text that is too long, a question with fewer than two or more than six choices. The message says which.",
     ),
     (
         "invalid_editor_script",
@@ -227,6 +331,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "invalid_entity_id",
         "A runtime entity id is malformed or refers to an entity that no longer exists.",
+    ),
+    (
+        "invalid_export_name",
+        "An export's name is 1 to 40 of a-z, 0-9, _ and -.",
     ),
     (
         "invalid_hash",
@@ -281,6 +389,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "A system name is empty or contains characters that are not allowed.",
     ),
     (
+        "invalid_template",
+        "A template given to wen new or the welcome screen is not a project folder.",
+    ),
+    (
         "invalid_test_file",
         "A scenario test file (tests/*.test.json) is not valid; the message names the step and what is wrong. A test has format 1, a scene, a seed and steps: frames, until, expect or capture.",
     ),
@@ -291,6 +403,14 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "invalid_type_description",
         "A game module described one of its types in a way the engine cannot read (malformed or impossible layout). Build game code with the engine's SDK; type descriptions are generated by its macros.",
+    ),
+    (
+        "invalid_version",
+        "A version is not three numbers (major.minor.patch, such as 1.2.0). check reports it as a warning for the engine key of wish.json: until it is a version, no engine can be chosen for the project.",
+    ),
+    (
+        "invalid_version_requirement",
+        "A version requirement is not comparators joined with commas (>=, >, <=, <, =, ^, ~), such as \">=0.9, <2.0\" or \"^1.2\".",
     ),
     (
         "json_duplicate_key",
@@ -333,16 +453,64 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "A running game that is recording a replay refuses live edits (they are not input, so the replay would not play the same). Save the recording first.",
     ),
     (
+        "lock_file_invalid",
+        "wish.lock, the exact packages the project uses, is not valid. Write it again from what is installed: packages with action lock.",
+    ),
+    (
+        "looks_invalid",
+        "The engine's own list of looks (for apply_look) could not be read. It is part of the engine: reinstall it.",
+    ),
+    (
         "managed_component",
         "The engine keeps this component itself (such as GlobalTransform or Hierarchy). Change the component it is derived from instead, such as Transform or the parent.",
+    ),
+    (
+        "material_fields_unused",
+        "Check warning: an entity's Material names a material file (file) and also writes its numbers. With a file the file is the whole look; the numbers do nothing. Remove them, change them in the material file instead (every entity that uses it changes), or clear file for a plain look of the entity's own.",
+    ),
+    (
+        "material_file_too_large",
+        "A *.mat.json file is larger than 256 KiB and was not read. A material file holds a few numbers and the paths of its textures; pictures stay in their own PNG files.",
+    ),
+    (
+        "material_invisible",
+        "Check warning: a scene or prefab gives an entity's plain Material (no file) a base_color alpha of 0 or below, so nothing of it is drawn: an alpha below 1 makes a surface see-through. Set the alpha to 1 (solid) or between 0 and 1 (see-through); to hide an entity on purpose remove its Primitive or Model, and to fade it let game code lower the alpha while the game runs.",
+    ),
+    (
+        "material_needs_uvs",
+        "Render warning: a material file with textures is on a Model that has parts without texture coordinates (UVs), so its textures show as one flat colour there. Export the model with UVs, or use a material file without textures on it.",
+    ),
+    (
+        "material_not_loaded",
+        "Render warning: an entity's Material.file names a material file that could not be used (it does not exist, is not a *.mat.json, or has a mistake: the message says which). The entity is drawn with the numbers of its own Material (a model: with its own materials). Fix the file or the path; check lists everything wrong with the project's material files.",
+    ),
+    (
+        "material_unused_on_model",
+        "Check warning: an entity has a Model and a Material without a file. A model is drawn with the materials of its own file; only a material file (Material.file) replaces them, all of them. Remove the Material, or save the look as a material file (asset_create with a .mat.json path) and name it in Material.file.",
+    ),
+    (
+        "material_uv_unusable",
+        "Check warning: a material file's uv_scale has a 0 (the whole picture would shrink to one point, so it is drawn as 1), or a uv_scale or uv_offset number is beyond 4096 either way (it is drawn as 4096). Use a number other than 0 between -4096 and 4096: [4, 4] tiles the picture 4 by 4, a negative number mirrors it.",
     ),
     (
         "mesh_too_large_for_gpu",
         "A mesh has more vertex data than the GPU allows in one buffer. Split it or reduce its detail in the modelling tool.",
     ),
     (
+        "migration_engine_not_set",
+        "wen migrate migrated files but could not read wish.json, so its engine key still names the older engine, which cannot read the migrated files. Fix wish.json and set engine to the version of the engine that migrated (the hint names it).",
+    ),
+    (
+        "migration_prefab_unresolved",
+        "wen migrate could not tell what a prefab gives an instance (the prefab is missing, or nested too deep), so it wrote the old default into the instance as if the prefab gave none. Check the result; migrating the whole project with the prefab present avoids it.",
+    ),
+    (
+        "migration_refused",
+        "wen migrate does not migrate a file whose entities or resources are not a JSON object: fix the file first (wen check), then migrate it.",
+    ),
+    (
         "missing_format",
-        "A document has no \"format\" number. Add \"format\": 1.",
+        "A document has no \"format\" number. Add the number the hint gives (a scene: the engine's scene format, wish_scene::FORMAT).",
     ),
     (
         "missing_parameter",
@@ -393,12 +561,20 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "The entity named as the camera has no Camera component. Name one that does, or leave camera out to use the first one.",
     ),
     (
+        "not_a_material_file",
+        "Material.file names a file that is not a material file (*.mat.json). To put a picture on a surface, make a material file whose base_color_texture names the picture (asset_create with a .mat.json path) and name that file here.",
+    ),
+    (
         "not_an_instance",
         "The operation works on prefab instances only, and the entity is not one.",
     ),
     (
         "not_canonical",
         "A file is valid but not in canonical form. The engine writes canonical files itself; wen fmt rewrites hand-edited ones.",
+    ),
+    (
+        "not_revertible",
+        "That change cannot be taken back on its own: it was undone already, was itself an undo or redo, or is older than a change made outside the engine or than the history kept. Undo or edit by hand.",
     ),
     (
         "nothing_found",
@@ -408,6 +584,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "nothing_to_move",
         "The file or folder to move does not exist.",
+    ),
+    (
+        "old_format",
+        "A scene or prefab file is of an older format than this engine writes. It is read as its own format meant it (a default that changed since keeps its old value for this file), so nothing looks or plays differently. wen migrate rewrites it in the current format with those values written in; so does the next change made through the engine.",
     ),
     (
         "output_exists",
@@ -426,16 +606,92 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "An entity has overrides but is not a prefab instance. Remove the overrides or make it an instance.",
     ),
     (
+        "package_engine_mismatch",
+        "A package says it works with other engine versions than this one. Use a version of the package made for this engine.",
+    ),
+    (
+        "package_exists",
+        "The package is installed already. Pass replace: true to put this version in its place (the old one goes to the trash).",
+    ),
+    (
         "package_failed",
         "`wen package` could not build the package (engine development only): the message says which step.",
     ),
     (
+        "package_hash_mismatch",
+        "A package from the index does not have the files the index names (its content hash differs). Nothing was installed.",
+    ),
+    (
+        "package_index_invalid",
+        "The package index's index.json is not valid, or names a folder that holds another package or version. The pointer says where.",
+    ),
+    (
+        "package_index_missing",
+        "There is no package index: name a folder of packages with the index parameter or WISH_PACKAGE_INDEX.",
+    ),
+    (
+        "package_install_failed",
+        "A package could not be copied into place. Nothing was half-installed: it is copied beside its place and moved in only when complete.",
+    ),
+    (
+        "package_invalid",
+        "A package's wish-package.json is not valid, or the package holds a link or uses the engine's own id prefix. The message says which; the hint shows the format.",
+    ),
+    (
+        "package_license_unknown",
+        "A package's license is not one of the known permissive licenses. It installs; read its license before you share a game made with it.",
+    ),
+    (
+        "package_lock_mismatch",
+        "A project package's files are not the ones wish.lock records, or the lock names a package that is not installed. Write the lock again, or install the package again.",
+    ),
+    (
         "package_needs_static_crt",
-        "The wen being packaged needs the Visual C++ runtime DLL, which a clean Windows may not have; build it with the C runtime linked in (RUSTFLAGS=-C target-feature=+crt-static).",
+        "A program in the Windows package (wen, the player, the launcher, or the SDK's compile-time macros) needs the Visual C++ runtime DLL, which a clean Windows may not have; build it with the C runtime linked in (RUSTFLAGS=-C target-feature=+crt-static).",
+    ),
+    (
+        "package_not_found",
+        "There is no package there: no folder with a wish-package.json, or no installed package of that id.",
+    ),
+    (
+        "package_remove_failed",
+        "A package could not be moved to the trash (a program may be using its files).",
+    ),
+    (
+        "package_too_large",
+        "A package has more than 4,096 files or 64 MiB. Big assets belong in the project, not in a package.",
+    ),
+    (
+        "package_unreadable",
+        "A package's folder or files could not be read.",
+    ),
+    (
+        "package_version_not_found",
+        "No version of the package in the index fits this engine (and the version asked for). The hint lists the versions there are.",
+    ),
+    (
+        "package_without_compiler_notices",
+        "The compiler being packed has no licence notices where rustup puts them (share/doc/rust), so the package ships the compiler without them. Package with a rustup toolchain.",
+    ),
+    (
+        "package_without_launcher",
+        "The launcher (wish-engine) is not built beside wen, so the package has no program to start the editor from a shortcut or a double-click (on Windows, without a console window). Build wish_cli (both programs) first.",
+    ),
+    (
+        "package_without_player",
+        "The player program is not built beside wen, so the package cannot export games. Build wish_player first.",
     ),
     (
         "path_case_mismatch",
         "A path differs only in letter case from an existing file. Paths are case-sensitive: write the existing name exactly, or the same file would be opened twice under two names.",
+    ),
+    (
+        "permission_denied",
+        "Only a person can do that (change the permission mode, accept or reject a proposal). Ask the person working with you.",
+    ),
+    (
+        "player_missing",
+        "The player program (wish_player) was not found next to the engine. Build it or set WISH_PLAYER.",
     ),
     ("png_decode", "An image could not be decoded as PNG."),
     ("png_encode", "A picture could not be encoded as PNG."),
@@ -479,7 +735,19 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "project_exists",
         "The folder already has a wish.json. wen new never overwrites a project.",
     ),
+    (
+        "project_files_exist",
+        "A new project would replace files already in its folder.",
+    ),
     ("project_not_found", "The project folder does not exist."),
+    (
+        "proposal_decided",
+        "That proposal was accepted, rejected or failed already; only waiting ones can be decided.",
+    ),
+    (
+        "proposal_not_found",
+        "There is no proposal with that id. proposals with action list shows them.",
+    ),
     (
         "replay_assets_changed",
         "Project files the simulation reads (sound and animation clip lengths, fonts) changed since the replay was recorded, so the run may differ. Re-record the replay if the change was intended.",
@@ -531,6 +799,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "retype_refused",
         "An engine type's layout cannot change while a world exists; only types declared by game code can. Rename the game's type if it clashes with an engine type.",
+    ),
+    (
+        "revert_conflict",
+        "Later changes touched what the change to take back changed; reverting it would undo part of theirs. Take those back first (newest first) or edit by hand.",
     ),
     (
         "rigid_body_without_collider",
@@ -709,6 +981,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "A play session was closed (a log entry, not a problem).",
     ),
     (
+        "shader_entry_point_missing",
+        "A shader file that replaces an engine shader is valid WGSL but lacks a function the engine builds a pipeline from (the message names it). The file was probably copied from an earlier engine version: start again from the current engine shader and carry the changes over.",
+    ),
+    (
         "shader_import_cycle",
         "Shader modules import each other in a circle. Move what both need into a third module.",
     ),
@@ -729,6 +1005,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "A shader is valid WGSL syntax but breaks a rule (a type mismatch, a wrong binding).",
     ),
     (
+        "shadows_out_of_range",
+        "RenderSettings.shadow_cascades is 2 or more, so shadows are drawn only up to shadow_distance in front of the camera (depth along the direction it looks), and nothing that is drawn can cast a shadow into that part of the scene: the picture has no shadows and no shadow map is drawn. Raise shadow_distance, or set shadow_cascades to 1 (one map covers the whole scene). To see where shadows end in any picture, use capture_frame with view shadow_cascades: gray has no shadow.",
+    ),
+    (
         "snapshot_exists",
         "A snapshot with that label already exists; snapshots are not overwritten.",
     ),
@@ -743,6 +1023,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "stale_revision",
         "The scene changed since the base_revision the edit was prepared against. Read it again and redo the change on top of the current revision.",
+    ),
+    (
+        "sun_disc_without_light",
+        "Sky.sun_size_deg was changed from its default to ask for a sun disc, and the scene has no DirectionalLight, so none is drawn: the disc sits where that light shines from. Add the light, or set sun_size_deg to 0. At the default size a scene without a sun simply has no disc and nothing is reported; an orthographic camera never shows one.",
     ),
     (
         "system_failed",
@@ -761,8 +1045,20 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "A text value could not be stored or found.",
     ),
     (
+        "texture_not_loaded",
+        "Render warning: a texture a material names could not be drawn (the file is missing, is not a PNG, is damaged, is larger than 4096 pixels a side, or the scene's material textures together pass the budget of 2^28 pixels). The message names the file and the texture slots that wanted it; those slots are drawn as if they were empty and the rest of the picture is unharmed.",
+    ),
+    (
+        "texture_not_png",
+        "Check warning: a texture field of a material file names a file that is not a PNG. Textures outside models are read from PNG files only (models bring their own PNG or JPEG textures), so it will not be drawn. Convert the picture to an 8-bit PNG.",
+    ),
+    (
         "texture_too_large_for_gpu",
         "A texture is larger than this GPU accepts per side. Scale it down in the modelling tool.",
+    ),
+    (
+        "too_many_checkpoints",
+        "The project keeps at most 200 checkpoints. Delete old ones.",
     ),
     (
         "too_many_entities",
@@ -858,6 +1154,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "The editor has no interface language with that code (wen edit --lang). The hint lists the codes.",
     ),
     (
+        "unknown_look",
+        "edit_apply's apply_look names a look the engine does not have. The hint gives the closest; the candidates are plain, natural and vivid.",
+    ),
+    (
         "unknown_parameter",
         "A tool has no parameter with that name. The hint gives the closest; the candidates list them all.",
     ),
@@ -904,7 +1204,7 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     ),
     (
         "unknown_view",
-        "No view has that name: use lit, ids, depth, normals or wireframe.",
+        "No view has that name: use lit, ids, depth, normals, wireframe, colliders, lights or shadow_cascades.",
     ),
     (
         "unsupported_animation",
@@ -916,7 +1216,7 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     ),
     (
         "unsupported_format",
-        "A document has a format number this engine does not read.",
+        "A document has a format number this engine does not read: newer than the engine (update the engine), or one no engine wrote. An older scene or prefab format the engine knows is read and reported as old_format instead.",
     ),
     (
         "unsupported_primitive_mode",
@@ -933,6 +1233,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "value_out_of_range",
         "A number is outside its field's allowed range (shown with the unit). schema_get shows the ranges.",
+    ),
+    (
+        "warnings_cut_short",
+        "Render warning: one picture had more warnings about materials and textures than are listed (32); this one counts the rest. Fix the listed ones first: one missing file often stands behind many.",
     ),
     (
         "window_failed",
@@ -957,6 +1261,13 @@ pub fn diagnostic_page(code: &str) -> Option<String> {
         })
 }
 
+/// The schema types that say what a kind of file holds: they are in no
+/// world, so not in a registry, but `schema_get`, the type pages and the
+/// search know them like any other type (kind `file`).
+pub fn file_types() -> Vec<wish_schema::TypeSchema> {
+    vec![wish_asset::material_schema()]
+}
+
 fn type_kind<'a>(registry: &'a Registry, name: &str) -> Option<(&'static str, &'a TypeInfo)> {
     registry
         .components()
@@ -976,12 +1287,22 @@ fn type_kind<'a>(registry: &'a Registry, name: &str) -> Option<(&'static str, &'
         })
 }
 
-/// The page of a component, resource or event type, made from its schema.
+/// The page of a component, resource or event type, or of the type a kind
+/// of file holds, made from its schema.
 pub fn type_page(registry: &Registry, name: &str) -> Option<String> {
-    let (kind, info) = type_kind(registry, name)?;
-    let schema = wish_schema::json_schema::json_schema(info.schema());
-    let mut page = format!("# {name} ({kind})\n\n{}\n", info.schema().doc.trim());
-    if info.is_managed() {
+    let (kind, type_schema, managed) = match type_kind(registry, name) {
+        Some((kind, info)) => (kind, info.schema().clone(), info.is_managed()),
+        None => (
+            "file",
+            file_types()
+                .into_iter()
+                .find(|schema| schema.name == name)?,
+            false,
+        ),
+    };
+    let schema = wish_schema::json_schema::json_schema(&type_schema);
+    let mut page = format!("# {name} ({kind})\n\n{}\n", type_schema.doc.trim());
+    if managed {
         page.push_str("\nThe engine keeps this one itself: it cannot be written.\n");
     }
     if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
@@ -1013,9 +1334,15 @@ pub fn type_page(registry: &Registry, name: &str) -> Option<String> {
             ));
         }
     }
-    page.push_str(&format!(
-        "\nIn a scene file: `\"{name}\": {{ ... }}` with any of these fields; the others keep their defaults.\n"
-    ));
+    if kind == "file" {
+        page.push_str(
+            "\nIn its file: `{ \"format\": 1, \"material\": { ... } }` with any of these fields; the others keep their defaults.\n",
+        );
+    } else {
+        page.push_str(&format!(
+            "\nIn a scene file: `\"{name}\": {{ ... }}` with any of these fields; the others keep their defaults.\n"
+        ));
+    }
     Some(page)
 }
 
@@ -1079,9 +1406,18 @@ Tests: `tests/*.test.json` (`{{ \"format\": 1, \"scene\": ..., \"seed\": 1, \"st
 Physics (`Collider`, `RigidBody`, `CharacterController`, `CollisionStarted`, `physics_query`), sound (`AudioSource`,\n\
 `PlaySound`; `logs_get` kinds [\"audio\"]), lights (`PointLight`, `SpotLight`), animation (`AnimationPlayer`), the in-game\n\
 interface (`UiNode`, `UiText`, `UiButton`; `describe_view` lists it; `sim_step` input `pointer` and `click`), particles\n\
-(`ParticleEmitter`), 2D (orthographic `Camera`, `Sprite`). `asset_create` makes placeholder sounds and pictures.\n\
+(`ParticleEmitter`), 2D (orthographic `Camera`, `Sprite`). `asset_create` makes placeholder sounds and pictures, and\n\
+material files (`*.mat.json`, type `MaterialFile`: textures, tiling, cut-outs) that a `Material` names in its `file`.\n\
+Picture quality is the `RenderSettings` resource (shadows on or off, the shadow map's size, `antialiasing`); `capture_frame`\n\
+and `describe_view` give `stats`: what the picture costs in draw calls, triangles and lights, and which effects it used.\n\
+The look is data too, and a scene has the look `natural` by default: `Ambient` `source: \"Sky\"` lights surfaces from\n\
+the sky's own colours, `Sky` `sun_size_deg` draws the sun's disc, `Fog` (`density`, `height_falloff`) fades far things into\n\
+the horizon, `Bloom` (`strength`) makes what is brighter than white glow (an emissive `Material`, the sun's disc),\n\
+`ColorGrading` sets contrast, saturation, white balance and a vignette, `RenderSettings` `antialiasing` smooths edges and\n\
+`shadow_cascades` keeps shadows near the camera sharp (up to `shadow_distance` meters; `view: \"shadow_cascades\"` shows\n\
+them). A whole look at once: `edit_apply` `apply_look` (`plain` is none of it).\n\
 **`wish://docs/recipes` has working pieces of games** (a platformer character, a follow camera, pickups with a score,\n\
-checkpoints, moving platforms, a win screen and a button, a 2D scene, tests): start from them.\n\
+checkpoints, moving platforms, a win screen and a button, a 2D scene, a texture on a box, tests): start from them.\n\
 \n\
 ## Rules\n\
 \n\
@@ -1105,7 +1441,68 @@ struct Hit {
 }
 
 /// Searches the guide, the type pages and the diagnostic pages.
+/// A recipe page a package brings (M10a WP5).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PackageRecipe {
+    /// Its address: `wish://docs/packages/<id>/<file>`.
+    pub uri: String,
+    /// Its title (its first `# ` line, else its file name).
+    pub title: String,
+    /// The package's name.
+    pub package: String,
+    /// Its text.
+    pub text: String,
+}
+
+/// The recipes of the project's and the person's packages, in that order
+/// (a package in both: the project's).
+pub fn package_recipes(project: &std::path::Path) -> Vec<PackageRecipe> {
+    let mut found: Vec<PackageRecipe> = Vec::new();
+    for scope in [
+        crate::packages::Scope::Project,
+        crate::packages::Scope::User,
+    ] {
+        for package in crate::packages::installed(scope, project) {
+            let Some(manifest) = package.manifest else {
+                continue;
+            };
+            for file in manifest.contents.get("recipes").into_iter().flatten() {
+                let uri = format!("wish://docs/packages/{}/{file}", manifest.id);
+                if found.iter().any(|recipe| recipe.uri == uri) {
+                    continue;
+                }
+                let Ok(text) = std::fs::read_to_string(package.folder.join(file)) else {
+                    continue;
+                };
+                let title = text
+                    .lines()
+                    .find_map(|line| line.strip_prefix("# "))
+                    .map_or_else(|| file.clone(), str::to_owned);
+                found.push(PackageRecipe {
+                    uri,
+                    title,
+                    package: manifest.name.clone(),
+                    text,
+                });
+            }
+        }
+    }
+    found
+}
+
+/// Searches the documentation: the guide, the SDK, the recipes (the
+/// engine's and `extra`, the packages'), the types and the diagnostics.
 pub fn search(registry: &Registry, query: &str, limit: usize) -> Vec<Value> {
+    search_with(registry, query, limit, &[])
+}
+
+/// [`search`] with the recipes packages bring.
+pub fn search_with(
+    registry: &Registry,
+    query: &str,
+    limit: usize,
+    extra: &[PackageRecipe],
+) -> Vec<Value> {
     let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
     if words.is_empty() {
         return Vec::new();
@@ -1148,11 +1545,19 @@ pub fn search(registry: &Registry, query: &str, limit: usize) -> Vec<Value> {
             section.to_owned(),
         ));
     }
+    for recipe in extra {
+        pages.push((
+            recipe.uri.clone(),
+            format!("Recipe ({}): {}", recipe.package, recipe.title),
+            recipe.text.clone(),
+        ));
+    }
     let names: Vec<String> = registry
         .components()
         .map(|(_, info)| info.name().to_owned())
         .chain(registry.resources().map(|(_, info)| info.name().to_owned()))
         .chain(registry.events().map(|(_, info)| info.name().to_owned()))
+        .chain(file_types().into_iter().map(|schema| schema.name))
         .collect();
     for name in names {
         if let Some(page) = type_page(registry, &name) {
@@ -1250,7 +1655,8 @@ pub struct Collected { /// Its points.
 Field types: `bool`, integers, `f32`, `f64`, `Vec2`, `Vec3`, `Vec4`, `Quat`, `Mat4`, `Color`, `Entity`, `Text`,
 `AssetRef`, fixed arrays `[T; N]`, and structs / fieldless enums marked `#[schema]`. No `String`, `Vec`, `Option`:
 data must have a fixed size. The engine's own types are there too: `Transform`, `GlobalTransform` (read only),
-`Camera`, `DirectionalLight`, `Primitive`, `Material`, `Model`, `Sky`, `Ambient`, `Exposure`, `Time`.
+`Camera`, `DirectionalLight`, `Primitive`, `Material`, `Model`, `Sky`, `Ambient`, `Exposure`, `Fog`, `Bloom`,
+`ColorGrading`, `RenderSettings`, `Time`.
 
 ## Systems
 

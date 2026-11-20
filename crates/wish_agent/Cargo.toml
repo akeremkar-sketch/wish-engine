@@ -1,0 +1,18 @@
+[package]
+name = "wish_agent"
+description = "The Wish Engine cockpit's agent adapters: a provider-independent interface, Claude Code as a subprocess on the person's own account, and a scripted adapter for tests."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+wish_control.workspace = true
+
+[dev-dependencies]
+wish_mcp.workspace = true
+
+[lints]
+workspace = true

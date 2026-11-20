@@ -765,7 +765,7 @@
         },
         "UiText": {
           "size": 32,
-          "text": "Puan: 0   Can: 3"
+          "text": "Score: 0   Lives: 3"
         }
       }
     },
@@ -840,7 +840,7 @@
       }
     }
   },
-  "format": 1,
+  "format": 2,
   "resources": {
     "Sky": {
       "ground": [0.02, 0.02, 0.05, 1],

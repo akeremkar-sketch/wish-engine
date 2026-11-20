@@ -11,7 +11,8 @@ pub(crate) const CAPTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba
 /// The largest capture side, in pixels.
 pub const MAX_CAPTURE_SIZE: u32 = 8192;
 
-fn check_size(width: u32, height: u32) -> Result<()> {
+/// Refuses a picture size no capture can have.
+pub(crate) fn check_size(width: u32, height: u32) -> Result<()> {
     if width == 0 || height == 0 || width > MAX_CAPTURE_SIZE || height > MAX_CAPTURE_SIZE {
         return Err(Diagnostic::error(
             "invalid_capture_size",
@@ -23,6 +24,7 @@ fn check_size(width: u32, height: u32) -> Result<()> {
 }
 
 /// An offscreen colour target and the buffer it is copied into.
+#[derive(Clone)]
 pub(crate) struct Target {
     pub(crate) texture: wgpu::Texture,
     pub(crate) view: wgpu::TextureView,
@@ -46,39 +48,52 @@ impl Target {
         format: wgpu::TextureFormat,
     ) -> Result<Self> {
         check_size(width, height)?;
+        gpu.checked("create the capture target", |gpu| {
+            Self::create(gpu, width, height, format)
+        })
+    }
+
+    /// Creates the target without checking: call inside `Gpu::checked`, with
+    /// a size [`check_size`] accepted.
+    pub(crate) fn create(gpu: &Gpu, width: u32, height: u32, format: wgpu::TextureFormat) -> Self {
         let padded_row = (width * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
             * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        gpu.checked("create the capture target", |gpu| {
-            let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("capture"),
-                size: wgpu::Extent3d {
-                    width,
-                    height,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-                view_formats: &[],
-            });
-            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-            let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("capture readback"),
-                size: u64::from(padded_row) * u64::from(height),
-                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                mapped_at_creation: false,
-            });
-            Self {
-                texture,
-                view,
-                readback,
+        let texture = gpu.create_texture(&wgpu::TextureDescriptor {
+            label: Some("capture"),
+            size: wgpu::Extent3d {
                 width,
                 height,
-                padded_row,
-            }
-        })
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let readback = gpu.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("capture readback"),
+            size: u64::from(padded_row) * u64::from(height),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        Self {
+            texture,
+            view,
+            readback,
+            width,
+            height,
+            padded_row,
+        }
+    }
+
+    /// How many bytes of GPU memory the target holds: its texture (every
+    /// capture format is four bytes a pixel) and its readback buffer.
+    pub(crate) fn bytes(&self) -> u64 {
+        let pixels = u64::from(self.width) * u64::from(self.height);
+        pixels * 4 + u64::from(self.padded_row) * u64::from(self.height)
     }
 
     /// Appends the copy of the target into the readback buffer.
@@ -227,7 +242,7 @@ pub fn draw_probe(gpu: &Gpu, width: u32, height: u32) -> Result<RgbaImage> {
             pass.draw(0..3, 0..1);
         }
         target.copy(&mut encoder);
-        gpu.queue.submit([encoder.finish()]);
-    })?;
+        gpu.finish(encoder)
+    })??;
     target.read(gpu)
 }

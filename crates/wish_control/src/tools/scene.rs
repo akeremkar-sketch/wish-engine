@@ -2,11 +2,11 @@
 //! `edit_history`.
 
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Map, Value, json};
 use wish_core::{Diagnostic, Entity, Result};
-use wish_scene::{Action, Actor, SceneDocument, Transaction};
+use wish_scene::{Action, Actor, Applied, SceneDocument, Transaction};
 
 use super::DETAIL;
 use crate::documents::touched;
@@ -129,7 +129,7 @@ pub(crate) const ENTITY_GET: Tool = Tool {
 pub(crate) const EDIT_APPLY: Tool = Tool {
     name: "edit_apply",
     title: "Change the scene",
-    description: "Applies a list of operations to a scene, all or nothing, and writes the file. Operations: spawn {id, parent?, order?, components?, notes?}, instantiate {id, prefab, ...}, despawn {id}, set {id, component, value} (merges fields), replace {id, component, value}, remove {id, component}, reparent {id, parent, order?}, rename {id, to}, set_notes {id, notes}, set_resource / replace_resource {name, value}, remove_resource {name}, set_override / replace_override / remove_override {id, entity, component, value?}. In Transform values, \"euler_deg\": [x, y, z] may stand for rotation. Siblings keep the order of their \"order\" (then by id): give order where it matters, as in an interface column. A failed operation changes nothing and says which one (location.op). Answers the new revision, what changed, and what others changed since you last looked. With session, the operations change that running game's world instead (not the file, not its history; it lasts while the session runs): spawn, despawn, set, replace, remove, reparent, rename and the resource operations.",
+    description: "Applies a list of operations to a scene, all or nothing, and writes the file. Operations: spawn {id, parent?, order?, components?, notes?}, instantiate {id, prefab, ...}, despawn {id}, set {id, component, value} (merges fields), replace {id, component, value}, remove {id, component}, reparent {id, parent, order?}, rename {id, to}, set_notes {id, notes}, set_resource / replace_resource {name, value}, remove_resource {name}, set_override / replace_override / remove_override {id, entity, component, value?}, apply_look {look} (a whole look in one step: plain = no effects, natural = what a scene has by default: sky light, sun disc, light haze, soft bloom, gentle grading, FXAA, four shadow cascades; vivid = the same, stronger; it writes every value of Ambient source/sky_strength, Sky sun_size_deg, Fog, ColorGrading, Bloom and RenderSettings antialiasing/shadow_cascades/shadow_distance, and leaves the sky's colours, the exposure and the rest as they are). In Transform values, \"euler_deg\": [x, y, z] may stand for rotation. Siblings keep the order of their \"order\" (then by id): give order where it matters, as in an interface column. A failed operation changes nothing and says which one (location.op). Answers the new revision, what changed, the changed entities as they are now (now: the touched components' values and world_position; no need to read them back), the changed resources as they are now (now_resources: every field; one over 4 KiB is only named, in now_resources_omitted), and what others changed since you last looked. The file is saved by this call. With session, the operations change that running game's world instead (not the file, not its history; it lasts while the session runs): spawn, despawn, set, replace, remove, reparent, rename and the resource operations.",
     params: &[
         SCENE,
         Param::optional(
@@ -160,6 +160,11 @@ pub(crate) const EDIT_APPLY: Tool = Tool {
             Kind::Boolean,
             "Create the scene file if it does not exist.",
         ),
+        Param::optional(
+            "reason",
+            Kind::String,
+            "Why, in a sentence (shown on this change's card in the editor's activity feed, and in edit_history).",
+        ),
     ],
     mutates: true,
     run: edit_apply,
@@ -173,10 +178,18 @@ pub(crate) const EDIT_HISTORY: Tool = Tool {
         SCENE,
         Param::optional(
             "action",
-            Kind::Choice(&["list", "undo", "redo"]),
-            "list the history, or undo / redo the latest changes.",
+            Kind::Choice(&["list", "undo", "redo", "revert"]),
+            "list the history; undo / redo the latest changes; or revert one earlier change on its own (revision), if nothing later touched what it changed.",
         )
         .or("\"list\""),
+        Param::optional(
+            "revision",
+            Kind::Integer {
+                min: 1,
+                max: i64::MAX,
+            },
+            "For revert: the revision the change produced (from list, or from edit_apply's answer).",
+        ),
         Param::optional(
             "steps",
             Kind::Integer { min: 1, max: 100 },
@@ -198,6 +211,56 @@ pub(crate) const EDIT_HISTORY: Tool = Tool {
     mutates: true,
     run: edit_history,
 };
+
+/// `edit_history` revert: one earlier change taken back on its own.
+fn revert_one(
+    workspace: &mut Workspace,
+    args: &Args,
+    actor: &Actor,
+    path: &str,
+    notes: Vec<Diagnostic>,
+) -> Result<Map<String, Value>> {
+    let Some(revision) = args.int("revision").and_then(|r| u64::try_from(r).ok()) else {
+        return Err(Diagnostic::error(
+            "missing_parameter",
+            "revert needs \"revision\": the change to take back.",
+            "Give the revision from edit_history list (or from edit_apply's answer), like \"revision\": 12.",
+        )
+        .at_path("/revision"));
+    };
+    let registry = workspace.registry().clone();
+    let others = workspace.others_since(path, actor);
+    let dry_run = args.flag("dry_run");
+    let mut working = workspace.document(path)?.doc.clone();
+    let reason = Some(format!("took back r{revision}"));
+    let applied = if dry_run {
+        working.revertible(revision)?;
+        Applied {
+            revision: working.revision(),
+            changes: Vec::new(),
+        }
+    } else {
+        working.revert(revision, actor.clone(), reason, &registry)?
+    };
+    if !dry_run {
+        workspace.commit_document(path, working)?;
+        workspace.mark_seen(path, actor);
+    }
+    let mut out = Map::new();
+    out.insert("scene".to_owned(), json!(path));
+    out.insert("action".to_owned(), json!("revert"));
+    out.insert("reverted".to_owned(), json!(revision));
+    out.insert("revision".to_owned(), json!(applied.revision));
+    out.insert("changes".to_owned(), changes_json(&applied.changes));
+    if dry_run {
+        out.insert("dry_run".to_owned(), json!(true));
+    }
+    if let Some(others) = others {
+        out.insert("changed_by_others".to_owned(), others);
+    }
+    finish(&mut out, notes, workspace, path);
+    Ok(out)
+}
 
 // --------------------------------------------------------------------------
 
@@ -272,6 +335,32 @@ fn finish(
     if !notes.is_empty() {
         out.insert("diagnostics".to_owned(), json!(notes));
     }
+}
+
+/// Component names asked to be shown (not to filter by): an unknown one
+/// is left out with a warning instead of failing the whole call, so the
+/// rest of the answer still comes (M10b efficiency work).
+fn shown_components(
+    workspace: &Workspace,
+    names: Vec<String>,
+    param: &str,
+    notes: &mut Vec<Diagnostic>,
+) -> Vec<String> {
+    let mut kept = Vec::new();
+    for (index, name) in names.into_iter().enumerate() {
+        match check_component_names(workspace, std::slice::from_ref(&name), param) {
+            Ok(()) => kept.push(name),
+            Err(mut problem) => {
+                problem.severity = wish_core::Severity::Warning;
+                // The hint names the closest one; the whole list would only
+                // lengthen every answer.
+                problem.candidates.clear();
+                problem.message = format!("{} It was left out of the answer.", problem.message);
+                notes.push(problem.at_path(format!("/{param}/{index}")));
+            }
+        }
+    }
+    kept
 }
 
 // --------------------------------------------------------------------------
@@ -389,8 +478,12 @@ fn entity_query(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map
     }
     let with = args.strings("with");
     check_component_names(workspace, &with, "with")?;
-    let include = args.strings("components");
-    check_component_names(workspace, &include, "components")?;
+    let include = shown_components(
+        workspace,
+        args.strings("components"),
+        "components",
+        &mut notes,
+    );
     let condition = match args.str("where") {
         Some(text) => Some(
             Expr::compile(text, workspace.registry()).map_err(|problem| {
@@ -587,8 +680,12 @@ fn entity_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<S
         )
         .at_path("/ids"));
     }
-    let only = args.strings("components");
-    check_component_names(workspace, &only, "components")?;
+    let asked_only = args.strings("components");
+    let only = shown_components(workspace, asked_only.clone(), "components", &mut notes);
+    if !asked_only.is_empty() && only.is_empty() {
+        // Every name was wrong: nothing to show is not an answer.
+        check_component_names(workspace, &asked_only, "components")?;
+    }
     let revision = match &session_id {
         Some(id) => workspace.session(id)?.app.tick(),
         None => workspace.document(&path)?.doc.revision(),
@@ -719,6 +816,130 @@ fn entity_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<S
 }
 
 const MAX_CHANGES_SHOWN: usize = 50;
+/// At most this many changed entities are shown as they are now.
+const MAX_NOW_SHOWN: usize = 10;
+
+/// The changed entities as they are after the change, so an agent need not
+/// read them back (M10b efficiency work): the values of the components the
+/// change touched (all of a spawned one's), and the world position when
+/// where it is may have changed. Despawned entities are left out.
+fn now_json(workspace: &mut Workspace, path: &str, changes: &[String]) -> Option<Value> {
+    // id -> (every component?, named components, place may have changed)
+    let mut touched: BTreeMap<String, (bool, Vec<String>, bool)> = BTreeMap::new();
+    for change in changes {
+        let Some(rest) = change.strip_prefix("/entities/") else {
+            continue;
+        };
+        let mut parts = rest.splitn(3, '/');
+        let Some(id) = parts.next() else { continue };
+        let entry = touched.entry(id.to_owned()).or_default();
+        match (parts.next(), parts.next()) {
+            (None, _) => {
+                entry.0 = true;
+                entry.2 = true;
+            }
+            (Some("components"), Some(component)) => {
+                let component = component.split('/').next().unwrap_or(component);
+                if component == "Transform" {
+                    entry.2 = true;
+                }
+                if !entry.1.iter().any(|c| c == component) {
+                    entry.1.push(component.to_owned());
+                }
+            }
+            (Some("parent"), _) => entry.2 = true,
+            _ => {}
+        }
+    }
+    let view = workspace.view(path).ok()?;
+    let mut now = Map::new();
+    for (id, (all, components, moved)) in touched {
+        if now.len() >= MAX_NOW_SHOWN {
+            break;
+        }
+        let Some(&entity) = view.ids.get(&id) else {
+            continue;
+        };
+        let mut item = Map::new();
+        if let Ok(Value::Object(values)) = view.world.entity_json(entity) {
+            let mut shown = Map::new();
+            for (name, value) in values {
+                let wanted = if all {
+                    !INTERNAL.contains(&name.as_str())
+                } else {
+                    components.contains(&name)
+                };
+                if wanted {
+                    shown.insert(name, value);
+                }
+            }
+            if !shown.is_empty() {
+                item.insert("components".to_owned(), Value::Object(shown));
+            }
+        }
+        if moved && let Some(at) = world_position(&view.world, entity) {
+            item.insert("world_position".to_owned(), json!(at));
+        }
+        now.insert(id, Value::Object(item));
+    }
+    (!now.is_empty()).then_some(Value::Object(now))
+}
+
+/// The resources a change touched, as they are after it (every field, the
+/// defaults filled in), so that an agent need not read them back: after an
+/// `apply_look` this is the whole look. A resource the change removed reads
+/// as its defaults, which is what the engine then uses.
+fn now_resources_json(workspace: &mut Workspace, path: &str, changes: &[String]) -> Option<Value> {
+    let names: BTreeSet<&str> = changes
+        .iter()
+        .filter_map(|change| change.strip_prefix("/resources/"))
+        .map(|rest| rest.split('/').next().unwrap_or(rest))
+        .collect();
+    if names.is_empty() {
+        return None;
+    }
+    let view = workspace.view(path).ok()?;
+    let world = &view.world;
+    let mut now = Map::new();
+    let mut omitted = Vec::new();
+    for name in names {
+        let value = match world.resource_json(name) {
+            Ok(value) => value,
+            Err(_) => {
+                let Some(value) = world
+                    .registry()
+                    .resource_id(name)
+                    .and_then(|id| world.registry().resource(id))
+                    .and_then(|info| {
+                        wish_schema::to_json(info.schema(), info.default_bytes(), world.texts())
+                            .ok()
+                    })
+                else {
+                    continue;
+                };
+                value
+            }
+        };
+        // A large resource (a game's table) is named, not echoed.
+        if value.to_string().len() > MAX_NOW_RESOURCE_BYTES {
+            omitted.push(name);
+            continue;
+        }
+        now.insert(name.to_owned(), value);
+    }
+    let mut out = Map::new();
+    if !now.is_empty() {
+        out.insert("values".to_owned(), Value::Object(now));
+    }
+    if !omitted.is_empty() {
+        out.insert("omitted".to_owned(), json!(omitted));
+    }
+    (!out.is_empty()).then_some(Value::Object(out))
+}
+
+/// A touched resource whose JSON is longer than this is listed in
+/// `now_resources_omitted` instead of shown.
+const MAX_NOW_RESOURCE_BYTES: usize = 4096;
 
 fn changes_json(changes: &[String]) -> Value {
     let entities: Vec<String> = touched(changes).into_iter().collect();
@@ -734,28 +955,30 @@ fn changes_json(changes: &[String]) -> Value {
 }
 
 fn refuse_if_file_invalid(workspace: &Workspace, path: &str) -> Result<()> {
-    if let Some(problem) = &workspace.document(path)?.disk_problem {
-        let mut refusal = problem.clone();
-        refusal.severity = wish_core::Severity::Error;
-        refusal.code = "scene_file_invalid".into();
-        refusal.docs = "wish://docs/diagnostics/scene_file_invalid".to_owned();
-        return Err(refusal);
-    }
-    Ok(())
+    workspace.refuse_if_file_invalid(path)
 }
 
 fn edit_apply(workspace: &mut Workspace, args: &Args, actor: &Actor) -> Result<Map<String, Value>> {
     if let Some(session) = args.str("session") {
         let id = workspace.session_id(Some(session))?;
-        let ops = crate::ops::parse_ops(args.value("ops").unwrap_or(&Value::Null))?;
-        return workspace.edit_session(&id, &ops, actor, args.flag("dry_run"));
+        let parsed = crate::ops::parse_ops_traced(args.value("ops").unwrap_or(&Value::Null))?;
+        return workspace
+            .edit_session(&id, &parsed.ops, actor, args.flag("dry_run"))
+            .map_err(|problem| parsed.locate(problem));
     }
     let create = args.flag("create");
     let (path, notes) = open(workspace, args, create)?;
     refuse_if_file_invalid(workspace, &path)?;
-    let ops = crate::ops::parse_ops(args.value("ops").unwrap_or(&Value::Null))?;
+    let crate::ops::Parsed { ops, origin } =
+        crate::ops::parse_ops_traced(args.value("ops").unwrap_or(&Value::Null))?;
+    let locate = |problem| crate::ops::locate(&origin, problem);
     let transaction = Transaction {
         actor: actor.clone(),
+        reason: args
+            .str("reason")
+            .map(str::trim)
+            .filter(|reason| !reason.is_empty())
+            .map(|reason| reason.chars().take(500).collect()),
         base_revision: args
             .int("base_revision")
             .and_then(|r| u64::try_from(r).ok()),
@@ -767,26 +990,41 @@ fn edit_apply(workspace: &mut Workspace, args: &Args, actor: &Actor) -> Result<M
     let registry = workspace.registry().clone();
     let dry_run = args.flag("dry_run");
     let mut working = workspace.document(&path)?.doc.clone();
+    let mut now = None;
     let applied = if dry_run {
         if let Some(base) = transaction.base_revision
             && base != working.revision()
         {
             // Same refusal as a real apply.
-            working.apply(&transaction, &registry)?;
+            working.apply(&transaction, &registry).map_err(locate)?;
         }
-        working.preview(&transaction, &registry)?
+        working.preview(&transaction, &registry).map_err(locate)?
     } else {
-        working.apply(&transaction, &registry)?
+        working.apply(&transaction, &registry).map_err(locate)?
     };
+    let mut now_resources = None;
     if !dry_run {
         // Written first, kept only if the write worked.
         workspace.commit_document(&path, working)?;
         workspace.mark_seen(&path, actor);
+        now = now_json(workspace, &path, &applied.changes);
+        now_resources = now_resources_json(workspace, &path, &applied.changes);
     }
     let mut out = Map::new();
     out.insert("scene".to_owned(), json!(path));
     out.insert("revision".to_owned(), json!(applied.revision));
     out.insert("changes".to_owned(), changes_json(&applied.changes));
+    if let Some(now) = now {
+        out.insert("now".to_owned(), now);
+    }
+    if let Some(Value::Object(mut now)) = now_resources {
+        if let Some(values) = now.remove("values") {
+            out.insert("now_resources".to_owned(), values);
+        }
+        if let Some(omitted) = now.remove("omitted") {
+            out.insert("now_resources_omitted".to_owned(), omitted);
+        }
+    }
     if dry_run {
         out.insert("dry_run".to_owned(), json!(true));
     }
@@ -816,17 +1054,39 @@ fn edit_history(
             .rev()
             .take(limit)
             .map(|entry| {
-                json!({
+                let mut item = json!({
                     "revision": entry.revision,
                     "actor": entry.actor.label(),
                     "action": match entry.action {
                         Action::Edit => "edit",
                         Action::Undo => "undo",
                         Action::Redo => "redo",
+                        Action::Revert => "revert",
                     },
                     "entities": touched(&entry.changes),
                     "changes": entry.changes.len(),
-                })
+                });
+                if let Some(reason) = &entry.reason {
+                    item["reason"] = json!(reason);
+                }
+                if let Some(reverts) = entry.reverts {
+                    item["reverts"] = json!(reverts);
+                }
+                // Whether this one change can be taken back on its own now,
+                // and if not, why (a card's "Undo this").
+                match doc.revertible(entry.revision) {
+                    Ok(()) => item["revertible"] = json!(true),
+                    Err(problem) => {
+                        item["revertible"] = json!(false);
+                        if problem.code != "not_revertible" {
+                            item["not_revertible"] = json!(problem.code);
+                        }
+                    }
+                }
+                if doc.is_reverted(entry.revision) {
+                    item["reverted"] = json!(true);
+                }
+                item
             })
             .collect();
         out.insert("revision".to_owned(), json!(doc.revision()));
@@ -840,6 +1100,9 @@ fn edit_history(
         return Ok(out);
     }
     refuse_if_file_invalid(workspace, &path)?;
+    if action == "revert" {
+        return revert_one(workspace, args, actor, &path, notes);
+    }
     let steps = args.int("steps").unwrap_or(1);
     let dry_run = args.flag("dry_run");
     let registry = workspace.registry().clone();

@@ -1,6 +1,6 @@
 [package]
 name = "wish_evals"
-description = "Agent evaluations for Wish Engine: tasks an AI agent does through MCP, checked by the engine's own tools."
+description = "Agent evaluations and the AI scorecard of Wish Engine: tasks an AI agent does through MCP, checked by the engine's own tools."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -17,6 +17,7 @@ serde_json.workspace = true
 wish_audio.workspace = true
 wish_control.workspace = true
 wish_core.workspace = true
+wish_editor.workspace = true
 wish_import.workspace = true
 
 [lints]

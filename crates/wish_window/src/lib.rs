@@ -11,7 +11,7 @@
 //!   Q / E down / up, Shift to go faster, F to return to the scene's own
 //!   camera);
 //! - the **debug views** on the keys 1 (lit), 2 (ids), 3 (depth), 4 (normals),
-//!   5 (wireframe);
+//!   5 (wireframe), 6 (colliders), 7 (lights), 8 (shadow cascades);
 //! - **picking**: a left click names the entity under the cursor, from the
 //!   identity buffer;
 //! - **hot reload**: when a scene, prefab, model or shader file changes the

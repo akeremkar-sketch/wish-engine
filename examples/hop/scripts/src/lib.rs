@@ -166,7 +166,7 @@ fn show(
 ) {
     for (label, words) in labels.iter_mut() {
         if label.shown != score.points || text_of(words.text).is_empty() {
-            words.text = text(&format!("Puan: {}", score.points));
+            words.text = text(&format!("Score: {}", score.points));
             label.shown = score.points;
         }
     }

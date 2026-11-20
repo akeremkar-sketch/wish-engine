@@ -127,7 +127,7 @@ impl Workspace {
             "sources": if sources { Value::from(SCRIPTS_ENTRY) } else { Value::Null },
             "module": module,
             "last_build": self.scripts.last_build.as_ref().map(|r| json!({
-                "passed": r.passed, "errors": r.errors, "warnings": r.warnings, "seconds": r.seconds,
+                "passed": r.passed, "errors": r.errors, "warnings": r.warnings,
             })),
             "problem": self.scripts.load_problem.as_ref().map(|p| p.message.clone()),
         })

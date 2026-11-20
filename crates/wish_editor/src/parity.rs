@@ -120,6 +120,11 @@ pub const PARITY: &[Capability] = &[
         "Scene resources: Remove resource",
         "parity_ops::scene_resources_are_edited_added_reset_and_removed",
     ),
+    op(
+        "edit_apply:apply_look",
+        "Inspector with nothing selected (scene resources): Add resource..., then Apply a look: Plain, Natural or Vivid",
+        "parity_ops::a_look_is_applied_by_hand",
+    ),
     // The scene's history.
     op(
         "edit_history:undo",
@@ -130,6 +135,11 @@ pub const PARITY: &[Capability] = &[
         "edit_history:redo",
         "Menu bar: Redo; Ctrl+Y / Ctrl+Shift+Z; the History tab",
         "polish::ctrl_z_undoes_ctrl_y_redoes_and_ctrl_p_plays",
+    ),
+    op(
+        "edit_history:revert",
+        "The History tab: Undo this (one change on its own)",
+        "parity_ops::one_change_is_taken_back_from_the_history_tab",
     ),
     query(
         "edit_history:list",
@@ -144,22 +154,22 @@ pub const PARITY: &[Capability] = &[
     ),
     op(
         "asset_create",
-        "Browser: New... (a placeholder sound or picture)",
+        "Browser: New... (a placeholder sound or picture, a material file); a material file's fields are changed where the browser shows the file (parity_ops::a_material_file_is_made_and_changed_by_hand)",
         "parity_ops::a_placeholder_sound_and_picture_are_made",
     ),
     op(
         "project_settings",
-        "Project menu: Settings... (name, default scene, input map)",
+        "File > Settings... (name, default scene, input map)",
         "settings::a_new_action_is_added_and_the_project_renamed",
     ),
     op(
         "script_build",
-        "Project menu: Build code (and on the card of a scene that needs it)",
+        "Game > Build code (and on the card of a scene that needs it)",
         "panels::a_build_that_fails_shows_its_problems",
     ),
     op(
         "capture_frame",
-        "Project menu: Save picture (captures/)",
+        "File > Save picture (captures/)",
         "parity_ops::the_view_is_saved_as_a_picture",
     ),
     // Running the game.
@@ -195,12 +205,47 @@ pub const PARITY: &[Capability] = &[
     ),
     op(
         "replay",
-        "Menu bar: Record, then Play and Stop (saved); Project menu: Replays (play back)",
+        "Toolbar: Record, then Play and Stop (saved); Game > Replays (play back)",
         "parity_ops::a_run_is_recorded_and_played_back",
     ),
     op(
+        "checkpoint",
+        "Edit > Checkpoints (save, go back, compare with now: the before/after window, delete)",
+        "parity_ops::a_checkpoint_is_saved_compared_and_gone_back_to",
+    ),
+    op(
+        "project_export",
+        "File > Export game (exports/<name>/)",
+        "parity_ops::the_game_is_exported_from_the_menu",
+    ),
+    op(
+        "game_design",
+        "AI mode: the game card, Decisions (add, remove), Plan (add, mark, remove), play-test notes (Take a note, Done), questions (choose an answer, Remember)",
+        "ai_mode::the_design_is_made_by_hand",
+    ),
+    op(
+        "packages",
+        "File > Packages (install from a folder into the project or for yourself, remove, write the lock again)",
+        "packages::packages_are_installed_and_removed_by_hand",
+    ),
+    op(
+        "engines",
+        "Hub: Engine versions (add an engine's folder, remove one); a recent project opens with the engine version it was made with",
+        "welcome::engines_are_added_and_removed_in_the_hub_and_a_project_opens_with_its_own",
+    ),
+    op(
+        "permissions",
+        "AI > Permissions (Only suggest, Apply I review, Autonomous)",
+        "parity_ops::an_agents_proposal_is_accepted_and_rejected_by_hand",
+    ),
+    op(
+        "proposals",
+        "The Activity tab: Waiting for you, Accept / Reject",
+        "parity_ops::an_agents_proposal_is_accepted_and_rejected_by_hand",
+    ),
+    op(
         "test_run",
-        "Project menu: Run tests (failures in the Problems tab), Update golden pictures",
+        "Game > Run tests (failures in the Problems tab), Update golden pictures",
         "parity_ops::the_tests_run_from_the_menu",
     ),
     // Questions: the editor answers them by showing.
@@ -216,7 +261,7 @@ pub const PARITY: &[Capability] = &[
     ),
     query(
         "check",
-        "Project menu: Check; the Problems tab",
+        "Game > Check; the Problems tab",
         "panels::a_problem_is_listed_and_a_click_selects_its_entity",
     ),
     query(
@@ -258,6 +303,11 @@ pub const PARITY: &[Capability] = &[
         "logs_get",
         "The Console tab",
         "panels::the_console_shows_what_was_logged",
+    ),
+    query(
+        "activity_get",
+        "The Activity tab: everyone's calls, newest first; Undo this on an edit",
+        "parity_ops::the_activity_tab_shows_what_an_agent_did",
     ),
     query(
         "docs_search",

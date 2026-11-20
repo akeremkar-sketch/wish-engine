@@ -1,0 +1,51 @@
+{
+  "format": 1,
+  "id": "example_green_ball",
+  "prompt": "Put a green ball named 'ball' on the ground to the left of the middle of the scene (x between -3 and -1), visible from the camera.",
+  "files": false,
+  "setup": {
+    "ops": [
+      { "op": "spawn", "id": "marker", "components": {
+        "Transform": { "translation": [2, 0.25, 0], "scale": [0.5, 0.5, 0.5] },
+        "Primitive": { "shape": "Cube" } } }
+    ]
+  },
+  "check": {
+    "check_passes": true,
+    "visible": { "ball": 50 },
+    "tests": [
+      { "format": 1, "scene": "scenes/main.scene.json", "seed": 1, "steps": [
+        { "expect": "Primitive.shape == \"Sphere\" && Material.base_color.y > 0.5 && Material.base_color.x < 0.4 && Material.base_color.z < 0.4",
+          "entity": "ball", "message": "ball is a green sphere" },
+        { "expect": "Transform.translation.x > -3 && Transform.translation.x < -1 && Transform.translation.y > 0.4 && Transform.translation.y < 0.6",
+          "entity": "ball", "message": "ball rests on the ground left of the middle" },
+        { "expect": "count(Primitive) == 3", "message": "nothing else was added or removed" }
+      ] }
+    ]
+  },
+  "reference": {
+    "ops": [
+      { "op": "spawn", "id": "ball", "components": {
+        "Transform": { "translation": [-2, 0.5, 0] },
+        "Primitive": { "shape": "Sphere" },
+        "Material": { "base_color": [0.1, 0.8, 0.2, 1] } } }
+    ]
+  },
+  "follow_up": {
+    "prompt": "Make the ball twice as big, still resting on the ground.",
+    "check": {
+      "tests": [
+        { "format": 1, "scene": "scenes/main.scene.json", "seed": 1, "steps": [
+          { "expect": "Transform.scale.y > 1.9 && Transform.scale.y < 2.1 && Transform.translation.y > 0.9 && Transform.translation.y < 1.1",
+            "entity": "ball", "message": "ball is 2 m across and rests on the ground" }
+        ] }
+      ]
+    },
+    "reference": {
+      "ops": [
+        { "op": "set", "id": "ball", "component": "Transform",
+          "value": { "translation": [-2, 1, 0], "scale": [2, 2, 2] } }
+      ]
+    }
+  }
+}

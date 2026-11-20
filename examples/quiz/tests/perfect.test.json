@@ -31,10 +31,10 @@
     },
     {
       "expect": "Game.screen == 1 && Game.question == 0",
-      "message": "Başla starts the questions"
+      "message": "Start starts the questions"
     },
     {
-      "expect": "UiText.text == \"Wish Engine hangi dille yazıldı?\"",
+      "expect": "UiText.text == \"What language is Wish Engine written in?\"",
       "entity": "question",
       "message": "the first question is asked"
     },
@@ -158,7 +158,7 @@
       "message": "every answer right: 5 points"
     },
     {
-      "expect": "UiText.text == \"5 sorudan 5 doğru!\"",
+      "expect": "UiText.text == \"5 of 5 right!\"",
       "entity": "result",
       "message": "the result screen says so"
     },
@@ -193,10 +193,10 @@
     },
     {
       "expect": "Game.screen == 1 && Game.question == 0 && Game.score == 0",
-      "message": "'Tekrar' starts a new game from the first question"
+      "message": "'Play again' starts a new game from the first question"
     },
     {
-      "expect": "UiText.text == \"Wish Engine hangi dille yazıldı?\"",
+      "expect": "UiText.text == \"What language is Wish Engine written in?\"",
       "entity": "question",
       "message": "the first question is asked again"
     },

@@ -18,7 +18,7 @@
         "UiText": {
           "align": "Center",
           "size": 40,
-          "text": "Tekrar oyna"
+          "text": "Play again"
         }
       },
       "parent": "again_button"
@@ -298,7 +298,7 @@
         "UiText": {
           "align": "Center",
           "size": 44,
-          "text": "Başla"
+          "text": "Start"
         }
       },
       "parent": "start_button"
@@ -310,11 +310,11 @@
           "align": "Center",
           "color": [1, 0.85, 0.35, 1],
           "size": 64,
-          "text": "Motor Bilgi Yarışması"
+          "text": "Engine Quiz"
         }
       },
       "parent": "menu"
     }
   },
-  "format": 1
+  "format": 2
 }

@@ -12,6 +12,8 @@
 //! - `{ "click": [x, y] }`: move, press and release at a place
 //! - `{ "key": "Z", "ctrl": true, "up": false }` (egui key names)
 //! - `{ "text": "abc" }`
+//! - `{ "paste": "abc" }`, `{ "copy": true }`, `{ "cut": true }`: the
+//!   clipboard (what Ctrl+V, Ctrl+C and Ctrl+X do in a window)
 //! - `{ "scroll": [x, y] }`
 //! - `{ "mouse_delta": [x, y] }`
 //! - `{ "modifiers": { "ctrl": true } }`: these modifier keys are held from
@@ -112,6 +114,15 @@ pub fn parse_event(event: &Value) -> Result<Vec<ShellEvent>> {
             modifiers,
         }]);
     }
+    if let Some(text) = event["paste"].as_str() {
+        return Ok(vec![ShellEvent::Paste(text.to_owned())]);
+    }
+    if event["copy"] == true {
+        return Ok(vec![ShellEvent::Copy]);
+    }
+    if event["cut"] == true {
+        return Ok(vec![ShellEvent::Cut]);
+    }
     if let Some(text) = event["text"].as_str() {
         return Ok(vec![ShellEvent::Text(text.to_owned())]);
     }
@@ -138,6 +149,25 @@ pub fn parse_event(event: &Value) -> Result<Vec<ShellEvent>> {
     ))
 }
 
+/// What a script drives: the editor, or the launcher (welcome screen, then
+/// the editor) that `wen edit` opens without a project.
+pub trait Driven {
+    /// Runs one frame with these events; returns whether it drew.
+    fn frame_canvas(&mut self, size: (u32, u32), seconds: f64, events: Vec<ShellEvent>) -> bool;
+    /// The last picture.
+    fn canvas(&self) -> &Canvas;
+}
+
+impl Driven for EditorApp {
+    fn frame_canvas(&mut self, size: (u32, u32), seconds: f64, events: Vec<ShellEvent>) -> bool {
+        EditorApp::frame_canvas(self, size, seconds, events)
+    }
+
+    fn canvas(&self) -> &Canvas {
+        EditorApp::canvas(self)
+    }
+}
+
 /// What a script did.
 pub struct Ran {
     /// The last picture.
@@ -147,7 +177,7 @@ pub struct Ran {
 }
 
 /// Runs a script on the editor and returns the last picture.
-pub fn run_script(app: &mut EditorApp, script: &Value) -> Result<Ran> {
+pub fn run_script<D: Driven + ?Sized>(app: &mut D, script: &Value) -> Result<Ran> {
     let size = match script.get("size") {
         Some(size) => {
             let (w, h) = pair(size, "size")?;
@@ -163,7 +193,7 @@ pub fn run_script(app: &mut EditorApp, script: &Value) -> Result<Ran> {
     }
     let mut frames = 0u64;
     let mut seconds = 1.0 / 60.0;
-    let mut run = |app: &mut EditorApp, events: Vec<ShellEvent>, seconds: f64| -> Result<()> {
+    let mut run = |app: &mut D, events: Vec<ShellEvent>, seconds: f64| -> Result<()> {
         frames += 1;
         if frames > MAX_FRAMES {
             return Err(bad(

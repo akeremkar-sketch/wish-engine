@@ -1,0 +1,186 @@
+{
+  "agent": {
+    "instructions": "This is a story game: the text, the characters and the player's choices matter more than action. Keep every character's voice and the tone on the card the same everywhere. Show text with the game's interface (UiText); a choice is a button. Every ending on the card must be reachable: test each branch with a scenario test."
+  },
+  "card": [
+    {
+      "hint": {
+        "en": "What the story is called",
+        "tr": "Hikâyenin adı"
+      },
+      "key": "title",
+      "label": {
+        "en": "Name",
+        "tr": "Ad"
+      }
+    },
+    {
+      "hint": {
+        "en": "A keeper finds a letter that should not exist",
+        "tr": "Bir bekçi, var olmaması gereken bir mektup bulur"
+      },
+      "key": "pitch",
+      "label": {
+        "en": "In one sentence",
+        "tr": "Tek cümleyle"
+      },
+      "lines": 2
+    },
+    {
+      "hint": {
+        "en": "Where and when it happens",
+        "tr": "Nerede ve ne zaman geçiyor"
+      },
+      "key": "setting",
+      "label": {
+        "en": "Setting",
+        "tr": "Mekân"
+      },
+      "lines": 2
+    },
+    {
+      "hint": {
+        "en": "One per line: who they are and what they want",
+        "tr": "Her satıra bir tane: kim oldukları ve ne istedikleri"
+      },
+      "key": "characters",
+      "label": {
+        "en": "Characters",
+        "tr": "Karakterler"
+      },
+      "list": true
+    },
+    {
+      "hint": {
+        "en": "Cosy, eerie, funny, sad...",
+        "tr": "Sıcak, ürkütücü, komik, hüzünlü..."
+      },
+      "key": "tone",
+      "label": {
+        "en": "Tone",
+        "tr": "Ton"
+      }
+    },
+    {
+      "hint": {
+        "en": "How the player's choices change the story",
+        "tr": "Oyuncunun seçimleri hikâyeyi nasıl değiştirir"
+      },
+      "key": "choices",
+      "label": {
+        "en": "Choices",
+        "tr": "Seçimler"
+      },
+      "lines": 2
+    },
+    {
+      "hint": {
+        "en": "One per line: how it can end",
+        "tr": "Her satıra bir tane: nasıl bitebilir"
+      },
+      "key": "endings",
+      "label": {
+        "en": "Endings",
+        "tr": "Sonlar"
+      },
+      "list": true
+    },
+    {
+      "hint": {
+        "en": "Art style, colours, music",
+        "tr": "Çizim tarzı, renkler, müzik"
+      },
+      "key": "look",
+      "label": {
+        "en": "Look and feel",
+        "tr": "Görünüm ve his"
+      },
+      "lines": 2
+    },
+    {
+      "hint": {
+        "en": "One per line: what the game cannot do without",
+        "tr": "Her satıra bir tane: oyunun olmazsa olmazları"
+      },
+      "key": "must",
+      "label": {
+        "en": "Must have",
+        "tr": "Olmazsa olmazlar"
+      },
+      "list": true
+    },
+    {
+      "hint": {
+        "en": "One per line: good ideas that wait",
+        "tr": "Her satıra bir tane: bekleyen iyi fikirler"
+      },
+      "key": "later",
+      "label": {
+        "en": "Later",
+        "tr": "Sonraya kalanlar"
+      },
+      "list": true
+    }
+  ],
+  "description": {
+    "en": "For games where the story, the characters and the player's choices matter most.",
+    "tr": "Hikâyenin, karakterlerin ve oyuncunun seçimlerinin en önemli olduğu oyunlar için."
+  },
+  "format": 1,
+  "name": {
+    "en": "Story game",
+    "tr": "Hikâye oyunu"
+  },
+  "ready": [
+    {
+      "name": {
+        "en": "Write a scene",
+        "tr": "Bir sahne yaz"
+      },
+      "request": {
+        "en": "Write the next scene of the story as a playable screen: who speaks, what they say, and the player's choices. Keep to the characters and the tone on the card.",
+        "tr": "Hikâyenin sıradaki sahnesini oynanabilir bir ekran olarak yaz: kim konuşuyor, ne diyor ve oyuncunun seçimleri neler. Karttaki karakterlere ve tona uy."
+      }
+    },
+    {
+      "name": {
+        "en": "Add a character",
+        "tr": "Karakter ekle"
+      },
+      "request": {
+        "en": "Add a new character who fits the story: give them a want, a voice and a first appearance. Ask me about anything the card does not say.",
+        "tr": "Hikâyeye uyan yeni bir karakter ekle: bir isteği, bir sesi ve ilk görünüşü olsun. Kartın söylemediği her şeyi bana sor."
+      }
+    },
+    {
+      "name": {
+        "en": "Add a choice",
+        "tr": "Seçim ekle"
+      },
+      "request": {
+        "en": "Add a choice that matters: the player picks between two or three options, and each changes what happens next or which ending is reached.",
+        "tr": "Önemli bir seçim ekle: oyuncu iki ya da üç seçenekten birini seçsin ve her biri sonrasını ya da ulaşılan sonu değiştirsin."
+      }
+    },
+    {
+      "name": {
+        "en": "Check the branches",
+        "tr": "Dalları denetle"
+      },
+      "request": {
+        "en": "Play every branch of the story with input (sim_step) and tell me which endings can be reached and which cannot; fix the ones that cannot.",
+        "tr": "Hikâyenin her dalını girdiyle oyna (sim_step) ve hangi sonlara ulaşılabildiğini, hangilerine ulaşılamadığını söyle; ulaşılamayanları düzelt."
+      }
+    },
+    {
+      "name": {
+        "en": "Polish the writing",
+        "tr": "Metni cilala"
+      },
+      "request": {
+        "en": "Read all the story's texts and make them tighter and more vivid, keeping each character's voice; change no choices or endings.",
+        "tr": "Hikâyenin bütün metinlerini oku; her karakterin sesini koruyarak daha sıkı ve canlı yap; seçimleri ve sonları değiştirme."
+      }
+    }
+  ]
+}

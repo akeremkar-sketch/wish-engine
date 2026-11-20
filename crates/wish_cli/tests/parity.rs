@@ -1,17 +1,21 @@
 //! Command-line parity: every control-plane tool gives the same JSON answer
 //! in process, through `wen call` and through `wen do` (and, from WP6 on,
 //! through the MCP server). A tool added to the catalogue without an example
-//! here fails the test.
+//! here fails the test. And every tool, resource and prompt answers the
+//! same bytes in two separate processes on the same project, game code
+//! built in both (ADR-027, rule 2: no wall-clock value in an answer).
 
 #![allow(missing_docs)]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 
 use serde_json::{Value, json};
 use wish_control::{Workspace, WorkspaceOptions, catalog, parse_actor};
+use wish_script::build::{Toolchain, pack_sdk};
 
 /// A small project: wish.json, a scene with a camera and a cube, a prefab.
 fn project(name: &str) -> PathBuf {
@@ -130,6 +134,47 @@ fn examples() -> Vec<(&'static str, Value)> {
             "project_settings",
             json!({ "action": "set", "dry_run": true, "scene": "scenes/main.scene.json" }),
         ),
+        ("activity_get", json!({ "limit": 5 })),
+        ("checkpoint", json!({ "action": "save", "note": "before" })),
+        ("checkpoint", json!({ "action": "list" })),
+        (
+            "checkpoint",
+            json!({ "action": "restore", "name": "cp_1", "dry_run": true }),
+        ),
+        ("checkpoint", json!({ "action": "restore", "name": "nope" })),
+        ("project_export", json!({ "name": "Bad Name" })),
+        (
+            "game_design",
+            json!({ "action": "set_brief", "fields": { "pitch": "Hop the islands", "must": ["double jump"] } }),
+        ),
+        (
+            "game_design",
+            json!({ "action": "decide", "text": "Jump height 2.5 m" }),
+        ),
+        (
+            "game_design",
+            json!({ "action": "ask", "text": "How many enemies?", "options": ["3", "5", "10"] }),
+        ),
+        (
+            "game_design",
+            json!({ "action": "answer", "id": 2, "answer": "5", "remember": true }),
+        ),
+        ("game_design", json!({ "action": "forget", "id": 99 })),
+        ("game_design", json!({})),
+        ("packages", json!({})),
+        ("packages", json!({ "action": "check", "path": "nowhere" })),
+        (
+            "packages",
+            json!({ "action": "remove", "id": "com.example.none" }),
+        ),
+        ("packages", json!({ "action": "lock", "dry_run": true })),
+        ("engines", json!({ "action": "add", "path": "nowhere" })),
+        ("permissions", json!({})),
+        ("permissions", json!({ "action": "set", "mode": "suggest" })),
+        ("proposals", json!({})),
+        ("proposals", json!({ "action": "accept", "id": 7 })),
+        ("permissions", json!({ "action": "set", "mode": "apply" })),
+        ("activity_get", json!({ "since": 2, "actor": "agents" })),
         ("scene_get", json!({ "detail": "normal" })),
         ("asset_info", json!({ "path": "assets/models/tri.glb" })),
         ("sim_step", json!({})),
@@ -195,9 +240,9 @@ fn examples() -> Vec<(&'static str, Value)> {
         ),
         ("sim_stop", json!({ "session": "s2" })),
         ("sim_stop", json!({ "session": "s1" })),
-        // Building needs the SDK pack and the compiler, which differ between
-        // machines; the parity of the answer is shown on a mistake (building
-        // itself is tested in wish_control/tests/script_tools.rs).
+        // Building needs the SDK pack and the compiler; here the parity of
+        // the answer is shown on a mistake. A real build in two processes is
+        // compared in `every_tool_answers_the_same_bytes_in_two_processes`.
         ("script_build", json!({ "reload": "yes" })),
     ]
 }
@@ -439,6 +484,57 @@ fn wen_new_makes_a_project_the_tools_can_use() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// M9 WP3: `wen new --template` starts from one of the engine's templates
+/// (the repository's examples in a development build).
+#[test]
+fn wen_new_starts_from_a_template() {
+    let dir = std::env::temp_dir().join(format!("wish-new-template-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let root = dir.to_str().unwrap();
+    let output = wen()
+        .args([
+            "new",
+            root,
+            "--name",
+            "My bricks",
+            "--template",
+            "bricks",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["ok"], true, "{report}");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("scripts/src/lib.rs")).unwrap(),
+        std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../examples/bricks/scripts/src/lib.rs")
+        )
+        .unwrap()
+    );
+    let project: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("wish.json")).unwrap()).unwrap();
+    assert_eq!(project["name"], "My bricks");
+    std::fs::remove_dir_all(&dir).unwrap();
+    // An unknown template is named with the ones there are.
+    let unknown = wen()
+        .args(["new", root, "--template", "nope", "--json"])
+        .output()
+        .unwrap();
+    assert!(!unknown.status.success());
+    let problem: Value = serde_json::from_slice(&unknown.stdout).unwrap();
+    assert_eq!(problem["error"]["code"], "invalid_template");
+    assert!(
+        problem["error"]["hint"]
+            .as_str()
+            .unwrap()
+            .contains("islands"),
+        "{problem}"
+    );
+    assert!(!dir.exists());
+}
+
 /// Talks MCP to a `wen mcp` process: every message, then end of input; the
 /// answers in order.
 fn run_mcp(root: &str, messages: &[Value]) -> (Vec<Value>, bool, String) {
@@ -625,4 +721,363 @@ fn wen_mcp_reports_a_bad_folder_on_standard_error() {
         "standard output belongs to the protocol"
     );
     assert!(String::from_utf8_lossy(&output.stderr).contains("project_not_found"));
+}
+
+/// The SDK pack and the compiler, for `wen` processes that build game code
+/// (`WISH_SDK`, `WISH_RUSTC`).
+fn toolchain() -> &'static Toolchain {
+    static TOOLCHAIN: OnceLock<Toolchain> = OnceLock::new();
+    TOOLCHAIN.get_or_init(|| {
+        let tmp = PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml");
+        let cargo = PathBuf::from(std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned()));
+        let sdk = tmp.join("sdk-pack-cli-parity");
+        // The folder is the test's own (a cache may have left anything in it).
+        let _ = std::fs::remove_dir_all(&sdk);
+        pack_sdk(&cargo, &manifest, &tmp.join("sdk-target"), &sdk).unwrap();
+        let out = Command::new("rustc")
+            .args(["--print", "sysroot"])
+            .output()
+            .unwrap();
+        let sysroot = PathBuf::from(String::from_utf8(out.stdout).unwrap().trim());
+        let rustc = sysroot
+            .join("bin")
+            .join(if cfg!(windows) { "rustc.exe" } else { "rustc" });
+        Toolchain { sdk, rustc }
+    })
+}
+
+/// A fresh `wen new` project (game code, a scenario test, an action map) at
+/// `dir`: the same files every time.
+fn new_project(dir: &Path) {
+    let _ = std::fs::remove_dir_all(dir);
+    wish_control::scaffold::create_project(dir, "Twice", "wen").unwrap();
+}
+
+/// Every call through one `wen do` process on a fresh project at `dir`,
+/// with the toolchain; one answer line per call.
+fn do_with_toolchain(dir: &Path, calls: &[(&str, Value)]) -> Vec<String> {
+    new_project(dir);
+    let toolchain = toolchain();
+    let list: Vec<Value> = calls
+        .iter()
+        .map(|(tool, args)| json!({ "tool": tool, "args": args }))
+        .collect();
+    let mut child = wen()
+        .args(["do", "-", "--software", "--root", dir.to_str().unwrap()])
+        .env("WISH_SDK", &toolchain.sdk)
+        .env("WISH_RUSTC", &toolchain.rustc)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(Value::Array(list).to_string().as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The calls of the two-process comparison, one row per tool of the
+/// catalogue, in the order they run (a row may first call other tools to
+/// set up what its tool needs). Each row's own tool must answer `ok` at
+/// least once: an answer that is only "missing parameter" proves little.
+/// A tool missing here fails the test.
+fn two_process_calls() -> Vec<(&'static str, Vec<(&'static str, Value)>)> {
+    vec![
+        ("project_info", vec![("project_info", json!({}))]),
+        (
+            "schema_get",
+            vec![(
+                "schema_get",
+                json!({ "names": ["Transform"], "detail": "normal" }),
+            )],
+        ),
+        (
+            "docs_search",
+            vec![("docs_search", json!({ "query": "camera field of view" }))],
+        ),
+        ("check", vec![("check", json!({}))]),
+        (
+            "scene_get",
+            vec![("scene_get", json!({ "detail": "normal" }))],
+        ),
+        (
+            "edit_apply",
+            vec![(
+                "edit_apply",
+                json!({ "ops": [{ "op": "spawn", "id": "crate", "components": {
+                    "Primitive": { "shape": "Cube" }, "Transform": { "translation": [0, 1, 0] } } }] }),
+            )],
+        ),
+        ("edit_history", vec![("edit_history", json!({}))]),
+        (
+            "entity_query",
+            vec![(
+                "entity_query",
+                json!({ "with": ["Primitive"], "components": ["Transform"] }),
+            )],
+        ),
+        (
+            "entity_get",
+            vec![("entity_get", json!({ "ids": ["camera", "crate"] }))],
+        ),
+        (
+            "asset_create",
+            vec![
+                (
+                    "asset_create",
+                    json!({ "path": "assets/dot.png", "picture": { "shape": "circle", "width": 16, "height": 16, "color": [1, 0, 0, 1] } }),
+                ),
+                (
+                    "asset_create",
+                    json!({ "path": "assets/blip.wav", "sound": { "wave": "square", "frequency": 300, "seconds": 0.1 } }),
+                ),
+            ],
+        ),
+        ("asset_list", vec![("asset_list", json!({}))]),
+        (
+            "asset_info",
+            vec![
+                ("asset_info", json!({ "path": "scenes/main.scene.json" })),
+                ("asset_info", json!({ "path": "assets/dot.png" })),
+            ],
+        ),
+        (
+            "asset_move",
+            vec![(
+                "asset_move",
+                json!({ "from": "assets/dot.png", "to": "assets/pictures/dot.png" }),
+            )],
+        ),
+        ("sim_start", vec![("sim_start", json!({ "seed": 3 }))]),
+        (
+            "sim_step",
+            vec![(
+                "sim_step",
+                json!({ "session": "s1", "frames": 30, "watch": ["crate"] }),
+            )],
+        ),
+        (
+            "sim_snapshot",
+            vec![
+                ("sim_snapshot", json!({ "session": "s1", "label": "a" })),
+                ("sim_snapshot", json!({ "session": "s1", "action": "list" })),
+            ],
+        ),
+        (
+            "sim_restore",
+            vec![(
+                "sim_restore",
+                json!({ "session": "s1", "snapshot": "a", "fork": true }),
+            )],
+        ),
+        ("logs_get", vec![("logs_get", json!({ "session": "s1" }))]),
+        (
+            "physics_query",
+            vec![(
+                "physics_query",
+                json!({ "ray": { "from": [0, 5, 0], "dir": [0, -1, 0] } }),
+            )],
+        ),
+        (
+            "capture_frame",
+            vec![
+                ("capture_frame", json!({ "width": 64, "height": 36 })),
+                (
+                    "capture_frame",
+                    json!({ "session": "s1", "width": 64, "height": 36, "view": "ids" }),
+                ),
+            ],
+        ),
+        (
+            "describe_view",
+            vec![("describe_view", json!({ "width": 64, "height": 36 }))],
+        ),
+        (
+            "replay",
+            vec![
+                ("sim_start", json!({})),
+                ("replay", json!({ "action": "record", "session": "s3" })),
+                (
+                    "sim_step",
+                    json!({ "session": "s3", "frames": 5, "input": { "move": [0, 1] } }),
+                ),
+                (
+                    "replay",
+                    json!({ "action": "save", "session": "s3", "name": "twice" }),
+                ),
+                ("replay", json!({ "action": "run", "name": "twice" })),
+            ],
+        ),
+        (
+            "sim_stop",
+            vec![
+                ("sim_stop", json!({ "session": "s3" })),
+                ("sim_stop", json!({ "session": "s2" })),
+                ("sim_stop", json!({ "session": "s1" })),
+            ],
+        ),
+        ("script_build", vec![("script_build", json!({}))]),
+        ("test_run", vec![("test_run", json!({}))]),
+        ("project_settings", vec![("project_settings", json!({}))]),
+        (
+            "checkpoint",
+            vec![
+                ("checkpoint", json!({ "action": "save", "note": "twice" })),
+                ("checkpoint", json!({ "action": "list" })),
+            ],
+        ),
+        ("permissions", vec![("permissions", json!({}))]),
+        ("proposals", vec![("proposals", json!({}))]),
+        // A dry run lists what an export writes without copying the player
+        // program (tens of MB) twice.
+        (
+            "project_export",
+            vec![("project_export", json!({ "dry_run": true }))],
+        ),
+        (
+            "game_design",
+            vec![
+                (
+                    "game_design",
+                    json!({ "action": "decide", "text": "Jump height 2.5 m" }),
+                ),
+                ("game_design", json!({})),
+            ],
+        ),
+        ("packages", vec![("packages", json!({}))]),
+        ("engines", vec![("engines", json!({}))]),
+        // Last: what everything above left in the feed, the history and the
+        // project's summary (the build included).
+        (
+            "activity_get",
+            vec![
+                ("activity_get", json!({})),
+                ("edit_history", json!({})),
+                ("project_info", json!({})),
+            ],
+        ),
+    ]
+}
+
+/// ADR-027, rule 2: a tool's answer depends on the project, the call and
+/// the session, and on nothing else, so no duration, timestamp or date can
+/// be in it. Every tool of the catalogue is called for real (a row of
+/// [`two_process_calls`] each: edits, assets, sessions, a replay, a
+/// checkpoint, the game code built) in one `wen do` process, and again in a
+/// second process on the same project made afresh; the answers are compared
+/// byte for byte. `capture_frame` and `describe_view` draw on the software
+/// adapter.
+#[test]
+fn every_tool_answers_the_same_bytes_in_two_processes() {
+    let rows = two_process_calls();
+    for tool in catalog() {
+        assert!(
+            rows.iter().any(|(name, _)| *name == tool.name),
+            "the tool '{}' has no row in two_process_calls (parity.rs): add calls that use it for real",
+            tool.name
+        );
+    }
+    let calls: Vec<(&str, Value)> = rows
+        .iter()
+        .flat_map(|(_, calls)| calls.iter().cloned())
+        .collect();
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("parity-two-processes");
+    let first = do_with_toolchain(&dir, &calls);
+    let second = do_with_toolchain(&dir, &calls);
+    assert_eq!(first.len(), calls.len(), "one answer per call: {first:?}");
+    assert_eq!(second.len(), calls.len());
+    for (index, (a, b)) in first.iter().zip(&second).enumerate() {
+        assert_eq!(a, b, "call {index}: {:?}", calls[index]);
+    }
+    let answers: Vec<Value> = first
+        .iter()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    // Each row's tool really did something.
+    let mut index = 0;
+    for (tool, row) in &rows {
+        let worked = row
+            .iter()
+            .zip(&answers[index..])
+            .any(|((name, _), answer)| name == tool && answer["ok"] == true);
+        assert!(
+            worked,
+            "no call of '{tool}' answered ok: {:?}",
+            &first[index..index + row.len()]
+        );
+        index += row.len();
+    }
+    // The build was a real one, its test passes, and the project knows it.
+    let answer_of = |tool: &str| {
+        let at = calls.iter().rposition(|(name, _)| *name == tool).unwrap();
+        &answers[at]
+    };
+    assert_eq!(answer_of("script_build")["passed"], true);
+    assert!(answer_of("script_build").get("seconds").is_none());
+    assert_eq!(answer_of("test_run")["passed"], true);
+    let info = answer_of("project_info");
+    assert_eq!(info["scripts"]["last_build"]["passed"], true, "{info}");
+    assert!(info["scripts"]["last_build"].get("seconds").is_none());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// ADR-027, rule 2 for what the MCP server serves besides tool calls: the
+/// lists of tools, resources and prompts and every listed resource are the
+/// same bytes in two `wen mcp` processes on the same project.
+#[test]
+fn every_resource_reads_the_same_in_two_processes() {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("parity-two-resources");
+    let start = vec![
+        json!({ "jsonrpc": "2.0", "id": 0, "method": "initialize", "params": { "protocolVersion": "2025-06-18", "clientInfo": { "name": "parity" } } }),
+        json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
+    ];
+    let mut listing = start.clone();
+    listing.push(json!({ "jsonrpc": "2.0", "id": 1, "method": "resources/list" }));
+    new_project(&dir);
+    let (answers, success, stderr) = run_mcp(dir.to_str().unwrap(), &listing);
+    assert!(success, "{stderr}");
+    let uris: Vec<String> = answers[1]["result"]["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["uri"].as_str().unwrap().to_owned())
+        .collect();
+    assert!(uris.len() > 5, "{uris:?}");
+    let mut messages = start;
+    for (id, method) in ["tools/list", "resources/list", "prompts/list"]
+        .iter()
+        .enumerate()
+    {
+        messages.push(json!({ "jsonrpc": "2.0", "id": id + 1, "method": method }));
+    }
+    for (index, uri) in uris.iter().enumerate() {
+        messages.push(json!({ "jsonrpc": "2.0", "id": index + 10, "method": "resources/read", "params": { "uri": uri } }));
+    }
+    let run = || {
+        new_project(&dir);
+        let (answers, success, stderr) = run_mcp(dir.to_str().unwrap(), &messages);
+        assert!(success, "{stderr}");
+        answers
+            .iter()
+            .map(Value::to_string)
+            .collect::<Vec<String>>()
+    };
+    let first = run();
+    let second = run();
+    assert_eq!(first.len(), messages.len() - 1, "every request answered");
+    for (index, (a, b)) in first.iter().zip(&second).enumerate() {
+        assert_eq!(a, b, "answer {index}");
+        let answer: Value = serde_json::from_str(a).unwrap();
+        assert!(answer.get("error").is_none(), "answer {index}: {a}");
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
 }

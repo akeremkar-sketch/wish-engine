@@ -1,0 +1,258 @@
+name: Release
+
+# The engine's release archives for Windows and Linux
+# (docs/design/M12-release-pipeline.md).
+#
+# - A tag of three numbers (ADR-027 rule 3: 0.2.0, 1.0.0; no "v", no suffix)
+#   builds both, checks them, and makes a DRAFT GitHub Release with the two
+#   archives and SHA256SUMS. A person writes the notes and publishes it.
+# - The dry run: a push that touches the packaging code, or a run by hand,
+#   does the same up to the draft; the archives stay artifacts of the run.
+
+on:
+  push:
+    tags: ["[0-9]+.[0-9]+.[0-9]+"]
+    # Path filters apply to these branch pushes, never to tags.
+    branches: [main, "m[0-9]*"]
+    paths:
+      - .github/workflows/release.yml
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - THIRD_PARTY_LICENSES.md
+      - licenses/**
+      - crates/wish_cli/src/launcher.rs
+      - crates/wish_cli/src/tool_cmds.rs
+      - crates/wish_control/src/archive.rs
+      - crates/wish_control/src/engines.rs
+      - crates/wish_control/src/licenses.rs
+      - crates/wish_control/src/release.rs
+      - crates/wish_script/src/build.rs
+      - examples/**
+      - packages/**
+      - tools/third_party.py
+  workflow_dispatch:
+
+# Nothing by default; each job asks for what it needs.
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    name: version (and the tag)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Read the workspace version; a tag must be that version
+        id: read
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error file=Cargo.toml::The workspace version '$version' is not three numbers (ADR-027 rule 3)."
+            exit 1
+          fi
+          if [ "$REF_TYPE" = tag ] && [ "$REF_NAME" != "$version" ]; then
+            echo "::error::The tag '$REF_NAME' is not the workspace version '$version' (Cargo.toml). Tag the commit that carries that version, or change the version first."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  package:
+    name: package (${{ matrix.platform }})
+    needs: version
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows-x86_64
+            target: x86_64-pc-windows-msvc
+            archive: zip
+            exe: .exe
+            # The shipped programs carry the C runtime: a clean Windows may
+            # lack VCRUNTIME140.dll. With --target the flag stays off build
+            # scripts and proc macros.
+            rustflags: -C target-feature=+crt-static
+          # Pinned, not ubuntu-latest: the Linux programs need the glibc of
+          # the system they are built on or newer, and 22.04's 2.35 is the
+          # floor the README and the guides state.
+          - os: ubuntu-22.04
+            platform: linux-x86_64
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+            exe: ""
+            rustflags: ""
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      TARGET: ${{ matrix.target }}
+      EXE: ${{ matrix.exe }}
+      STEM: wish-engine-${{ needs.version.outputs.version }}-${{ matrix.platform }}
+      ARCHIVE: wish-engine-${{ needs.version.outputs.version }}-${{ matrix.platform }}.${{ matrix.archive }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      # As in CI: the Linux runner needs room for the build.
+      - name: Free disk space
+        if: runner.os == 'Linux'
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
+      # Sound output links ALSA (cpal): headers and pkg-config to build.
+      - name: Install the ALSA headers
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config
+      # The toolchain pinned in rust-toolchain.toml, with the wasm32 target.
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
+      # No build cache: a release is built from the sources alone.
+      - name: Build wen, the player and the launcher (dist profile)
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+        run: cargo build --locked --profile dist --target "$TARGET" -p wish_cli -p wish_player
+      # Every entry is dated with the commit's time, so the archive is the
+      # same whenever this commit is packaged.
+      - name: Package
+        run: |
+          export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          "target/$TARGET/dist/wen$EXE" package --out "$RUNNER_TEMP/release/package"
+          ls -l "$RUNNER_TEMP/release"
+      # The floor the README and the guides state: glibc 2.35 (Ubuntu 22.04,
+      # Debian 12). Every ELF file of the package (wen, the player, the
+      # launcher, the SDK's macro libraries, the packed compiler) must ask for
+      # no newer GLIBC_ symbol version.
+      - name: The Linux programs need glibc 2.35 or older
+        if: runner.os == 'Linux'
+        run: |
+          floor=2.35
+          bad=0
+          checked=0
+          while IFS= read -r -d '' file; do
+            if [ "$(head -c 4 "$file" | od -An -c | tr -d ' \n')" != '177ELF' ]; then
+              continue
+            fi
+            checked=$((checked + 1))
+            need=$(objdump -T "$file" 2>/dev/null | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -Vu | tail -n 1)
+            if [ -n "$need" ] && [ "$(printf '%s\n%s\n' "$need" "$floor" | sort -V | tail -n 1)" != "$floor" ]; then
+              echo "::error::${file#"$RUNNER_TEMP/release/package/"} needs glibc $need; the stated floor is $floor"
+              bad=1
+            fi
+          done < <(find "$RUNNER_TEMP/release/package" -type f -print0)
+          echo "$checked ELF files checked against glibc $floor"
+          test "$checked" -gt 0
+          exit "$bad"
+      - name: Check the checksum
+        working-directory: ${{ runner.temp }}/release
+        run: sha256sum -c SHA256SUMS
+      - name: Package again into another folder; the archive must be the same bytes
+        run: |
+          export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          "target/$TARGET/dist/wen$EXE" package --out "$RUNNER_TEMP/again/package" > /dev/null
+          cmp "$RUNNER_TEMP/release/$ARCHIVE" "$RUNNER_TEMP/again/$ARCHIVE"
+          cmp "$RUNNER_TEMP/release/SHA256SUMS" "$RUNNER_TEMP/again/SHA256SUMS"
+          rm -rf "$RUNNER_TEMP/again"
+      # Read by a tool that shares no code with the writer.
+      - name: Extract the archive with another tool
+        run: |
+          mkdir -p "$RUNNER_TEMP/unpacked"
+          if [ "$RUNNER_OS" = Windows ]; then
+            pwsh -NoProfile -Command 'Expand-Archive -LiteralPath (Join-Path $env:RUNNER_TEMP "release/$env:ARCHIVE") -DestinationPath (Join-Path $env:RUNNER_TEMP "unpacked")'
+          else
+            tar -xzf "$RUNNER_TEMP/release/$ARCHIVE" -C "$RUNNER_TEMP/unpacked"
+          fi
+          ls -l "$RUNNER_TEMP/unpacked/$STEM"
+          for file in LICENSE-MIT LICENSE-APACHE THIRD_PARTY_LICENSES.md wish-engine.json; do
+            test -s "$RUNNER_TEMP/unpacked/$STEM/$file"
+          done
+          test -d "$RUNNER_TEMP/unpacked/$STEM/toolchain/share/doc/rust"
+      # Only the extracted copy: its programs, its packed compiler, its SDK
+      # and its player (on Linux this also proves the execute bits). The
+      # runner's rustup and cargo are taken off PATH and pointed at an empty
+      # folder, so game code can only build with the packed compiler. This
+      # runs on a full runner image, not on a bare system: it proves the
+      # archive needs no developer tools, not that a bare system has every
+      # library the programs load.
+      - name: "From the extracted archive alone: version, new, build, test, export, play"
+        run: |
+          package="$RUNNER_TEMP/unpacked/$STEM"
+          wen="$package/wen$EXE"
+          game="$RUNNER_TEMP/smoke"
+          test -f "$package/toolchain/bin/rustc$EXE"
+          if grep -q rustc_path "$package/sdk/sdk.json"; then
+            echo "::error file=crates/wish_script/src/build.rs::The package's sdk.json names the build machine's compiler (rustc_path)."
+            exit 1
+          fi
+          empty="$RUNNER_TEMP/no-rust"
+          mkdir -p "$empty"
+          PATH="$(printf '%s' "$PATH" | tr ':' '\n' | grep -v -i -e '\.cargo' -e rustup | paste -sd ':' -)"
+          export PATH RUSTUP_HOME="$empty" CARGO_HOME="$empty"
+          unset WISH_RUSTC WISH_SDK RUSTC
+          if command -v rustc; then
+            echo "::error::A rustc is still on PATH, so the smoke cannot prove the packed compiler is used."
+            exit 1
+          fi
+          test "$("$wen" version)" = "wen $VERSION"
+          "$wen" new "$game" --name Smoke
+          "$wen" build --root "$game"
+          "$wen" test --root "$game"
+          "$wen" export --root "$game" --name smoke
+          "$game/exports/smoke/smoke$EXE" --headless --frames 60
+      - name: Keep the archive and its checksum
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ env.STEM }}
+          path: |
+            ${{ runner.temp }}/release/${{ env.ARCHIVE }}
+            ${{ runner.temp }}/release/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7
+          # The archive is compressed already.
+          compression-level: 0
+
+  release:
+    name: draft release
+    if: github.ref_type == 'tag'
+    needs: [version, package]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: artifacts
+      - name: Join the two checksum lists and check them
+        run: |
+          mkdir release
+          cp artifacts/*/wish-engine-* release/
+          cat artifacts/*/SHA256SUMS | LC_ALL=C sort -k 2 > release/SHA256SUMS
+          cat release/SHA256SUMS
+          cd release && sha256sum -c SHA256SUMS
+      - name: Make the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh release create "$TAG" release/* --repo "$REPO" --draft --verify-tag \
+            --title "Wish Engine $TAG" \
+            --notes "Draft made by the release workflow from the tag $TAG: the Windows and Linux archives and their SHA-256 checksums (check them with sha256sum -c SHA256SUMS). Write the notes, then publish."

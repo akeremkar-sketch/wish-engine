@@ -4,16 +4,27 @@
 //! given input and [`raster`] draws the result into a [`raster::Canvas`] with
 //! no GPU, the same on every machine (see the M8a design note, §2).
 
+mod ai_mode;
 mod app;
 mod browser;
+mod cockpit;
+mod commands;
 mod gizmo;
+mod hub;
 pub mod i18n;
 mod inspector;
+mod packages_window;
 mod panels;
 pub mod parity;
+mod prefs;
 pub mod raster;
 pub mod script;
 mod settings;
+mod style;
+mod themes;
+mod vector;
+pub mod welcome;
+mod workspaces;
 
 pub use app::{EditorApp, Opener, Row, ids};
 
@@ -22,19 +33,30 @@ pub use app::{EditorApp, Opener, Row, ids};
 /// `$XDG_CONFIG_HOME/wish` or `~/.config/wish` elsewhere), file
 /// `editor.json`.
 pub fn preferences_path() -> Option<std::path::PathBuf> {
-    let var = |name: &str| std::env::var_os(name).filter(|value| !value.is_empty());
-    let folder = if let Some(dir) = var("WISH_CONFIG_DIR") {
-        std::path::PathBuf::from(dir)
-    } else if cfg!(windows) {
-        std::path::PathBuf::from(var("APPDATA")?).join("Wish")
-    } else if let Some(dir) = var("XDG_CONFIG_HOME") {
-        std::path::PathBuf::from(dir).join("wish")
-    } else {
-        std::path::PathBuf::from(var("HOME")?)
-            .join(".config")
-            .join("wish")
-    };
-    Some(folder.join("editor.json"))
+    Some(wish_control::crash::config_folder()?.join("editor.json"))
+}
+
+/// What to tell the person once about a crash report written since the
+/// editor last said so (the newest report in `crashes`; the name told is
+/// kept in the preferences as `crash_seen`). `None` when there is nothing
+/// new.
+pub fn crash_notice(preferences: &std::path::Path, crashes: &std::path::Path) -> Option<String> {
+    let newest = wish_control::crash::reports(crashes).into_iter().next()?;
+    let name = newest.file_name()?.to_string_lossy().into_owned();
+    let seen = prefs::read(preferences)
+        .get("crash_seen")
+        .and_then(serde_json::Value::as_str)
+        == Some(name.as_str());
+    if seen {
+        return None;
+    }
+    let _ = prefs::update(preferences, |prefs| {
+        prefs.insert("crash_seen".to_owned(), serde_json::Value::String(name));
+    });
+    Some(i18n::tf(
+        "Wish Engine stopped unexpectedly last time. A report is in {path} (nothing was sent); attaching it to an issue helps fix it.",
+        &[("path", &newest.display())],
+    ))
 }
 pub use inspector::has_widget;
 
@@ -58,10 +80,19 @@ pub struct Editor {
     /// Textures egui no longer needs, freed when the next frame is painted
     /// (a frame laid out but not painted keeps its list here).
     to_free: Vec<egui::TextureId>,
+    /// Text a copy or a cut asked to put on the system clipboard.
+    copied: Option<String>,
 }
 
 /// A widget on screen, as the accessibility tree describes it: what a
 /// screen reader would say, and where it is. Tests find buttons and fields
+/// The engine's icon for windows and the taskbar: the wishing wand on a dark
+/// tile, `size` pixels square, as straight RGBA pixels with its size.
+pub fn window_icon(size: u16) -> (Vec<u8>, u32, u32) {
+    let side = u32::from(size.clamp(16, 512));
+    (vector::app_icon(size), side, side)
+}
+
 /// by name with it instead of by pixel.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Widget {
@@ -82,6 +113,11 @@ impl Default for Editor {
 }
 
 impl Editor {
+    /// Puts the theme in use on the interface again (after it changed).
+    pub(crate) fn restyle(&self) {
+        style::apply(&self.context);
+    }
+
     /// An editor with the engine's own font (Roboto) in both families.
     pub fn new() -> Self {
         let context = Context::default();
@@ -99,6 +135,7 @@ impl Editor {
         }
         context.set_fonts(fonts);
         context.enable_accesskit();
+        style::apply(&context);
         Self {
             context,
             textures: Textures::default(),
@@ -106,6 +143,7 @@ impl Editor {
             widgets: Vec::new(),
             repaint: false,
             to_free: Vec::new(),
+            copied: None,
         }
     }
 
@@ -118,6 +156,11 @@ impl Editor {
     /// The widgets of the last frame (role, label, value, place).
     pub fn widgets(&self) -> &[Widget] {
         &self.widgets
+    }
+
+    /// Takes the text a copy or a cut asked to put on the clipboard.
+    pub fn take_copied(&mut self) -> Option<String> {
+        self.copied.take()
     }
 
     /// The egui context (to set styles; panels receive the [`Ui`]).
@@ -149,6 +192,11 @@ impl Editor {
             ..RawInput::default()
         };
         let mut output = self.context.run_ui(input, ui);
+        for command in &output.platform_output.commands {
+            if let egui::OutputCommand::CopyText(text) = command {
+                self.copied = Some(text.clone());
+            }
+        }
         self.repaint = output
             .viewport_output
             .values()
@@ -161,7 +209,12 @@ impl Editor {
                     let bounds = node.bounds()?;
                     Some(Widget {
                         role: format!("{:?}", node.role()),
-                        label: node.label().map(str::to_owned),
+                        // A text box is named by its hint (its placeholder)
+                        // when it has no label of its own.
+                        label: node
+                            .label()
+                            .or_else(|| node.placeholder())
+                            .map(str::to_owned),
                         value: node.value().map(str::to_owned),
                         rect: Rect::from_min_max(
                             pos2(bounds.x0 as f32, bounds.y0 as f32),

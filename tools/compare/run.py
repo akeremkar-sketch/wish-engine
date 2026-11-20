@@ -6,6 +6,12 @@ Wish Engine and one driving Unity, each through its own MCP server.
         after a reference solution. Unity: the scene reader on a small
         fixture. Nothing is downloaded, no model is called.
 
+    python tools/compare/run.py prepare-unity --unity-project DIR
+        Before the Unity editor is opened: writes each task's own copy of
+        the start scene (Assets/Scenes/Compare_<task>.unity). A scene copied
+        in while the editor runs in the background is not imported, and the
+        agent cannot open it (found in the first Unity run, 18 November 2026).
+
     python tools/compare/run.py run --engine wish|unity [--model sonnet] [--effort medium]
                                     [--tasks place_cube,delete] [--unity-project DIR] [--label NAME]
         Spends Claude usage: ask the user first. Each task runs `claude -p`
@@ -295,12 +301,34 @@ def claude(prompt, task, server, tools, model, effort):
              "--mcp-config", ".compare-mcp.json", "--strict-mcp-config", "--allowedTools", f"mcp__{server}",
              "--disallowedTools", "Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch,Read,Glob,Grep"],
             cwd=cwd, capture_output=True, timeout=1800)
-        metrics = stream_metrics(done.stdout.decode("utf-8", "replace").splitlines())
+        text = done.stdout.decode("utf-8", "replace")
+        metrics = stream_metrics(text.splitlines())
+        # The agent's own transcript, to see why a task failed.
+        transcripts = os.path.join(WORK, "transcripts")
+        os.makedirs(transcripts, exist_ok=True)
+        with open(os.path.join(transcripts, f"{server}-{task}.jsonl"), "w", encoding="utf-8") as f:
+            f.write(text)
     except subprocess.TimeoutExpired as expired:
         metrics = stream_metrics((expired.stdout or b"").decode("utf-8", "replace").splitlines())
         metrics["timed_out"] = True
     shutil.rmtree(cwd, ignore_errors=True)
     return metrics
+
+
+def unity_scene_rel(task):
+    return f"Assets/Scenes/Compare_{task}.unity"
+
+
+def prepare_unity(args):
+    project = args[args.index("--unity-project") + 1]
+    base = os.path.join(project, "Assets", "Scenes", "CompareBase.unity")
+    for task, _ in TASKS:
+        target = os.path.join(project, unity_scene_rel(task))
+        shutil.copyfile(base, target)
+        meta = target + ".meta"
+        if os.path.exists(meta):
+            os.remove(meta)
+    print(f"wrote {len(TASKS)} task scenes; now open the project in the Unity editor, then run")
 
 
 def run(args):
@@ -329,6 +357,14 @@ def run(args):
         wrong = [t for t, _ in tasks if unity_check(t, base, project)[0]]
         if wrong:
             sys.exit(f"the start scene already passes {wrong}: check CompareSetup")
+        # Each task starts from its own untouched copy, imported by the
+        # editor when it opened (prepare-unity).
+        base_bytes = open(base, "rb").read()
+        stale = [t for t, _ in tasks
+                 if not os.path.exists(os.path.join(project, unity_scene_rel(t)))
+                 or open(os.path.join(project, unity_scene_rel(t)), "rb").read() != base_bytes]
+        if stale:
+            sys.exit(f"task scenes missing or changed: {stale}; close the editor, run prepare-unity, open it again")
     for task, prompt in tasks:
         if engine == "wish":
             root = wish_project(task)
@@ -337,9 +373,8 @@ def run(args):
             passed, why = wish_check(task, WEN, root)
             shutil.rmtree(root, ignore_errors=True)
         else:
-            scene_rel = f"Assets/Scenes/Compare_{task}.unity"
-            shutil.copyfile(base, os.path.join(project, scene_rel))
-            full = f"Unity'de {scene_rel} sahnesini aç. {prompt} {NOTE}"
+            scene_rel = unity_scene_rel(task)
+            full = f"Open the scene {scene_rel} in Unity. {prompt} {NOTE}"
             metrics = claude(full, task, "unity-mcp", UNITY_MCP, model, effort)
             passed, why = unity_check(task, os.path.join(project, scene_rel), project)
         row = {"engine": engine, "task": task, "passed": passed, "why": why, **metrics}
@@ -361,7 +396,9 @@ def run(args):
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "selftest":
         sys.exit(0 if selftest() else 1)
-    if len(sys.argv) > 1 and sys.argv[1] == "run":
+    if len(sys.argv) > 1 and sys.argv[1] == "prepare-unity":
+        prepare_unity(sys.argv[2:])
+    elif len(sys.argv) > 1 and sys.argv[1] == "run":
         run(sys.argv[2:])
     else:
         print(__doc__)

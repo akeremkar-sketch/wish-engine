@@ -23,7 +23,7 @@ fn unwritable(path: &Path, error: &std::io::Error) -> Diagnostic {
     Diagnostic::error(
         "file_unwritable",
         format!("Could not write '{}': {error}.", path.display()),
-        "Check that the folder can be written to.",
+        "Check that the folder can be written to. On Windows, controlled folder access (Windows Security) keeps unknown programs out of Documents and Desktop: choose another folder, or allow wen.exe there.",
     )
 }
 
@@ -40,7 +40,7 @@ fn write(root: &Path, relative: &str, text: &str, written: &mut Vec<String>) -> 
 /// The scene a new project starts with.
 fn starting_scene() -> Result<String> {
     wish_scene::json::to_canonical(&json!({
-        "format": 1,
+        "format": wish_scene::FORMAT,
         "entities": {
             "camera": { "components": {
                 "Camera": { "fov_y_deg": 50 },
@@ -178,21 +178,20 @@ Built in, set up with components (`schema_get` and `docs_search` say how; `wish:
 /// already has a `wish.json`. `command` is how MCP clients start the engine
 /// (`wen`, or its full path). Returns the files written, project-relative.
 pub fn create_project(dir: &Path, name: &str, command: &str) -> Result<Vec<String>> {
-    let name = name.trim();
-    if name.is_empty() || name.chars().count() > 80 || name.chars().any(char::is_control) {
-        return Err(Diagnostic::error(
-            "invalid_project_name",
-            "A project name must be 1 to 80 characters without control characters.",
-            "Pass --name \"My game\".",
-        ));
-    }
-    if dir.join(PROJECT_FILE).exists() {
-        return Err(Diagnostic::error(
-            "project_exists",
-            format!("'{}' already has a {PROJECT_FILE}.", dir.display()),
-            "Choose a new folder, or open this project with `wen call project_info --root <folder>`.",
-        ));
-    }
+    let name = check_new(dir, name)?;
+    refuse_existing(
+        dir,
+        [
+            PROJECT_FILE,
+            "scenes/main.scene.json",
+            "assets/.gitkeep",
+            "scripts/src/lib.rs",
+            "tests/boots.test.json",
+            wish_input::INPUT_FILE,
+        ]
+        .into_iter()
+        .chain(AGENT_FILES.iter().copied()),
+    )?;
     let mut written = Vec::new();
     write(
         dir,
@@ -215,15 +214,67 @@ pub fn create_project(dir: &Path, name: &str, command: &str) -> Result<Vec<Strin
         &wish_input::InputMap::starter().to_canonical()?,
         &mut written,
     )?;
-    write(dir, ".mcp.json", &mcp_config(command), &mut written)?;
-    write(dir, "CLAUDE.md", &guide(name), &mut written)?;
-    write(
-        dir,
-        ".gitignore",
-        ".wish/\ntarget/\n*.wish-tmp\n",
-        &mut written,
-    )?;
+    write_agent_files(dir, name, command, &mut written)?;
     Ok(written)
+}
+
+/// The files [`write_agent_files`] writes.
+const AGENT_FILES: &[&str] = &[".mcp.json", "CLAUDE.md", ".gitignore"];
+
+/// Refuses to make a project over files that are already there (a folder
+/// with other files is fine, as long as none would be replaced).
+fn refuse_existing<'a>(dir: &Path, files: impl IntoIterator<Item = &'a str>) -> Result<()> {
+    let mut there: Vec<&str> = files
+        .into_iter()
+        .filter(|file| dir.join(file).exists())
+        .collect();
+    if there.is_empty() {
+        return Ok(());
+    }
+    there.sort_unstable();
+    there.truncate(5);
+    Err(Diagnostic::error(
+        "project_files_exist",
+        format!(
+            "'{}' already has files a new project would replace ({}).",
+            dir.display(),
+            there.join(", ")
+        ),
+        "Choose a new or empty folder; nothing was written.",
+    ))
+}
+
+/// The files every project has whatever it starts from: how agents
+/// connect, the agent guide, what git ignores.
+fn write_agent_files(
+    dir: &Path,
+    name: &str,
+    command: &str,
+    written: &mut Vec<String>,
+) -> Result<()> {
+    write(dir, ".mcp.json", &mcp_config(command), written)?;
+    write(dir, "CLAUDE.md", &guide(name), written)?;
+    write(dir, ".gitignore", ".wish/\ntarget/\n*.wish-tmp\n", written)
+}
+
+/// Checks a new project's name and folder; returns the trimmed name.
+fn check_new<'a>(dir: &Path, name: &'a str) -> Result<&'a str> {
+    let name = name.trim();
+    if name.is_empty() || name.chars().count() > 80 || name.chars().any(char::is_control) {
+        return Err(Diagnostic::error(
+            "invalid_project_name",
+            "A project name must be 1 to 80 characters without control characters.",
+            "Pass --name \"My game\".",
+        ));
+    }
+    if dir.join(PROJECT_FILE).exists() {
+        return Err(Diagnostic::error(
+            "project_exists",
+            format!("'{}' already has a {PROJECT_FILE}.", dir.display()),
+            "Choose a new folder, or open this project with `wen call project_info --root <folder>`.",
+        ));
+    }
+    Ok(name)
 }
 
 /// The default project name for a folder: its last component.
@@ -235,4 +286,253 @@ pub fn name_for(dir: &Path) -> String {
         .filter(|name| !name.is_empty())
         .unwrap_or("My game")
         .to_owned()
+}
+
+/// Top-level entries of a template that a new project does not take: what
+/// the engine makes (builds, exports) and the files written for the new
+/// project itself.
+const NOT_FROM_TEMPLATE: &[&str] = &[
+    ".wish",
+    "exports",
+    "target",
+    PROJECT_FILE,
+    ".mcp.json",
+    "CLAUDE.md",
+    ".gitignore",
+];
+
+/// Whether `name` is one Windows keeps for devices (`con`, `nul`, `com1`...,
+/// with or without an extension): a file or folder cannot have it.
+pub fn reserved_on_windows(name: &str) -> bool {
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or(name)
+        .trim_end()
+        .to_ascii_lowercase();
+    matches!(stem.as_str(), "con" | "prn" | "aux" | "nul")
+        || ((stem.starts_with("com") || stem.starts_with("lpt"))
+            && stem.len() == 4
+            && stem.as_bytes()[3].is_ascii_digit())
+}
+
+/// A project to start from: a folder with a `wish.json` (the engine's
+/// examples are the templates it ships with).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Template {
+    /// Its folder's name (`islands`).
+    pub id: String,
+    /// The name its `wish.json` gives.
+    pub name: String,
+    /// Its folder.
+    pub path: PathBuf,
+}
+
+/// Where the templates are: `WISH_TEMPLATES`, else `templates/` beside the
+/// running program (an installed engine), else the repository's `examples/`
+/// (a development build).
+pub fn templates_folder() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("WISH_TEMPLATES").filter(|dir| !dir.is_empty()) {
+        return Some(PathBuf::from(dir));
+    }
+    let beside = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join("templates")));
+    if let Some(dir) = beside.filter(|dir| dir.is_dir()) {
+        return Some(dir);
+    }
+    let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
+    examples.is_dir().then_some(examples)
+}
+
+/// The templates in `folder`, by id (folders without a readable
+/// `wish.json` are not templates).
+pub fn templates(folder: &Path) -> Vec<Template> {
+    let mut found: Vec<Template> = std::fs::read_dir(folder)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            let id = entry.file_name().to_str()?.to_owned();
+            let config = crate::project::read_project(&path).ok()??;
+            Some(Template {
+                id,
+                name: config.name,
+                path,
+            })
+        })
+        .collect();
+    found.sort_by(|a, b| a.id.cmp(&b.id));
+    found
+}
+
+/// The templates packages bring (M10a WP5): the person's packages and the
+/// engine's own, by `<package id>/<folder>`.
+pub fn package_templates() -> Vec<Template> {
+    let mut folders: Vec<PathBuf> =
+        crate::packages::installed(crate::packages::Scope::User, Path::new("."))
+            .into_iter()
+            .map(|package| package.folder)
+            .collect();
+    if let Some(engine) = crate::packages::engine_packages_folder() {
+        let mut engine_folders: Vec<PathBuf> = std::fs::read_dir(&engine)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.is_dir())
+            .collect();
+        engine_folders.sort();
+        folders.extend(engine_folders);
+    }
+    let mut found: Vec<Template> = Vec::new();
+    for folder in folders {
+        let Ok(manifest) = crate::packages::read_manifest(&folder) else {
+            continue;
+        };
+        for item in manifest.contents.get("templates").into_iter().flatten() {
+            let id = format!("{}/{item}", manifest.id);
+            let path = folder.join(item);
+            if found.iter().any(|known| known.id == id) {
+                continue;
+            }
+            if let Ok(Some(config)) = crate::project::read_project(&path) {
+                found.push(Template {
+                    id,
+                    name: config.name,
+                    path,
+                });
+            }
+        }
+    }
+    found
+}
+
+/// Every template: the engine's (`templates_folder`), then the packages'.
+pub fn all_templates() -> Vec<Template> {
+    let mut found = templates_folder().map_or_else(Vec::new, |folder| templates(&folder));
+    found.extend(package_templates());
+    found
+}
+
+/// Creates a project in `dir` from a template: its scenes, assets, game
+/// code, tests and input map are copied; `wish.json` takes the new name;
+/// the agent files are the new project's own. What the engine made in the
+/// template (`.wish/`, `exports/`) is left behind, so the game code is
+/// built again in the new project.
+pub fn create_from_template(
+    dir: &Path,
+    name: &str,
+    command: &str,
+    template: &Path,
+) -> Result<Vec<String>> {
+    let name = check_new(dir, name)?;
+    let not_a_template = || {
+        Diagnostic::error(
+            "invalid_template",
+            format!("'{}' is not a project folder.", template.display()),
+            "Choose one of the engine's templates (wen new <folder> --template islands), or a folder with a wish.json.",
+        )
+    };
+    let Some(mut config) = crate::project::read_project(template)? else {
+        return Err(not_a_template());
+    };
+    let files = template_entries(template).map_err(|_| not_a_template())?;
+    refuse_existing(
+        dir,
+        files
+            .iter()
+            .map(String::as_str)
+            .chain([PROJECT_FILE])
+            .chain(AGENT_FILES.iter().copied()),
+    )?;
+    let mut written = Vec::new();
+    for relative in files {
+        let target = dir.join(&relative);
+        if let Some(folder) = target.parent() {
+            std::fs::create_dir_all(folder).map_err(|error| unwritable(folder, &error))?;
+        }
+        std::fs::copy(template.join(&relative), &target)
+            .map_err(|error| unwritable(&target, &error))?;
+        written.push(relative);
+    }
+    config.name = name.to_owned();
+    config.engine = env!("CARGO_PKG_VERSION").to_owned();
+    write(dir, PROJECT_FILE, &config.to_canonical()?, &mut written)?;
+    if !dir.join("assets").exists() {
+        write(dir, "assets/.gitkeep", "", &mut written)?;
+    }
+    write_agent_files(dir, name, command, &mut written)?;
+    written.sort();
+    Ok(written)
+}
+
+/// Copies a template as a template (for an engine package's `templates/`):
+/// its files and its `wish.json`, without what the engine made in it.
+/// Returns how many files were copied.
+pub fn copy_template(template: &Path, to: &Path) -> Result<usize> {
+    let files = template_entries(template).map_err(|error| {
+        Diagnostic::error(
+            "invalid_template",
+            format!(
+                "Could not read the template '{}': {error}.",
+                template.display()
+            ),
+            "Check that the template folder exists and can be read.",
+        )
+    })?;
+    let mut count = 0;
+    // The template's own picture (for the welcome screen) goes with it.
+    let picture = ".template/thumbnail.png";
+    let extra = template.join(picture).is_file().then_some(picture);
+    for relative in files
+        .iter()
+        .map(String::as_str)
+        .chain([PROJECT_FILE])
+        .chain(extra)
+    {
+        let target = to.join(relative);
+        if let Some(folder) = target.parent() {
+            std::fs::create_dir_all(folder).map_err(|error| unwritable(folder, &error))?;
+        }
+        std::fs::copy(template.join(relative), &target)
+            .map_err(|error| unwritable(&target, &error))?;
+        count += 1;
+    }
+    Ok(count)
+}
+
+/// The template's files to copy, project-relative with `/`, sorted.
+fn template_entries(template: &Path) -> std::io::Result<Vec<String>> {
+    let mut files = Vec::new();
+    let mut folders = vec![(template.to_path_buf(), String::new())];
+    while let Some((folder, prefix)) = folders.pop() {
+        for entry in std::fs::read_dir(&folder)? {
+            let entry = entry?;
+            let Some(file) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            // Hidden entries (.git, .vscode, .claude...) are the template's
+            // own business, not the new project's.
+            if file.starts_with('.')
+                || (prefix.is_empty() && NOT_FROM_TEMPLATE.contains(&file.as_str()))
+            {
+                continue;
+            }
+            // Links are not followed: a template copies only what is in it.
+            let kind = entry.file_type()?;
+            let relative = format!("{prefix}{file}");
+            if kind.is_dir() {
+                folders.push((entry.path(), format!("{relative}/")));
+            } else if kind.is_file()
+                && !relative.ends_with(".part")
+                && !relative.ends_with(".wish-tmp")
+            {
+                files.push(relative);
+            }
+        }
+    }
+    files.sort();
+    Ok(files)
 }

@@ -16,7 +16,7 @@
     { "expect": "Score.points == 3 && Score.coins == 3", "message": "all three coins were collected" },
     { "expect": "count(Coin) == 0", "message": "no coin is left in the world" },
     { "frames": 2 },
-    { "expect": "UiText.text == \"Puan: 3\"", "entity": "score_label", "message": "the interface shows the score" },
+    { "expect": "UiText.text == \"Score: 3\"", "entity": "score_label", "message": "the interface shows the score" },
     { "expect": "UiNode.visible == true", "entity": "win_banner", "message": "the win banner is shown" },
     { "expect": "count(ParticleEmitter) == 3", "message": "every coin left a burst of sparks" }
   ]

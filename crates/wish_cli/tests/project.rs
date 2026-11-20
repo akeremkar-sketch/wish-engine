@@ -63,8 +63,8 @@ impl Drop for Dir {
     }
 }
 
-const GOOD: &str = "{\n  \"entities\": {\n    \"a\": {\n      \"components\": {\n        \"MeshRef\": {\n          \"mesh\": \"assets/a.glb\"\n        }\n      }\n    }\n  },\n  \"format\": 1\n}\n";
-const LOOSE: &str = r#"{ "format": 1, "entities": { "a": { "components": { "MeshRef": { "mesh": "assets/a.glb" } } } } }"#;
+const GOOD: &str = "{\n  \"entities\": {\n    \"a\": {\n      \"components\": {\n        \"MeshRef\": {\n          \"mesh\": \"assets/a.glb\"\n        }\n      }\n    }\n  },\n  \"format\": 2\n}\n";
+const LOOSE: &str = r#"{ "format": 2, "entities": { "a": { "components": { "MeshRef": { "mesh": "assets/a.glb" } } } } }"#;
 
 #[test]
 fn check_reports_every_problem_and_fails_only_on_errors() {
@@ -150,7 +150,7 @@ fn check_reports_every_problem_and_fails_only_on_errors() {
 #[test]
 fn render_scenes_are_checked_and_run_like_any_other() {
     let dir = Dir::new("render");
-    let scene = "{\n  \"entities\": {\n    \"camera\": {\n      \"components\": {\n        \"Camera\": {\n          \"fov_y_deg\": 50\n        },\n        \"Transform\": {\n          \"translation\": [0, 2, 8]\n        }\n      }\n    },\n    \"cube\": {\n      \"components\": {\n        \"Material\": {\n          \"metallic\": 1\n        },\n        \"Primitive\": {\n          \"shape\": \"Cube\"\n        }\n      }\n    }\n  },\n  \"format\": 1,\n  \"resources\": {\n    \"Exposure\": {\n      \"ev100\": 12\n    }\n  }\n}\n";
+    let scene = "{\n  \"entities\": {\n    \"camera\": {\n      \"components\": {\n        \"Camera\": {\n          \"fov_y_deg\": 50\n        },\n        \"Transform\": {\n          \"translation\": [0, 2, 8]\n        }\n      }\n    },\n    \"cube\": {\n      \"components\": {\n        \"Material\": {\n          \"metallic\": 1\n        },\n        \"Primitive\": {\n          \"shape\": \"Cube\"\n        }\n      }\n    }\n  },\n  \"format\": 2,\n  \"resources\": {\n    \"Exposure\": {\n      \"ev100\": 12\n    }\n  }\n}\n";
     dir.write("main.scene.json", scene);
     let (ok, report) = wen_json(&[
         "check",
@@ -228,7 +228,7 @@ fn capture_draws_a_scene_file_into_a_png() {
     let dir = Dir::new("capture");
     dir.write(
         "main.scene.json",
-        r#"{ "format": 1, "entities": {
+        r#"{ "format": 2, "entities": {
             "cam": { "components": { "Camera": {}, "Transform": { "translation": [0, 1, 5] } } },
             "box": { "components": { "Primitive": { "shape": "Cube" }, "Material": { "base_color": [0.9, 0.1, 0.1, 1] } } },
             "sun": { "components": { "DirectionalLight": {}, "Transform": { "rotation": [-0.38, 0, 0, 0.92] } } }
@@ -308,7 +308,7 @@ fn describe_lists_what_a_camera_sees() {
     let dir = Dir::new("describe");
     dir.write(
         "main.scene.json",
-        r#"{ "format": 1, "entities": {
+        r#"{ "format": 2, "entities": {
             "cam": { "components": { "Camera": {}, "Transform": { "translation": [0, 1, 8] } } },
             "wall": { "components": { "Primitive": { "shape": "Cube" }, "Transform": { "translation": [0, 1, 0], "scale": [3, 3, 1] } } },
             "hidden_box": { "components": { "Primitive": { "shape": "Cube" }, "Transform": { "translation": [0, 1, -3], "scale": [0.5, 0.5, 0.5] } } },
@@ -414,7 +414,7 @@ fn capture_draws_models_from_the_projects_assets_and_reports_the_ones_it_cannot(
     std::fs::write(dir.0.join("assets/broken.glb"), b"not a model").unwrap();
     dir.write(
         "main.scene.json",
-        r#"{ "format": 1, "entities": {
+        r#"{ "format": 2, "entities": {
             "cam": { "components": { "Camera": {}, "Transform": { "translation": [0, 0, 6] } } },
             "sun": { "components": { "DirectionalLight": {} } },
             "tri": { "components": { "Model": { "asset": "assets/tri.glb" } } },
@@ -499,7 +499,13 @@ fn migrate_accepts_current_files_and_refuses_what_it_cannot_upgrade() {
     let (ok, report) = wen_json(&["migrate", "--root", dir.arg(), "--json"]);
     assert!(ok, "{report}");
     assert_eq!(report["up_to_date"], 1);
-    assert_eq!(report["current_format"], 1);
+    assert_eq!(report["current_format"], 2);
+    assert_eq!(report["migrated"], serde_json::json!([]));
+    assert_eq!(
+        dir.read("a.scene.json"),
+        GOOD,
+        "a current file is left alone"
+    );
 
     dir.write("old.scene.json", "{ \"format\": 0 }");
     dir.write("new.scene.json", "{ \"format\": 9 }");
@@ -512,6 +518,216 @@ fn migrate_accepts_current_files_and_refuses_what_it_cannot_upgrade() {
         .map(|d| d["code"].as_str().unwrap())
         .collect();
     assert_eq!(codes, ["unsupported_format", "no_migration"]);
+}
+
+/// A project of format 1 (the scene format before the look lock of 1.0):
+/// every command reads it as it is; `check` says so with a warning and
+/// passes; `fmt` tidies a file in its own format and never migrates;
+/// `migrate` writes format 2 with the values the files relied on, after
+/// which the project is current and silent.
+#[test]
+fn a_project_of_format_1_is_read_as_it_is_and_migrated_on_request() {
+    let dir = Dir::new("format-1");
+    let old = GOOD.replace("\"format\": 2", "\"format\": 1");
+    let loose = LOOSE.replace("\"format\": 2", "\"format\": 1");
+    assert_ne!(old, GOOD);
+    dir.write("assets/a.glb", "glb");
+    dir.write("tidy.scene.json", &old);
+    dir.write("loose.scene.json", &loose);
+    let check = [
+        "check",
+        "--example",
+        "stress",
+        "--root",
+        dir.arg(),
+        "--json",
+    ];
+    let (ok, report) = wen_json(&check);
+    assert!(ok, "format 1 is a warning, not an error: {report}");
+    assert_eq!(report["errors"], 0);
+    let noted: Vec<(&str, &str)> = report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| {
+            (
+                d["location"]["file"].as_str().unwrap(),
+                d["code"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        noted,
+        [
+            ("loose.scene.json", "old_format"),
+            ("loose.scene.json", "not_canonical"),
+            ("tidy.scene.json", "old_format"),
+        ],
+        "{report}"
+    );
+    assert!(
+        report["diagnostics"][0]["hint"]
+            .as_str()
+            .unwrap()
+            .contains("wen migrate"),
+        "{report}"
+    );
+
+    // A run of the scene works, and nothing was written by reading.
+    let (ok, run) = wen_json(&[
+        "run",
+        "--example",
+        "stress",
+        "--scene",
+        "tidy.scene.json",
+        "--root",
+        dir.arg(),
+        "--frames",
+        "3",
+        "--json",
+    ]);
+    assert!(ok, "{run}");
+    assert_eq!(dir.read("tidy.scene.json"), old);
+    assert_eq!(dir.read("loose.scene.json"), loose);
+
+    // fmt: the loose file is tidied as format 1; both are named as older.
+    let fmt = ["fmt", "--example", "stress", "--root", dir.arg(), "--json"];
+    let mut fmt_check = fmt.to_vec();
+    fmt_check.push("--check");
+    let (ok, report) = wen_json(&fmt_check);
+    assert!(!ok, "{report}");
+    assert_eq!(report["changed"], serde_json::json!(["loose.scene.json"]));
+    assert_eq!(
+        report["older_format"],
+        serde_json::json!(["loose.scene.json", "tidy.scene.json"])
+    );
+    let (ok, report) = wen_json(&fmt);
+    assert!(ok, "{report}");
+    assert_eq!(dir.read("loose.scene.json"), old, "tidied, still format 1");
+    assert_eq!(dir.read("tidy.scene.json"), old);
+    let (ok, report) = wen_json(&fmt_check);
+    assert!(ok, "a tidy file of format 1 passes fmt --check: {report}");
+    assert_eq!(report["changed"], serde_json::json!([]));
+
+    // migrate: both become format 2, with the look they had written in.
+    let (ok, report) = wen_json(&["migrate", "--root", dir.arg(), "--json"]);
+    assert!(ok, "{report}");
+    assert_eq!(
+        report["migrated"],
+        serde_json::json!(["loose.scene.json", "tidy.scene.json"])
+    );
+    let migrated: serde_json::Value = serde_json::from_str(&dir.read("tidy.scene.json")).unwrap();
+    assert_eq!(migrated["format"], 2);
+    assert_eq!(migrated["resources"]["Fog"]["density"], 0.0);
+    assert_eq!(migrated["resources"]["Ambient"]["source"], "Color");
+    assert_eq!(
+        migrated["entities"],
+        serde_json::from_str::<serde_json::Value>(GOOD).unwrap()["entities"]
+    );
+    assert_eq!(dir.read("loose.scene.json"), dir.read("tidy.scene.json"));
+    // Now the project is current: no warning, canonical, nothing to migrate.
+    let (ok, report) = wen_json(&check);
+    assert!(ok, "{report}");
+    assert_eq!(report["warnings"], 0, "{report}");
+    let (ok, report) = wen_json(&fmt_check);
+    assert!(ok, "{report}");
+    assert!(report.get("older_format").is_none(), "{report}");
+    let (ok, report) = wen_json(&["migrate", "--root", dir.arg(), "--json"]);
+    assert!(ok, "{report}");
+    assert_eq!(report["migrated"], serde_json::json!([]));
+    assert_eq!(report["up_to_date"], 2);
+}
+
+/// `wish.json` of a project made by an older engine (canonical).
+fn project_file(engine: &str) -> String {
+    format!(
+        "{{\n  \"engine\": \"{engine}\",\n  \"format\": 1,\n  \"name\": \"Old\",\n  \"scene\": \"main.scene.json\",\n  \"types\": {{\n    \"example\": \"stress\"\n  }}\n}}\n"
+    )
+}
+
+/// ADR-027, rule 3: `wen migrate` sets `engine` in `wish.json` to the
+/// migrating engine's version when it migrated something, and only then;
+/// opening, checking and editing never touch the key.
+#[test]
+fn migrate_names_the_migrating_engine_and_nothing_else_does() {
+    let dir = Dir::new("migrate-engine");
+    let old = GOOD.replace("\"format\": 2", "\"format\": 1");
+    dir.write("wish.json", &project_file("0.0.9"));
+    dir.write("main.scene.json", &old);
+    dir.write("other.scene.json", GOOD);
+    // Checking and running read it; nothing is written.
+    let check = ["check", "--root", dir.arg(), "--json"];
+    let (ok, report) = wen_json(&check);
+    assert!(ok, "{report}");
+    let (ok, run) = wen_json(&["call", "scene_get", "{}", "--root", dir.arg()]);
+    assert!(ok, "{run}");
+    assert_eq!(dir.read("wish.json"), project_file("0.0.9"));
+    // An edit through the engine saves the scene in the new format, but the
+    // project still names the engine that made it.
+    let (ok, edit) = wen_json(&[
+        "call",
+        "edit_apply",
+        r#"{"scene":"other.scene.json","ops":[{"op":"spawn","id":"b"}]}"#,
+        "--root",
+        dir.arg(),
+    ]);
+    assert!(ok, "{edit}");
+    assert_eq!(dir.read("wish.json"), project_file("0.0.9"));
+    // A migration that migrates something names this engine; only that key
+    // changes.
+    let here = env!("CARGO_PKG_VERSION");
+    let (ok, report) = wen_json(&["migrate", "--root", dir.arg(), "--json"]);
+    assert!(ok, "{report}");
+    assert_eq!(report["migrated"], serde_json::json!(["main.scene.json"]));
+    assert_eq!(report["engine"], here);
+    assert_eq!(dir.read("wish.json"), project_file(here));
+    let (ok, text) = wen(&["migrate", "--root", dir.arg()]);
+    assert!(ok, "{text}");
+    assert!(!text.contains("now names engine"), "{text}");
+    // Nothing to migrate: the key is left alone, whatever it says.
+    dir.write("wish.json", &project_file("0.0.9"));
+    let (ok, report) = wen_json(&["migrate", "--root", dir.arg(), "--json"]);
+    assert!(ok, "{report}");
+    assert!(report["engine"].is_null(), "{report}");
+    assert_eq!(dir.read("wish.json"), project_file("0.0.9"));
+    // A project that names a newer engine keeps it: the key is only raised.
+    dir.write("wish.json", &project_file("9.0.0"));
+    dir.write("main.scene.json", &old);
+    let (ok, report) = wen_json(&["migrate", "--root", dir.arg(), "--json"]);
+    assert!(ok, "{report}");
+    assert_eq!(report["migrated"], serde_json::json!(["main.scene.json"]));
+    assert!(report["engine"].is_null(), "{report}");
+    assert_eq!(dir.read("wish.json"), project_file("9.0.0"));
+    // One that is not a version is replaced.
+    dir.write("wish.json", &project_file("0.2"));
+    dir.write("main.scene.json", &old);
+    let (ok, report) = wen_json(&["migrate", "--root", dir.arg(), "--json"]);
+    assert!(ok, "{report}");
+    assert_eq!(report["engine"], here);
+    assert_eq!(dir.read("wish.json"), project_file(here));
+}
+
+/// ADR-027, rule 3: an `engine` that is not a version is reported, where it
+/// is, with a hint; the project still opens.
+#[test]
+fn check_reports_an_engine_that_is_not_a_version() {
+    let dir = Dir::new("engine-not-a-version");
+    dir.write("wish.json", &project_file("0.2"));
+    dir.write("main.scene.json", GOOD);
+    let (ok, report) = wen_json(&["check", "--root", dir.arg(), "--json"]);
+    assert!(ok, "a warning: {report}");
+    let found = &report["diagnostics"][0];
+    assert_eq!(found["code"], "invalid_version", "{report}");
+    assert_eq!(found["severity"], "warning");
+    assert_eq!(found["location"]["file"], "wish.json");
+    assert_eq!(found["location"]["path"], "/engine");
+    assert_eq!(found["location"]["line"], 2);
+    assert!(found["hint"].as_str().unwrap().contains("three numbers"));
+    // A version is not reported.
+    dir.write("wish.json", &project_file("0.2.0"));
+    let (ok, report) = wen_json(&["check", "--root", dir.arg(), "--json"]);
+    assert!(ok, "{report}");
+    assert_eq!(report["warnings"], 0, "{report}");
 }
 
 #[test]
@@ -598,7 +814,7 @@ fn shaders_are_checked_and_a_folder_of_edits_can_be_drawn_with() {
     // Capture refuses to draw with it and says why.
     dir.write(
         "main.scene.json",
-        r#"{ "format": 1, "entities": { "cam": { "components": { "Camera": {} } } } }"#,
+        r#"{ "format": 2, "entities": { "cam": { "components": { "Camera": {} } } } }"#,
     );
     let out = dir.0.join("x.png");
     let (ok, report) = wen_json(&[
@@ -647,7 +863,7 @@ fn without_a_usable_graphics_adapter_capture_explains_instead_of_crashing() {
     let dir = Dir::new("no-gpu");
     dir.write(
         "main.scene.json",
-        r#"{ "format": 1, "entities": { "cam": { "components": { "Camera": {} } } } }"#,
+        r#"{ "format": 2, "entities": { "cam": { "components": { "Camera": {} } } } }"#,
     );
     let out = dir.0.join("never.png");
     // Asking for a backend this platform does not have leaves no adapter.
@@ -679,4 +895,370 @@ fn without_a_usable_graphics_adapter_capture_explains_instead_of_crashing() {
             .contains("--software")
     );
     assert!(!out.exists());
+}
+
+/// A template a package brings is offered by `wen new --template`, as
+/// `<package id>/<folder>`, picture and all (M10a WP5).
+#[test]
+fn a_package_template_makes_a_new_project() {
+    let base = std::env::temp_dir().join(format!("wen-package-template-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    // An engine packages folder with one template package.
+    let package = base.join("engine/com.example.kit");
+    std::fs::create_dir_all(package.join("tiny/scenes")).unwrap();
+    std::fs::create_dir_all(package.join("tiny/.template")).unwrap();
+    std::fs::write(
+        package.join("wish-package.json"),
+        r#"{ "format": 1, "id": "com.example.kit", "name": "Kit", "version": "1.0.0", "engine": ">=0.1",
+            "license": "MIT", "contents": { "templates": ["tiny"] } }"#,
+    )
+    .unwrap();
+    std::fs::write(
+        package.join("tiny/wish.json"),
+        r#"{ "format": 1, "name": "Tiny", "scene": "scenes/main.scene.json" }"#,
+    )
+    .unwrap();
+    std::fs::write(
+        package.join("tiny/scenes/main.scene.json"),
+        r#"{ "format": 2, "entities": {} }"#,
+    )
+    .unwrap();
+    std::fs::write(package.join("tiny/.template/thumbnail.png"), "png").unwrap();
+    let out = base.join("game");
+    let output = Command::new(env!("CARGO_BIN_EXE_wen"))
+        .args([
+            "new",
+            out.to_str().unwrap(),
+            "--template",
+            "com.example.kit/tiny",
+            "--json",
+        ])
+        .env("WISH_ENGINE_PACKAGES", base.join("engine"))
+        .output()
+        .unwrap();
+    let answer: Value = serde_json::from_slice(&output.stdout).unwrap_or(Value::Null);
+    assert_eq!(
+        answer["ok"],
+        true,
+        "{answer} {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(out.join("scenes/main.scene.json").is_file());
+    let config: Value =
+        serde_json::from_str(&std::fs::read_to_string(out.join("wish.json")).unwrap()).unwrap();
+    assert_eq!(config["name"], "game");
+    // The template's picture is part of the package (not of the project).
+    let files = wish_control::packages::package_files(&package).unwrap();
+    assert!(
+        files.contains(&"tiny/.template/thumbnail.png".to_owned()),
+        "{files:?}"
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn pkg_searches_adds_updates_and_removes_from_a_folder_index() {
+    let base = std::env::temp_dir().join(format!("wen-pkg-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let theme = |folder: &str, version: &str| {
+        let package = base.join("index").join(folder);
+        std::fs::create_dir_all(package.join("themes")).unwrap();
+        std::fs::write(
+            package.join("wish-package.json"),
+            format!(
+                r#"{{ "format": 1, "id": "com.example.dusk", "name": "Dusk", "version": "{version}", "engine": ">=0.1",
+                    "license": "MIT", "description": "Evening colours.", "contents": {{ "themes": ["themes/dusk.json"] }} }}"#
+            ),
+        )
+        .unwrap();
+        std::fs::write(package.join("themes/dusk.json"), r#"{ "format": 1 }"#).unwrap();
+    };
+    theme("dusk-1", "1.0.0");
+    theme("dusk-2", "1.2.0");
+    let game = base.join("game");
+    wish_control::scaffold::create_project(&game, "Pkg", "wen").unwrap();
+    let pkg = |words: &[&str]| -> (bool, Value) {
+        let mut arguments = vec!["pkg"];
+        arguments.extend_from_slice(words);
+        arguments.extend_from_slice(&["--index", "../index", "--json"]);
+        let output = Command::new(env!("CARGO_BIN_EXE_wen"))
+            .args(&arguments)
+            .current_dir(&game)
+            .output()
+            .unwrap();
+        (
+            output.status.success(),
+            serde_json::from_slice(&output.stdout).unwrap_or(Value::Null),
+        )
+    };
+    let (ok, found) = pkg(&["search", "evening"]);
+    assert!(ok, "{found}");
+    assert_eq!(found["packages"][0]["latest"], "1.2.0", "{found}");
+    let (ok, added) = pkg(&["add", "com.example.dusk", "--version", "=1.0.0"]);
+    assert!(ok, "{added}");
+    let (ok, updated) = pkg(&["update"]);
+    assert!(ok, "{updated}");
+    assert_eq!(updated["updated"][0]["to"], "1.2.0", "{updated}");
+    assert!(game.join("wish.lock").is_file());
+    let (ok, removed) = pkg(&["remove", "com.example.dusk"]);
+    assert!(ok, "{removed}");
+    assert!(!game.join("packages/com.example.dusk").exists());
+    assert!(!game.join("wish.lock").exists(), "no packages, no lock");
+    // People read text.
+    let output = Command::new(env!("CARGO_BIN_EXE_wen"))
+        .args(["pkg", "search", "--index", "../index"])
+        .current_dir(&game)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("com.example.dusk 1.2.0"), "{text}");
+    let (ok, wrong) = wen(&["pkg", "fetch"]);
+    assert!(!ok, "{wrong}");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// M10b: `wen engines` adds, lists, picks and removes engine versions; the
+/// list is the person's (WISH_CONFIG_DIR here).
+#[test]
+fn wen_engines_adds_lists_picks_and_removes() {
+    let base = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("wen-engines");
+    let _ = std::fs::remove_dir_all(&base);
+    let engine = base.join("old-engine");
+    std::fs::create_dir_all(&engine).unwrap();
+    std::fs::write(
+        engine.join("wish-engine.json"),
+        r#"{ "format": 1, "version": "0.0.5" }"#,
+    )
+    .unwrap();
+    std::fs::write(engine.join(wish_control::engines::WEN), "").unwrap();
+    let game = base.join("game");
+    std::fs::create_dir_all(&game).unwrap();
+    std::fs::write(
+        game.join("wish.json"),
+        r#"{ "engine": "0.0.5", "format": 1, "name": "Old", "scene": "scenes/main.scene.json" }"#,
+    )
+    .unwrap();
+    let wen = |args: &[&str]| -> Value {
+        let output = Command::new(env!("CARGO_BIN_EXE_wen"))
+            .args(args)
+            .arg("--json")
+            .env("WISH_CONFIG_DIR", base.join("config"))
+            .current_dir(&base)
+            .output()
+            .unwrap();
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|_| {
+            panic!(
+                "{} {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            )
+        })
+    };
+    // Folders are relative to where wen runs.
+    let added = wen(&["engines", "add", "old-engine"]);
+    assert_eq!(added["ok"], true, "{added}");
+    assert_eq!(added["engine"]["version"], "0.0.5");
+    assert_eq!(added["added"], true);
+    let listed = wen(&["engines"]);
+    let versions: Vec<&str> = listed["engines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|e| e["version"].as_str())
+        .collect();
+    assert!(versions.contains(&"0.0.5"), "{listed}");
+    let picked = wen(&["engines", "pick", "game"]);
+    assert_eq!(picked["fit"], "exact", "{picked}");
+    assert_eq!(picked["switch"], true);
+    assert_eq!(picked["opens_with"]["version"], "0.0.5");
+    let removed = wen(&["engines", "remove", "old-engine", "--dry-run"]);
+    assert_eq!(removed["dry_run"], true, "{removed}");
+    let removed = wen(&["engines", "remove", "old-engine"]);
+    assert_eq!(removed["removed"], true, "{removed}");
+    assert!(engine.join("wish-engine.json").is_file(), "only forgotten");
+    let wrong = wen(&["engines", "add", "game"]);
+    assert_eq!(wrong["error"]["code"], "engine_folder_invalid", "{wrong}");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// A project with a red picture, a material file that uses it (written
+/// loosely), and a scene whose box takes its look from the file.
+fn material_project(name: &str) -> Dir {
+    let dir = Dir::new(name);
+    let red = wish_render::RgbaImage {
+        width: 8,
+        height: 8,
+        pixels: [255, 0, 0, 255].repeat(64),
+    };
+    std::fs::write(dir.0.join("assets/red.png"), red.to_png().unwrap()).unwrap();
+    dir.write(
+        "assets/wall.mat.json",
+        r#"{ "material": { "roughness": 1, "base_color_texture": "assets/red.png" }, "format": 1 }"#,
+    );
+    dir.write(
+        "main.scene.json",
+        r#"{ "format": 2, "entities": {
+            "cam": { "components": { "Camera": {}, "Transform": { "translation": [0, 0, 3] } } },
+            "box": { "components": { "Primitive": { "shape": "Cube" }, "Material": { "file": "assets/wall.mat.json" } } },
+            "sun": { "components": { "DirectionalLight": {}, "Transform": { "rotation": [-0.38, 0, 0, 0.92] } } }
+        } }"#,
+    );
+    dir
+}
+
+const WALL: &str = "{\n  \"format\": 1,\n  \"material\": {\n    \"base_color_texture\": \"assets/red.png\",\n    \"roughness\": 1\n  }\n}\n";
+
+#[test]
+fn material_files_are_formatted_checked_migrated_and_drawn() {
+    let dir = material_project("materials");
+    // fmt: listed by --check, rewritten without it, byte for byte canonical;
+    // a material file can be named on its own.
+    let fmt = ["fmt", "--example", "stress", "--root", dir.arg(), "--json"];
+    let mut check_only = fmt.to_vec();
+    check_only.push("--check");
+    let (ok, report) = wen_json(&check_only);
+    assert!(!ok, "{report}");
+    assert_eq!(
+        report["changed"],
+        serde_json::json!(["assets/wall.mat.json", "main.scene.json"])
+    );
+    let mut one = fmt.to_vec();
+    one.push("assets/wall.mat.json");
+    let (ok, report) = wen_json(&one);
+    assert!(ok, "{report}");
+    assert_eq!(
+        report["changed"],
+        serde_json::json!(["assets/wall.mat.json"])
+    );
+    assert_eq!(dir.read("assets/wall.mat.json"), WALL);
+    let (ok, _) = wen_json(&fmt);
+    assert!(ok);
+    let (ok, report) = wen_json(&check_only);
+    assert!(ok, "formatting is stable: {report}");
+    assert_eq!(dir.read("assets/wall.mat.json"), WALL);
+
+    // check: clean; migrate: both documents are current.
+    let check = [
+        "check",
+        "--example",
+        "stress",
+        "--root",
+        dir.arg(),
+        "--json",
+    ];
+    let (ok, report) = wen_json(&check);
+    assert!(ok, "{report}");
+    assert_eq!(report["diagnostics"], serde_json::json!([]), "{report}");
+    let (ok, report) = wen_json(&["migrate", "--root", dir.arg(), "--json"]);
+    assert!(ok, "{report}");
+    assert_eq!(report["up_to_date"], 2);
+
+    // The box is drawn with the file's picture.
+    let out = dir.0.join("shot.png");
+    let capture = [
+        "capture",
+        "--example",
+        "stress",
+        "--scene",
+        "main.scene.json",
+        "--root",
+        dir.arg(),
+        "--software",
+        "--size",
+        "160x120",
+        "--out",
+        out.to_str().unwrap(),
+        "--json",
+    ];
+    let (ok, report) = wen_json(&capture);
+    assert!(ok, "{report}");
+    assert!(
+        report
+            .get("diagnostics")
+            .is_none_or(|d| d == &serde_json::json!([])),
+        "{report}"
+    );
+    let picture = wish_render::RgbaImage::from_png(&std::fs::read(&out).unwrap()).unwrap();
+    let [r, g, b, _] = picture.pixel(80, 60).unwrap();
+    assert!(
+        r > 80 && r > 3 * g && r > 3 * b,
+        "the box is red: {r} {g} {b}"
+    );
+
+    // A mistake in the material file: check fails with the file and the
+    // line, fmt leaves the file alone, the picture is still drawn (the box
+    // without the file's look) and says why.
+    let broken = WALL.replace("\"roughness\": 1", "\"roughness\": 11");
+    dir.write("assets/wall.mat.json", &broken);
+    let (ok, report) = wen_json(&check);
+    assert!(!ok, "{report}");
+    let problem = &report["diagnostics"][0];
+    assert_eq!(problem["code"], "value_out_of_range", "{report}");
+    assert_eq!(problem["location"]["file"], "assets/wall.mat.json");
+    assert_eq!(problem["location"]["line"], 5);
+    let (ok, report) = wen_json(&fmt);
+    assert!(!ok, "{report}");
+    assert_eq!(
+        report["skipped"],
+        serde_json::json!(["assets/wall.mat.json"])
+    );
+    assert_eq!(dir.read("assets/wall.mat.json"), broken);
+    let (ok, report) = wen_json(&capture);
+    assert!(ok, "{report}");
+    assert!(
+        report.to_string().contains("material_not_loaded"),
+        "{report}"
+    );
+    // A format this engine does not know.
+    dir.write("assets/wall.mat.json", "{ \"format\": 9 }");
+    let (ok, report) = wen_json(&["migrate", "--root", dir.arg(), "--json"]);
+    assert!(!ok);
+    assert_eq!(report["diagnostics"][0]["code"], "unsupported_format");
+}
+
+#[test]
+fn watch_follows_material_files() {
+    let dir = material_project("watch-materials");
+    dir.write("assets/wall.mat.json", WALL);
+    let mut child = Command::new(env!("CARGO_BIN_EXE_wen"))
+        .args([
+            "watch",
+            "--example",
+            "stress",
+            "--scene",
+            "main.scene.json",
+            "--root",
+            dir.arg(),
+            "--seconds",
+            "3",
+            "--json",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("wen runs");
+    let mut reader = std::io::BufReader::new(child.stdout.take().unwrap());
+    let mut stdout = String::new();
+    reader.read_line(&mut stdout).unwrap();
+    std::thread::sleep(Duration::from_millis(600));
+    // A good change to the material file is a reload; a bad one is refused
+    // with the reason, and the last good scene stays.
+    dir.write("assets/wall.mat.json", &WALL.replace("1\n", "0.5\n"));
+    std::thread::sleep(Duration::from_millis(700));
+    dir.write(
+        "assets/wall.mat.json",
+        "{ \"format\": 1, \"material\": { \"shiny\": true } }",
+    );
+    reader.read_to_string(&mut stdout).unwrap();
+    assert!(child.wait().unwrap().success(), "{stdout}");
+    let events: Vec<Value> = stdout
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let names: Vec<&str> = events.iter().filter_map(|e| e["event"].as_str()).collect();
+    assert_eq!(names, ["loaded", "reloaded", "rejected"], "{stdout}");
+    assert_eq!(events[2]["diagnostics"][0]["code"], "unknown_field");
+    assert_eq!(
+        events[2]["diagnostics"][0]["location"]["file"],
+        "assets/wall.mat.json"
+    );
 }

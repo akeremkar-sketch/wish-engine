@@ -3,9 +3,13 @@
 #import brdf
 #import draw
 #import lights
+#import fog
 
-// Opaque surfaces, lit by one directional light, the point and spot lights
-// of their cluster, the ambient light, and the sky's reflection. Output is already multiplied by the exposure.
+// Surfaces, lit by one directional light, the point and spot lights of their
+// cluster, the ambient light (one colour, or the sky's own light), and the
+// sky's reflection, seen through the fog when there is one. Output is
+// already multiplied by the exposure. The opaque pass and the blended pass
+// (see-through surfaces) both draw with these functions.
 
 // The material's textures. A slot without a texture holds a 1x1 default, so
 // the factors alone decide.
@@ -41,7 +45,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
     out.clip = frame.view_proj * world;
     out.world_position = world.xyz;
     out.normal = (draw.normal_matrix * vec4<f32>(in.normal, 0.0)).xyz;
-    out.uv = in.uv;
+    out.uv = in.uv * draw.uv_transform.xy + draw.uv_transform.zw;
     out.tangent = (draw.model * vec4<f32>(in.tangent.xyz, 0.0)).xyz;
     out.tangent_sign = in.tangent.w;
     out.view_depth = -(frame.view * world).z;
@@ -97,7 +101,13 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
                 * visibility_smith(n_dot_v, n_dot_l, alpha) * f;
             let diffuse = (vec3<f32>(1.0) - f) * diffuse_colour / PI;
             // Shadows only dim the direct light; sampled at the geometric normal.
-            let visibility = shadow_visibility(in.world_position, normalize(in.normal));
+            // A frame has either one shadow map or cascades.
+            var visibility = 1.0;
+            if (frame.cascades.info.x > 0.5) {
+                visibility = cascaded_visibility(in.world_position, normalize(in.normal));
+            } else {
+                visibility = shadow_visibility(in.world_position, normalize(in.normal));
+            }
             colour += (diffuse + specular) * frame.light_radiance.rgb * n_dot_l * visibility;
         }
     }
@@ -107,10 +117,39 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
     }
     // Ambient light on the diffuse part, the sky's reflection on the
     // specular part.
-    colour += diffuse_colour * frame.ambient.rgb / PI * occlusion;
     let reflected = reflect(-v, n);
-    colour += environment_brdf(f0, roughness, n_dot_v) * sky_radiance(reflected) * occlusion;
+    if (frame.sky_light.x > 0.5) {
+        // From the sky: each surface gathers the part of the sky it faces,
+        // and a rough surface reflects a wide part of it. The sky's strength
+        // scales only the light it gives a surface; its reflection shows
+        // the sky as it is drawn, as in the flat mode, so a metal is not
+        // dimmed with it.
+        colour += diffuse_colour * sky_irradiance(n) / PI * (occlusion * frame.sky_light.y);
+        colour += environment_brdf(f0, roughness, n_dot_v)
+            * sky_reflection(reflected, roughness) * occlusion;
+    } else {
+        colour += diffuse_colour * frame.ambient.rgb / PI * occlusion;
+        colour += environment_brdf(f0, roughness, n_dot_v) * sky_radiance(reflected) * occlusion;
+    }
     let emission = textureSample(emissive_texture, material_sampler, in.uv).rgb * draw.emissive.rgb;
     colour += emission * frame.exposure.y;
-    return vec4<f32>(colour * frame.exposure.x, 1.0);
+    if (frame.fog_colour.w > 0.5) {
+        if (frame.fog_limit.y > 0.5) {
+            // An orthographic camera looks along one direction from every
+            // point of its plane: the ray to a surface is as long as the
+            // surface is deep, wherever in the picture it is.
+            let forward_y = -frame.view[1].z;
+            let deep = max(in.view_depth, 0.0);
+            colour = fogged(colour, in.world_position.y - forward_y * deep, forward_y, deep);
+        } else {
+            let to_surface = in.world_position - frame.camera_position.xyz;
+            let away = length(to_surface);
+            colour = fogged(colour, frame.camera_position.y,
+                to_surface.y / max(away, 1e-6), away);
+        }
+    }
+    // The alpha is the surface's: the blended pass mixes a see-through
+    // surface by it (its draw's alpha is cleaned to 0..1 on the CPU). In the
+    // opaque pass it lands in the HDR picture's alpha, which nothing reads.
+    return vec4<f32>(colour * frame.exposure.x, albedo.a);
 }

@@ -1,0 +1,31 @@
+{
+  "colors": {
+    "accent": "#3d6fd0",
+    "accent_soft": "#2f4e85",
+    "amber": "#e2b04a",
+    "backdrop": "#1c1d20",
+    "field": "#1c1d20",
+    "go": "#5fbf6e",
+    "hover": "#33343a",
+    "hover_line": "#4a4c55",
+    "icon": "#b7b9c1",
+    "line": "#36373d",
+    "panel": "#25262a",
+    "pressed": "#3a3b42",
+    "raised": "#2c2d32",
+    "red": "#d9605a",
+    "select": "#5b8fea",
+    "sky": "#8fb3e9",
+    "sun": "#e2c06a",
+    "text": "#e1e2e6",
+    "weak": "#9b9da6",
+    "widget": "#2c2d32"
+  },
+  "format": 1,
+  "name": "Atelier",
+  "radius": {
+    "menu": 4,
+    "widget": 3,
+    "window": 4
+  }
+}

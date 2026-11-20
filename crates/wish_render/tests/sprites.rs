@@ -227,3 +227,49 @@ fn a_perspective_scene_with_particles_still_draws_its_meshes() {
     let image = draw(&scene);
     assert!(image.pixel(160, 90).is_some());
 }
+
+#[test]
+fn sprites_and_particles_are_counted_in_the_statistics() {
+    let world = world_of(SCENE);
+    let scene = extract(&world).unwrap();
+    let gpu = gpu();
+    let frame = renderer(&gpu).render(&gpu, &scene, None, 320, 180).unwrap();
+    // One mesh (the wall, 12 triangles) and no light, so no shadow map; the
+    // sky and tone mapping; five sprites and fifty particles, two triangles
+    // each, in three runs: the smooth ones behind, the two sharp heroes, the
+    // smooth ones in front.
+    assert_eq!(frame.drawn, 1);
+    assert_eq!(frame.stats.shadow_casters, 0);
+    assert_eq!(frame.stats.triangles, 12 + 2 + 2 * (5 + 50));
+    assert_eq!(frame.stats.draw_calls, 1 + 2 + 3);
+    assert_eq!((frame.stats.width, frame.stats.height), (320, 180));
+}
+
+#[test]
+fn a_second_frame_with_sprites_creates_nothing_and_draws_only_its_own() {
+    // The sprite pass takes its atlas texture, its uniform buffer and its
+    // vertex buffer from the renderer's pool and fills them every frame.
+    // The device counts every texture and buffer made on it, so "nothing"
+    // is nothing, by the pool or beside it.
+    let world = world_of(SCENE);
+    let scene = extract(&world).unwrap();
+    let gpu = gpu();
+    let renderer = renderer(&gpu);
+    let first = renderer.render(&gpu, &scene, None, 320, 180).unwrap();
+    let made = gpu.created();
+    let second = renderer.render(&gpu, &scene, None, 320, 180).unwrap();
+    assert_eq!(gpu.created(), made, "a second frame creates nothing");
+    assert_eq!(second.image, first.image);
+
+    // Kept buffers are filled again, never read past what a frame filled: a
+    // frame with fewer sprites after one with more shows only its own.
+    let mut fewer = scene.clone();
+    fewer.sprites.truncate(2);
+    fewer.emitters.clear();
+    let alone = draw(&fewer);
+    assert_ne!(alone, first.image);
+    let after = renderer.render(&gpu, &fewer, None, 320, 180).unwrap();
+    assert_eq!(after.image, alone);
+    let back = renderer.render(&gpu, &scene, None, 320, 180).unwrap();
+    assert_eq!(back.image, first.image);
+}

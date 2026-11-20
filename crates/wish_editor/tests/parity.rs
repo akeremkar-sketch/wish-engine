@@ -22,7 +22,7 @@ fn every_tool_and_operation_has_a_way_by_hand_and_a_test() {
         wanted.insert(format!("edit_apply:{op}"));
     }
     wanted.insert("edit_apply:session".to_owned());
-    for action in ["list", "undo", "redo"] {
+    for action in ["list", "undo", "redo", "revert"] {
         wanted.insert(format!("edit_history:{action}"));
     }
     let listed: BTreeSet<String> = PARITY.iter().map(|row| row.name.to_owned()).collect();

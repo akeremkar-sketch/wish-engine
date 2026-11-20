@@ -77,11 +77,14 @@ pub(crate) struct InspectorActions {
     pub revert: Option<String>,
     /// New notes for an entity (its id, the text; empty: none).
     pub notes: Option<(String, String)>,
+    /// Apply a named look to the scene (its id: `natural`).
+    pub look: Option<String>,
 }
 
 impl InspectorActions {
     pub fn any(&self) -> bool {
-        self.set.is_some()
+        self.look.is_some()
+            || self.set.is_some()
             || self.add.is_some()
             || self.remove.is_some()
             || self.copy.is_some()
@@ -126,9 +129,58 @@ fn common(inspected: &[Inspected]) -> Vec<String> {
         .collect()
 }
 
+/// A look's name in the interface's language (the engine's own looks), or
+/// as the look's data gives it.
+pub(crate) fn look_name(id: &str, english: &str) -> String {
+    match id {
+        "plain" => t("Plain").to_owned(),
+        "natural" => t("Natural").to_owned(),
+        "vivid" => t("Vivid").to_owned(),
+        _ => english.to_owned(),
+    }
+}
+
+/// What a look looks like, for the hover text.
+fn look_description(id: &str, english: &str) -> String {
+    match id {
+        "plain" => t("No effects: the picture as the engine drew it before the look settings existed.").to_owned(),
+        "natural" => t("Daylight: the sky lights the scene, a sun disc, a light haze, a soft glow, gentle colours, smooth edges and sharp shadows near the camera.").to_owned(),
+        "vivid" => t("Natural, stronger: thicker haze, a clear glow, punchier and warmer colours, darker corners.").to_owned(),
+        _ => english.to_owned(),
+    }
+}
+
+/// "Apply a look" at the top of the scene resources' "Add resource..."
+/// menu: the engine's named looks (`edit_apply` `apply_look`), each one
+/// change of the scene's resources. In the menu rather than beside it, so
+/// that the panel looks as it did until it is opened.
+fn looks_section(ui: &mut Ui, actions: &mut InspectorActions) {
+    let Ok(looks) = wish_control::looks::looks() else {
+        return;
+    };
+    ui.strong(t("Apply a look..."))
+        .on_hover_text(t(
+            "Sets the sky light, sun disc, fog, bloom, grading, anti-aliasing and shadow cascades at once.",
+        ));
+    ui.horizontal(|ui| {
+        for look in &looks {
+            let name = look_name(&look.id, &look.name);
+            if ui
+                .button(name)
+                .on_hover_text(look_description(&look.id, &look.description))
+                .clicked()
+            {
+                actions.look = Some(look.id.clone());
+                ui.close();
+            }
+        }
+    });
+    ui.separator();
+}
+
 /// The inspector panel.
 pub(crate) fn panel(ui: &mut Ui, view: &InspectorView<'_>, actions: &mut InspectorActions) {
-    ui.heading(t("Inspector"));
+    crate::style::panel_title(ui, t("Inspector"));
     ui.separator();
     let Some(first) = view.inspected.first() else {
         ui.weak(t("Select an entity to edit its components."));
@@ -140,7 +192,11 @@ pub(crate) fn panel(ui: &mut Ui, view: &InspectorView<'_>, actions: &mut Inspect
             "Nothing is selected: these are the scene's own settings (sky, light, physics, the game's resources).",
         ));
     } else if view.inspected.len() == 1 {
-        ui.strong(&first.id);
+        ui.label(
+            egui::RichText::new(&first.id)
+                .size(16.0)
+                .color(crate::style::pal().text),
+        );
     } else {
         ui.strong(tf("{count} entities", &[("count", &view.inspected.len())]));
         ui.weak(t(
@@ -158,6 +214,45 @@ pub(crate) fn panel(ui: &mut Ui, view: &InspectorView<'_>, actions: &mut Inspect
         ui.weak(t(
             "Part of a prefab instance: changes are kept as overrides of the instance.",
         ));
+    }
+    if !part {
+        let present = common(view.inspected);
+        let add = if view.resources {
+            t("Add resource...")
+        } else {
+            t("Add component...")
+        };
+        ui.menu_button(add, |ui| {
+            if view.resources {
+                looks_section(ui, actions);
+            }
+            let mut filter = view.state.borrow().add_filter.clone();
+            let search = ui.add(
+                egui::TextEdit::singleline(&mut filter)
+                    .hint_text(t("Search"))
+                    .desired_width(200.0),
+            );
+            search.request_focus();
+            view.state.borrow_mut().add_filter.clone_from(&filter);
+            let wanted = filter.to_lowercase();
+            egui::ScrollArea::vertical()
+                .max_height(300.0)
+                .show(ui, |ui| {
+                    for name in view.schemas.keys() {
+                        if present.contains(name) || !name.to_lowercase().contains(&wanted) {
+                            continue;
+                        }
+                        let doc = view.schemas[name]["description"]
+                            .as_str()
+                            .unwrap_or_default();
+                        if ui.button(name).on_hover_text(doc).clicked() {
+                            actions.add = Some(name.clone());
+                            view.state.borrow_mut().add_filter.clear();
+                            ui.close();
+                        }
+                    }
+                });
+        });
     }
     ui.separator();
     egui::ScrollArea::vertical()
@@ -235,44 +330,6 @@ pub(crate) fn panel(ui: &mut Ui, view: &InspectorView<'_>, actions: &mut Inspect
                     header_response.on_hover_text(doc);
                 }
             }
-            if !part {
-                ui.separator();
-                let present = common(view.inspected);
-                let add = if view.resources {
-                    t("Add resource...")
-                } else {
-                    t("Add component...")
-                };
-                ui.menu_button(add, |ui| {
-                    let mut filter = view.state.borrow().add_filter.clone();
-                    let search = ui.add(
-                        egui::TextEdit::singleline(&mut filter)
-                            .hint_text(t("Search"))
-                            .desired_width(200.0),
-                    );
-                    search.request_focus();
-                    view.state.borrow_mut().add_filter.clone_from(&filter);
-                    let wanted = filter.to_lowercase();
-                    egui::ScrollArea::vertical()
-                        .max_height(300.0)
-                        .show(ui, |ui| {
-                            for name in view.schemas.keys() {
-                                if present.contains(name) || !name.to_lowercase().contains(&wanted)
-                                {
-                                    continue;
-                                }
-                                let doc = view.schemas[name]["description"]
-                                    .as_str()
-                                    .unwrap_or_default();
-                                if ui.button(name).on_hover_text(doc).clicked() {
-                                    actions.add = Some(name.clone());
-                                    view.state.borrow_mut().add_filter.clear();
-                                    ui.close();
-                                }
-                            }
-                        });
-                });
-            }
         });
 }
 
@@ -348,6 +405,20 @@ fn fields(
             }
         });
     changed
+}
+
+/// The fields of a material file (`path`), edited with the widgets a
+/// component's fields have: `schema` is the `MaterialFile` schema and
+/// `value` the file's look with every field. Returns the field that changed and its
+/// whole new value.
+pub(crate) fn material_fields(
+    ui: &mut Ui,
+    view: &InspectorView<'_>,
+    path: &str,
+    schema: &Value,
+    value: &Value,
+) -> Option<(String, Value)> {
+    fields(ui, view, &format!("material:{path}"), schema, value)
 }
 
 /// Sends `new` when the change is finished; keeps a drag's value shown
@@ -535,12 +606,9 @@ fn numbers(
                 }
             } else {
                 let mut number = item.as_f64().unwrap_or(0.0);
-                let mut drag = DragValue::new(&mut number).speed(0.02).max_decimals(4);
-                if let Some(prefix) = ["x: ", "y: ", "z: ", "w: "]
-                    .get(index)
-                    .filter(|_| length <= 4)
-                {
-                    drag = drag.prefix(*prefix);
+                let drag = DragValue::new(&mut number).speed(0.02).max_decimals(4);
+                if length <= 4 && !color {
+                    axis(ui, index);
                 }
                 if ui.add(drag).changed() {
                     *item = json!(number);
@@ -550,6 +618,18 @@ fn numbers(
         }
     });
     finish(ui, view, key, changed, Value::Array(items))
+}
+
+/// The letter of a vector's part in its axis colour (X red, Y green, Z
+/// blue, as the handles in the view; W quiet), before its number.
+fn axis(ui: &mut Ui, index: usize) {
+    let (letter, color) = match index {
+        0 => ("X", egui::Color32::from_rgb(229, 83, 75)),
+        1 => ("Y", egui::Color32::from_rgb(107, 191, 89)),
+        2 => ("Z", egui::Color32::from_rgb(79, 143, 230)),
+        _ => ("W", crate::style::pal().weak),
+    };
+    ui.label(egui::RichText::new(letter).size(11.0).strong().color(color));
 }
 
 /// A rotation, edited as degrees about X, Y, Z (yaw about Y first, as
@@ -566,13 +646,13 @@ fn quaternion(ui: &mut Ui, view: &InspectorView<'_>, key: &str, value: &Value) -
     }
     let mut changed = false;
     ui.horizontal(|ui| {
-        for (degree, prefix) in degrees.iter_mut().zip(["x: ", "y: ", "z: "]) {
+        for (index, degree) in degrees.iter_mut().enumerate() {
+            axis(ui, index);
             if ui
                 .add(
                     DragValue::new(degree)
                         .speed(0.5)
-                        .suffix(format!(" {}", t("deg")))
-                        .prefix(prefix),
+                        .suffix(format!(" {}", t("deg"))),
                 )
                 .changed()
             {

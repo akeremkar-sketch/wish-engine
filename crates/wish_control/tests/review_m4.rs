@@ -1,5 +1,5 @@
 //! Regression tests for the M4 closing review's findings (design note §14,
-//! "M4 kapanışı"). Each test is the review's reproduction.
+//! "M4 closing"). Each test is the review's reproduction.
 
 #![allow(missing_docs)]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

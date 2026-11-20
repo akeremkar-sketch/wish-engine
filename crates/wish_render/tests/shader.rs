@@ -106,3 +106,81 @@ fn import_mistakes_name_the_file_line_and_a_hint() {
         "shader_import_unknown"
     );
 }
+
+/// The shadow pass as it was before alpha-masked casters: valid WGSL, without
+/// the two functions the masked pipeline is built from.
+const OLD_SHADOW_PASS: &str = "#import draw
+
+struct Light {
+    view_proj: mat4x4<f32>,
+};
+
+@group(0) @binding(0) var<uniform> light: Light;
+
+@vertex
+fn vs_main(@location(0) position: vec3<f32>) -> @builtin(position) vec4<f32> {
+    return light.view_proj * draw.model * vec4<f32>(position, 1.0);
+}
+";
+
+#[test]
+fn a_replaced_shader_without_a_function_a_pipeline_needs_is_reported_in_its_file() {
+    use wish_render::{Gpu, GpuOptions, Renderer, check_shaders, engine_shaders};
+    // Regression (closing review): a shader override folder holding a copy
+    // of an engine shader from before a pipeline needed more of it passed
+    // `wen shaders` and then failed in the GPU as a "bug in wish_render".
+    assert!(check_shaders(&engine_shaders()).is_empty());
+    let mut library = engine_shaders();
+    library.add("shadow_pass", "shaders/shadow_pass.wgsl", OLD_SHADOW_PASS);
+    // The file is fine as WGSL.
+    library.check("shadow_pass").unwrap();
+    // Without a GPU: one problem, in the file, naming what is missing.
+    let problems = check_shaders(&library);
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    let problem = &problems[0];
+    assert_eq!(problem.code, "shader_entry_point_missing");
+    assert_eq!(
+        problem.location.file.as_deref(),
+        Some("shaders/shadow_pass.wgsl")
+    );
+    assert!(
+        problem.message.contains("`@vertex fn vs_masked`")
+            && problem.message.contains("`@fragment fn fs_masked`"),
+        "{}",
+        problem.message
+    );
+    assert!(!problem.message.contains("vs_main"), "{}", problem.message);
+    assert!(
+        problem.hint.contains("shadow_pass.wgsl"),
+        "{}",
+        problem.hint
+    );
+    // The renderer refuses it the same way, before the GPU is asked.
+    let gpu = Gpu::new(GpuOptions { software: true }).expect("a software adapter");
+    let refused = Renderer::with_shaders(&gpu, &library).unwrap_err();
+    assert_eq!(refused.code, "shader_entry_point_missing");
+    assert_eq!(&refused, problem);
+
+    // A function of the right name for the wrong stage does not count.
+    let wrong_stage = format!(
+        "{OLD_SHADOW_PASS}
+@vertex
+fn vs_masked() -> @builtin(position) vec4<f32> {{
+    return vec4<f32>(0.0);
+}}
+@vertex
+fn fs_masked() -> @builtin(position) vec4<f32> {{
+    return vec4<f32>(0.0);
+}}
+"
+    );
+    library.add("shadow_pass", "shaders/shadow_pass.wgsl", &wrong_stage);
+    let problems = check_shaders(&library);
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(
+        problems[0].message.contains("`@fragment fn fs_masked`")
+            && !problems[0].message.contains("vs_masked"),
+        "{}",
+        problems[0].message
+    );
+}

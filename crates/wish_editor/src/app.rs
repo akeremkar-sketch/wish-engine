@@ -49,18 +49,39 @@ pub type Opener = Box<dyn FnMut(&std::path::Path) -> Result<(), String>>;
 
 /// The default way to open a file: the program named by the `WISH_EDITOR`
 /// environment variable (such as `code`), or the system's own choice.
-fn open_with_system(path: &std::path::Path) -> Result<(), String> {
-    use std::process::Command;
-    let spawned = match std::env::var("WISH_EDITOR") {
-        Ok(program) if !program.trim().is_empty() => Command::new(program.trim()).arg(path).spawn(),
-        _ if cfg!(windows) => Command::new("cmd")
-            .args(["/C", "start", ""])
+pub(crate) fn open_with_system(path: &std::path::Path) -> Result<(), String> {
+    match std::env::var("WISH_EDITOR") {
+        Ok(program) if !program.trim().is_empty() => std::process::Command::new(program.trim())
             .arg(path)
-            .spawn(),
-        _ if cfg!(target_os = "macos") => Command::new("open").arg(path).spawn(),
-        _ => Command::new("xdg-open").arg(path).spawn(),
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| error.to_string()),
+        _ => open_with_os(path),
+    }
+}
+
+/// Opens a folder or a web page with the system (the file manager, the
+/// browser), never with `WISH_EDITOR`. On Windows through `explorer`, not
+/// `cmd /C start` (which would read `&` in a path as another command).
+pub(crate) fn open_with_os(path: &std::path::Path) -> Result<(), String> {
+    use std::process::Command;
+    let spawned = if cfg!(windows) {
+        Command::new("explorer").arg(path).spawn()
+    } else if cfg!(target_os = "macos") {
+        Command::new("open").arg(path).spawn()
+    } else {
+        Command::new("xdg-open").arg(path).spawn()
     };
     spawned.map(|_| ()).map_err(|error| error.to_string())
+}
+
+/// A before/after comparison: a checkpoint's picture of the scene and
+/// now's.
+struct Compare {
+    name: String,
+    before: egui::ColorImage,
+    now: egui::ColorImage,
+    textures: RefCell<Option<(egui::TextureHandle, egui::TextureHandle)>>,
 }
 
 /// The game running in the editor.
@@ -97,7 +118,6 @@ fn game_key(name: &str) -> &str {
     }
 }
 /// The window's backdrop where nothing is drawn.
-const BACKDROP: [u8; 4] = [24, 24, 27, 255];
 /// A viewport smaller than this is not drawn (a window being squeezed).
 const MIN_VIEWPORT: f32 = 32.0;
 /// The colour of the box around the selection in the view.
@@ -127,6 +147,8 @@ struct UiState {
     rename: Option<(String, String)>,
     /// Where the timeline slider was put while the button is still down.
     timeline: Option<usize>,
+    /// The hierarchy's filter: only rows whose name has these letters.
+    filter: String,
 }
 
 /// The editor as a window's content.
@@ -157,6 +179,47 @@ pub struct EditorApp {
     inspecting_resources: bool,
     /// The scene's history, newest first.
     history: Vec<Value>,
+    /// The project's checkpoints, oldest first.
+    checkpoints: Vec<Value>,
+    /// How much agents may change by themselves (`permissions`).
+    permission_mode: String,
+    /// Agents' proposals (waiting ones are shown in the Activity tab).
+    proposals: Vec<Value>,
+    /// The agent's panel, its task and the editor's MCP endpoint (M8b).
+    cockpit: crate::cockpit::Cockpit,
+    /// The AI mode is on (M9c): the game card, decisions, plan, notes and
+    /// the conversation instead of the manual panels.
+    ai_mode: bool,
+    /// What the AI mode's panels are writing.
+    ai: RefCell<crate::ai_mode::AiState>,
+    /// The game's design (`game_design get`).
+    design: Value,
+    /// The last test run: passed, failed.
+    tests: Option<(usize, usize)>,
+    /// Where Claude Code is (looked for when the AI settings open).
+    assistant: Option<String>,
+    /// The "connect an outside agent" window is open.
+    connect_open: bool,
+    /// The Packages window (M10a).
+    packages: crate::packages_window::PackagesState,
+    /// The theme in use, its key, and the themes there are (M10a).
+    theme: crate::style::Theme,
+    theme_key: String,
+    themes: Vec<crate::themes::ThemeEntry>,
+    /// The theme changed: the interface takes it before its next layout.
+    restyle: bool,
+    /// The workspaces there are, in the interface's language (M10a).
+    workspaces: Vec<crate::workspaces::WorkspaceEntry>,
+    /// The person's own shortcuts, by command id (M10a).
+    keys: BTreeMap<String, String>,
+    /// The command palette: open, what is typed, which line is chosen.
+    palette: RefCell<Palette>,
+    /// An earlier export of this name is there: the person is asked before
+    /// it is replaced (its folder).
+    export_confirm: Option<String>,
+    /// A before/after comparison being shown: the checkpoint, its picture
+    /// and now's, and their textures once made.
+    compare: Option<Compare>,
     /// Record the next run as a replay.
     record: bool,
     /// The project has game code that is not built yet.
@@ -166,6 +229,16 @@ pub struct EditorApp {
     eye: RefCell<Option<FlyCamera>>,
     movement: Movement,
     looking: bool,
+    /// How far ahead of the scene view's eye it turns around and zooms
+    /// toward (meters): framing a selection sets it.
+    focus: f32,
+    /// Alt and the left button are held on the view: the eye orbits.
+    orbiting: bool,
+    /// The middle button is held on the view: the eye slides.
+    panning: bool,
+    /// The controls that float on the scene view (last frame's places): a
+    /// press on them is theirs, not the view's.
+    view_overlays: RefCell<Vec<Rect>>,
     pointer: Option<(f32, f32)>,
     modifiers: Modifiers,
     /// Where a primary-button press began over the view.
@@ -176,6 +249,17 @@ pub struct EditorApp {
     viewport: Rect,
     /// What the scene looked like last (kept while nothing changes).
     picture: Option<RgbaImage>,
+    /// The game view is wanted beside the scene view (shown when the middle
+    /// is wide enough).
+    game_view: bool,
+    /// Where the game view is this frame (`Rect::NOTHING`: not shown).
+    game_viewport: Rect,
+    /// The game view's picture: the scene's own camera, with the game's
+    /// interface.
+    game_picture: Option<RgbaImage>,
+    /// What the game picture was drawn for (scene revision, game tick,
+    /// size), so it is drawn again only when one of them changes.
+    game_drawn: Option<(u64, Option<u64>, u32, u32)>,
     /// Boxes around the selected entities, in window pixels.
     outlines: Vec<Rect>,
     drawn_size: (u32, u32),
@@ -198,6 +282,11 @@ pub struct EditorApp {
     /// The console's entries (from `logs_get`), and the last one read.
     log: VecDeque<Value>,
     log_seq: u64,
+    /// The activity feed, oldest first, and the last entry read.
+    activity: VecDeque<Value>,
+    activity_seq: u64,
+    /// The feed shows agents only.
+    agents_only: std::cell::Cell<bool>,
     since_log: f64,
     /// What `check` found last.
     found: Vec<Value>,
@@ -228,6 +317,8 @@ pub struct EditorApp {
     play: Option<Play>,
     /// Component schemas from `schema_get`, by name.
     schemas: BTreeMap<String, Value>,
+    /// The schema a material file's fields are edited with (`MaterialFile`).
+    material_schema: Option<Value>,
     /// The project's files, for asset fields.
     assets: Vec<String>,
     /// The selection as the inspector shows it, and what it was read for.
@@ -241,6 +332,17 @@ pub struct EditorApp {
     scripts: String,
     frames: u64,
     exit: bool,
+}
+
+/// The command palette's state (M10a).
+#[derive(Default)]
+struct Palette {
+    open: bool,
+    filter: String,
+    /// The line Enter runs.
+    chosen: usize,
+    /// The text box takes the keyboard on the next layout.
+    focus: bool,
 }
 
 /// A handle being dragged: the drag, and what it has made so far.
@@ -273,6 +375,44 @@ struct Actions {
     /// Look for problems and show them.
     show_problems: bool,
     run_tests: bool,
+    /// Save a checkpoint now.
+    save_checkpoint: bool,
+    /// Export the game.
+    export: bool,
+    /// Replace the earlier export (asked).
+    export_replace: bool,
+    /// Keep the earlier export.
+    export_cancel: bool,
+    /// Set the permission mode.
+    permission: Option<&'static str>,
+    /// Show or hide the agent's panel.
+    toggle_cockpit: bool,
+    /// Show or hide the game view.
+    toggle_game_view: bool,
+    /// Open (true) or close (false) the "connect an outside agent" window.
+    connect: Option<bool>,
+    /// What the agent's panel asked for.
+    cockpit: crate::cockpit::CockpitActions,
+    /// Switch to the AI mode (true) or the manual one.
+    switch_mode: Option<bool>,
+    /// What the AI mode's panels asked for.
+    ai: crate::ai_mode::AiActions,
+    /// Open the Packages window.
+    open_packages: bool,
+    /// Use this theme.
+    theme: Option<String>,
+    /// Run this command (a shortcut or the palette).
+    command: Option<&'static str>,
+    /// What the Packages window asked for.
+    packages: crate::packages_window::PackagesActions,
+    /// Go back to this checkpoint.
+    restore_checkpoint: Option<String>,
+    /// Compare this checkpoint with now.
+    compare_checkpoint: Option<String>,
+    /// Delete this checkpoint.
+    delete_checkpoint: Option<String>,
+    /// Close the before/after window.
+    close_compare: bool,
     /// Run the tests and keep their pictures as the golden ones.
     update_golden: bool,
     /// Play a saved replay back.
@@ -285,6 +425,14 @@ struct Actions {
     deselect: bool,
     /// Add an entity (under this parent, or at the root).
     add: Option<Option<String>>,
+    /// Create a ready-made entity from the Create menu (`cube`, `camera`).
+    create: Option<&'static str>,
+    /// Copy the selected entities (with their children) beside themselves.
+    duplicate: bool,
+    /// Make a new scene and open it.
+    new_scene: bool,
+    /// Move the scene view's eye so the selection fills it.
+    frame: bool,
     delete: bool,
     /// Rename an entity: from, to.
     rename: Option<(String, String)>,
@@ -330,6 +478,25 @@ impl Actions {
             || self.language.is_some()
             || self.show_problems
             || self.run_tests
+            || self.save_checkpoint
+            || self.export
+            || self.toggle_game_view
+            || self.export_replace
+            || self.export_cancel
+            || self.permission.is_some()
+            || self.toggle_cockpit
+            || self.connect.is_some()
+            || self.cockpit.any()
+            || self.switch_mode.is_some()
+            || self.open_packages
+            || self.theme.is_some()
+            || self.command.is_some()
+            || self.packages.any()
+            || self.ai.any()
+            || self.restore_checkpoint.is_some()
+            || self.compare_checkpoint.is_some()
+            || self.delete_checkpoint.is_some()
+            || self.close_compare
             || self.update_golden
             || self.replay.is_some()
             || self.save_picture
@@ -340,6 +507,10 @@ impl Actions {
             || self.view.is_some()
             || self.select.is_some()
             || self.add.is_some()
+            || self.create.is_some()
+            || self.duplicate
+            || self.new_scene
+            || self.frame
             || self.rename.is_some()
             || self.reparent.is_some()
             || self.inspector.any()
@@ -368,7 +539,7 @@ impl EditorApp {
         let mut app = Self {
             editor: Some(Editor::new()),
             workspace,
-            canvas: Canvas::new(1, 1, BACKDROP),
+            canvas: Canvas::new(1, 1, crate::style::pal().backdrop),
             project: String::new(),
             scene: String::new(),
             scenes: Vec::new(),
@@ -382,6 +553,10 @@ impl EditorApp {
             eye: RefCell::new(None),
             movement: Movement::default(),
             looking: false,
+            focus: 8.0,
+            orbiting: false,
+            panning: false,
+            view_overlays: RefCell::new(Vec::new()),
             pointer: None,
             modifiers: Modifiers::default(),
             press: None,
@@ -390,6 +565,10 @@ impl EditorApp {
             picture: None,
             outlines: Vec::new(),
             drawn_size: (0, 0),
+            game_view: true,
+            game_viewport: Rect::NOTHING,
+            game_picture: None,
+            game_drawn: None,
             picture_stale: true,
             ui_state: RefCell::new(UiState::default()),
             prefabs: Vec::new(),
@@ -403,6 +582,9 @@ impl EditorApp {
             tab: Tab::Assets,
             log: VecDeque::new(),
             log_seq: 0,
+            activity: VecDeque::new(),
+            activity_seq: 0,
+            agents_only: std::cell::Cell::new(false),
             since_log: 0.0,
             found: Vec::new(),
             timings: VecDeque::new(),
@@ -420,6 +602,7 @@ impl EditorApp {
             drag: None,
             play: None,
             schemas: BTreeMap::new(),
+            material_schema: None,
             assets: Vec::new(),
             inspected: Vec::new(),
             inspected_for: (Vec::new(), u64::MAX),
@@ -433,6 +616,28 @@ impl EditorApp {
             resource_schemas: BTreeMap::new(),
             inspecting_resources: false,
             history: Vec::new(),
+            checkpoints: Vec::new(),
+            permission_mode: "apply".to_owned(),
+            proposals: Vec::new(),
+            connect_open: false,
+            packages: crate::packages_window::PackagesState::default(),
+            theme: crate::style::ATELIER,
+            theme_key: crate::themes::DEFAULT_KEY.to_owned(),
+            themes: Vec::new(),
+            restyle: false,
+            workspaces: Vec::new(),
+            keys: BTreeMap::new(),
+            palette: RefCell::new(Palette::default()),
+            export_confirm: None,
+            cockpit: crate::cockpit::Cockpit::new(Box::new(
+                wish_agent::claude::ClaudeCode::default(),
+            )),
+            ai_mode: false,
+            ai: RefCell::new(crate::ai_mode::AiState::default()),
+            design: Value::Null,
+            tests: None,
+            assistant: None,
+            compare: None,
             record: false,
             unbuilt: false,
             frames: 0,
@@ -440,6 +645,9 @@ impl EditorApp {
         };
         app.refresh_project();
         app.load_schemas();
+        app.themes = crate::themes::available(Some(app.workspace.root()));
+        crate::themes::load_languages(Some(app.workspace.root()));
+        app.read_workspaces();
         app
     }
 
@@ -503,6 +711,13 @@ impl EditorApp {
             .flatten()
             .filter_map(|t| Some((t["name"].as_str()?.to_owned(), t["schema"].clone())))
             .collect();
+        let look = self.call(
+            "schema_get",
+            &json!({ "names": ["MaterialFile"], "detail": "full" }),
+        );
+        self.material_schema = look["types"][0]["schema"]
+            .is_object()
+            .then(|| look["types"][0]["schema"].clone());
         // Resources a scene may hold: not the ones the engine writes every
         // tick (time, input, the pointer).
         let resources: Vec<String> = listed["types"]
@@ -970,6 +1185,11 @@ impl EditorApp {
 
     /// The inspector's changes to the scene's resources.
     fn resource_act(&mut self, asked: InspectorActions) {
+        if let Some(look) = asked.look {
+            let op = json!({ "op": "apply_look", "look": look });
+            let name = inspector::look_name(&look, &look);
+            self.edit(&tf("applied the look {look}", &[("look", &name)]), vec![op]);
+        }
         if let Some((name, field, value)) = asked.set {
             let op =
                 json!({ "op": "set_resource", "name": name, "value": { field.clone(): value } });
@@ -1158,6 +1378,10 @@ impl EditorApp {
 
     /// The reading part of [`EditorApp::refresh_project`].
     fn read_project(&mut self) {
+        // An agent may save checkpoints too: the menu follows.
+        self.read_checkpoints();
+        self.read_proposals();
+        self.read_design();
         let info = self.call("project_info", &json!({}));
         if info["ok"] != true {
             self.status = info["error"]["message"]
@@ -1347,10 +1571,16 @@ impl EditorApp {
     /// Returns whether the editor has that language (if not, nothing
     /// changes).
     pub fn set_language(&mut self, code: &str) -> bool {
+        // A package may have brought it since the languages were read.
+        if crate::i18n::find(code).is_none() {
+            crate::themes::load_languages(Some(self.workspace.root()));
+        }
         match crate::i18n::find(code) {
             Some(language) => {
                 self.language = language.code;
                 crate::i18n::set_language(language.code);
+                // Workspaces name their fields in the person's language.
+                self.read_workspaces();
                 self.picture_stale = true;
                 true
             }
@@ -1368,10 +1598,38 @@ impl EditorApp {
     /// change. Without a file, the language comes from `WISH_LANG` or the
     /// system's; else English.
     pub fn use_preferences(&mut self, path: std::path::PathBuf) {
-        let saved = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-            .and_then(|prefs| prefs["language"].as_str().map(str::to_owned));
+        let prefs = crate::prefs::read(&path);
+        if let Some(shown) = prefs.get("game_view").and_then(Value::as_bool) {
+            self.game_view = shown;
+        }
+        self.keys = crate::commands::overrides_from(&prefs);
+        if let Some(key) = prefs.get("theme").and_then(Value::as_str) {
+            self.set_theme(key);
+        }
+        self.packages.index = crate::packages_window::IndexForm::from_prefs(&prefs);
+        if let Some(on) = prefs.get("ai_mode").and_then(Value::as_bool) {
+            self.ai_mode = on;
+        }
+        if let Some(agent) = prefs.get("agent").and_then(Value::as_object) {
+            let settings = &mut self.cockpit.settings;
+            settings.model = agent
+                .get("model")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            for (key, slot) in [
+                ("memory", &mut settings.memory),
+                ("checkpoint_first", &mut settings.checkpoint_first),
+                ("files", &mut settings.files),
+            ] {
+                if let Some(on) = agent.get(key).and_then(Value::as_bool) {
+                    *slot = on;
+                }
+            }
+        }
+        let saved = prefs
+            .get("language")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
         let chosen = saved
             .as_deref()
             .and_then(crate::i18n::find)
@@ -1379,7 +1637,109 @@ impl EditorApp {
         if let Some(language) = chosen {
             self.set_language(language.code);
         }
+        // This project becomes the first of the recent ones (the welcome
+        // screen lists them); a failure to write costs only that.
+        let root = self.workspace.root().to_path_buf();
+        let _ = crate::prefs::update(&path, |prefs| crate::prefs::remember(prefs, &root));
         self.preferences = Some(path);
+    }
+
+    /// Shows the Agent panel (the welcome screen opens it when the person
+    /// chose to work with an assistant).
+    pub fn open_agent_panel(&mut self) {
+        self.cockpit.open = true;
+        self.ai_mode = true;
+        self.picture_stale = true;
+    }
+
+    /// The themes there are: key and name.
+    pub fn themes(&self) -> Vec<(String, String)> {
+        self.themes
+            .iter()
+            .map(|theme| (theme.key.clone(), theme.name.clone()))
+            .collect()
+    }
+
+    /// The theme in use (its key).
+    pub fn theme_key(&self) -> &str {
+        &self.theme_key
+    }
+
+    /// Uses the theme `key` (a package's theme file); whether it could be
+    /// read (if not, the status bar says why and the theme stays).
+    pub fn set_theme(&mut self, key: &str) -> bool {
+        // A package may have brought it since the themes were read.
+        if !self.themes.iter().any(|theme| theme.key == key) {
+            self.themes = crate::themes::available(Some(self.workspace.root()));
+        }
+        match crate::themes::load(&self.themes, key) {
+            Ok(theme) => {
+                self.theme = theme;
+                self.theme_key = key.to_owned();
+                crate::style::set_theme(theme);
+                // (The interface takes it before its next layout.)
+                self.restyle = true;
+                self.canvas = Canvas::new(self.canvas.width, self.canvas.height, theme.backdrop);
+                self.picture_stale = true;
+                true
+            }
+            Err(problem) => {
+                self.status = tf(
+                    "the theme could not be used: {problem}",
+                    &[("problem", &problem)],
+                );
+                false
+            }
+        }
+    }
+
+    /// Whether the AI mode is on.
+    pub fn ai_mode(&self) -> bool {
+        self.ai_mode
+    }
+
+    /// Turns the AI mode on or off (the menu bar's switch does the same).
+    pub fn set_ai_mode(&mut self, on: bool) {
+        if self.ai_mode != on {
+            self.ai_mode = on;
+            self.picture_stale = true;
+            self.game_drawn = None;
+            self.save_preferences();
+        }
+    }
+
+    /// The game's design as the editor last read it.
+    pub fn design(&self) -> &Value {
+        &self.design
+    }
+
+    /// The last task given to the agent.
+    pub fn last_task(&self) -> Option<&wish_agent::Task> {
+        self.cockpit.last_task.as_ref()
+    }
+
+    /// Reads the game's design (the AI mode's panels show it).
+    fn read_design(&mut self) -> bool {
+        let got = self.call("game_design", &json!({}));
+        let design = if got["ok"] == true {
+            got["design"].clone()
+        } else {
+            Value::Null
+        };
+        let changed = design != self.design;
+        self.design = design;
+        changed
+    }
+
+    /// Whether the Agent panel is shown.
+    pub fn agent_panel_open(&self) -> bool {
+        self.cockpit.open
+    }
+
+    /// Sets the status line (what the welcome screen did before the editor
+    /// opened, such as building the game code).
+    pub fn set_status(&mut self, status: String) {
+        self.status = status;
     }
 
     /// Writes the preferences, if the editor keeps them (a failure only
@@ -1388,11 +1748,24 @@ impl EditorApp {
         let Some(path) = self.preferences.clone() else {
             return;
         };
-        let text = format!("{:#}\n", json!({ "language": self.language }));
-        let written = path
-            .parent()
-            .map_or(Ok(()), std::fs::create_dir_all)
-            .and_then(|()| std::fs::write(&path, text));
+        let language = self.language;
+        let theme_key = self.theme_key.clone();
+        let game_view = self.game_view;
+        let ai_mode = self.ai_mode;
+        let settings = &self.cockpit.settings;
+        let agent = json!({
+            "model": settings.model,
+            "memory": settings.memory,
+            "checkpoint_first": settings.checkpoint_first,
+            "files": settings.files,
+        });
+        let written = crate::prefs::update(&path, |prefs| {
+            prefs.insert("language".to_owned(), json!(language));
+            prefs.insert("theme".to_owned(), json!(theme_key));
+            prefs.insert("game_view".to_owned(), json!(game_view));
+            prefs.insert("ai_mode".to_owned(), json!(ai_mode));
+            prefs.insert("agent".to_owned(), agent);
+        });
         if let Err(error) = written {
             self.status = tf(
                 "the language could not be saved: {error}",
@@ -1432,6 +1805,879 @@ impl EditorApp {
         if let Some(seq) = got["last_seq"].as_u64() {
             self.log_seq = self.log_seq.max(seq);
         }
+    }
+
+    /// Reads what was done since the feed last looked.
+    fn read_activity(&mut self) {
+        let got = self.call(
+            "activity_get",
+            &json!({ "since": self.activity_seq, "limit": 500 }),
+        );
+        if got["ok"] != true {
+            return;
+        }
+        for entry in got["entries"].as_array().into_iter().flatten() {
+            self.activity.push_back(entry.clone());
+            if self.activity.len() > crate::panels::MAX_LOG {
+                self.activity.pop_front();
+            }
+        }
+        if let Some(seq) = got["last_seq"].as_u64() {
+            self.activity_seq = self.activity_seq.max(seq);
+        }
+    }
+
+    /// Replaces the way the agent runs (tests use a scripted one).
+    pub fn set_agent(&mut self, agent: Box<dyn wish_agent::Adapter>) {
+        self.cockpit.agent = agent;
+    }
+
+    /// The agent's transcript, one line each (`You: ...`, `edit_apply: done`).
+    pub fn transcript(&self) -> Vec<String> {
+        use crate::cockpit::Who;
+        self.cockpit
+            .transcript
+            .iter()
+            .map(|line| match line.who {
+                Who::Person => format!("You: {}", line.text),
+                Who::Agent => line.text.clone(),
+                Who::Tool => crate::cockpit::tool_line(&line.text, line.ok == Some(true)),
+                Who::Note => line.text.clone(),
+            })
+            .collect()
+    }
+
+    /// Whether an agent's task is running.
+    pub fn agent_running(&self) -> bool {
+        self.cockpit.run.is_some()
+    }
+
+    /// What the last task told the agent.
+    pub fn last_instructions(&self) -> Option<&str> {
+        self.cockpit.last_instructions.as_deref()
+    }
+
+    /// What goes with the next request.
+    pub fn agent_context(&self) -> &[String] {
+        &self.cockpit.context
+    }
+
+    /// The agent's calls waiting at the endpoint run now, against this
+    /// editor's workspace; and what the task reported is taken in. Returns
+    /// whether anything happened.
+    fn cockpit_tick(&mut self) -> bool {
+        let mut ran = 0;
+        if let Some((endpoint, _)) = self.cockpit.mcp.as_mut() {
+            ran = endpoint.serve_pending(
+                &mut wish_mcp::Server::new(&mut self.workspace),
+                std::time::Duration::ZERO,
+            );
+        }
+        let (reported, changed) = self.cockpit.take_events();
+        if ran > 0 {
+            self.read_design();
+        }
+        if ran > 0 || changed {
+            // The agent changed things: show them now, not at the next poll.
+            self.revision = u64::MAX;
+            self.refresh_scene();
+            self.inspected_for = (Vec::new(), u64::MAX);
+            self.picture_stale = true;
+        }
+        if reported && self.cockpit.run.is_none() {
+            self.status = t("the agent finished").to_owned();
+            self.refresh_project();
+        }
+        ran > 0 || reported
+    }
+
+    /// A line about an entity, for the agent: its id and where it is.
+    fn describe_for_agent(&mut self, id: &str) -> String {
+        let got = self.call(
+            "entity_get",
+            &json!({ "scene": self.scene.clone(), "ids": [id], "components": ["Transform"] }),
+        );
+        match got["entities"][0]["components"]["Transform"]["translation"].as_array() {
+            Some(at) => {
+                let at: Vec<String> = at
+                    .iter()
+                    .map(|v| format!("{:.2}", v.as_f64().unwrap_or(0.0)))
+                    .collect();
+                format!("the entity `{id}` (at {})", at.join(", "))
+            }
+            None => format!("the entity `{id}`"),
+        }
+    }
+
+    /// The agent panel's actions.
+    fn cockpit_act(&mut self, asked: &crate::cockpit::CockpitActions) {
+        if let Some(index) = asked.remove_context
+            && index < self.cockpit.context.len()
+        {
+            self.cockpit.context.remove(index);
+        }
+        if asked.point {
+            self.cockpit.pointing = !self.cockpit.pointing;
+        }
+        if asked.add_selection {
+            for id in self.selected.clone() {
+                let line = self.describe_for_agent(&id);
+                if !self.cockpit.context.contains(&line) {
+                    self.cockpit.context.push(line);
+                }
+            }
+        }
+        if asked.stop
+            && let Some(run) = self.cockpit.run.as_mut()
+        {
+            run.stop();
+            self.cockpit.transcript.push(crate::cockpit::Line {
+                who: crate::cockpit::Who::Note,
+                text: t("Stopped. What was done stays (it is in the history).").to_owned(),
+                ok: Some(false),
+            });
+            self.cockpit.run = None;
+        }
+        if asked.send && self.cockpit.run.is_none() {
+            self.send_task();
+        }
+    }
+
+    /// One `game_design` call as the person; the design is read again.
+    /// Returns whether it worked (if not, the status bar says why).
+    fn design_call(&mut self, args: Value) -> bool {
+        let got = self.call("game_design", &args);
+        if got["ok"] != true {
+            self.status = got["error"]["message"]
+                .as_str()
+                .unwrap_or(t("it did not work"))
+                .to_owned();
+            return false;
+        }
+        self.read_design();
+        true
+    }
+
+    /// A play-test note: the moment (the game's tick while it plays), the
+    /// scene and its picture, kept under `design/notes/`.
+    fn take_note(&mut self, text: String) {
+        let first = self.design["next_id"].as_u64().unwrap_or(1);
+        let picture = (first..first + 10_000)
+            .map(|n| format!("design/notes/{n}.png"))
+            .find(|path| !self.workspace.root().join(path).exists())
+            .unwrap_or_else(|| format!("design/notes/{first}.png"));
+        let (args, tick) = match &self.play {
+            Some(play) => (
+                json!({ "session": play.session.clone(), "out": picture.clone() }),
+                Some(play.tick),
+            ),
+            None => (
+                json!({ "scene": self.scene.clone(), "out": picture.clone() }),
+                None,
+            ),
+        };
+        let saved = self.call("capture_frame", &args);
+        let mut note = json!({ "action": "note", "text": text, "scene": self.scene.clone() });
+        if let Some(tick) = tick {
+            note["tick"] = json!(tick);
+        }
+        if saved["ok"] == true {
+            note["picture"] = json!(picture);
+        }
+        if self.design_call(note) {
+            self.status = t("note taken").to_owned();
+        }
+    }
+
+    /// What command `id` does: the actions it stands for (the same as its
+    /// button or menu entry).
+    fn command_actions(&self, id: &str, actions: &mut Actions) {
+        match id {
+            "app.palette" => {
+                let mut palette = self.palette.borrow_mut();
+                palette.open = !palette.open;
+                palette.filter.clear();
+                palette.chosen = 0;
+                palette.focus = palette.open;
+            }
+            "game.play" => {
+                if self.play.is_some() {
+                    actions.play_stop = true;
+                } else if !self.scene.ends_with(".prefab.json") {
+                    actions.play_start = true;
+                }
+            }
+            "editor.undo" => actions.undo |= self.can_undo && self.play.is_none(),
+            "editor.redo" => actions.redo |= self.can_redo && self.play.is_none(),
+            "edit.duplicate" => actions.duplicate |= self.play.is_none(),
+            "scene.new" => actions.new_scene |= self.play.is_none(),
+            create if create.starts_with("create.") => {
+                if self.play.is_none() {
+                    actions.create = CREATE_KINDS
+                        .iter()
+                        .map(|(kind, _, _)| *kind)
+                        .find(|kind| create.strip_prefix("create.") == Some(*kind));
+                }
+            }
+            "mode.switch" => actions.switch_mode = Some(!self.ai_mode),
+            "mode.manual" => actions.switch_mode = Some(false),
+            "mode.ai" => actions.switch_mode = Some(true),
+            "ai.next_step" => actions.ai.next_step = true,
+            "ai.settings" => actions.ai.settings = Some(true),
+            "agent.panel" => actions.toggle_cockpit = true,
+            "view.game_view" => actions.toggle_game_view = true,
+            "view.reset_camera" => actions.reset_camera = true,
+            "view.frame" => actions.frame |= self.play.is_none(),
+            "project.check" => actions.show_problems = true,
+            "project.build_code" => actions.build_code = true,
+            "project.run_tests" => actions.run_tests = true,
+            "project.save_checkpoint" => actions.save_checkpoint = true,
+            "project.save_picture" => actions.save_picture = true,
+            "project.export" => actions.export = true,
+            "project.settings" => actions.open_settings = true,
+            "project.packages" => actions.open_packages = true,
+            "project.connect_agent" => actions.connect = Some(true),
+            "app.quit" => actions.quit = true,
+            _ => {}
+        }
+    }
+
+    /// The command palette: type, choose with the arrows, Enter runs.
+    fn palette_window(&self, ui: &mut Ui, actions: &mut Actions) {
+        if !self.palette.borrow().open {
+            return;
+        }
+        let mut palette = self.palette.borrow_mut();
+        let found = crate::commands::matching(&palette.filter);
+        let (down, up, enter, escape) = ui.input_mut(|input| {
+            (
+                input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown),
+                input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
+                input.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
+                input.consume_key(egui::Modifiers::NONE, egui::Key::Escape),
+            )
+        });
+        if down {
+            palette.chosen = (palette.chosen + 1).min(found.len().saturating_sub(1));
+        }
+        if up {
+            palette.chosen = palette.chosen.saturating_sub(1);
+        }
+        palette.chosen = palette.chosen.min(found.len().saturating_sub(1));
+        let bound = crate::commands::bindings(&self.keys);
+        let mut run = None;
+        egui::Window::new(t("Command palette"))
+            .title_bar(false)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_TOP, [0.0, 64.0])
+            .fixed_size([460.0, 0.0])
+            .show(ui.ctx(), |ui| {
+                let field = ui.add(
+                    egui::TextEdit::singleline(&mut palette.filter)
+                        .desired_width(f32::INFINITY)
+                        .hint_text(t("Type a command")),
+                );
+                if std::mem::take(&mut palette.focus) {
+                    field.request_focus();
+                }
+                if field.changed() {
+                    palette.chosen = 0;
+                }
+                ui.separator();
+                if found.is_empty() {
+                    ui.weak(t("No command matches."));
+                }
+                for (index, command) in found.iter().enumerate().take(14) {
+                    let keys: Vec<String> = bound
+                        .iter()
+                        .filter(|(id, _)| *id == command.id)
+                        .map(|(_, shortcut)| crate::commands::shortcut_text(shortcut))
+                        .collect();
+                    ui.horizontal(|ui| {
+                        let line = ui.selectable_label(index == palette.chosen, (command.name)());
+                        if line.clicked() {
+                            run = Some(command.id);
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.weak(keys.join("  "));
+                        });
+                    });
+                }
+            });
+        if enter {
+            run = found.get(palette.chosen).map(|command| command.id);
+        }
+        if run.is_some() || escape {
+            palette.open = false;
+        }
+        if let Some(id) = run {
+            drop(palette);
+            self.command_actions(id, actions);
+        }
+    }
+
+    /// Reads the installed packages for the Packages window.
+    fn read_packages(&mut self) {
+        let got = self.call("packages", &json!({}));
+        if got["ok"] == true {
+            self.packages.listing = got;
+        }
+    }
+
+    /// What the Packages window asked for: each a `packages` call.
+    fn packages_act(&mut self, asked: crate::packages_window::PackagesActions) {
+        if asked.close {
+            self.packages.open = false;
+        }
+        let mut answer = Value::Null;
+        if let Some((path, scope)) = asked.install {
+            answer = self.call(
+                "packages",
+                &json!({ "action": "install", "path": path, "scope": scope,
+                    "replace": self.packages.replace.get() }),
+            );
+            if answer["ok"] == true {
+                self.packages.path.borrow_mut().clear();
+                self.status = tf(
+                    "installed {name} {version}",
+                    &[
+                        ("name", &answer["package"]["name"].as_str().unwrap_or("?")),
+                        (
+                            "version",
+                            &answer["package"]["version"].as_str().unwrap_or("?"),
+                        ),
+                    ],
+                );
+            }
+        }
+        if let Some((id, scope)) = asked.remove {
+            answer = self.call(
+                "packages",
+                &json!({ "action": "remove", "id": id, "scope": scope }),
+            );
+            if answer["ok"] == true {
+                self.status = tf("{id} moved to the trash", &[("id", &id)]);
+            }
+        }
+        let mut search = false;
+        if let Some(ask) = asked.index {
+            let index = self.packages.index.index_arg();
+            if let Some(path) = self.preferences.clone() {
+                let _ = crate::prefs::update(&path, |prefs| match &index {
+                    Some(folder) => {
+                        prefs.insert("package_index".to_owned(), json!(folder));
+                    }
+                    None => {
+                        prefs.remove("package_index");
+                    }
+                });
+            }
+            let mut call = |action: &str, id: &str, scope: &str| {
+                let mut args = json!({ "action": action, "id": id, "scope": scope });
+                if let Some(index) = &index {
+                    args["index"] = json!(index);
+                }
+                self.call("packages", &args)
+            };
+            let mut asked_id = None;
+            match ask {
+                crate::packages_window::IndexAsk::Search => search = true,
+                crate::packages_window::IndexAsk::Add(id, scope) => {
+                    answer = call("add", &id, scope);
+                    asked_id = Some(id);
+                    search = true;
+                }
+                crate::packages_window::IndexAsk::Update(id, scope) => {
+                    answer = call("update", &id, scope);
+                    asked_id = Some(id);
+                    search = true;
+                }
+            }
+            if let Some(id) = asked_id
+                && answer["ok"] == true
+            {
+                self.status = crate::packages_window::index_status(&answer, &id);
+            }
+        }
+        if asked.lock {
+            answer = self.call("packages", &json!({ "action": "lock" }));
+            if answer["ok"] == true {
+                self.status = t("the lock was written again").to_owned();
+            }
+        }
+        if answer["ok"] == false {
+            self.status = answer["error"]["message"]
+                .as_str()
+                .unwrap_or(t("it did not work"))
+                .to_owned();
+        }
+        self.read_packages();
+        if search {
+            self.search_index();
+        }
+        self.themes = crate::themes::available(Some(self.workspace.root()));
+        crate::themes::load_languages(Some(self.workspace.root()));
+        self.read_workspaces();
+    }
+
+    /// Searches the package index with the window's words (a `packages`
+    /// call; a person looking does not enter the activity feed).
+    fn search_index(&mut self) {
+        let mut args = json!({
+            "action": "search",
+            "query": self.packages.index.query.borrow().trim(),
+        });
+        if let Some(index) = self.packages.index.index_arg() {
+            args["index"] = json!(index);
+        }
+        let got = self.call("packages", &args);
+        let form = &mut self.packages.index;
+        if got["ok"] == true {
+            form.results = got["packages"].as_array().cloned();
+            form.problem = None;
+        } else {
+            form.results = None;
+            form.problem = Some(format!(
+                "{} {}",
+                got["error"]["message"].as_str().unwrap_or(""),
+                got["error"]["hint"].as_str().unwrap_or("")
+            ));
+        }
+    }
+
+    /// Reads the workspaces packages bring (in the interface's language).
+    fn read_workspaces(&mut self) {
+        self.workspaces = crate::workspaces::available(self.workspace.root(), self.language);
+    }
+
+    /// The project's workspace, if it is one a package here brings.
+    fn current_workspace(&self) -> Option<&crate::workspaces::WorkspaceEntry> {
+        let key = self.design["workspace"].as_str()?;
+        self.workspaces
+            .iter()
+            .find(|workspace| workspace.key == key)
+    }
+
+    /// The AI mode's actions.
+    fn ai_act(&mut self, ai: crate::ai_mode::AiActions) {
+        if let Some(chosen) = ai.workspace {
+            let args = match chosen
+                .as_deref()
+                .and_then(|key| self.workspaces.iter().find(|w| w.key == key))
+            {
+                Some(workspace) => {
+                    let card: Vec<Value> = workspace
+                        .card
+                        .iter()
+                        .map(|field| json!({ "key": field.key, "label": field.label_en, "list": field.list }))
+                        .collect();
+                    json!({ "action": "set_workspace", "workspace": workspace.key, "card": card })
+                }
+                None => json!({ "action": "set_workspace" }),
+            };
+            if self.design_call(args) {
+                let mut state = self.ai.borrow_mut();
+                state.card_from = None;
+                state.card.clear();
+            }
+        }
+        if let Some(fields) = ai.save_card
+            && self.design_call(json!({ "action": "set_brief", "fields": fields }))
+        {
+            self.ai.borrow_mut().card_from = None;
+            self.status = t("the game card was saved").to_owned();
+        }
+        if let Some(text) = ai.decide {
+            self.design_call(json!({ "action": "decide", "text": text }));
+        }
+        if let Some(id) = ai.forget {
+            self.design_call(json!({ "action": "forget", "id": id }));
+        }
+        if let Some(text) = ai.plan_add {
+            self.design_call(json!({ "action": "plan_add", "text": text }));
+        }
+        if let Some((id, status)) = ai.plan_status {
+            self.design_call(json!({ "action": "plan_set", "id": id, "status": status }));
+        }
+        if let Some(id) = ai.plan_remove {
+            self.design_call(json!({ "action": "plan_remove", "id": id }));
+        }
+        if let Some(text) = ai.note {
+            self.take_note(text);
+        }
+        if let Some(id) = ai.note_done {
+            self.design_call(json!({ "action": "note_done", "id": id }));
+        }
+        if let Some((id, answer, keep)) = ai.answer {
+            let question = self.design["questions"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|q| q["id"].as_u64() == Some(id))
+                .and_then(|q| q["text"].as_str())
+                .unwrap_or("")
+                .to_owned();
+            if self.design_call(
+                json!({ "action": "answer", "id": id, "answer": answer, "remember": keep }),
+            ) {
+                self.ai.borrow_mut().own.remove(&id);
+                // The agent stopped to ask: it goes on with the answer.
+                self.start_task(tf(
+                    "My answer to \"{question}\": {answer}. Go on.",
+                    &[("question", &question), ("answer", &answer)],
+                ));
+            }
+        }
+        if let Some(request) = ai.ready {
+            *self.cockpit.request.borrow_mut() = request;
+        }
+        if ai.draft_card {
+            self.start_task(
+                t("Write the game card from the game as it is now (game_design set_brief). Ask me about what you cannot tell.")
+                    .to_owned(),
+            );
+        }
+        if ai.next_step {
+            let next = self.design["plan"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|step| step["status"] != "done")
+                .map(|step| {
+                    (
+                        step["id"].as_u64().unwrap_or(0),
+                        step["text"].as_str().unwrap_or("").to_owned(),
+                    )
+                });
+            if let Some((id, text)) = next {
+                self.start_task(tf(
+                    "Do the next step of the plan: [{id}] {text}. Mark it doing when you start and done when it works (game_design plan_set).",
+                    &[("id", &id), ("text", &text)],
+                ));
+            }
+        }
+        if ai.send_notes {
+            let notes: Vec<String> = self.design["notes"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|note| note["status"] == "open")
+                .map(|note| {
+                    let mut line = format!(
+                        "- [{}] {}",
+                        note["id"].as_u64().unwrap_or(0),
+                        note["text"].as_str().unwrap_or("")
+                    );
+                    if let Some(tick) = note["tick"].as_u64() {
+                        line.push_str(&format!(" (tick {tick})"));
+                    }
+                    if let Some(picture) = note["picture"].as_str() {
+                        line.push_str(&format!(" (picture: {picture})"));
+                    }
+                    line
+                })
+                .collect();
+            if !notes.is_empty() {
+                self.start_task(tf(
+                    "Fix what these notes from playing the game say, then close each one (game_design note_done): {notes}",
+                    &[("notes", &format!("\n{}", notes.join("\n")))],
+                ));
+            }
+        }
+        if ai.fix {
+            let mut problems: Vec<String> = self
+                .found
+                .iter()
+                .take(20)
+                .map(|problem| {
+                    format!(
+                        "- {} ({})",
+                        problem["message"].as_str().unwrap_or(""),
+                        problem["code"].as_str().unwrap_or("")
+                    )
+                })
+                .collect();
+            if self.unbuilt {
+                problems.push(t("- the game code is not built (script_build)").to_owned());
+            }
+            if problems.is_empty() {
+                problems.push(t("- run check and test_run, and fix what fails").to_owned());
+            }
+            self.start_task(tf(
+                "Fix these problems, then check again (check, test_run): {problems}",
+                &[("problems", &format!("\n{}", problems.join("\n")))],
+            ));
+        }
+        if let Some(open) = ai.settings {
+            if open {
+                self.assistant = wish_agent::claude::find().map(|path| path.display().to_string());
+            }
+            self.ai.borrow_mut().settings = open;
+        }
+        let before = self.cockpit.settings.clone();
+        if let Some(model) = ai.model {
+            self.cockpit.settings.model = model;
+        }
+        if let Some(memory) = ai.memory {
+            self.cockpit.settings.memory = memory;
+            if !memory {
+                self.cockpit.session = None;
+            }
+        }
+        if let Some(first) = ai.checkpoint_first {
+            self.cockpit.settings.checkpoint_first = first;
+        }
+        if let Some(files) = ai.files {
+            self.cockpit.settings.files = files;
+        }
+        if self.cockpit.settings != before {
+            self.save_preferences();
+        }
+        if ai.new_conversation {
+            self.cockpit.session = None;
+            self.cockpit.transcript.push(crate::cockpit::Line {
+                who: crate::cockpit::Who::Note,
+                text: t("A new conversation: the agent starts afresh (the game card and the decisions stay).")
+                    .to_owned(),
+                ok: Some(true),
+            });
+        }
+        if let Some(scene) = ai.scene_view {
+            self.ai.borrow_mut().scene_view = scene;
+            self.picture_stale = true;
+            self.game_drawn = None;
+        }
+        if ai.show_activity {
+            self.set_ai_mode(false);
+            self.tab = Tab::Activity;
+        }
+    }
+
+    /// The editor's MCP endpoint (loopback, a fresh token), started once.
+    fn ensure_endpoint(&mut self) -> Result<(), ()> {
+        if self.cockpit.mcp.is_some() {
+            return Ok(());
+        }
+        let token = wish_mcp::http::random_token();
+        let started = std::net::TcpListener::bind("127.0.0.1:0").and_then(|listener| {
+            wish_mcp::http::Endpoint::start(
+                listener,
+                wish_mcp::http::HttpOptions {
+                    token: Some(token.clone()),
+                    ..wish_mcp::http::HttpOptions::default()
+                },
+            )
+        });
+        match started {
+            Ok(endpoint) => {
+                self.cockpit.mcp = Some((endpoint, token));
+                Ok(())
+            }
+            Err(error) => {
+                self.status = tf("the agent cannot connect: {error}", &[("error", &error)]);
+                Err(())
+            }
+        }
+    }
+
+    /// Where an outside agent connects to this editor: its endpoint's
+    /// address and token (once the endpoint is started).
+    pub fn mcp_endpoint(&self) -> Option<(String, String)> {
+        self.cockpit
+            .mcp
+            .as_ref()
+            .map(|(endpoint, token)| (format!("http://{}/mcp", endpoint.address()), token.clone()))
+    }
+
+    /// The window that tells how an outside agent connects to this editor.
+    /// Asks before an earlier export is replaced.
+    fn export_window(&self, ui: &mut Ui, actions: &mut Actions) {
+        let Some(folder) = &self.export_confirm else {
+            return;
+        };
+        egui::Window::new(t("Replace the earlier export?"))
+            .collapsible(false)
+            .resizable(false)
+            .default_pos([420.0, 200.0])
+            .show(ui.ctx(), |ui| {
+                ui.label(tf(
+                    "{folder} is there already. Replace it with the game as it is now? Files you added to that folder are replaced too.",
+                    &[("folder", folder)],
+                ));
+                ui.horizontal(|ui| {
+                    if ui.button(t("Replace")).clicked() {
+                        actions.export_replace = true;
+                    }
+                    if ui.button(t("Cancel")).clicked() {
+                        actions.export_cancel = true;
+                    }
+                });
+            });
+    }
+
+    fn connect_window(&self, ui: &mut Ui, actions: &mut Actions) {
+        if !self.connect_open {
+            return;
+        }
+        let Some((url, token)) = self.mcp_endpoint() else {
+            return;
+        };
+        let mut open = true;
+        egui::Window::new(t("Connect an outside agent"))
+            .open(&mut open)
+            .default_width(560.0)
+            .show(ui.ctx(), |ui| {
+                ui.label(t(
+                    "An agent connected here works in this editor, in its one history and activity feed, at the same time as the agent panel and you. While the editor is open:",
+                ));
+                let mut command = format!(
+                    "claude mcp add --transport http wish-editor {url} --header \"Authorization: Bearer {token}\""
+                );
+                ui.add(egui::TextEdit::multiline(&mut command).desired_rows(2).desired_width(f32::INFINITY));
+                ui.weak(tf("Address: {url}", &[("url", &url)]));
+                let mut shown = token.clone();
+                ui.horizontal(|ui| {
+                    ui.weak(t("Token:"));
+                    ui.add(egui::TextEdit::singleline(&mut shown).desired_width(300.0));
+                });
+                ui.weak(t(
+                    "Only programs on this computer can connect, and only with the token. A new token is made each time the editor starts.",
+                ));
+            });
+        if !open {
+            actions.connect = Some(false);
+        }
+    }
+
+    /// Starts the agent on the request written in the panel.
+    fn send_task(&mut self) {
+        let request = self.cockpit.request.borrow().trim().to_owned();
+        if request.is_empty() {
+            return;
+        }
+        if self.start_task(request) {
+            self.cockpit.request.borrow_mut().clear();
+        }
+    }
+
+    /// Starts the agent on `request`, with what was pointed at, the game's
+    /// design and the person's AI settings; a checkpoint is saved first
+    /// (unless the person turned that off). Returns whether it started.
+    fn start_task(&mut self, request: String) -> bool {
+        if self.cockpit.run.is_some() {
+            return false;
+        }
+        // Before every task: a way back.
+        let mut before = None;
+        if self.cockpit.settings.checkpoint_first {
+            let short: String = request.chars().take(40).collect();
+            let saved = self.call(
+                "checkpoint",
+                &json!({ "action": "save", "note": tf("before: {request}", &[("request", &short)]) }),
+            );
+            before = saved["checkpoint"]["name"].as_str().map(str::to_owned);
+            self.read_checkpoints();
+        }
+        if self.ensure_endpoint().is_err() {
+            return false;
+        }
+        let Some((endpoint, token)) = &self.cockpit.mcp else {
+            return false;
+        };
+        let endpoint = format!("http://{}/mcp", endpoint.address());
+        let token = token.clone();
+        self.read_design();
+        let settings = self.cockpit.settings.clone();
+        let task = wish_agent::Task {
+            context: self.cockpit.context.clone(),
+            design: {
+                let summary = wish_control::design_summary(&self.design);
+                match self
+                    .current_workspace()
+                    .filter(|w| !w.instructions.trim().is_empty())
+                {
+                    Some(workspace) => Some(format!(
+                        "{}The workspace ({}): {}\n",
+                        summary.unwrap_or_default(),
+                        workspace.name,
+                        workspace.instructions.trim()
+                    )),
+                    None => summary,
+                }
+            },
+            model: settings.model.clone(),
+            resume: if settings.memory {
+                self.cockpit.session.clone()
+            } else {
+                None
+            },
+            files: settings.files,
+            ..wish_agent::Task::new(
+                request.clone(),
+                endpoint,
+                token,
+                self.workspace.root().to_path_buf(),
+                self.scene.clone(),
+            )
+        };
+        self.cockpit.last_instructions = Some(wish_agent::instructions(&task));
+        if let Some(name) = before {
+            self.cockpit
+                .before
+                .insert(self.cockpit.transcript.len(), name);
+        }
+        self.cockpit.transcript.push(crate::cockpit::Line {
+            who: crate::cockpit::Who::Person,
+            text: request,
+            ok: None,
+        });
+        let started = self.cockpit.agent.start(&task);
+        self.cockpit.last_task = Some(task);
+        match started {
+            Ok(run) => {
+                self.cockpit.run = Some(run);
+                self.cockpit.context.clear();
+                self.status = t("the agent is working").to_owned();
+                true
+            }
+            Err(problem) => {
+                self.cockpit.transcript.push(crate::cockpit::Line {
+                    who: crate::cockpit::Who::Note,
+                    text: problem,
+                    ok: Some(false),
+                });
+                false
+            }
+        }
+    }
+
+    /// Reads the permission mode and the agents' proposals.
+    fn read_proposals(&mut self) {
+        let got = self.call("proposals", &json!({}));
+        if got["ok"] == true {
+            self.permission_mode = got["mode"].as_str().unwrap_or("apply").to_owned();
+            self.proposals = got["proposals"].as_array().cloned().unwrap_or_default();
+        }
+    }
+
+    /// The permission mode (`suggest`, `apply`, `autonomous`).
+    pub fn permission_mode(&self) -> &str {
+        &self.permission_mode
+    }
+
+    /// The agents' proposals waiting for a person.
+    pub fn waiting_proposals(&self) -> Vec<Value> {
+        self.proposals
+            .iter()
+            .filter(|p| p["status"] == "waiting")
+            .cloned()
+            .collect()
+    }
+
+    /// The activity feed's entries, oldest first.
+    pub fn activity(&self) -> Vec<Value> {
+        self.activity.iter().cloned().collect()
     }
 
     /// Runs `check` for the problems tab.
@@ -1597,6 +2843,164 @@ impl EditorApp {
         };
     }
 
+    /// Reads the project's checkpoints.
+    fn read_checkpoints(&mut self) {
+        let got = self.call("checkpoint", &json!({ "action": "list" }));
+        self.checkpoints = got["checkpoints"].as_array().cloned().unwrap_or_default();
+    }
+
+    /// The checkpoints' names, oldest first.
+    pub fn checkpoint_names(&self) -> Vec<String> {
+        self.checkpoints
+            .iter()
+            .filter_map(|c| c["name"].as_str().map(str::to_owned))
+            .collect()
+    }
+
+    /// Whether the before/after window is open, and on which checkpoint.
+    pub fn comparing(&self) -> Option<&str> {
+        self.compare.as_ref().map(|c| c.name.as_str())
+    }
+
+    /// The checkpoint actions of the project menu and the compare window.
+    fn checkpoint_act(&mut self, actions: &Actions) {
+        if actions.close_compare {
+            self.compare = None;
+        }
+        if actions.save_checkpoint {
+            let saved = self.call(
+                "checkpoint",
+                &json!({ "action": "save", "note": t("saved in the editor") }),
+            );
+            self.status = if saved["ok"] == true {
+                let name = saved["checkpoint"]["name"].as_str().unwrap_or("?");
+                tf("checkpoint {name} saved", &[("name", &name)])
+            } else {
+                let message = saved["error"]["message"]
+                    .as_str()
+                    .unwrap_or(t("it did not work"));
+                tf("checkpoint not saved: {message}", &[("message", &message)])
+            };
+            self.read_checkpoints();
+        }
+        if let Some(name) = &actions.restore_checkpoint
+            && self.play.is_none()
+        {
+            let back = self.call("checkpoint", &json!({ "action": "restore", "name": name }));
+            self.status = if back["ok"] == true {
+                tf(
+                    "back to checkpoint {name} (Undo brings now back)",
+                    &[("name", name)],
+                )
+            } else {
+                let message = back["error"]["message"]
+                    .as_str()
+                    .unwrap_or(t("it did not work"));
+                tf("could not go back: {message}", &[("message", &message)])
+            };
+            self.compare = None;
+            self.revision = u64::MAX;
+            self.refresh_scene();
+            self.refresh_project();
+            self.inspected_for = (Vec::new(), u64::MAX);
+            self.picture_stale = true;
+        }
+        if let Some(name) = &actions.compare_checkpoint {
+            let scene = self.scene.clone();
+            let picture = |app: &mut Self, source: PictureSource<'_>| {
+                app.workspace
+                    .render_picture(source, None, 480, 270, View::Lit)
+                    .map(|picture| {
+                        egui::ColorImage::from_rgba_unmultiplied(
+                            [picture.image.width as usize, picture.image.height as usize],
+                            &picture.image.pixels,
+                        )
+                    })
+            };
+            let before = picture(self, PictureSource::Checkpoint(Some(&scene), name));
+            let now = picture(self, PictureSource::Scene(Some(&scene)));
+            match (before, now) {
+                (Ok(before), Ok(now)) => {
+                    self.compare = Some(Compare {
+                        name: name.clone(),
+                        before,
+                        now,
+                        textures: RefCell::new(None),
+                    });
+                }
+                (Err(problem), _) | (_, Err(problem)) => {
+                    self.status = tf(
+                        "cannot compare: {message}",
+                        &[("message", &problem.message)],
+                    );
+                }
+            }
+        }
+        if let Some(name) = &actions.delete_checkpoint {
+            let gone = self.call("checkpoint", &json!({ "action": "delete", "name": name }));
+            if gone["ok"] == true {
+                self.status = tf("checkpoint {name} deleted", &[("name", name)]);
+            }
+            if self.compare.as_ref().is_some_and(|c| c.name == *name) {
+                self.compare = None;
+            }
+            self.read_checkpoints();
+        }
+    }
+
+    /// The before/after window.
+    fn compare_window(&self, ui: &mut Ui, actions: &mut Actions) {
+        let Some(compare) = &self.compare else {
+            return;
+        };
+        let mut open = true;
+        egui::Window::new(tf("Before ({name}) and now", &[("name", &compare.name)]))
+            .open(&mut open)
+            .default_pos([240.0, 80.0])
+            .show(ui.ctx(), |ui| {
+                let mut textures = compare.textures.borrow_mut();
+                let (before, now) = textures.get_or_insert_with(|| {
+                    (
+                        ui.ctx().load_texture(
+                            format!("before:{}", compare.name),
+                            compare.before.clone(),
+                            egui::TextureOptions::LINEAR,
+                        ),
+                        ui.ctx().load_texture(
+                            format!("now:{}", compare.name),
+                            compare.now.clone(),
+                            egui::TextureOptions::LINEAR,
+                        ),
+                    )
+                });
+                ui.horizontal(|ui| {
+                    for (label, texture) in [(t("Before"), &*before), (t("Now"), &*now)] {
+                        ui.vertical(|ui| {
+                            ui.strong(label);
+                            ui.image((texture.id(), vec2(360.0, 202.5)));
+                        });
+                    }
+                });
+                ui.horizontal(|ui| {
+                    if ui
+                        .button(t("Go back to this"))
+                        .on_hover_text(t(
+                            "Brings the scenes back as they were; one change in the history, so Undo brings now back",
+                        ))
+                        .clicked()
+                    {
+                        actions.restore_checkpoint = Some(compare.name.clone());
+                    }
+                    if ui.button(t("Keep now")).clicked() {
+                        actions.close_compare = true;
+                    }
+                });
+            });
+        if !open {
+            actions.close_compare = true;
+        }
+    }
+
     /// Runs the project's scenario tests (keeping their pictures as the
     /// golden ones if `update`); failures go to the problems tab.
     fn run_tests(&mut self, update: bool) {
@@ -1623,6 +3027,7 @@ impl EditorApp {
                 })
             })
             .collect();
+        self.tests = Some((results.len() - failed.len(), failed.len()));
         self.status = tf(
             "tests: {passed} passed, {failed} failed",
             &[
@@ -1983,6 +3388,128 @@ impl EditorApp {
         }
     }
 
+    /// Copies the selected entities, each with its children, beside itself
+    /// (under the same parent) with new ids, in one change; the copies
+    /// become the selection. A selected entity inside another selected one
+    /// is copied with it, not twice; parts of prefab instances are the
+    /// prefab's and are not copied on their own.
+    fn duplicate_selected(&mut self) {
+        let chosen: BTreeSet<&str> = self
+            .selected
+            .iter()
+            .filter(|id| !id.contains('/'))
+            .map(String::as_str)
+            .collect();
+        let parent_of = |id: &str| {
+            self.rows
+                .iter()
+                .find(|row| row.id == id)
+                .and_then(|row| row.parent.clone())
+        };
+        let originals: Vec<String> = chosen
+            .iter()
+            .filter(|id| {
+                let mut up = parent_of(id);
+                while let Some(parent) = up {
+                    if chosen.contains(parent.as_str()) {
+                        return false;
+                    }
+                    up = parent_of(&parent);
+                }
+                true
+            })
+            .map(|id| (*id).to_owned())
+            .collect();
+        if originals.is_empty() {
+            self.status = t("Select an entity to duplicate it").to_owned();
+            return;
+        }
+        let parents: Vec<Option<String>> = originals.iter().map(|id| parent_of(id)).collect();
+        let mut taken: BTreeSet<String> = self.rows.iter().map(|row| row.id.clone()).collect();
+        let mut ops = Vec::new();
+        let mut copies = Vec::new();
+        let scene = self.scene.clone();
+        for (id, parent) in originals.iter().zip(parents) {
+            let got = self.call(
+                "scene_get",
+                &json!({ "scene": scene, "detail": "full", "root": id, "depth": 64 }),
+            );
+            let Some(node) = got["tree"].get(0).filter(|_| got["ok"] == true).cloned() else {
+                continue;
+            };
+            copies.push(copy_tree(&node, parent.as_deref(), &mut taken, &mut ops));
+        }
+        if ops.is_empty() {
+            self.status = t("Select an entity to duplicate it").to_owned();
+            return;
+        }
+        let what = tf("duplicated {id}", &[("id", &copies.join(", "))]);
+        if self.edit(&what, ops) {
+            self.selected = copies;
+            self.picture_stale = true;
+        }
+    }
+
+    /// Makes a new scene with what a new project starts with (a camera,
+    /// the ground and the sun) under the first free `scenes/scene_<n>`
+    /// name, as one `edit_apply` that creates the file; the path to open,
+    /// or none (the status says why).
+    fn new_scene(&mut self) -> Option<String> {
+        let path = (1..)
+            .map(|n| format!("scenes/scene_{n}.scene.json"))
+            .find(|path| !self.scenes.contains(path))?;
+        let ops = json!([
+            { "op": "spawn", "id": "camera", "components": {
+                "Camera": { "fov_y_deg": 50 },
+                "Transform": { "translation": [0, 2, 7], "rotation": [-0.0871557, 0, 0, 0.9961947] }
+            } },
+            { "op": "spawn", "id": "ground", "components": {
+                "Primitive": { "shape": "Plane" },
+                "Material": { "base_color": [0.45, 0.45, 0.42, 1], "roughness": 0.9 },
+                "Transform": { "scale": [30, 1, 30] }
+            } },
+            { "op": "spawn", "id": "sun", "components": {
+                "DirectionalLight": { "illuminance_lux": 100000 },
+                "Transform": { "rotation": [-0.4545195, 0.3304543, 0.1786597, 0.8067046] }
+            } }
+        ]);
+        let made = self.call(
+            "edit_apply",
+            &json!({ "scene": path.clone(), "create": true, "ops": ops }),
+        );
+        if made["ok"] != true {
+            let message = made["error"]["message"]
+                .as_str()
+                .unwrap_or(t("it did not work"));
+            let hint = made["error"]["hint"].as_str().unwrap_or("");
+            self.status = tf(
+                "new scene failed: {message} {hint}",
+                &[("message", &message), ("hint", &hint)],
+            );
+            return None;
+        }
+        self.refresh_project();
+        Some(path)
+    }
+
+    /// Moves the scene view's eye, looking the same way, so the selected
+    /// entity fills the view (its size from its scale: the shapes are a
+    /// metre across), and turns and zooms around it from then on.
+    fn frame_selection(&mut self) {
+        let Some((_, target)) = self.target.as_ref() else {
+            self.status = t("Select an entity to frame it").to_owned();
+            return;
+        };
+        let (scale, _, center) = target.world().to_scale_rotation_translation();
+        let radius = scale.abs().max_element().max(0.25) * 0.9;
+        // The scene view's lens; 50 degrees, as a new project's camera.
+        const FOV_Y: f32 = 50.0 * std::f32::consts::PI / 180.0;
+        if let Some(eye) = self.eye.borrow_mut().as_mut() {
+            self.focus = eye.frame(center, radius, FOV_Y);
+            self.picture_stale = true;
+        }
+    }
+
     /// An id that no entity has, built on `base`.
     fn unused_id(&self, base: &str) -> String {
         let taken: BTreeSet<&str> = self.rows.iter().map(|row| row.id.as_str()).collect();
@@ -1997,12 +3524,39 @@ impl EditorApp {
         // The history tab's buttons are the menu bar's.
         actions.undo |= actions.panels.undo;
         actions.redo |= actions.panels.redo;
+        if let Some(id) = actions.command.take() {
+            self.command_actions(id, &mut actions);
+        }
+        // The AI mode's conversation, task cards and health are the
+        // cockpit's, the checkpoints' and the project menu's.
+        actions.cockpit.send |= actions.ai.cockpit.send;
+        actions.cockpit.stop |= actions.ai.cockpit.stop;
+        if actions.cockpit.remove_context.is_none() {
+            actions.cockpit.remove_context = actions.ai.cockpit.remove_context.take();
+        }
+        if let Some(name) = actions.ai.undo_task.take() {
+            actions.restore_checkpoint = Some(name);
+        }
+        if let Some(name) = actions.ai.compare_task.take() {
+            actions.compare_checkpoint = Some(name);
+        }
+        actions.run_tests |= std::mem::take(&mut actions.ai.run_tests);
+        actions.build_code |= std::mem::take(&mut actions.ai.build);
         // Undo, redo and another scene are about the files: not while a
         // game runs (its changes are live and go with it).
         if self.play.is_some() {
             actions.undo = false;
             actions.redo = false;
             actions.scene = None;
+            actions.new_scene = false;
+            actions.create = None;
+            actions.duplicate = false;
+        }
+        // A new scene is opened like one chosen from the list.
+        if actions.new_scene
+            && let Some(path) = self.new_scene()
+        {
+            actions.scene = Some(path);
         }
         if actions.quit {
             self.exit = true;
@@ -2013,6 +3567,123 @@ impl EditorApp {
         }
         if actions.run_tests {
             self.run_tests(false);
+        }
+        self.checkpoint_act(&actions);
+        if actions.export_cancel {
+            self.export_confirm = None;
+            self.status = t("the earlier export was kept").to_owned();
+        }
+        if actions.export || actions.export_replace {
+            let replace = actions.export_replace && self.export_confirm.take().is_some();
+            let exported = self.call("project_export", &json!({ "overwrite": replace }));
+            self.status = if exported["ok"] == true {
+                let mut status = tf(
+                    "game exported: {program} (zip its folder to share it)",
+                    &[("program", &exported["program"].as_str().unwrap_or("?"))],
+                );
+                // A warning (such as the C runtime the player needs) is
+                // said with it.
+                for warning in exported["diagnostics"].as_array().into_iter().flatten() {
+                    status.push(' ');
+                    status.push_str(warning["message"].as_str().unwrap_or_default());
+                }
+                status
+            } else if exported["error"]["code"] == "export_exists" {
+                self.export_confirm = Some(
+                    exported["error"]["message"]
+                        .as_str()
+                        .and_then(|message| message.split('\'').nth(1))
+                        .unwrap_or("exports/")
+                        .to_owned(),
+                );
+                t("an earlier export is there: replace it?").to_owned()
+            } else {
+                let message = exported["error"]["message"]
+                    .as_str()
+                    .unwrap_or(t("it did not work"));
+                let hint = exported["error"]["hint"].as_str().unwrap_or("");
+                tf(
+                    "not exported: {message} {hint}",
+                    &[("message", &message), ("hint", &hint)],
+                )
+            };
+        }
+        if actions.toggle_cockpit {
+            self.cockpit.open = !self.cockpit.open;
+        }
+        if actions.toggle_game_view {
+            self.game_view = !self.game_view;
+            self.game_drawn = None;
+            self.picture_stale = true;
+            self.save_preferences();
+        }
+        match actions.connect {
+            Some(true) => {
+                if self.ensure_endpoint().is_ok() {
+                    self.connect_open = true;
+                }
+            }
+            Some(false) => self.connect_open = false,
+            None => {}
+        }
+        self.cockpit_act(&actions.cockpit);
+        if let Some(key) = actions.theme.take()
+            && self.set_theme(&key)
+        {
+            self.save_preferences();
+        }
+        if actions.open_packages {
+            self.packages.open = true;
+            self.read_packages();
+        }
+        let asked = std::mem::take(&mut actions.packages);
+        if asked.any() {
+            self.packages_act(asked);
+        }
+        if let Some(on) = actions.switch_mode {
+            self.set_ai_mode(on);
+        }
+        let ai = std::mem::take(&mut actions.ai);
+        if ai.any() {
+            self.ai_act(ai);
+        }
+        if let Some(mode) = actions.permission {
+            let set = self.call("permissions", &json!({ "action": "set", "mode": mode }));
+            if set["ok"] == true {
+                self.status = tf("agents' permission: {mode}", &[("mode", &mode_label(mode))]);
+            }
+            self.read_proposals();
+        }
+        if let Some((id, accept)) = actions.panels.decide {
+            let action = if accept { "accept" } else { "reject" };
+            let done = self.call("proposals", &json!({ "action": action, "id": id }));
+            self.status = if done["ok"] != true {
+                let message = done["error"]["message"]
+                    .as_str()
+                    .unwrap_or(t("it did not work"));
+                tf(
+                    "proposal {id}: {message}",
+                    &[("id", &id), ("message", &message)],
+                )
+            } else if !accept {
+                tf("proposal {id} rejected", &[("id", &id)])
+            } else if done["answer"]["ok"] == true {
+                tf("proposal {id} accepted and made", &[("id", &id)])
+            } else {
+                let message = done["answer"]["error"]["message"]
+                    .as_str()
+                    .unwrap_or(t("it did not work"));
+                tf(
+                    "proposal {id} accepted but failed: {message}",
+                    &[("id", &id), ("message", &message)],
+                )
+            };
+            self.read_proposals();
+            self.revision = u64::MAX;
+            self.refresh_scene();
+            self.refresh_project();
+            self.inspected_for = (Vec::new(), u64::MAX);
+            self.picture_stale = true;
         }
         if actions.update_golden {
             self.run_tests(true);
@@ -2044,6 +3715,57 @@ impl EditorApp {
             self.load_assets();
             self.select_asset(&path);
         }
+        if let Some((path, field, value)) = actions.browser.material.take() {
+            // The file is made again with every field it writes and this
+            // one: one call by a human, as an agent would change it. What
+            // it writes is read again first, not taken from the panel, so
+            // a change an agent made meanwhile is kept.
+            let now = self.call("asset_info", &json!({ "path": path }));
+            // A file that does not read as a material now (someone is
+            // half-way through editing it, or it is far too large) has no
+            // `written`: it is not made again from this one field, which
+            // would wipe everything else it writes. (A material that names
+            // a missing texture still reads, and can be changed: that is
+            // how the texture is fixed.)
+            let problem = now["diagnostics"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|d| d["severity"] == "error")
+                .map(|d| d["message"].as_str().unwrap_or_default().to_owned());
+            let made = match now["written"].as_object() {
+                Some(written) if now["ok"] == true => {
+                    let mut written = written.clone();
+                    written.insert(field.clone(), value);
+                    self.call(
+                        "asset_create",
+                        &json!({ "path": path, "material": written, "overwrite": true }),
+                    )
+                }
+                _ => {
+                    let message = problem
+                        .or_else(|| now["error"]["message"].as_str().map(str::to_owned))
+                        .unwrap_or_else(|| t("it did not work").to_owned());
+                    json!({ "ok": false, "error": { "message": message } })
+                }
+            };
+            self.status = if made["ok"] == true {
+                tf(
+                    "set {field} in {path}",
+                    &[("field", &field), ("path", &path)],
+                )
+            } else {
+                let message = made["error"]["message"]
+                    .as_str()
+                    .unwrap_or(t("it did not work"));
+                tf(
+                    "could not make {path}: {message}",
+                    &[("path", &path), ("message", &message)],
+                )
+            };
+            self.select_asset(&path);
+            self.picture_stale = true;
+        }
         if let Some(code) = actions.language {
             self.set_language(code);
             self.save_preferences();
@@ -2065,7 +3787,11 @@ impl EditorApp {
         }
         if actions.reset_camera {
             *self.eye.borrow_mut() = None;
+            self.focus = 8.0;
             self.picture_stale = true;
+        }
+        if actions.frame {
+            self.frame_selection();
         }
         if let Some(path) = actions.browser.select {
             self.select_asset(&path);
@@ -2122,6 +3848,43 @@ impl EditorApp {
             if tab == Tab::Console {
                 self.read_log();
             }
+            if tab == Tab::Activity {
+                self.read_activity();
+                self.read_proposals();
+            }
+        }
+        let revert = actions
+            .panels
+            .revert
+            .map(|revision| (self.scene.clone(), revision))
+            .or(actions.panels.revert_in.clone());
+        if let Some((scene, revision)) = revert
+            && self.play.is_none()
+        {
+            let done = self.call(
+                "edit_history",
+                &json!({ "scene": scene, "action": "revert", "revision": revision }),
+            );
+            self.status = if done["ok"] == true {
+                tf("took back r{revision}", &[("revision", &revision)])
+            } else {
+                let message = done["error"]["message"]
+                    .as_str()
+                    .unwrap_or(t("it did not work"));
+                let hint = done["error"]["hint"].as_str().unwrap_or("");
+                tf(
+                    "could not take back r{revision}: {message} {hint}",
+                    &[
+                        ("revision", &revision),
+                        ("message", &message),
+                        ("hint", &hint),
+                    ],
+                )
+            };
+            self.revision = u64::MAX;
+            self.refresh_scene();
+            self.inspected_for = (Vec::new(), u64::MAX);
+            self.picture_stale = true;
         }
         if actions.panels.clear_console {
             self.log.clear();
@@ -2279,6 +4042,19 @@ impl EditorApp {
                 self.selected = vec![id];
             }
         }
+        if let Some(kind) = actions.create
+            && let Some((_, _, components)) = CREATE_KINDS.iter().find(|(k, _, _)| *k == kind)
+        {
+            let id = self.unused_id(kind);
+            let op = json!({ "op": "spawn", "id": id, "components": components() });
+            if self.edit(&tf("added {id}", &[("id", &id)]), vec![op]) {
+                self.selected = vec![id];
+                self.picture_stale = true;
+            }
+        }
+        if actions.duplicate {
+            self.duplicate_selected();
+        }
         // A part of a prefab instance is the prefab's: not deleted here.
         let doomed: Vec<String> = self
             .selected
@@ -2388,9 +4164,13 @@ impl EditorApp {
     /// clicking to pick.
     fn view_input(&mut self, events: &[ShellEvent]) {
         for event in events {
+            // On the view, and not on a control floating over it.
             let over_view = |app: &Self| {
-                app.pointer
-                    .is_some_and(|(x, y)| app.viewport.contains(pos2(x, y)))
+                app.pointer.is_some_and(|(x, y)| {
+                    let at = pos2(x, y);
+                    app.viewport.contains(at)
+                        && !app.view_overlays.borrow().iter().any(|r| r.contains(at))
+                })
             };
             match event {
                 ShellEvent::Pointer { x, y } => self.pointer = Some((*x, *y)),
@@ -2448,6 +4228,24 @@ impl EditorApp {
                 }
                 continue;
             }
+            // Alt and the left button orbit the eye (the handles do not
+            // take that press).
+            if let ShellEvent::Button {
+                button: Button::Primary,
+                pressed,
+                modifiers,
+            } = event
+            {
+                if *pressed && (modifiers.alt || self.modifiers.alt) && over_view(self) {
+                    self.orbiting = true;
+                    self.press = None;
+                    continue;
+                }
+                if !*pressed && self.orbiting {
+                    self.orbiting = false;
+                    continue;
+                }
+            }
             // The handles first: a press on one is not a click on the view.
             let took = self.gizmo_input(event);
             match event {
@@ -2456,6 +4254,34 @@ impl EditorApp {
                     pressed,
                     ..
                 } => self.looking = *pressed && over_view(self),
+                ShellEvent::Button {
+                    button: Button::Middle,
+                    pressed,
+                    ..
+                } => self.panning = *pressed && over_view(self),
+                ShellEvent::Scroll { y, .. } if over_view(self) => {
+                    let focus = self.focus;
+                    if let Some(eye) = self.eye.borrow_mut().as_mut() {
+                        let pivot = eye.position + eye.forward() * focus;
+                        // One notch of a wheel (48) comes an eighth nearer.
+                        self.focus = eye.dolly(pivot, (*y / 48.0 * 0.125).clamp(-0.5, 0.5));
+                        self.picture_stale = true;
+                    }
+                }
+                ShellEvent::MouseDelta { x, y } if self.orbiting || self.panning => {
+                    let focus = self.focus;
+                    if let Some(eye) = self.eye.borrow_mut().as_mut() {
+                        if self.orbiting {
+                            let pivot = eye.position + eye.forward() * focus;
+                            eye.orbit(pivot, *x, *y);
+                        } else {
+                            // The world follows the pointer at the pivot's
+                            // distance.
+                            eye.pan(*x, *y, focus * 0.0015);
+                        }
+                        self.picture_stale = true;
+                    }
+                }
                 ShellEvent::Button {
                     button: Button::Primary,
                     pressed,
@@ -2521,6 +4347,42 @@ impl EditorApp {
     /// The picture of the scene at the viewport's size, drawn when something
     /// changed (the scene, the camera, the size); and what a click on it
     /// means: who is under the pointer, and where the selection is.
+    /// Draws the game view's picture when what it shows has changed: the
+    /// scene (or the running game) through the scene's own camera, with the
+    /// game's interface, as the player sees it.
+    fn render_game(&mut self) {
+        let area = self.game_viewport;
+        if area == Rect::NOTHING || area.width() < MIN_VIEWPORT || area.height() < MIN_VIEWPORT {
+            self.game_picture = None;
+            self.game_drawn = None;
+            return;
+        }
+        let (width, height) = (area.width() as u32, area.height() as u32);
+        let preview = self.drag.as_ref().and_then(|active| active.ops.clone());
+        let key = (
+            self.revision,
+            self.play.as_ref().map(|play| play.tick),
+            width,
+            height,
+        );
+        if preview.is_none() && self.game_drawn == Some(key) && self.game_picture.is_some() {
+            return;
+        }
+        let scene = self.scene.clone();
+        let session = self.play.as_ref().map(|play| play.session.clone());
+        let source = match (&session, &preview) {
+            (Some(id), _) => PictureSource::Session(id),
+            (None, Some(ops)) => PictureSource::Preview(Some(&scene), ops),
+            (None, None) => PictureSource::Scene(Some(&scene)),
+        };
+        self.game_picture = self
+            .workspace
+            .render_picture(source, None, width, height, View::Lit)
+            .ok()
+            .map(|picture| picture.image);
+        self.game_drawn = Some(key);
+    }
+
     fn render_viewport(&mut self, seconds: f64) -> bool {
         let (width, height) = (
             self.viewport.width().max(0.0) as u32,
@@ -2564,12 +4426,15 @@ impl EditorApp {
                 (None, Some(ops)) => PictureSource::Preview(Some(&scene), ops),
                 (None, None) => PictureSource::Scene(Some(&scene)),
             };
-            // A running game is seen through its own camera.
-            let eye_camera: Option<&dyn Fn(&CameraView) -> CameraView> = if session.is_some() {
-                None
-            } else {
-                Some(&camera)
-            };
+            // A running game is seen through its own camera, unless the game
+            // view beside shows that: then this view keeps the editor's eye.
+            let split = self.game_viewport != Rect::NOTHING;
+            let eye_camera: Option<&dyn Fn(&CameraView) -> CameraView> =
+                if session.is_some() && !split {
+                    None
+                } else {
+                    Some(&camera)
+                };
             let drawn = self
                 .workspace
                 .render_picture(source, eye_camera, width, height, self.view);
@@ -2598,10 +4463,14 @@ impl EditorApp {
             return false;
         }
         let session = self.play.as_ref().map(|play| play.session.clone());
+        let split = self.game_viewport != Rect::NOTHING;
         let ids = match &session {
-            Some(id) => self
-                .workspace
-                .render_ids(PictureSource::Session(id), None, width, height),
+            Some(id) => self.workspace.render_ids(
+                PictureSource::Session(id),
+                if split { Some(&camera) } else { None },
+                width,
+                height,
+            ),
             None => self.workspace.render_ids(
                 PictureSource::Scene(Some(&scene)),
                 Some(&camera),
@@ -2623,10 +4492,21 @@ impl EditorApp {
                     (y - origin.y).max(0.0) as u32,
                 )
                 .and_then(|entity| ids.names.get(&entity).cloned());
-            match hit {
-                Some(name) => self.click_entity(&name, toggle),
-                None if !toggle => self.selected.clear(),
-                None => {}
+            if self.cockpit.pointing || self.ai_mode {
+                // Show and tell: what was clicked goes with the request.
+                self.cockpit.pointing = false;
+                if let Some(name) = hit {
+                    let line = self.describe_for_agent(&name);
+                    if !self.cockpit.context.contains(&line) {
+                        self.cockpit.context.push(line);
+                    }
+                }
+            } else {
+                match hit {
+                    Some(name) => self.click_entity(&name, toggle),
+                    None if !toggle => self.selected.clear(),
+                    None => {}
+                }
             }
         }
         let mut boxes: BTreeMap<_, _> = ids
@@ -2662,21 +4542,517 @@ impl EditorApp {
     }
 
     /// The hierarchy panel: select, add, delete, rename, move.
+    /// The handles' tools, floating at the scene view's top left: move,
+    /// rotate, scale, their axes, snapping and the camera's reset.
+    fn view_tools(&self, ui: &mut Ui, area: Rect, actions: &mut Actions) -> Rect {
+        use crate::style::{Icon, tool_button};
+        let band = Rect::from_min_max(
+            area.min + vec2(8.0, 8.0),
+            pos2(area.max.x - 8.0, area.min.y + 44.0),
+        );
+        floating(ui, band, false, |ui| {
+            for (mode, icon, name) in [
+                (Mode::Translate, Icon::Move, t("Move")),
+                (Mode::Rotate, Icon::Rotate, t("Rotate")),
+                (Mode::Scale, Icon::Scale, t("Scale")),
+            ] {
+                if tool_button(ui, icon, name, false, self.mode == mode, true, None)
+                    .on_hover_text(format!("{name} ({})", t("Keys W, E, R")))
+                    .clicked()
+                {
+                    actions.mode = Some(mode);
+                }
+            }
+            ui.separator();
+            let space = if self.space == Space::World {
+                t("World")
+            } else {
+                t("Local")
+            };
+            if tool_button(ui, Icon::Globe, space, true, false, true, None)
+                .on_hover_text(t("The handles' axes: the world's or the entity's own"))
+                .clicked()
+            {
+                actions.toggle_space = true;
+            }
+            if tool_button(ui, Icon::Magnet, t("Snap"), false, self.snap, true, None)
+                .on_hover_text(t("Half metres, 15 degrees, steps of 10 % when on"))
+                .clicked()
+            {
+                actions.toggle_snap = true;
+            }
+            if tool_button(
+                ui,
+                Icon::Target,
+                t("Reset camera"),
+                false,
+                false,
+                true,
+                None,
+            )
+            .on_hover_text(t("Reset camera"))
+            .clicked()
+            {
+                actions.reset_camera = true;
+            }
+        })
+    }
+
+    /// What the scene view shows, floating at its top right: the debug
+    /// view (lit, ids, depth...) and the game view beside it.
+    fn view_shows(&self, ui: &mut Ui, area: Rect, actions: &mut Actions) -> Rect {
+        use crate::style::{Icon, tool_button};
+        let band = Rect::from_min_max(
+            pos2(area.min.x + 8.0, area.min.y + 8.0),
+            pos2(area.max.x - 8.0, area.min.y + 44.0),
+        );
+        floating(ui, band, true, |ui| {
+            if tool_button(
+                ui,
+                Icon::Screen,
+                t("Game view"),
+                false,
+                self.game_view,
+                true,
+                None,
+            )
+            .on_hover_text(t(
+                "The game as the player sees it (the scene's camera), beside the scene view",
+            ))
+            .clicked()
+            {
+                actions.toggle_game_view = true;
+            }
+            egui::ComboBox::from_id_salt("view")
+                .selected_text(view_label(self.view.name()))
+                // Every view in sight: the list is short, and one that
+                // has to be scrolled to is one nobody finds.
+                .height(400.0)
+                .show_ui(ui, |ui| {
+                    for name in View::NAMES {
+                        if ui
+                            .selectable_label(*name == self.view.name(), view_label(name))
+                            .on_hover_text(tf(
+                                "Called '{name}' by capture_frame and wen capture --view",
+                                &[("name", name)],
+                            ))
+                            .clicked()
+                            && let Ok(view) = View::parse(name)
+                        {
+                            actions.view = Some(view);
+                        }
+                    }
+                });
+        })
+    }
+
+    /// The menu bar's menus: File, Edit, Create, View, Game, AI, Help.
+    /// Each item is the same action as its button or shortcut elsewhere;
+    /// the shortcut it has (from the command table, as the person set it)
+    /// is shown beside it.
+    fn menus(&self, ui: &mut Ui, actions: &mut Actions) {
+        // The menu bar's words stand on the bar without an outline or a
+        // fill until the pointer is on them (the menus themselves keep the
+        // theme's widgets).
+        let bar = &mut ui.style_mut().visuals.widgets.inactive;
+        bar.bg_stroke = egui::Stroke::NONE;
+        bar.bg_fill = egui::Color32::TRANSPARENT;
+        bar.weak_bg_fill = egui::Color32::TRANSPARENT;
+        let editing = self.play.is_none();
+        let key = |id: &str| crate::commands::first_key(&self.keys, id).unwrap_or_default();
+        // A menu item: its words, its shortcut, whether it can be used now.
+        // Its accessible name is its words alone (tests and screen readers
+        // find it by them), not the words and the shortcut together.
+        let item = |ui: &mut Ui, name: &str, shortcut: String, enabled: bool| {
+            let mut button = egui::Button::new(name);
+            if !shortcut.is_empty() {
+                button = button.shortcut_text(shortcut);
+            }
+            let response = ui.add_enabled(enabled, button);
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, name));
+            let clicked = response.clicked();
+            if clicked {
+                ui.close();
+            }
+            clicked
+        };
+        ui.menu_button(t("File"), |ui| {
+            if item(ui, t("New scene"), key("scene.new"), editing) {
+                actions.new_scene = true;
+            }
+            ui.menu_button(t("Open scene"), |ui| {
+                for scene in &self.scenes {
+                    if ui
+                        .add_enabled(editing, egui::Button::selectable(*scene == self.scene, scene))
+                        .clicked()
+                    {
+                        actions.scene = Some(scene.clone());
+                        ui.close();
+                    }
+                }
+                if !self.prefabs.is_empty() {
+                    ui.separator();
+                    ui.weak(t("Prefabs"));
+                }
+                for prefab in &self.prefabs {
+                    if ui
+                        .add_enabled(editing, egui::Button::selectable(*prefab == self.scene, prefab))
+                        .clicked()
+                    {
+                        actions.scene = Some(prefab.clone());
+                        ui.close();
+                    }
+                }
+            });
+            ui.separator();
+            if ui
+                .button(t("Save picture"))
+                .on_hover_text(t("The view's picture, as a PNG under captures/"))
+                .clicked()
+            {
+                actions.save_picture = true;
+                ui.close();
+            }
+            if ui
+                .button(t("Export game"))
+                .on_hover_text(t(
+                    "A folder under exports/ that runs on a machine without the engine (no editor, no compiler)",
+                ))
+                .clicked()
+            {
+                actions.export = true;
+                ui.close();
+            }
+            ui.separator();
+            if ui
+                .button(t("Settings..."))
+                .on_hover_text(t("The project's name, default scene and input map"))
+                .clicked()
+            {
+                actions.open_settings = true;
+                ui.close();
+            }
+            if ui
+                .button(t("Packages..."))
+                .on_hover_text(t("Themes, workspaces, languages, recipes and templates: install, remove"))
+                .clicked()
+            {
+                actions.open_packages = true;
+                ui.close();
+            }
+            ui.separator();
+            if item(ui, t("Quit"), key("app.quit"), true) {
+                actions.quit = true;
+            }
+        });
+        ui.menu_button(t("Edit"), |ui| {
+            if item(ui, t("Undo"), key("editor.undo"), self.can_undo && editing) {
+                actions.undo = true;
+            }
+            if item(ui, t("Redo"), key("editor.redo"), self.can_redo && editing) {
+                actions.redo = true;
+            }
+            ui.separator();
+            let chosen = editing && self.selected.iter().any(|id| !id.contains('/'));
+            if item(ui, t("Duplicate"), key("edit.duplicate"), chosen) {
+                actions.duplicate = true;
+            }
+            if item(ui, t("Rename"), "F2".to_owned(), chosen)
+                && let Some(first) = self.selected.iter().find(|id| !id.contains('/'))
+            {
+                self.ui_state.borrow_mut().rename = Some((first.clone(), first.clone()));
+            }
+            if item(ui, t("Delete"), "Delete".to_owned(), chosen) {
+                actions.delete = true;
+            }
+            ui.separator();
+            ui.menu_button(t("Checkpoints"), |ui| {
+                if ui
+                    .button(t("Save checkpoint"))
+                    .on_hover_text(t("Keeps the scenes, prefabs and settings as they are now"))
+                    .clicked()
+                {
+                    actions.save_checkpoint = true;
+                    ui.close();
+                }
+                ui.separator();
+                if self.checkpoints.is_empty() {
+                    ui.weak(t("No checkpoints yet."));
+                }
+                for checkpoint in self.checkpoints.iter().rev().take(12) {
+                    let name = checkpoint["name"].as_str().unwrap_or("?").to_owned();
+                    let label = match checkpoint["note"].as_str() {
+                        Some(note) => format!("{name}: {note}"),
+                        None => name.clone(),
+                    };
+                    ui.menu_button(label, |ui| {
+                        if ui
+                            .add_enabled(editing, egui::Button::new(t("Go back to this")))
+                            .clicked()
+                        {
+                            actions.restore_checkpoint = Some(name.clone());
+                            ui.close();
+                        }
+                        if ui.button(t("Compare with now")).clicked() {
+                            actions.compare_checkpoint = Some(name.clone());
+                            ui.close();
+                        }
+                        if ui.button(t("Delete")).clicked() {
+                            actions.delete_checkpoint = Some(name.clone());
+                            ui.close();
+                        }
+                    });
+                }
+            });
+        });
+        ui.menu_button(t("Create"), |ui| {
+            for (index, (kind, name, _)) in CREATE_KINDS.iter().enumerate() {
+                if matches!(index, 1 | 4 | 8) {
+                    ui.separator();
+                }
+                let id = format!("create.{kind}");
+                if item(ui, name(), key(&id), editing) {
+                    actions.create = Some(*kind);
+                }
+            }
+        });
+        ui.menu_button(t("View"), |ui| {
+            ui.menu_button(t("Shading"), |ui| {
+                for name in View::NAMES {
+                    if ui
+                        .selectable_label(*name == self.view.name(), view_label(name))
+                        .on_hover_text(tf(
+                            "Called '{name}' by capture_frame and wen capture --view",
+                            &[("name", name)],
+                        ))
+                        .clicked()
+                        && let Ok(view) = View::parse(name)
+                    {
+                        actions.view = Some(view);
+                        ui.close();
+                    }
+                }
+            });
+            if ui
+                .add(egui::Button::selectable(self.game_view, t("Game view")))
+                .on_hover_text(t(
+                    "The game as the player sees it (the scene's camera), beside the scene view",
+                ))
+                .clicked()
+            {
+                actions.toggle_game_view = true;
+                ui.close();
+            }
+            if item(
+                ui,
+                t("Frame the selection"),
+                key("view.frame"),
+                editing && self.target.is_some(),
+            ) {
+                actions.frame = true;
+            }
+            if item(ui, t("Reset camera"), key("view.reset_camera"), true) {
+                actions.reset_camera = true;
+            }
+            ui.separator();
+            ui.menu_button(t("Theme"), |ui| {
+                for theme in &self.themes {
+                    if ui
+                        .selectable_label(self.theme_key == theme.key, &theme.name)
+                        .on_hover_text(&theme.key)
+                        .clicked()
+                    {
+                        actions.theme = Some(theme.key.clone());
+                        ui.close();
+                    }
+                }
+                ui.separator();
+                ui.weak(t("More themes come in packages (Packages...)"));
+            });
+            ui.menu_button(t("Language"), |ui| {
+                for language in crate::i18n::all_languages() {
+                    if ui
+                        .selectable_label(self.language == language.code, language.name)
+                        .clicked()
+                    {
+                        actions.language = Some(language.code);
+                        ui.close();
+                    }
+                }
+            });
+        });
+        ui.menu_button(t("Game"), |ui| {
+            let can_play = !self.scene.ends_with(".prefab.json");
+            let word = if editing { t("Play") } else { t("Stop") };
+            let run = ui.add_enabled(
+                can_play,
+                egui::Button::new(word).shortcut_text(key("game.play")),
+            );
+            run.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, can_play, word));
+            if run.clicked() {
+                if editing {
+                    actions.play_start = true;
+                } else {
+                    actions.play_stop = true;
+                }
+                ui.close();
+            }
+            if ui
+                .add_enabled(editing, egui::Button::selectable(self.record, t("Record")))
+                .on_hover_text(t(
+                    "Record the next run as a replay (saved under replays/ when it stops)",
+                ))
+                .clicked()
+            {
+                actions.toggle_record = true;
+                ui.close();
+            }
+            ui.menu_button(t("Replays"), |ui| {
+                let replays = self.replays();
+                if replays.is_empty() {
+                    ui.weak(t("No replays yet: turn on Record, then Play."));
+                }
+                for name in replays {
+                    if ui
+                        .button(&name)
+                        .on_hover_text(t("Play it back: does the game still play the same?"))
+                        .clicked()
+                    {
+                        actions.replay = Some(name);
+                        ui.close();
+                    }
+                }
+            });
+            ui.separator();
+            if ui
+                .button(t("Edit code"))
+                .on_hover_text(t("Open scripts/src/lib.rs in your code editor (WISH_EDITOR, or the system's)"))
+                .clicked()
+            {
+                actions.edit_code = true;
+                ui.close();
+            }
+            let build = ui
+                .add(egui::Button::new(t("Build code")).shortcut_text(key("project.build_code")))
+                .on_hover_text(t("Build the game code; a running game switches to it"));
+            build.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, t("Build code")));
+            if build.clicked() {
+                actions.build_code = true;
+                ui.close();
+            }
+            ui.separator();
+            if ui
+                .button(t("Run tests"))
+                .on_hover_text(t("The project's scenario tests (tests/*.test.json)"))
+                .clicked()
+            {
+                actions.run_tests = true;
+                ui.close();
+            }
+            if ui
+                .button(t("Update golden pictures"))
+                .on_hover_text(t(
+                    "Run the tests and keep the pictures they take as the golden ones (look at them first)",
+                ))
+                .clicked()
+            {
+                actions.update_golden = true;
+                ui.close();
+            }
+            if ui.button(t("Check")).on_hover_text(t("Look for problems in the whole project")).clicked() {
+                actions.check = true;
+                ui.close();
+            }
+        });
+        ui.menu_button(t("AI"), |ui| {
+            if ui
+                .add(egui::Button::selectable(
+                    self.cockpit.open,
+                    t("Show or hide the agent panel"),
+                ))
+                .on_hover_text(t("The agent's panel: ask, point at things, watch it work"))
+                .clicked()
+            {
+                actions.toggle_cockpit = true;
+                ui.close();
+            }
+            if ui
+                .button(t("Connect an outside agent..."))
+                .on_hover_text(t("Let Claude Code (or any MCP client) work in this editor"))
+                .clicked()
+            {
+                actions.connect = Some(true);
+                ui.close();
+            }
+            ui.menu_button(t("Permissions"), |ui| {
+                for (mode, hover) in [
+                    (
+                        "suggest",
+                        t("An agent's change to the project waits for you in the Activity tab"),
+                    ),
+                    (
+                        "apply",
+                        t("Agents' changes are made; you review them in the Activity tab"),
+                    ),
+                    (
+                        "autonomous",
+                        t("As apply, and the cockpit does not ask between an agent's tasks"),
+                    ),
+                ] {
+                    if ui
+                        .selectable_label(self.permission_mode == mode, mode_label(mode))
+                        .on_hover_text(hover)
+                        .clicked()
+                    {
+                        actions.permission = Some(mode);
+                        ui.close();
+                    }
+                }
+            });
+        });
+        ui.menu_button(t("Help"), |ui| {
+            if item(ui, t("Command palette"), key("app.palette"), true) {
+                actions.command = Some("app.palette");
+            }
+        });
+    }
+
     fn hierarchy(&self, ui: &mut Ui, actions: &mut Actions) {
         ui.horizontal(|ui| {
-            ui.heading(t("Hierarchy"));
+            crate::style::panel_title(ui, t("Hierarchy"));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui
-                    .add_enabled(!self.selected.is_empty(), egui::Button::new(t("Delete")))
-                    .clicked()
+                use crate::style::{Icon, tool_button};
+                if tool_button(
+                    ui,
+                    Icon::Trash,
+                    t("Delete"),
+                    false,
+                    false,
+                    !self.selected.is_empty(),
+                    None,
+                )
+                .on_hover_text(t("Delete"))
+                .clicked()
                 {
                     actions.delete = true;
                 }
-                if ui.button("+").on_hover_text(t("Add an entity")).clicked() {
+                if tool_button(ui, Icon::Plus, "+", false, false, true, None)
+                    .on_hover_text(t("Add an entity"))
+                    .clicked()
+                {
                     actions.add = Some(None);
                 }
             });
         });
+        // The filter: only the rows whose name has what is typed (any case).
+        let mut filter = self.ui_state.borrow().filter.clone();
+        ui.add(
+            egui::TextEdit::singleline(&mut filter)
+                .hint_text(t("Filter entities"))
+                .desired_width(f32::INFINITY),
+        );
+        let wanted = filter.trim().to_lowercase();
+        self.ui_state.borrow_mut().filter = filter;
         ui.separator();
         let typing = self.ui_state.borrow().rename.is_some() || self.play.is_some();
         if !typing
@@ -2692,10 +5068,21 @@ impl EditorApp {
             self.ui_state.borrow_mut().rename = Some((first.clone(), first.clone()));
         }
         egui::ScrollArea::vertical().show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 1.0;
             for row in &self.rows {
+                if !wanted.is_empty() && !row.id.to_lowercase().contains(&wanted) {
+                    continue;
+                }
                 let selected = self.selected.contains(&row.id);
+                // How many it holds, quietly after its name.
+                let children = self
+                    .rows
+                    .iter()
+                    .filter(|other| other.parent.as_deref() == Some(row.id.as_str()))
+                    .count();
                 ui.horizontal(|ui| {
-                    ui.add_space(row.depth as f32 * 14.0);
+                    let depth = if wanted.is_empty() { row.depth } else { 0 };
+                    ui.add_space(depth as f32 * 14.0);
                     let renaming = {
                         let state = self.ui_state.borrow();
                         state
@@ -2722,12 +5109,24 @@ impl EditorApp {
                         }
                         return;
                     }
+                    // What kind of thing it is, at a glance.
+                    let (icon, color) =
+                        crate::style::entity_icon(&row.components, row.prefab.is_some());
+                    let (icon_rect, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
+                    crate::style::paint(ui.painter(), icon_rect, icon, color);
                     let response = ui
                         .selectable_label(selected, &row.id)
                         .interact(Sense::click_and_drag());
                     if response.clicked() {
                         actions.select =
                             Some((row.id.clone(), ui.input(|input| input.modifiers.command)));
+                    }
+                    if children > 0 {
+                        ui.label(
+                            egui::RichText::new(children.to_string())
+                                .size(11.0)
+                                .color(crate::style::pal().weak),
+                        );
                     }
                     if response.double_clicked() {
                         self.ui_state.borrow_mut().rename = Some((row.id.clone(), row.id.clone()));
@@ -2785,124 +5184,78 @@ impl EditorApp {
 
     /// The layout: menu bar, hierarchy, inspector, status bar, and the hole
     /// in the middle that the scene's picture shows through.
-    fn layout(&self, ui: &mut Ui, viewport: &mut Rect) -> Actions {
+    fn layout(&self, ui: &mut Ui, viewport: &mut Rect, game_area: &mut Rect) -> Actions {
         let mut actions = Actions::default();
         egui::Panel::top("menu").show(ui, |ui| {
-            // Shortcuts, unless the person is typing (a text box has its
-            // own undo).
-            if !ui.ctx().egui_wants_keyboard_input() {
-                let pressed = |ui: &Ui, modifiers: egui::Modifiers, key: egui::Key| {
-                    ui.input_mut(|input| {
-                        input.consume_shortcut(&egui::KeyboardShortcut::new(modifiers, key))
-                    })
-                };
-                let command = egui::Modifiers::COMMAND;
-                if pressed(ui, command | egui::Modifiers::SHIFT, egui::Key::Z)
-                    || pressed(ui, command, egui::Key::Y)
-                {
-                    actions.redo |= self.can_redo && self.play.is_none();
-                } else if pressed(ui, command, egui::Key::Z) {
-                    actions.undo |= self.can_undo && self.play.is_none();
+            // Shortcuts, from the command table (M10a), unless the person is
+            // typing (a text box has its own undo); the palette's opens
+            // even then.
+            let typing = ui.ctx().egui_wants_keyboard_input();
+            for (id, shortcut) in crate::commands::bindings(&self.keys) {
+                if (typing && id != "app.palette") || actions.command.is_some() {
+                    continue;
                 }
-                if pressed(ui, command, egui::Key::P) {
-                    if self.play.is_some() {
-                        actions.play_stop = true;
-                    } else if !self.scene.ends_with(".prefab.json") {
-                        actions.play_start = true;
-                    }
+                if ui.input_mut(|input| input.consume_shortcut(&shortcut)) {
+                    actions.command = Some(id);
                 }
             }
+            // The menu bar: the mark, the menus, the project and scene, and
+            // the search that opens the command palette.
+            ui.horizontal(|ui| {
+                let (mark, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
+                crate::style::paint_logo(ui.painter(), mark);
+                self.menus(ui, &mut actions);
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let search = egui::Button::new(
+                        egui::RichText::new(format!("{}    Ctrl+K", t("Search everything")))
+                            .color(crate::style::pal().weak),
+                    )
+                    .fill(crate::style::pal().field)
+                    .min_size(vec2(210.0, 0.0));
+                    if ui.add(search).on_hover_text(t("Command palette")).clicked() {
+                        actions.command = Some("app.palette");
+                    }
+                    ui.add_space(12.0);
+                    ui.label(
+                        egui::RichText::new(format!("{} — {}", self.project, self.scene))
+                            .color(crate::style::pal().weak),
+                    );
+                });
+            });
+        });
+        egui::Panel::top("toolbar").show(ui, |ui| {
             // A narrow window puts the rest of the bar on a second line.
             ui.horizontal_wrapped(|ui| {
-                ui.menu_button(self.project.as_str(), |ui| {
-                    if ui
-                        .button(t("Settings..."))
-                        .on_hover_text(t("The project's name, default scene and input map"))
-                        .clicked()
+                use crate::style::{Icon, tool_button, tool_group};
+                let editing = self.play.is_none();
+                tool_group(ui, 64.0, |ui| {
+                    if tool_button(
+                        ui,
+                        Icon::Undo,
+                        t("Undo"),
+                        false,
+                        false,
+                        self.can_undo && editing,
+                        None,
+                    )
+                    .on_hover_text("Ctrl+Z")
+                    .clicked()
                     {
-                        actions.open_settings = true;
-                        ui.close();
+                        actions.undo = true;
                     }
-                    if ui.button(t("Check")).on_hover_text(t("Look for problems in the whole project")).clicked() {
-                        actions.check = true;
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui
-                        .button(t("Edit code"))
-                        .on_hover_text(t("Open scripts/src/lib.rs in your code editor (WISH_EDITOR, or the system's)"))
-                        .clicked()
+                    if tool_button(
+                        ui,
+                        Icon::Redo,
+                        t("Redo"),
+                        false,
+                        false,
+                        self.can_redo && editing,
+                        None,
+                    )
+                    .on_hover_text("Ctrl+Y")
+                    .clicked()
                     {
-                        actions.edit_code = true;
-                        ui.close();
-                    }
-                    if ui
-                        .button(t("Build code"))
-                        .on_hover_text(t("Build the game code; a running game switches to it"))
-                        .clicked()
-                    {
-                        actions.build_code = true;
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui
-                        .button(t("Run tests"))
-                        .on_hover_text(t("The project's scenario tests (tests/*.test.json)"))
-                        .clicked()
-                    {
-                        actions.run_tests = true;
-                        ui.close();
-                    }
-                    if ui
-                        .button(t("Update golden pictures"))
-                        .on_hover_text(t(
-                            "Run the tests and keep the pictures they take as the golden ones (look at them first)",
-                        ))
-                        .clicked()
-                    {
-                        actions.update_golden = true;
-                        ui.close();
-                    }
-                    ui.menu_button(t("Replays"), |ui| {
-                        let replays = self.replays();
-                        if replays.is_empty() {
-                            ui.weak(t("No replays yet: turn on Record, then Play."));
-                        }
-                        for name in replays {
-                            if ui
-                                .button(&name)
-                                .on_hover_text(t("Play it back: does the game still play the same?"))
-                                .clicked()
-                            {
-                                actions.replay = Some(name);
-                                ui.close();
-                            }
-                        }
-                    });
-                    if ui
-                        .button(t("Save picture"))
-                        .on_hover_text(t("The view's picture, as a PNG under captures/"))
-                        .clicked()
-                    {
-                        actions.save_picture = true;
-                        ui.close();
-                    }
-                    ui.separator();
-                    ui.menu_button(t("Language"), |ui| {
-                        for language in crate::i18n::LANGUAGES {
-                            if ui
-                                .selectable_label(self.language == language.code, language.name)
-                                .clicked()
-                            {
-                                actions.language = Some(language.code);
-                                ui.close();
-                            }
-                        }
-                    });
-                    ui.separator();
-                    if ui.button(t("Quit")).clicked() {
-                        actions.quit = true;
-                        ui.close();
+                        actions.redo = true;
                     }
                 });
                 egui::ComboBox::from_id_salt("scene")
@@ -2923,92 +5276,87 @@ impl EditorApp {
                             }
                         }
                     });
-                ui.separator();
-                if ui
-                    .add_enabled(
-                        self.can_undo && self.play.is_none(),
-                        egui::Button::new(t("Undo")),
-                    )
-                    .on_hover_text("Ctrl+Z")
-                    .clicked()
-                {
-                    actions.undo = true;
-                }
-                if ui
-                    .add_enabled(
-                        self.can_redo && self.play.is_none(),
-                        egui::Button::new(t("Redo")),
-                    )
-                    .on_hover_text("Ctrl+Y")
-                    .clicked()
-                {
-                    actions.redo = true;
-                }
-                ui.separator();
-                egui::ComboBox::from_id_salt("view")
-                    .selected_text(view_label(self.view.name()))
-                    .show_ui(ui, |ui| {
-                        for name in View::NAMES {
-                            if ui
-                                .selectable_label(*name == self.view.name(), view_label(name))
-                                .on_hover_text(tf(
-                                    "Called '{name}' by capture_frame and wen capture --view",
-                                    &[("name", name)],
-                                ))
-                                .clicked()
-                                && let Ok(view) = View::parse(name)
-                            {
-                                actions.view = Some(view);
-                            }
-                        }
-                    });
-                match &self.play {
+                tool_group(ui, 220.0, |ui| match &self.play {
                     None => {
-                        if ui
-                            .add_enabled(
-                                !self.scene.ends_with(".prefab.json"),
-                                egui::Button::new(t("Play")),
-                            )
-                            .on_hover_text(t(
-                                "Run the game here; changes made while it runs are not kept (Ctrl+P)",
-                            ))
-                            .clicked()
+                        if tool_button(
+                            ui,
+                            Icon::Play,
+                            t("Play"),
+                            true,
+                            false,
+                            !self.scene.ends_with(".prefab.json"),
+                            Some(crate::style::pal().go),
+                        )
+                        .on_hover_text(t(
+                            "Run the game here; changes made while it runs are not kept (Ctrl+P)",
+                        ))
+                        .clicked()
                         {
                             actions.play_start = true;
                         }
-                        if ui
-                            .selectable_label(self.record, t("Record"))
-                            .on_hover_text(t(
-                                "Record the next run as a replay (saved under replays/ when it stops)",
-                            ))
-                            .clicked()
+                        if tool_button(
+                            ui,
+                            Icon::Record,
+                            t("Record"),
+                            true,
+                            self.record,
+                            true,
+                            Some(crate::style::pal().red),
+                        )
+                        .on_hover_text(t(
+                            "Record the next run as a replay (saved under replays/ when it stops)",
+                        ))
+                        .clicked()
                         {
                             actions.toggle_record = true;
                         }
                     }
                     Some(play) => {
                         if play.recording {
-                            ui.label(
-                                egui::RichText::new(t("REC"))
-                                    .color(egui::Color32::from_rgb(235, 90, 80)),
-                            )
-                            .on_hover_text(t("This run is being recorded as a replay"));
+                            ui.label(egui::RichText::new(t("REC")).color(crate::style::pal().red))
+                                .on_hover_text(t("This run is being recorded as a replay"));
                         }
-                        let pause = if play.paused { t("Resume") } else { t("Pause") };
-                        if ui.button(pause).clicked() {
+                        let (icon, pause) = if play.paused {
+                            (Icon::Play, t("Resume"))
+                        } else {
+                            (Icon::Pause, t("Pause"))
+                        };
+                        if tool_button(
+                            ui,
+                            icon,
+                            pause,
+                            true,
+                            false,
+                            true,
+                            Some(crate::style::pal().go),
+                        )
+                        .clicked()
+                        {
                             actions.play_pause = true;
                         }
-                        if ui
-                            .add_enabled(play.paused, egui::Button::new(t("Step")))
+                        if tool_button(ui, Icon::Step, t("Step"), false, false, play.paused, None)
                             .on_hover_text(t("One tick"))
                             .clicked()
                         {
                             actions.play_step = true;
                         }
-                        if ui.button(t("Stop")).clicked() {
+                        if tool_button(
+                            ui,
+                            Icon::Stop,
+                            t("Stop"),
+                            true,
+                            false,
+                            true,
+                            Some(crate::style::pal().red),
+                        )
+                        .clicked()
+                        {
                             actions.play_stop = true;
                         }
-                        ui.label(tf("tick {tick}", &[("tick", &play.tick)]));
+                        ui.label(
+                            egui::RichText::new(tf("tick {tick}", &[("tick", &play.tick)]))
+                                .color(crate::style::pal().weak),
+                        );
                         if play.snapshots.len() > 1 {
                             let pending = self.ui_state.borrow().timeline;
                             let mut cursor = pending.unwrap_or(play.cursor);
@@ -3028,77 +5376,118 @@ impl EditorApp {
                             }
                         }
                     }
+                });
+                if let Some(on) = crate::ai_mode::switch(ui, self.ai_mode) {
+                    actions.switch_mode = Some(on);
                 }
-                ui.separator();
-                if ui.button(t("Reset camera")).clicked() {
-                    actions.reset_camera = true;
+                if self.ai_mode {
+                    return;
                 }
-                ui.separator();
-                for (mode, name) in [
-                    (Mode::Translate, t("Move")),
-                    (Mode::Rotate, t("Rotate")),
-                    (Mode::Scale, t("Scale")),
-                ] {
-                    if ui
-                        .selectable_label(self.mode == mode, name)
-                        .on_hover_text(t("Keys W, E, R"))
-                        .clicked()
+                tool_group(ui, 100.0, |ui| {
+                    if tool_button(
+                        ui,
+                        Icon::Chat,
+                        t("Agent"),
+                        true,
+                        self.cockpit.open,
+                        true,
+                        Some(crate::style::accent_text()),
+                    )
+                    .on_hover_text(t("The agent's panel: ask, point at things, watch it work"))
+                    .clicked()
                     {
-                        actions.mode = Some(mode);
+                        actions.toggle_cockpit = true;
                     }
-                }
-                let space = if self.space == Space::World {
-                    t("World")
-                } else {
-                    t("Local")
-                };
-                if ui
-                    .button(space)
-                    .on_hover_text(t("The handles' axes: the world's or the entity's own"))
-                    .clicked()
-                {
-                    actions.toggle_space = true;
-                }
-                if ui
-                    .selectable_label(self.snap, t("Snap"))
-                    .on_hover_text(t("Half metres, 15 degrees, steps of 10 % when on"))
-                    .clicked()
-                {
-                    actions.toggle_snap = true;
-                }
+                });
             });
         });
         egui::Panel::bottom("status").show(ui, |ui| {
             ui.horizontal(|ui| {
                 let (errors, warnings) = self.problems;
-                ui.label(tf(
-                    "{errors} error(s), {warnings} warning(s)",
-                    &[("errors", &errors), ("warnings", &warnings)],
-                ));
+                // Problems in their colour; none in a quiet one.
+                let color = if errors > 0 {
+                    crate::style::pal().red
+                } else if warnings > 0 {
+                    crate::style::pal().amber
+                } else {
+                    crate::style::pal().weak
+                };
+                ui.label(
+                    egui::RichText::new(tf(
+                        "{errors} error(s), {warnings} warning(s)",
+                        &[("errors", &errors), ("warnings", &warnings)],
+                    ))
+                    .color(color),
+                );
                 ui.separator();
-                ui.add(egui::Label::new(&self.status).truncate())
-                    .on_hover_text(&self.status);
+                // The selection, quietly at the right end (not the
+                // engine's version: a picture of the window must not change
+                // with a release).
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if !self.selected.is_empty() {
+                        ui.label(
+                            egui::RichText::new(tf(
+                                "{count} selected",
+                                &[("count", &self.selected.len())],
+                            ))
+                            .color(crate::style::pal().weak),
+                        );
+                        ui.separator();
+                    }
+                    ui.add(egui::Label::new(&self.status).truncate())
+                        .on_hover_text(&self.status);
+                });
             });
         });
+        if self.ai_mode {
+            self.ai_layout(ui, viewport, game_area, &mut actions);
+            return actions;
+        }
         egui::Panel::bottom("assets")
             .resizable(true)
-            .default_size(190.0)
+            .default_size(170.0)
             .size_range(110.0..=420.0)
             .show(ui, |ui| {
                 crate::panels::tabs(ui, self.tab, self.found.len(), &mut actions.panels);
                 ui.separator();
                 match self.tab {
                     Tab::Assets => {
+                        // A selected material file is edited with the
+                        // inspector's widgets, over the MaterialFile schema.
+                        let widgets = InspectorView {
+                            inspected: &[],
+                            schemas: &self.schemas,
+                            resources: false,
+                            entities: Vec::new(),
+                            assets: &self.assets,
+                            copied: None,
+                            state: &self.inspector_state,
+                        };
                         let view = BrowserView {
                             assets: &self.files,
                             selected: self.asset_selected.as_deref(),
                             detail: self.asset_detail.as_ref(),
                             root: self.workspace.root(),
                             state: &self.browser_state,
+                            material: self
+                                .material_schema
+                                .as_ref()
+                                .map(|schema| (schema, &widgets)),
                         };
                         crate::browser::panel(ui, &view, &mut actions.browser);
                     }
                     Tab::Console => crate::panels::console(ui, &self.log, &mut actions.panels),
+                    Tab::Activity => {
+                        let mut agents_only = self.agents_only.get();
+                        crate::panels::activity(
+                            ui,
+                            &self.activity,
+                            &self.proposals,
+                            &mut agents_only,
+                            &mut actions.panels,
+                        );
+                        self.agents_only.set(agents_only);
+                    }
                     Tab::Problems => crate::panels::problems(ui, &self.found, &mut actions.panels),
                     Tab::Performance => {
                         crate::panels::performance(ui, &self.timings, self.play.is_some());
@@ -3132,13 +5521,58 @@ impl EditorApp {
                 };
                 inspector::panel(ui, &view, &mut actions.inspector);
             });
+        if self.cockpit.open {
+            egui::Panel::right("cockpit")
+                .default_size(320.0)
+                .show(ui, |ui| {
+                    crate::cockpit::panel(
+                        ui,
+                        &self.cockpit,
+                        mode_label(&self.permission_mode),
+                        &mut actions.cockpit,
+                    );
+                });
+        }
         crate::settings::window(ui, &self.settings, &self.scenes, &mut actions.settings);
+        self.compare_window(ui, &mut actions);
+        self.connect_window(ui, &mut actions);
+        crate::packages_window::window(ui, &self.packages, &mut actions.packages);
+        self.palette_window(ui, &mut actions);
+        self.export_window(ui, &mut actions);
         // The middle is not painted: the scene's picture shows through.
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
-                let area = ui.max_rect();
+                let full = ui.max_rect();
+                // The game view beside the scene view, when it is wanted and
+                // the middle is wide enough for both.
+                let split = self.game_view && full.width() >= GAME_VIEW_MIN_WIDTH;
+                let area = if split {
+                    let half = ((full.width() - VIEW_GAP) * 0.5).floor();
+                    *game_area = Rect::from_min_max(
+                        pos2(full.min.x + half + VIEW_GAP, full.min.y),
+                        full.max,
+                    );
+                    Rect::from_min_size(full.min, vec2(half, full.height()))
+                } else {
+                    full
+                };
                 *viewport = area;
+                if split {
+                    view_badge(ui, area, t("Scene"));
+                    view_badge(ui, *game_area, t("Game"));
+                }
+                // The view's own controls float on it (the redesign, R3):
+                // the handles' tools at its top left, what it shows at its
+                // top right, how to move around at its bottom left. A press
+                // on them is theirs, not the view's.
+                let mut overlays = Vec::new();
+                if self.play.is_none() {
+                    overlays.push(self.view_tools(ui, area, &mut actions));
+                    view_hint(ui, area);
+                }
+                overlays.push(self.view_shows(ui, area, &mut actions));
+                *self.view_overlays.borrow_mut() = overlays;
                 // A file dragged from the browser is dropped on the view.
                 let target = ui.allocate_rect(area, Sense::hover());
                 if let Some(dropped) = target.dnd_release_payload::<AssetDrag>() {
@@ -3152,6 +5586,75 @@ impl EditorApp {
                 }
             });
         actions
+    }
+
+    /// The AI mode's panels: the game on the left, the conversation on the
+    /// right, the live game with the plan, notes and health in the middle.
+    fn ai_layout(
+        &self,
+        ui: &mut Ui,
+        viewport: &mut Rect,
+        game_area: &mut Rect,
+        actions: &mut Actions,
+    ) {
+        let waiting = self
+            .proposals
+            .iter()
+            .filter(|p| p["status"] == "waiting")
+            .count();
+        let view = crate::ai_mode::AiView {
+            design: &self.design,
+            cockpit: &self.cockpit,
+            state: &self.ai,
+            problems: self.problems,
+            found: &self.found,
+            unbuilt: self.unbuilt,
+            tests: self.tests,
+            tick: self.play.as_ref().map(|play| play.tick),
+            permission: &self.permission_mode,
+            waiting,
+            assistant: self.assistant.as_deref(),
+            workspaces: &self.workspaces,
+            workspace: self.current_workspace(),
+        };
+        egui::Panel::left("ai-game")
+            .default_size(290.0)
+            .show(ui, |ui| {
+                crate::ai_mode::game_panel(ui, &view, &mut actions.ai)
+            });
+        egui::Panel::right("ai-conversation")
+            .default_size(370.0)
+            .show(ui, |ui| {
+                crate::ai_mode::conversation(ui, &view, &mut actions.ai)
+            });
+        egui::Panel::bottom("ai-board")
+            .resizable(true)
+            .default_size(230.0)
+            .size_range(140.0..=480.0)
+            .show(ui, |ui| crate::ai_mode::board(ui, &view, &mut actions.ai));
+        crate::ai_mode::settings(ui, &view, &mut actions.ai);
+        crate::settings::window(ui, &self.settings, &self.scenes, &mut actions.settings);
+        self.compare_window(ui, actions);
+        self.connect_window(ui, actions);
+        crate::packages_window::window(ui, &self.packages, &mut actions.packages);
+        self.palette_window(ui, actions);
+        self.export_window(ui, actions);
+        let scene_view = self.ai.borrow().scene_view;
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show(ui, |ui| {
+                let area = ui.max_rect();
+                if scene_view {
+                    *viewport = area;
+                } else {
+                    *viewport = Rect::NOTHING;
+                    *game_area = area;
+                }
+                crate::ai_mode::view_switch(ui, area, scene_view, &mut actions.ai);
+                if let Some((message, hint)) = &self.scene_error {
+                    self.scene_problem(ui, area, message, hint, actions);
+                }
+            });
     }
 
     /// A card in the middle of the view: why the scene cannot be shown, and
@@ -3209,15 +5712,24 @@ impl EditorApp {
     ) -> bool {
         // The language is per thread; this editor's is set for its frame.
         crate::i18n::set_language(self.language);
+        crate::style::set_theme(self.theme);
         self.since_poll += seconds;
         self.since_project_poll += seconds;
         self.since_log += seconds;
         let mut log_changed = false;
-        if (self.tab == Tab::Console || self.play.is_some()) && self.since_log >= 0.5 {
+        if (self.tab == Tab::Console || self.tab == Tab::Activity || self.play.is_some())
+            && self.since_log >= 0.5
+        {
             self.since_log = 0.0;
-            let before = self.log_seq;
+            let before = (self.log_seq, self.activity_seq);
             self.read_log();
-            log_changed = self.log_seq != before && self.tab == Tab::Console;
+            self.read_activity();
+            self.read_proposals();
+            log_changed = match self.tab {
+                Tab::Console => self.log_seq != before.0,
+                Tab::Activity => self.activity_seq != before.1,
+                _ => false,
+            };
         }
         let mut project_changed = false;
         if self.since_project_poll >= PROJECT_POLL_SECONDS {
@@ -3236,6 +5748,7 @@ impl EditorApp {
             self.since_poll = 0.0;
             changed |= self.refresh_scene();
         }
+        changed |= self.cockpit_tick() || self.cockpit.run.is_some();
         self.refresh_target();
         self.view_input(&events);
         self.tick_play(seconds);
@@ -3243,7 +5756,7 @@ impl EditorApp {
         if changed || self.picture_stale || self.pending_pick.is_some() {
             let egui_events = convert(&events, self.pointer);
             if self.canvas.width != size.0 || self.canvas.height != size.1 {
-                self.canvas = Canvas::new(size.0, size.1, BACKDROP);
+                self.canvas = Canvas::new(size.0, size.1, crate::style::pal().backdrop);
             }
             let Some(mut editor) = self.editor.take() else {
                 return false;
@@ -3254,21 +5767,33 @@ impl EditorApp {
             let mut seconds = seconds;
             let mut passes = 0;
             let frame = loop {
+                // A theme chosen last pass goes on the interface now.
+                if std::mem::take(&mut self.restyle) {
+                    editor.restyle();
+                }
                 let mut viewport = self.viewport;
+                let mut game_area = Rect::NOTHING;
                 let mut actions = Actions::default();
                 let frame = editor.layout(
                     size,
                     seconds,
                     egui_events.take().unwrap_or_default(),
                     |ui| {
-                        actions = self.layout(ui, &mut viewport);
+                        actions = self.layout(ui, &mut viewport, &mut game_area);
                     },
                 );
                 self.viewport = viewport;
+                if (self.game_viewport == Rect::NOTHING) != (game_area == Rect::NOTHING) {
+                    // The scene view changes camera when the game view comes
+                    // or goes during a game.
+                    self.picture_stale = true;
+                }
+                self.game_viewport = game_area;
                 let acted = actions.any();
                 self.act(actions);
                 let render_started = std::time::Instant::now();
                 let picked = self.render_viewport(seconds);
+                self.render_game();
                 scene_ms += render_started.elapsed().as_secs_f32() * 1000.0;
                 self.refresh_inspected();
                 self.refresh_target();
@@ -3283,10 +5808,15 @@ impl EditorApp {
             };
             // Backdrop, then the scene, then the panels over it.
             for pixel in self.canvas.pixels.as_chunks_mut::<4>().0 {
-                *pixel = BACKDROP;
+                *pixel = crate::style::pal().backdrop;
             }
             if let Some(picture) = &self.picture {
                 blit(&mut self.canvas, picture, self.viewport);
+            }
+            if self.game_viewport != Rect::NOTHING
+                && let Some(picture) = &self.game_picture
+            {
+                blit(&mut self.canvas, picture, self.game_viewport);
             }
             // (Not while a handle is dragged: the box would stay where the
             // entity was.)
@@ -3326,10 +5856,199 @@ impl EditorApp {
         false
     }
 
+    /// Where the game view is, if it is shown beside the scene view.
+    pub fn game_view_area(&self) -> Option<Rect> {
+        (self.game_viewport != Rect::NOTHING).then_some(self.game_viewport)
+    }
+
+    /// The scene view's place (where the editor's own camera draws).
+    pub fn scene_view_area(&self) -> Rect {
+        self.viewport
+    }
+
     /// The canvas as drawn last.
     pub fn canvas(&self) -> &Canvas {
         &self.canvas
     }
+}
+
+/// The middle must be this wide for the game view to be shown beside the
+/// scene view.
+const GAME_VIEW_MIN_WIDTH: f32 = 900.0;
+/// The gap between the scene view and the game view.
+const VIEW_GAP: f32 = 4.0;
+
+/// A view's name in its top-left corner ("Scene", "Game").
+/// One entry of the Create menu: its id (its command is `create.<id>`, and
+/// new entities are named `<id>_<n>`), the menu's word for it, and the
+/// components it is made with (as `edit_apply`'s `spawn` takes them).
+type CreateKind = (&'static str, fn() -> &'static str, fn() -> Value);
+
+/// The Create menu, in its order (separators after the first, the shapes
+/// and the camera and lights).
+const CREATE_KINDS: &[CreateKind] = &[
+    ("empty", || t("Empty"), || json!({ "Transform": {} })),
+    (
+        "cube",
+        || t("Cube"),
+        || json!({ "Transform": {}, "Primitive": { "shape": "Cube" } }),
+    ),
+    (
+        "sphere",
+        || t("Sphere"),
+        || json!({ "Transform": {}, "Primitive": { "shape": "Sphere" } }),
+    ),
+    (
+        "plane",
+        || t("Plane"),
+        || json!({ "Transform": { "scale": [10, 1, 10] }, "Primitive": { "shape": "Plane" } }),
+    ),
+    (
+        "camera",
+        || t("Camera"),
+        || json!({ "Transform": { "translation": [0, 2, 7] }, "Camera": {} }),
+    ),
+    (
+        "directional_light",
+        || t("Directional light"),
+        || {
+            json!({
+                "Transform": { "rotation": [-0.4545195, 0.3304543, 0.1786597, 0.8067046] },
+                "DirectionalLight": {}
+            })
+        },
+    ),
+    (
+        "point_light",
+        || t("Point light"),
+        || json!({ "Transform": { "translation": [0, 2, 0] }, "PointLight": {} }),
+    ),
+    (
+        "spot_light",
+        || t("Spot light"),
+        || {
+            // Turned a quarter round X, so it shines straight down.
+            let half = std::f64::consts::FRAC_1_SQRT_2;
+            json!({
+                "Transform": { "translation": [0, 3, 0], "rotation": [-half, 0, 0, half] },
+                "SpotLight": {}
+            })
+        },
+    ),
+    (
+        "sprite",
+        || t("Sprite"),
+        || json!({ "Transform": {}, "Sprite": {} }),
+    ),
+    (
+        "particles",
+        || t("Particles"),
+        || json!({ "Transform": {}, "ParticleEmitter": {} }),
+    ),
+];
+
+/// The operations that copy `node` (a `scene_get` node with full detail)
+/// and its children under new ids, each next to the old name (`crate_3`
+/// for `crate_1` when `crate_2` is taken); returns the copy's id. A prefab
+/// instance is copied as an instance of the same prefab, with its changes.
+fn copy_tree(
+    node: &Value,
+    parent: Option<&str>,
+    taken: &mut BTreeSet<String>,
+    ops: &mut Vec<Value>,
+) -> String {
+    let own = node["id"].as_str().unwrap_or("entity");
+    let base = own
+        .trim_end_matches(|c: char| c.is_ascii_digit())
+        .trim_end_matches('_');
+    let base = if base.is_empty() { "entity" } else { base };
+    let id = (1u32..)
+        .map(|n| format!("{base}_{n}"))
+        .find(|id| !taken.contains(id))
+        .unwrap_or_else(|| format!("{own}_copy"));
+    taken.insert(id.clone());
+    let mut op = match node.get("prefab") {
+        Some(prefab) => {
+            let mut op = json!({
+                "op": "instantiate", "id": id, "prefab": prefab, "components": node["components"]
+            });
+            if let Some(overrides) = node.get("overrides") {
+                op["overrides"] = overrides.clone();
+            }
+            op
+        }
+        None => json!({ "op": "spawn", "id": id, "components": node["components"] }),
+    };
+    if let Some(notes) = node.get("notes") {
+        op["notes"] = notes.clone();
+    }
+    if let Some(parent) = parent {
+        op["parent"] = json!(parent);
+    }
+    ops.push(op);
+    for child in node["children"].as_array().into_iter().flatten() {
+        copy_tree(child, Some(&id), taken, ops);
+    }
+    id
+}
+
+/// A strip of controls floating on the view, at the left or the right end
+/// of the band `band` (framed like the panels, small corners); returns
+/// where it is.
+fn floating(ui: &mut Ui, band: Rect, right: bool, add: impl FnOnce(&mut Ui)) -> Rect {
+    let layout = if right {
+        Layout::right_to_left(Align::Min)
+    } else {
+        Layout::left_to_right(Align::Min)
+    };
+    ui.scope_builder(egui::UiBuilder::new().max_rect(band).layout(layout), |ui| {
+        egui::Frame::new()
+            .fill(crate::style::pal().panel)
+            .stroke(egui::Stroke::new(1.0, crate::style::pal().line))
+            .corner_radius(egui::CornerRadius::same(crate::style::pal().radius_widget))
+            .inner_margin(egui::Margin::same(2))
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                ui.horizontal(add);
+            })
+            .response
+            .rect
+    })
+    .inner
+}
+
+/// How to move around the view, quietly at its bottom left.
+fn view_hint(ui: &Ui, area: Rect) {
+    let font = egui::FontId::proportional(11.0);
+    let galley = ui.painter().layout_no_wrap(
+        t("Alt+drag: orbit · Middle drag: pan · Wheel: zoom · Right drag: fly (WASD) · F: frame")
+            .to_owned(),
+        font,
+        crate::style::pal().text,
+    );
+    let size = galley.size() + vec2(12.0, 6.0);
+    if size.x + 16.0 > area.width() {
+        return;
+    }
+    let rect = Rect::from_min_size(pos2(area.min.x + 8.0, area.max.y - 8.0 - size.y), size);
+    ui.painter()
+        .rect_filled(rect, 3.0, egui::Color32::from_black_alpha(130));
+    ui.painter()
+        .galley(rect.min + vec2(6.0, 3.0), galley, crate::style::pal().text);
+}
+
+/// The name of a view (Scene, Game) at its bottom right, when two show.
+fn view_badge(ui: &Ui, area: Rect, name: &str) {
+    let font = egui::FontId::proportional(12.0);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(name.to_owned(), font, crate::style::pal().text);
+    let size = galley.size() + vec2(16.0, 6.0);
+    let rect = Rect::from_min_size(area.max - size - vec2(8.0, 8.0), size);
+    ui.painter()
+        .rect_filled(rect, 6.0, egui::Color32::from_black_alpha(150));
+    ui.painter()
+        .galley(rect.min + vec2(8.0, 3.0), galley, crate::style::pal().text);
 }
 
 /// A two-pixel frame around `rect`, kept inside `clip`.
@@ -3397,7 +6116,7 @@ fn egui_modifiers(modifiers: Modifiers) -> egui::Modifiers {
 }
 
 /// The window's plain events as egui's.
-fn convert(events: &[ShellEvent], pointer: Option<(f32, f32)>) -> Vec<egui::Event> {
+pub(crate) fn convert(events: &[ShellEvent], pointer: Option<(f32, f32)>) -> Vec<egui::Event> {
     let mut out = Vec::new();
     let mut at = pointer.map_or(pos2(0.0, 0.0), |(x, y)| pos2(x, y));
     for event in events {
@@ -3445,6 +6164,9 @@ fn convert(events: &[ShellEvent], pointer: Option<(f32, f32)>) -> Vec<egui::Even
                 }
             }
             ShellEvent::Text(text) => out.push(egui::Event::Text(text.clone())),
+            ShellEvent::Paste(text) => out.push(egui::Event::Paste(text.clone())),
+            ShellEvent::Copy => out.push(egui::Event::Copy),
+            ShellEvent::Cut => out.push(egui::Event::Cut),
             ShellEvent::Modifiers(modifiers) => {
                 out.push(egui::Event::ModifiersChanged(egui_modifiers(*modifiers)));
             }
@@ -3479,6 +6201,19 @@ impl Shell for EditorApp {
     fn wants_exit(&self) -> bool {
         self.exit
     }
+
+    fn take_clipboard(&mut self) -> Option<String> {
+        self.editor.as_mut().and_then(Editor::take_copied)
+    }
+}
+
+/// What a permission mode is called in the interface.
+pub(crate) fn mode_label(mode: &str) -> &'static str {
+    match mode {
+        "suggest" => t("Only suggest"),
+        "autonomous" => t("Autonomous"),
+        _ => t("Apply, I review"),
+    }
 }
 
 /// What a view of the scene is called in the interface (its name, such as
@@ -3492,6 +6227,7 @@ fn view_label(name: &str) -> &'static str {
         "wireframe" => t("Wireframe"),
         "colliders" => t("Colliders"),
         "lights" => t("Lights"),
+        "shadow_cascades" => t("Shadow cascades"),
         _ => t("Other view"),
     }
 }

@@ -1,0 +1,339 @@
+# M10 — Hub, packages and moddability (plan)
+
+**Status:** approved 17 November 2026 (user decision: M10a and M10b go into 1.0, M10c–e come after it); M10a in progress.
+**Recommended model · effort:** M10a and M10c Opus 5.5 · xhigh (lasting interface decisions); M10b, M10d and M10e Opus 5.5 · high.
+**Scope warning:** This plan grows the 1.0 scope. The recommendation is in §9: the base infrastructure (M10a) and the Hub (M10b) go into 1.0; plugins with code (M10c), game packages (M10d) and the ecosystem (M10e) come in 1.x releases.
+**18 November 2026, on the train after 1.0** ([road-to-2-0.md](road-to-2-0.md)): M10c (`wish_ext`) is after 2.0; of M10d, assets and prefabs in packages are release 1.6 and code in packages is an experiment in 1.10; of M10e, the docs site is release 1.3; the signed index and the signed updater are the download layer, which has no release number.
+
+## 1. The request
+
+- AI mode should be a **base template**; people should be able to change it easily and make their own workspaces.
+- There should be a **Hub** like Unity Hub and Epic Launcher: projects, engine versions, plugins, modes.
+- The interface and many other things should be moddable and multi-purpose.
+- The infrastructure for these should be built now, early.
+
+## 2. Why now
+
+When a plugin infrastructure is added later, the engine's own parts stay "special": plugins become second class, internal APIs leak outside, compatibility breaks. The real value of building early is that **the engine's own features also go through the same registries**: AI mode, themes, tools and templates become "first-party plugins". So:
+
+- plugin authors use the same API the engine uses;
+- the gaps of the API show while we build the engine;
+- the engine becomes moddable without being changed.
+
+Today many things are already data: languages (`lang/*.json`), templates (`examples/*`), recipes (`recipes.md`), the diagnostic catalog, the tool catalog. The plan gathers them under one **package** concept.
+
+## 3. Fit with the invariants
+
+| Invariant | What it means for plugins |
+|---|---|
+| 2 Determinism | Package versions are fixed by a lock file (`wish.lock`, with hashes); the replay carries the fingerprint of the packages. Code that enters the game is still deterministic Wasm. |
+| 4 Single control plane | A plugin registers a new capability in `wish_control` **as a tool**; the interface, MCP and the command line see it from the same place. A plugin capability that lives only in the interface does not exist. |
+| 5 Single diagnostic format | The errors of plugins also carry `code`, `message`, location and `hint`; the code prefix is the name of the package. |
+| 7 Game code is untrusted | Plugin code runs in Wasm, in the same sandbox as game code (fuel, memory limit). File, network and project access happen only through **permissions** that are asked for in the manifest and approved by the person. There is no native plugin. |
+| 9 Hybrid parity | Every tool a plugin adds can be used by the AI and by hand; the plugin's panel calls its tools. |
+| License | Every package declares its SPDX license; the Hub compares the license with the allowed list (like `deny.toml`) and shows it. |
+
+## 4. Package model
+
+Everything is a **package**: a folder with a `wish-package.json` manifest (or its `.zip`).
+
+```json
+{
+  "format": 1,
+  "id": "com.example.narrative-workspace",
+  "name": "Narrative Workspace",
+  "version": "1.2.0",
+  "engine": ">=1.0, <2.0",
+  "license": "MIT",
+  "kinds": ["workspace", "recipes", "theme"],
+  "capabilities": ["project.read", "design.write"],
+  "dependencies": { "com.example.dialogue-kit": "^0.3" },
+  "contents": { "workspaces": ["workspaces/story.json"], "themes": ["themes/ink.json"] }
+}
+```
+
+**Package kinds** (from harmless to powerful):
+
+| Kind | What | Code? | Example |
+|---|---|---|---|
+| `theme` | Color tokens, fonts, icon set (SVG paths), corner and spacing sizes | No | "Night blue", high contrast |
+| `language` | Interface translation | No | Japanese |
+| `template` | New project template (today's `examples/*`) | No (game code is compiled) | "Top-down RPG" |
+| `workspace` | The layout of AI mode: panels, game card fields, ready-made requests, ready-made decisions and questions, extra instructions for the agent | No | "Story game workspace" |
+| `recipes` | Recipes and examples the agent reads (`wish://docs/...`) | No | "Dialogue system recipes" |
+| `agent` | Definition of an agent adapter (command line, arguments, MCP configuration) | No (external program) | Another MCP client, a local model wrapper |
+| `tool` | A new tool for the control plane (Wasm) | Yes | "Level checker" |
+| `panel` | A panel for the editor (Wasm; returns a declarative interface tree) | Yes | Dialogue graph editor |
+| `importer` / `exporter` | Asset importer, export target (Wasm) | Yes | `.aseprite` importer |
+| `game` | Game package: components, systems, prefabs, assets | Yes (compiled with the game) | "Platformer kit" |
+
+**Project level:**
+- `wish.json` → `packages: { id: version range }` and the `engine` version.
+- `wish.lock` → resolved versions and SHA-256s (goes into git).
+- Packages are in the user cache (`%LOCALAPPDATA%\Wish\packages\<id>\<version>`); if wanted, they are copied into the project (`packages/`, offline and reproducible).
+
+**Editor level:** themes, languages, workspaces and agent adapters are installed into the person's preferences.
+
+## 5. Architecture: everything is a registry entry
+
+Today there are fixed lists: `CATALOG`, `LANGUAGES`, the `style.rs` constants, `ai_mode::CARD`, `ready_requests()`. These become **registries**. The engine's own parts are written into the same registry too.
+
+| Registry | Place | Today | Later |
+|---|---|---|---|
+| Tools | `wish_control` | `tools::CATALOG` (fixed) | `Registry<Tool>`: the engine's tools + the Wasm tools of packages (namespaced: `package.tool`) |
+| Commands | `wish_editor` | Actions built into buttons | Commands with ids (`editor.play`, `ai.next_step`); a **command palette (Ctrl+K)**, changeable shortcuts; plugins add commands; the agent can call commands too |
+| Panels | `wish_editor` | Fixed layout inside `app.rs` | Panel registry + layout document; AI mode becomes a `workspace` document |
+| Themes | `wish_editor::style` | Constants | Tokens (`color.accent`, `radius.widget`...) + theme JSON; the default theme is a package too |
+| Icons | `vector::parts` | Fixed paths | Icon registry; a theme can change the icon set |
+| Languages | `lang/*.json` | Embedded | Embedded + package languages |
+| Templates | `examples/*` | Folder | `template` package |
+| Diagnostics | `docs::DIAGNOSTICS` | Fixed | The engine's + the packages' (namespaced) |
+| Agent adapters | `wish_agent` | Claude Code, Scripted | `agent` packages; Claude Code is the first package |
+
+**Workspace document:** AI mode itself is this file:
+
+```json
+{
+  "format": 1,
+  "name": "With AI (default)",
+  "layout": {
+    "left":   [{ "panel": "design.card" }, { "panel": "design.decisions" }],
+    "center": [{ "panel": "view.game" }],
+    "bottom": [{ "panel": "design.plan" }, { "panel": "design.notes" }, { "panel": "project.health" }],
+    "right":  [{ "panel": "agent.conversation" }]
+  },
+  "card": [
+    { "key": "title", "label": "Name" },
+    { "key": "pitch", "label": "In one sentence", "lines": 2 },
+    { "key": "classes", "label": "Character classes", "list": true }
+  ],
+  "ready": [{ "name": "Add a level", "request": "..." }],
+  "agent": { "instructions": "...", "tools": ["*"], "model": null }
+}
+```
+
+- The fields of the game card come from data. So there can be cards for specific genres: "classes" for an RPG, "characters" for a story game.
+- The `game_design` tool reads the card fields from the workspace (schema first: the type and limits of the fields are there).
+- The person can drag and change the layout in the editor, save it and share it as a package.
+
+## 6. Hub (growth of the welcome screen)
+
+Not a separate program, but the evolution of the welcome screen (the screen that comes when `wish-engine.exe` is opened). Tabs:
+
+| Tab | Content |
+|---|---|
+| **Projects** | Recent projects, new project (templates = `template` packages), open, show in folder; the engine version of each project |
+| **Learn** | Guide, example games, recipes, short missions ("make your first game in 10 minutes") |
+| **Packages** | Installed packages; search, install, update, remove from the index; license, permissions, dependencies, release notes |
+| **Appearance** | Themes, workspaces, languages, icon sets; instant preview |
+| **Engine versions** | Versions installed side by side; a project opens with the version in its `wish.json`; update (signed) |
+| **AI** | Agent adapters (Claude Code and others), account status, default model, spending summary |
+| **Settings** | Folders, privacy (nothing is sent), crash reports |
+
+**Package index (registry), serverless and free:**
+- An open git repository (`wish-registry`), one JSON per package: versions, download address (GitHub Releases etc.), SHA-256, license, the publisher's public key.
+- The Hub downloads the index and searches locally. It works offline. No commission, no payment (in line with the vision).
+- Publishing = a PR to the index (`wen pkg publish` prepares it). The signature is ed25519; an unverified package is clearly marked.
+- A person can add other indexes too (inside a company, community).
+
+## 7. Plugins with code (M10c) and game packages (M10d)
+
+**Editor plugins (Wasm):**
+- `wish_ext` ABI v1: separate from the game ABI, versioned.
+- A plugin registers: tools (with schema parameters; the `Param` table is the same), panels (each frame they return a declarative interface tree: title, text, button, field, list; the editor turns it into egui), importers and exporters, `check` rules, event hooks (before saving, after a task).
+- A plugin cannot write files on its own: it calls control plane tools, and these calls enter the history with `actor: "ext:<package>"`.
+- The sandbox is the same as `wish_script`'s (fuel, memory). Hostile package tests (manifest, ABI fuzzing) are required.
+
+**Game packages:**
+- Source package: it enters the same `rustc` build as the game code as `--extern` (an extension of ADR-025).
+- It brings its own components, systems, prefabs and assets; their schemas are namespaced.
+- Version resolution is semver; a lock file; the replay carries the package fingerprint.
+
+## 8. Extra strategies for "making the engine better"
+
+| Strategy | Why | When |
+|---|---|---|
+| **Command palette and command ids** | Everything by keyboard; moddable shortcuts; the agent can call commands too | M10a |
+| **Theme tokens** | The interface changes without recompiling; accessibility (high contrast, large text) | M10a |
+| **Dockable panels** | The person builds their own layout, as in Unity and Unreal; the workspace document can be edited by hand | M10a |
+| **Engine version pinning + migration** | Old projects open safely with the new engine (`wen migrate` already exists) | M10a |
+| **Git-friendly merging** | Thanks to canonical JSON, a 3-way merge driver for scene and design files (`wen merge`); teamwork without a server | M10b |
+| **Signed updater** | Safe one-click update from the Hub | M10b |
+| **Linux and macOS packages** | For the community and plugin authors | M10b–M10e |
+| **`profile_get`** | Planned but not done; it also measures the cost of plugins | M10c |
+| **Plugin development kit** | `wen ext new/test/pack/publish`, a template plugin, docs generated from the schema | M10c |
+| **RFC process** | Lasting changes in the plugin API are discussed in public | M10e |
+
+## 9. Work packages and order
+
+**M10a — Base infrastructure (recommended for 1.0)**
+1. Registries: tool, command, panel, theme, icon, language, template, diagnostic. The engine's parts move into the registry, behavior does not change.
+2. Command palette (Ctrl+K) and changeable shortcuts.
+3. Theme tokens and theme JSON; the default theme is a package.
+4. Workspace document: AI mode and manual mode become two default workspaces; game card fields and ready-made requests come from data; the layout is saved.
+5. Package manifest, `wish.lock`, local package folder; data packages (theme, language, template, workspace, recipe).
+6. The `wish.json` engine version field.
+7. Tests: for each registry a "the engine's part also goes through the registry" test; hostile manifests; parity.
+
+**M10b — Hub (recommended for 1.0)**
+1. Welcome screen → Hub tabs (Projects, Learn, Packages, Appearance, AI, Settings).
+2. Package index format and `wen pkg search/add/remove/update/lock`.
+3. Install, remove, update; license and permission display; signature verification.
+4. Engine versions: side-by-side install, opening the project with the right version.
+5. Example packages: a theme, a workspace ("Story game"), a recipe package.
+
+**M10c — Plugins with code (1.x)**
+1. The `wish_ext` ABI and sandbox; permissions.
+2. Tool, panel, importer and hook kinds.
+3. The `wen ext` development kit; the example "Level checker".
+
+**M10d — Game packages (1.x)**
+1. Compiling source packages with the game, namespaced schemas.
+2. The example "Platformer kit".
+
+**M10e — Ecosystem (1.x)**
+1. Publishing flow, signing keys, the index repository.
+2. Docs site, RFC process.
+
+## 10. Decisions owned by the user
+
+- Scope: should M10a and M10b go into 1.0 (recommendation: yes)?
+- The name and owner (GitHub account) of the package index repository; later, together with the name and brand decision.
+- Which will be the first official packages (recommendation: dark and light themes, the "Story game" workspace, "Platformer" recipes).
+
+## 11. Risks
+
+- **Scope:** every work package is the size of a milestone. The order and the 1.0 boundary must be kept.
+- **Freezing the API early:** ABI v1 comes out marked "experimental"; the version field exists from day one.
+- **Security:** plugin code is treated as untrusted as game code; no file or network access without permission; hostile tests are part of the closing review.
+- **Determinism:** packages are tracked in the replay and in the hash; playback without a lock file gives a warning.
+
+## 12. M10a in detail (decisions before code)
+
+**Work packages, in order** (each one is built, tested and committed on its own):
+
+| WP | Content | Why in this order |
+|---|---|---|
+| WP1 | Package core in the control plane: manifest, validation, versions and version requirements, install / remove / list / check / lock, `wish.lock`, the `packages` tool (33rd) | Everything else is a kind of package |
+| WP2 | Theme tokens and theme packages; the default theme is a package | The first content kind; it changes the look without rebuilding |
+| WP3 | Workspace documents: the AI mode's layout, card fields, ready requests and agent instructions from data; workspace packages | The user's main wish: the AI mode as a template |
+| WP4 | Command registry, command palette (Ctrl+K), remappable shortcuts | Every action gets an id that packages and agents can name |
+| WP5 | Templates, languages and recipes from packages | The remaining data kinds |
+| WP6 | Closing review | |
+
+**Package files.**
+- A package is a folder with `wish-package.json` at its root. Hidden files and folders (`.git`, `.wish`) are not part of it.
+- `id`: lowercase, dot-separated, at least two parts (`com.example.dusk`), 3 to 64 characters of `a-z 0-9 - .`. The engine's own packages start with `wish.`; a package from outside cannot take that prefix.
+- `version`: `major.minor.patch`, numbers only (pre-release tags later if needed).
+- `engine`: a version requirement: comparators `>=`, `>`, `<=`, `<`, `=`, `^`, `~`, joined with commas (`>=0.9, <2.0`). A bare version means `^`.
+- `license`: an SPDX expression. Known permissive licenses pass silently; anything else installs with the warning `package_license_unknown`, so the person decides.
+- `contents`: kind → list of package-relative paths. Kinds in M10a: `themes` (`.json`), `workspaces` (`.json`), `languages` (`.json`), `recipes` (`.md`), `templates` (folders with a `wish.json`). An unknown kind is an error with the closest real one as the hint.
+- Limits: 4,096 files, 64 MiB, no links (a link could point outside the package).
+
+**Two scopes.**
+- `project`: inside the project, `packages/<id>/`, recorded in `wish.json` (`"packages": { "<id>": "<requirement>" }`, only written when there is at least one, so old projects stay byte-identical) and in `wish.lock` (canonical JSON: every package's id, version and content hash, the stable hash of its sorted files). The project carries its packages: it opens the same way on any machine, offline.
+- `user`: the person's own packages (themes, languages, workspaces), in `<config>/packages/<id>/`.
+- `packages/` is not an asset folder.
+
+**Install, remove, lock.**
+- Install copies the folder into a side folder, checks it there, and only then moves it into place (a failed install leaves nothing behind). The same id at another version is replaced only with `replace: true`.
+- Remove moves the package to `.wish/trash/packages/` (project) or `<config>/trash/packages/` (user), never deletes it: a removal can be undone by hand (ADR-022).
+- `lock` writes `wish.lock` from what is installed; `list` warns (`package_lock_mismatch`) when a package's files no longer match its lock entry.
+- Every mutating action has `dry_run`; every action enters the history and activity feed with its actor.
+
+## 13. Results
+
+- **WP1 (packages core):** `wish_control::packages` and the `packages` tool (33rd); the editor's Packages window; `wish.json` gains `packages` only when there is one; no packages means no `wish.lock`. A parity run caught absolute paths in diagnostics (the same call in two processes must give the same bytes): diagnostics name the manifest, not the folder.
+- **WP2 (themes):** the palette became `style::Theme`, read through `pal()`; the three engine themes are packages in `packages/` (Atelier, Midnight, High contrast). Atelier is the old look exactly: the golden images did not change. A theme chosen from the menu is applied before the next layout (the editor's context is out of reach while a frame is laid out). Text on the accent picks dark or white by the accent's lightness (High contrast's yellow).
+- **WP3 (workspaces):** the card's fields moved into the design file when a workspace is chosen (`game_design set_workspace`), so the control plane and the agent know them and the project carries them; ready requests and the agent's extra words come from the workspace package. The default workspace stays in code because its texts are translated with the interface; package texts are plain or per language. First engine workspace: Story game (setting, characters, tone, choices, endings).
+- **WP4 (commands):** every editor action has an id, a name and default shortcuts in one table; the hard-coded shortcuts became bindings from it; the person's `keys` preference replaces them; Ctrl+K opens the palette (it opens even while typing in a text box). Packages and agents naming commands comes with code extensions (M10c).
+- **WP5 (templates, languages, recipes):** recipes are searched and served to agents from the project's and the person's packages; templates from the person's and the engine's packages appear in `wen new --template` and on the welcome screen, picture included (`.template/` is the one hidden folder a package keeps); languages from packages join the menu at run time (a built-in code cannot be taken).
+- **M10b WP1 (the Hub):** the welcome screen gained tabs (Projects, Packages, Look, AI, Learn, Settings); every page writes only the person's preferences and packages; the Projects page is the old welcome screen unchanged.
+- **M10b WP2 (the package index, offline):** `wish_control::package_index` (a folder of packages or an `index.json`; §14), `packages` `search`/`add`/`update`, `wen pkg`, the index section in the Packages window and on the Hub. The index's folder is the `package_index` preference. A version's content hash is checked in the side folder, before the package moves into place. Search marks an update only when `update` would do it (the newest *compatible* version), so the two never disagree.
+- **M10b WP3 (engine versions side by side):** `wish_control::engines` and the `engines` tool (34th; §15), `wen engines`, the Hub's *Engine versions* tab, `wish-engine.json` in every package `wen package` makes. A project goes to the engine of its exact version, else the newest compatible one: from the launcher (`wen edit --pick-engine`) and from the Hub's recent projects; with none, this engine opens it and says why.
+- **M10a exit:** the default theme and a workspace are engine packages; a theme, a workspace, a recipe, a template and a language made outside the engine install from a folder, change the editor without a rebuild and come off again cleanly; `wish.lock` pins a project's packages. The Hub's Packages tab (M10b) puts a face on the package index.
+
+## 14. M10b in detail: the package index, offline first
+
+**User decision (18 November 2026):** the index works offline first; downloading over the internet (an HTTP/TLS library, the index repository's name and owner) comes after the user decides on them.
+
+**Problem.** A person or an agent should find packages by name or kind, install the newest one that fits this engine, and update installed ones, without knowing where each package folder is.
+
+**Options.** (a) Wait for the online index and build everything at once; (b) make the index a folder now (a local index), with the same format the online one will use, so that downloading later only adds "fetch the index and the package into a cache folder". (b) was chosen: everything above the fetch (search, choosing a version, checking, installing, updating, locking, the Hub's face) is the same either way.
+
+**Index format.** An index is a folder. Either it has an `index.json`:
+
+```json
+{ "format": 1, "name": "My index", "packages": [
+  { "id": "com.example.dusk", "name": "Dusk", "description": "...", "license": "MIT", "kinds": ["themes"],
+    "versions": [ { "version": "1.1.0", "engine": ">=0.1", "hash": "<content hash>", "path": "dusk/1.1.0" } ] } ] }
+```
+
+where `path` is a folder inside the index (forward slashes, no `..`) and `hash` (optional) is the package's content hash, checked after the copy and before the package is moved into place; or it has no `index.json`, and then every package folder in it (`<folder>/wish-package.json`, or one level deeper: `<id>/<version>/wish-package.json`) is an entry, read from its manifest. A folder of packages is therefore already an index. The online index will add a download address and an archive digest to each version; the fields above stay.
+
+**Where the index is.** The `index` parameter (a folder), else `WISH_PACKAGE_INDEX`, else `<config>/index/` (where the online index will be cached). No index gives `package_index_missing` with a hint naming all three.
+
+**Actions** (on the `packages` tool; `wen pkg` and the Hub call them):
+- `search` (`query`, may be empty): matches id, name, description and kinds without regard to case; each result names its newest version that fits this engine, the installed versions (project, person) and whether an update is waiting. Read-only: it does not enter the activity feed and is never held in suggest mode.
+- `add` (`id`, optional `version` requirement, `scope`, `replace`): installs the newest fitting version through the same checked install as a folder install; the project's `wish.lock` is written again.
+- `update` (optional `id`, `scope`): for every installed package the index knows, installs the newest version that fits the engine and stays compatible (`^installed`) unless `version` says otherwise; answers `updated`, `current`, `not_in_index`.
+
+**Hostile index.** `index.json` over 16 MiB, more than 10,000 packages or 1,000 versions of one, a `path` leaving the index, an invalid id or version are `package_index_invalid` (with the JSON pointer); a version whose files do not hash to the index's hash is refused (`package_hash_mismatch`) and nothing is installed.
+
+**Test plan.** Control plane: search/add/update/remove against a scanned index and an `index.json` index, version choice (engine mismatch, requirement), hash mismatch leaves no trace, hostile `index.json` cases, a person-only user scope. `wen pkg` parses into the same calls. Editor: the Packages window and the Hub search the index and install by hand (parity).
+
+## 15. M10b in detail: engine versions side by side
+
+**Problem.** A game plays bit for bit the same only on the engine it was made with (the replay and the world hash depend on it), and a newer engine may change a project's files. A person with several projects needs several engines on one computer, and each project should open with its own without the person keeping track.
+
+**Options.** (a) One engine, always migrating projects forward (simple, but an old project's replays stop matching and nobody can go back); (b) side-by-side engines like other hubs, each project opening with its version. (b) was chosen. Copying an engine (hundreds of MiB with the packed compiler) into a central folder was not made the only way: a person can also *add* an engine folder where it is, like "Locate" in other hubs.
+
+**Decision.**
+- An engine is a folder with `wen` and `wish-engine.json` (`{ "format": 1, "opens_from": "x.y.z", "version": "x.y.z" }`; `opens_from` is optional, added by M12 package 11a); `wen package` writes it.
+- The person's engines: the running one; every folder in `<config>/engines/` (where downloaded engines will go, once there is a download address); the folders listed in `<config>/engines.json` (`{ "format": 1, "folders": [...] }`, canonical). At most 64. A listed folder that is no longer an engine is a warning, and removing it forgets it.
+- **Which engine opens a project** (`wish.json` `engine`): the exact version (the running engine first among equals), else the newest installed engine that opens it unchanged: not older than the project, and its `opens_from` (the oldest version whose projects it opens unchanged, `wish_control::engines::OPENS_FROM`) no newer than the project's version (`"fit": "compatible"`). An engine whose `wish-engine.json` has no `opens_from` (packaged before the key existed) is judged by the caret rule (`^version`: never another major, or another minor below 1.0), and only for a project older than 0.1.0: a 0.1.0 package from before the look lock calls itself 0.1.0 too and cannot read scene format 2, so it is not taken even as the exact version. With none, the running engine opens it and says why (newer project: install that version; older than its `opens_from`: a file format changed since, so its files will change when they are saved).
+  - *Corrected by M12 package 11a (19 November 2026; ADR-027, rule 3).* This section first said "the newest installed version compatible with it (`^version` ...)": across 0.x the caret made every minor incompatible, so a project of 0.2.0 would have opened in 0.3.0 with a false note even with no format change between them. `VersionReq` keeps the caret for package requirements; only the choice of engine changed ([M12-public-face-code.md](M12-public-face-code.md) §3).
+- Where it applies: the launcher passes `--pick-engine` to `wen edit` for a project dropped on it, and `wen edit` starts the chosen engine and waits for it (its error goes to the launcher); the Hub's recent projects and *Open* start the chosen engine and close. `wen edit --root` without the flag opens the project with that `wen`, as asked.
+- Adding and removing are a person's (`permission_denied` for agents): they change the person's computer for every project. `list` and `pick` are looks.
+
+**Test plan.** Control plane: add (dry run, twice, not an engine, bad version), list order and warnings, remove (added: forgotten, installed: trash, running: refused, unknown), a broken list, the choice rules (exact, running among equals, newest compatible, `opens_from` across 0.x and the caret rule for engines without it, none), the tool's person-only actions. `wen engines` parses and runs add/list/pick/remove against `WISH_CONFIG_DIR`. Editor: the Hub adds and removes an engine by hand, and a recent project made with another installed version is handed to it (the window would close).
+
+## 16. M10b closing review
+
+Three independent reviews (package index, engine versions, the Hub) read the M10b changes (`ad0b2e0..991ec1d`). 31 findings; each was checked against the code before it was fixed. Regression tests: `wish_control/tests/review_m10b.rs`, `wish_editor/tests/welcome.rs` (`the_hub_forgets_a_gone_engine_and_shows_the_persons_shortcuts`), and the updated `package_index.rs`.
+
+**Package index and packages**
+- `update` of every package stopped at the first one that failed (a stale index entry, an engine mismatch, a `wish.` id from another index) and, after a failed install, left `wish.lock` and `wish.json` behind the files. Now a failing package is listed in `failed` (id, code, message, hint), the others still update, and whatever went into place is locked. Asked for by `id`, the problem is the answer; an installed package with a broken manifest is reported, not "up to date".
+- An `index.json` `path` could lead out of the index through a link or junction (only the text was checked). The real folder must now be inside the real index (`package_index_invalid`).
+- The `wish.` prefix check compared paths as text, so `<engine packages>/../..` passed. Both folders are now resolved first.
+- Partial versions in requirements were filled with zeros and compared exactly (`=1.2` was only 1.2.0, `^0` only 0.0.0). They now mean every version they start, as in Cargo.
+- A replace whose old version went to the trash but whose new one could not move in left nothing in place and a side folder behind. The side folder is cleared on every failure and the old version comes back.
+- Manifests are read up to 256 KiB, and a scanned index looks at no more than 20,000 folders (a folder that is not an index, such as a whole disk, no longer freezes the editor).
+- `search` names, per scope, whether an update waits (`update: { project, user }`): the editor showed Update beside a scope with nothing to update, and its answer read "installed ? ?". The status line is shared (`packages_window::index_status`) and says "up to date".
+- The Hub had its own copies of install, add and update. They now call the control plane's own functions, which the `packages` tool calls too (`packages::install_from`, `package_index::add`/`update`): no silent replace (an installed package must be removed first), warnings shown, a folder written in full.
+
+**Engine versions**
+- A Hub hand-off closed the window as soon as the other engine's process existed; if that engine stopped at once (it did not know the `--lang` passed to it, say), nothing opened and nothing was said. The window now stays until the engine has run for 2 s; if it ends with an error, the project opens here with what it wrote (`<machine folder>/hand-off-error.txt`). `--lang` is no longer passed (the preference carries it).
+- An older engine rewrote a newer engine's `engines.json` as format 1 with one entry. A list of a newer format is now never written (`engine_registry_invalid`); a broken one is kept as `engines.json.bak` before the list is written anew.
+- The limit of 64 counted only folders that were engines at that moment, and the list was cut to 64 when read for writing, dropping entries. Every listed folder now counts, nothing is cut on writing, and engines past the limit are a warning.
+- Installed engines and the list of added folders lived in the roaming `%APPDATA%`: hundreds of MiB per engine would roam, and this computer's paths would show on others. They are now in the machine's own folder (`crash::machine_folder()`: `%LOCALAPPDATA%\Wish` on Windows; `WISH_CONFIG_DIR` when set).
+- Every folder is resolved once per listing (a folder on an offline drive no longer makes each comparison wait), and `wen edit --headless-frame` does not look at the engines at all (its picture depends only on its arguments).
+- `wen package` writes `wish-engine.json` last: a package that stopped half way is not an engine.
+- An installed engine also in the list stayed there as a gone folder after removal; the running engine's folder in the list could never be forgotten. Both are forgotten now.
+- `wen edit --pick-engine` passes `--size` and `--exit-after` on, and an engine that ends with an error is not blamed on an incomplete folder.
+- Added folders that are no longer engines are listed apart (`Listing::stale`, the tool's `stale`), and the Hub shows them with Remove (it had no way to forget them).
+
+**The Hub**
+- Templates and their pictures are read again after a package comes or goes (a removed template package left a card pointing into the trash).
+- The packages and engines are read once (an empty theme list made the Hub read every package every frame), and each theme is parsed once, not on every layout of the Look tab.
+- The Learn tab shows the person's own shortcuts (the `keys` preference).
+- Folders and web pages open with the system (`app::open_with_os`, through `explorer` on Windows, never `cmd /C start`, which reads `&` in a path as another command), never with `WISH_EDITOR`.
+- The tab column is as wide as its longest name in the person's language (es/fr/it/el cut "Engine versions").
+- Emptying the index field forgets the `package_index` preference.
+- Wording: de "Look" → "Aussehen"; tr "this one" → "çalışan", "added" → "eklenmiş", "yours" → "sizde"; el "added".
+
+**Accepted, not changed**
+- `wen engines add` and `wen pkg add --user` from a shell count as the person (the actor of the command line is `human`): an agent with a shell is the person's own tool there, as with `permissions`. The `person_only` rule is for agents calling through MCP.
+- `the_engines_tool_lists_picks_and_is_a_persons` reads the machine's real engines list; its assertions hold whatever engines are installed.
+- Buttons named only "Remove" (one per row) are told apart by their row, not by name, for screen readers. Moved to the M11 list (accessible names per row).
+

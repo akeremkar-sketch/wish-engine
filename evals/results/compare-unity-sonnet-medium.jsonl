@@ -1,0 +1,8 @@
+{"engine": "unity", "task": "place_cube", "passed": true, "why": "cube at (2, 0.5, 0)", "turns": 6, "input_tokens": 215447, "output_tokens": 837, "cost_usd": 0.0841045, "tool_errors": 1, "tool_calls": 5}
+{"engine": "unity", "task": "paint_red", "passed": true, "why": "colours [(1.0, 0.0, 0.0)]", "turns": 10, "input_tokens": 275229, "output_tokens": 1610, "cost_usd": 0.12236310000000002, "tool_errors": 1, "tool_calls": 9}
+{"engine": "unity", "task": "falling_box", "passed": true, "why": "rigidbody with gravity, solid colliders on box and floor (static check)", "turns": 7, "input_tokens": 223036, "output_tokens": 1205, "cost_usd": 0.0995492, "tool_errors": 1, "tool_calls": 6}
+{"engine": "unity", "task": "point_light", "passed": false, "why": "point light at (0, 3, 0)", "turns": 7, "input_tokens": 255273, "output_tokens": 944, "cost_usd": 0.0949485, "tool_errors": 1, "tool_calls": 6}
+{"engine": "unity", "task": "camera_view", "passed": true, "why": "target inside a camera's view (geometry)", "turns": 8, "input_tokens": 228572, "output_tokens": 1628, "cost_usd": 0.10923120000000001, "tool_errors": 1, "tool_calls": 7}
+{"engine": "unity", "task": "reparent", "passed": true, "why": "world position kept", "turns": 9, "input_tokens": 258324, "output_tokens": 1203, "cost_usd": 0.1008466, "tool_errors": 1, "tool_calls": 8}
+{"engine": "unity", "task": "delete", "passed": true, "why": "old gone, missing: []", "turns": 7, "input_tokens": 252979, "output_tokens": 781, "cost_usd": 0.0884403, "tool_errors": 1, "tool_calls": 6}
+{"engine": "unity", "task": "scale_floor", "passed": true, "why": "scale {'x': 40.0, 'y': 0.2, 'z': 40.0}", "turns": 8, "input_tokens": 258479, "output_tokens": 1185, "cost_usd": 0.09831870000000001, "tool_errors": 1, "tool_calls": 7}

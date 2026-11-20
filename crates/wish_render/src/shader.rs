@@ -65,6 +65,12 @@ impl ShaderLibrary {
             .insert(name.to_owned(), (file.to_owned(), source.to_owned()));
     }
 
+    /// The file name a module was added with (the path shown in
+    /// diagnostics), if the library has a module of that name.
+    pub fn file_of(&self, name: &str) -> Option<&str> {
+        self.modules.get(name).map(|(file, _)| file.as_str())
+    }
+
     /// Puts `entry` and everything it imports together, imports first.
     pub fn compose(&self, entry: &str) -> Result<ComposedShader> {
         let mut order = Vec::new();
