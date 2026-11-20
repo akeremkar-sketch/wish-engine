@@ -159,17 +159,17 @@ pub const PARITY: &[Capability] = &[
     ),
     op(
         "project_settings",
-        "Project menu: Settings... (name, default scene, input map)",
+        "File > Settings... (name, default scene, input map)",
         "settings::a_new_action_is_added_and_the_project_renamed",
     ),
     op(
         "script_build",
-        "Project menu: Build code (and on the card of a scene that needs it)",
+        "Game > Build code (and on the card of a scene that needs it)",
         "panels::a_build_that_fails_shows_its_problems",
     ),
     op(
         "capture_frame",
-        "Project menu: Save picture (captures/)",
+        "File > Save picture (captures/)",
         "parity_ops::the_view_is_saved_as_a_picture",
     ),
     // Running the game.
@@ -205,17 +205,17 @@ pub const PARITY: &[Capability] = &[
     ),
     op(
         "replay",
-        "Menu bar: Record, then Play and Stop (saved); Project menu: Replays (play back)",
+        "Toolbar: Record, then Play and Stop (saved); Game > Replays (play back)",
         "parity_ops::a_run_is_recorded_and_played_back",
     ),
     op(
         "checkpoint",
-        "Project menu: Checkpoints (save, go back, compare with now: the before/after window, delete)",
+        "Edit > Checkpoints (save, go back, compare with now: the before/after window, delete)",
         "parity_ops::a_checkpoint_is_saved_compared_and_gone_back_to",
     ),
     op(
         "project_export",
-        "Project menu: Export game (exports/<name>/)",
+        "File > Export game (exports/<name>/)",
         "parity_ops::the_game_is_exported_from_the_menu",
     ),
     op(
@@ -225,7 +225,7 @@ pub const PARITY: &[Capability] = &[
     ),
     op(
         "packages",
-        "Project menu: Packages (install from a folder into the project or for yourself, remove, write the lock again)",
+        "File > Packages (install from a folder into the project or for yourself, remove, write the lock again)",
         "packages::packages_are_installed_and_removed_by_hand",
     ),
     op(
@@ -235,7 +235,7 @@ pub const PARITY: &[Capability] = &[
     ),
     op(
         "permissions",
-        "Project menu: Permissions (Only suggest, Apply I review, Autonomous)",
+        "AI > Permissions (Only suggest, Apply I review, Autonomous)",
         "parity_ops::an_agents_proposal_is_accepted_and_rejected_by_hand",
     ),
     op(
@@ -245,7 +245,7 @@ pub const PARITY: &[Capability] = &[
     ),
     op(
         "test_run",
-        "Project menu: Run tests (failures in the Problems tab), Update golden pictures",
+        "Game > Run tests (failures in the Problems tab), Update golden pictures",
         "parity_ops::the_tests_run_from_the_menu",
     ),
     // Questions: the editor answers them by showing.
@@ -261,7 +261,7 @@ pub const PARITY: &[Capability] = &[
     ),
     query(
         "check",
-        "Project menu: Check; the Problems tab",
+        "Game > Check; the Problems tab",
         "panels::a_problem_is_listed_and_a_click_selects_its_entity",
     ),
     query(

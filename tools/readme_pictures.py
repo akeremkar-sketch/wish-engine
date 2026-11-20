@@ -55,9 +55,10 @@ def level_ops():
 def editor_script(name):
     """The editor at 1280x720 with the showcase open, after a few idle
     frames so that the views have drawn. "editor": a crystal selected in the
-    hierarchy, so that the gizmo and the inspector show. "editor-ai": the
-    switch in the top bar set to With AI."""
-    click = [70, 170] if name == "editor" else [198, 18]
+    hierarchy (its fourth row, under the filter), so that the gizmo and the
+    inspector show. "editor-ai": the switch in the toolbar set to With AI.
+    The places are those of the editor's layout since its redesign (M12)."""
+    click = [70, 216] if name == "editor" else [534, 49]
     return {
         "size": [1280, 720],
         "steps": [

@@ -1359,16 +1359,51 @@ fn splash_frame(welcome: &mut Welcome, size: (u32, u32), played: f64, seconds: f
                 );
                 // The name comes in as the bone settles.
                 let shown = ((t - 0.55) / 0.35).clamp(0.0, 1.0) as f32;
+                let name_size = (side * 0.2).clamp(22.0, 40.0);
                 if shown > 0.0 {
                     let color = crate::style::pal().text.gamma_multiply(shown);
                     ui.painter().text(
                         egui::pos2(area.center().x, mark.bottom() + 18.0 + 8.0 * (1.0 - shown)),
                         egui::Align2::CENTER_TOP,
                         "Wish Engine",
-                        egui::FontId::proportional((side * 0.2).clamp(22.0, 40.0)),
+                        egui::FontId::proportional(name_size),
                         color,
                     );
                 }
+                // The promise comes in a moment after the name.
+                let promise = ((t - 0.8) / 0.3).clamp(0.0, 1.0) as f32;
+                if promise > 0.0 {
+                    ui.painter().text(
+                        egui::pos2(area.center().x, mark.bottom() + 26.0 + name_size),
+                        egui::Align2::CENTER_TOP,
+                        crate::i18n::t("Make a wish, and it is done."),
+                        egui::FontId::proportional(14.0),
+                        crate::style::pal().weak.gamma_multiply(promise),
+                    );
+                }
+                // A thin line along the bottom fills as the opening plays,
+                // and the engine's version sits under its end.
+                let width = (area.width() * 0.3).clamp(160.0, 320.0);
+                let line = egui::Rect::from_center_size(
+                    egui::pos2(area.center().x, area.max.y - 48.0),
+                    egui::vec2(width, 2.0),
+                );
+                ui.painter()
+                    .rect_filled(line, 1.0, crate::style::pal().line);
+                let done = (played / SPLASH_SECONDS).clamp(0.0, 1.0) as f32;
+                ui.painter().rect_filled(
+                    egui::Rect::from_min_size(line.min, egui::vec2(width * done, 2.0)),
+                    1.0,
+                    // The mark's own purple: the opening is the mark's moment.
+                    egui::Color32::from_rgb(156, 130, 255),
+                );
+                ui.painter().text(
+                    egui::pos2(line.max.x, line.max.y + 10.0),
+                    egui::Align2::RIGHT_TOP,
+                    env!("CARGO_PKG_VERSION"),
+                    egui::FontId::proportional(11.0),
+                    crate::style::pal().weak,
+                );
             });
     });
     for pixel in welcome.canvas.pixels.as_chunks_mut::<4>().0 {
@@ -1544,7 +1579,7 @@ fn new_game(ui: &mut Ui, welcome: &mut Welcome, templates: &[Template], claude: 
                         rect,
                         Icon::Hand,
                         t("Nobody: I make it by hand"),
-                        t("Any MCP agent can connect later: Project menu, Connect an outside agent."),
+                        t("Any MCP agent can connect later: AI > Connect an outside agent."),
                         enabled,
                     );
                 },
@@ -1873,7 +1908,7 @@ fn open_game(ui: &mut Ui, welcome: &mut Welcome, asked: &mut Asked) {
             (
                 Icon::Folder,
                 crate::style::pal().amber,
-                t("Project menu, Export game: a folder that runs without the engine."),
+                t("File > Export game: a folder that runs without the engine."),
             ),
         ] {
             ui.horizontal_top(|ui| {

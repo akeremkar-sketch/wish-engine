@@ -151,7 +151,7 @@ pub(crate) fn packages(ui: &mut Ui, view: &HubView, path: &mut String, asked: &m
         ui,
         t("Packages"),
         t(
-            "Themes, workspaces, languages, recipes and templates for every project you open. A project's own packages are in the editor (Project menu, Packages...).",
+            "Themes, workspaces, languages, recipes and templates for every project you open. A project's own packages are in the editor (File > Packages...).",
         ),
     );
     card(ui, |ui| {

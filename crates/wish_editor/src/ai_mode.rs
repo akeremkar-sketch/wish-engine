@@ -1299,7 +1299,7 @@ pub(crate) fn settings(ui: &mut Ui, view: &AiView, actions: &mut AiActions) {
             ui.add_space(6.0);
             crate::style::panel_title(ui, t("Permissions"));
             ui.weak(tf(
-                "Now: {mode} (Project menu > Permissions changes it)",
+                "Now: {mode} (AI > Permissions changes it)",
                 &[("mode", &crate::app::mode_label(view.permission))],
             ));
             ui.add_space(6.0);
