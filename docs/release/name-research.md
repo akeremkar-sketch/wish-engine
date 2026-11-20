@@ -73,3 +73,13 @@ Sources of the second round:
 [Project Sigil FAQ](https://dndbeyond-support.wizards.com/hc/en-us/articles/26423004178196-Project-Sigil-Playtest-FAQ),
 [Glimmer and TypeScript](https://mtmckenna.github.io/posts/2017/06/10/prototyping-a-game-in-glimmer-and-typescript),
 [TELLISIM](https://www.trademarkelite.com/trademark/trademark-detail/99251397/TELLISIM).
+
+## Decision (20 November 2026)
+
+**The name stays "Wish Engine"** (user decision, after the second round).
+The risk named above (the WISH marks of another company in software classes)
+is known and accepted for now. A trademark attorney's similarity search
+(classes 9 and 42; TÜRKPATENT, EUIPO, USPTO) stays the user's step; if it
+raises an objection, the second round's clean candidates are the fallback.
+The domain `wishengine.com` is registered by someone else; `wishengine.dev`
+and `wishengine.org` were not registered on the day of the lookup.

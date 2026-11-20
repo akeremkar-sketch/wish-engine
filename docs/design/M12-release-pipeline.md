@@ -362,7 +362,8 @@ was not run anywhere: everything about it is in "Not verified" below.
 - **Measured LTO choices** (fat, one codegen unit): later; the dist `wen.exe`
   is 42.3 MB with thin LTO and the static C runtime.
 - **The archive's name** carries the engine's name; the name is the user's
-  decision (M12 §7, decision 2). Renaming is one constant
+  decision (M12 §7, decision 2; answered 20 November 2026: "Wish Engine"
+  stays, so the archives keep `wish-engine-...`). Renaming is one constant
   (`wish_control::release::stem`) and the workflow's `STEM`.
 - **Zip times are UTC** written as MS-DOS local times (zip has no time
   zone): an extracted file shows the commit's UTC time as local time.
