@@ -372,7 +372,9 @@ one is treated as decided.
 6. *(open; asked now)* A spending cap per measurement campaign, so runs do
    not need a yes each time. The first campaign is the scorecard baseline of
    1.0.
-7. *(open)* Outside people: testers for the two-week beta of 1.0; after it,
+7. *(open; 21 November 2026: the user is finding them; the guide, the
+   issue forms and the plan of package 13 are ready:
+   [M12-beta-and-release.md](M12-beta-and-release.md))* Outside people: testers for the two-week beta of 1.0; after it,
    one or two for an informal run at 1.3, three fresh ones for the formal
    test at 1.4 and again at 2.0, ten or more for the beta of 2.0.
 8. *(open; release 1.3)* What "plugins" means: the compiler, SDK, export

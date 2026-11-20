@@ -1,0 +1,47 @@
+name: Bug report
+description: Something went wrong, the editor crashed, or a game does not play as it should.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Any language is fine (Türkçe da olur). Crash reports stay on your
+        computer until you attach one:
+        Windows `%LOCALAPPDATA%\Wish\crashes` (and `launcher-error.txt` there
+        if the editor did not start), Linux `~/.config/wish/crashes`.
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps
+      description: What you did, step by step, so that someone else can do it again.
+      placeholder: |
+        1. Made a project from the Islands template
+        2. Pressed Play
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: System
+      description: Windows or Linux version, and the graphics card if you know it.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Engine version
+      placeholder: 0.9.0
+  - type: textarea
+    id: crash
+    attributes:
+      label: Crash report or error text
+      description: Paste the newest crash report or the error message, or drag the file here.
+      render: text

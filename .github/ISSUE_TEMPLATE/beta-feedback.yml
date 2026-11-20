@@ -1,0 +1,38 @@
+name: Beta feedback
+description: Something confusing, slow, ugly or missing while you tried the beta.
+title: "[beta] "
+labels: ["beta"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for trying the beta. Any language is fine (Türkçe da olur).
+        The tester's guide: docs/release/beta.md.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you were doing, and what felt wrong or was missing.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+  - type: input
+    id: system
+    attributes:
+      label: System
+      description: Windows or Linux version, and the graphics card if you know it.
+      placeholder: Windows 11, NVIDIA RTX 3060
+  - type: input
+    id: version
+    attributes:
+      label: Engine version
+      description: The version on the opening screen or in the archive's name.
+      placeholder: 0.9.0
+  - type: textarea
+    id: pictures
+    attributes:
+      label: Screenshots
+      description: Drag pictures here when it is about something you saw.
