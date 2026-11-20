@@ -365,6 +365,8 @@ one is treated as decided.
    release there on a three-number tag; a person publishes it.
 4. *(open, urgent)* Merging to `main`, so the public sees the current state
    and the release pipeline can tag it.
+   **Done, 21 November 2026 (user decision):** `m9-product` merged into
+   `main`, with M8b, M9, M10 and M12 up to the editor redesign.
 5. *(open; release 1.6)* Where the art of the showcase games and starter
    packs comes from.
 6. *(open; asked now)* A spending cap per measurement campaign, so runs do
