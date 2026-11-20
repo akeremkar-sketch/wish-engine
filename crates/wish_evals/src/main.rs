@@ -36,7 +36,7 @@ mod probe;
 mod tasks;
 mod transcript;
 
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -398,26 +398,19 @@ fn claude_command() -> Command {
     })
 }
 
-/// One run of the Claude Code CLI in the project: a new session, or the
-/// given one resumed (a repair round). The harness's clock times it. The
-/// run's transcript goes to `log`, outside the project (a later agent in
-/// the same project must not read it).
-#[allow(clippy::too_many_arguments)]
-fn agent(
+/// The client's command line for one run. The prompt is never on it (it
+/// goes in on standard input; see `agent`).
+fn agent_command(
     dir: &Path,
-    log: &Path,
-    prompt: &str,
     model: &str,
     effort: &str,
     files: bool,
     resume: Option<&str>,
-    limit: Duration,
-) -> (Transcript, f64) {
-    let started = Instant::now();
+) -> Command {
     let mut command = claude_command();
     command
         .current_dir(dir)
-        .args(["-p", prompt, "--model", model, "--effort", effort])
+        .args(["-p", "--model", model, "--effort", effort])
         .args(["--output-format", "stream-json", "--verbose"])
         .args(["--mcp-config", ".mcp.json", "--strict-mcp-config"]);
     if let Some(session) = resume {
@@ -447,9 +440,29 @@ fn agent(
         })
         .args(["NotebookEdit", "WebFetch", "WebSearch", "Task", "TodoWrite"])
         .args(["--setting-sources", "project"])
-        .stdin(Stdio::null())
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    command
+}
+
+/// One run of the Claude Code CLI in the project: a new session, or the
+/// given one resumed (a repair round). The harness's clock times it. The
+/// run's transcript goes to `log`, outside the project (a later agent in
+/// the same project must not read it).
+#[allow(clippy::too_many_arguments)]
+fn agent(
+    dir: &Path,
+    log: &Path,
+    prompt: &str,
+    model: &str,
+    effort: &str,
+    files: bool,
+    resume: Option<&str>,
+    limit: Duration,
+) -> (Transcript, f64) {
+    let started = Instant::now();
+    let mut command = agent_command(dir, model, effort, files, resume);
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
@@ -462,6 +475,21 @@ fn agent(
             );
         }
     };
+    // The prompt goes in on standard input: on Windows the client is a
+    // batch file, and the standard library refuses a batch file argument
+    // with a line break in it (every prompt has one since the claim line).
+    if let Some(mut stdin) = child.stdin.take() {
+        let prompt = prompt.to_owned();
+        std::thread::spawn(move || {
+            let _ = stdin.write_all(prompt.as_bytes());
+        });
+    }
+    // Drained so that a talkative client never blocks on a full pipe.
+    if let Some(stderr) = child.stderr.take() {
+        std::thread::spawn(move || {
+            let _ = std::io::copy(&mut BufReader::new(stderr), &mut std::io::sink());
+        });
+    }
     let stdout = child.stdout.take();
     let reader = std::thread::spawn(move || {
         let mut lines = Vec::new();
@@ -1327,6 +1355,38 @@ fn main() -> std::process::ExitCode {
                 "usage: wish-evals selftest [--tasks 01,42] [--held-out [dir]] [--task-file f]\n       wish-evals campaign --label name [--models sonnet:medium,haiku:medium] [--tries 3] [--repairs 1] [--second-agent] [--max-cost 30] [--overwrite] [--held-out [dir]]   (spends quota)\n       wish-evals run --label name [--model sonnet] [--effort medium] [--tries 3]   (spends quota)\n       wish-evals card --from file | rescore --label name | recheck --label name | estimate"
             );
             exit(false)
+        }
+    }
+}
+
+#[cfg(test)]
+mod launch_tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use super::*;
+
+    /// On Windows the client is a batch file, and the standard library
+    /// refuses to start one with a line break in an argument: the first
+    /// campaign started no agent at all. The prompt goes in on standard
+    /// input, so no argument may carry one.
+    #[test]
+    fn the_command_line_never_carries_a_line_break() {
+        for files in [false, true] {
+            for resume in [None, Some("session-id")] {
+                let command = agent_command(Path::new("."), "sonnet", "medium", files, resume);
+                for arg in command.get_args() {
+                    let arg = arg.to_string_lossy();
+                    assert!(
+                        !arg.contains(['\n', '\r']),
+                        "an argument with a line break: {arg:?}"
+                    );
+                }
+                let args: Vec<String> = command
+                    .get_args()
+                    .map(|a| a.to_string_lossy().into_owned())
+                    .collect();
+                assert_eq!(args[0], "-p");
+                assert_eq!(args[1], "--model", "the prompt is not on the command line");
+            }
         }
     }
 }

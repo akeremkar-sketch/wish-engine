@@ -385,7 +385,9 @@ so the range is decided by Sonnet's.
 
 ## 8. What is not built, or not verified
 
-- **Nothing was run against a model.** The transcript reader is tested on
+- **Nothing was run against a model** when this section was written; the
+  small baseline of §10 has since run the claim sentence for real (the
+  repair round and the second agent are still unseen). The transcript reader is tested on
   synthetic transcripts and was run over the 41 recorded transcripts of M7
   (`rescore`, §5); the repair round (`--resume` with feedback), the claim
   sentence and the second agent have not been seen in a real run.
@@ -395,7 +397,8 @@ so the range is decided by Sonnet's.
   adding, moving with the gizmo and other scenes are not covered.
 - The replay holds within one process; across processes it is the engine's
   own test.
-- Haiku has no recorded run: its cost and time in §6 are assumptions.
+- Haiku had no recorded run: its cost and time in §6 are assumptions (§10
+  measured 0.012 $ per passed try).
 - The editor measure and the speed measure add time to every passed try;
   measured in the self-test, not in a campaign.
 
@@ -424,3 +427,61 @@ ones; all were fixed the same day, with the low ones.
 
 The estimate (§6) did not change: no assumption it uses changed. The cap
 stays $30.
+
+## 10. The first baseline: a small one (20 November 2026)
+
+The full baseline (§6: both models, three tries, one repair round, about
+16-20 $) was judged too expensive for now by the user, who chose a small
+one: twelve open tasks, one per area, and the long task; both models; one
+try; no repair round; a cap of 5 $. The card is
+[baseline-1.0-small.md](../../evals/results/baseline-1.0-small.md) (and
+`.json`); its command is on the card.
+
+The tasks: `01_red_cube` (scene editing), `08_behind_wall` (seeing),
+`09_import_model` (import), `10_night_scene` (look), `11_walk_code` (game
+code), `19_play_animation` (animation), `21_start_button` (interface),
+`23_two_d` (2D), `27_moving_platform` (physics), `29_gem_pickup` (game
+code and physics), `30_bell_sound` (audio), `41_save_replay` (replays),
+`42_lantern_night` (the long task).
+
+| | Sonnet 5.5 · medium | Haiku 5.5 · medium |
+|---|---|---|
+| passed at the first attempt | 13 of 13 | 13 of 13 |
+| believed right, refuted | 0 | 0 |
+| clean `check`, inspector edit by hand | 13 of 13, 13 of 13 | 13 of 13, 13 of 13 |
+| a replay holds (game tasks) | 4 of 4 | 4 of 4 |
+| tool errors per try | 0.15 | 0.54 |
+| cost per passed try | 0.106 $ | 0.012 $ |
+| seconds to a proven result, median | 10.5 | 18 |
+| tick at 10,000 entities (the long task's game) | 3.0 ms | 3.3 ms |
+| campaign cost | 1.38 $ | 0.16 $ |
+
+In all 1.54 $ and about 35 minutes. The long task passed with both models
+at the first attempt (Sonnet: 28 calls, 57 s; Haiku: 35 calls, one failed
+build it repaired itself, 111 s).
+
+What it says and what it does not:
+
+- It is a baseline for the areas, not for the set: thirteen of the
+  forty-two tasks, one try each, so the consistency rows are empty and one
+  failure would move a rate by eight points. The full baseline (§6) is
+  still to be run before the 1.0 release candidates.
+- The engine was "dirty" on the card: the only difference from the commit
+  it names was the launch fix below, in `wish_evals`, committed together
+  with the card.
+- One try went the other way from a false success: Haiku said
+  `RESULT: NOT DONE` on `19_play_animation` and the hidden check passed it.
+  The card counts it among neither false successes nor stated successes
+  (the denominator of the false-success row is 12 for Haiku); a row for
+  such under-claims is a small follow-up.
+- Tick time is measured on the long task only (one result per model).
+
+**A harness bug it found.** The first start launched no agent: every try
+failed in 0 s with "could not start claude: batch file arguments are
+invalid". On Windows the client is `claude.cmd`, and the Rust standard
+library refuses a batch-file argument that holds a line break; every prompt
+has one since the claim sentence (§2). The self-test never starts the
+client, so it could not see it. The prompt now goes in on standard input
+(`claude -p` reads it there), the client's error stream is drained, and
+`launch_tests::the_command_line_never_carries_a_line_break` guards it. The
+stopped start spent nothing.
