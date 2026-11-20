@@ -73,7 +73,7 @@ pub(crate) const CAPTURE_FRAME: Tool = Tool {
         Param::optional(
             "checkpoint",
             Kind::String,
-            "Draw the scene as this checkpoint kept it (a \"before\" picture to compare with now).",
+            "Draw the scene as this checkpoint kept it (a \"before\" picture to compare with now), with the prefabs and material files it kept; textures are drawn as they are now (checkpoints keep no pictures).",
         ),
         SHADERS,
     ],
@@ -130,6 +130,9 @@ struct Prepared {
     by_name: BTreeMap<String, Entity>,
     notes: Vec<Diagnostic>,
     source: Value,
+    /// For a picture of a checkpoint: its copy of the project's files,
+    /// whose material files the picture uses.
+    kept: Option<std::path::PathBuf>,
 }
 
 impl Prepared {
@@ -158,6 +161,7 @@ impl Prepared {
             by_name,
             notes,
             source,
+            kept: None,
         }
     }
 
@@ -242,12 +246,14 @@ fn prepare_checkpoint(
     if path.ends_with(".prefab.json") {
         stage(&mut prepared_scene);
     }
-    Ok(Prepared::new(
+    let mut prepared = Prepared::new(
         prepared_scene,
         view.ids,
         Vec::new(),
         json!({ "scene": path, "checkpoint": name }),
-    ))
+    );
+    prepared.kept = Some(workspace.checkpoint_files(name));
+    Ok(prepared)
 }
 
 /// [`prepare`] without the tool's arguments: a session's live world, or a
@@ -376,14 +382,16 @@ fn drawing<'a>(
     workspace: &'a mut Workspace,
     args: &Args,
     scene: &RenderScene,
+    kept: Option<&std::path::Path>,
 ) -> Result<(&'a mut Drawing, Vec<Diagnostic>)> {
-    drawing_with(workspace, args.str("shaders"), scene)
+    drawing_with(workspace, args.str("shaders"), scene, kept)
 }
 
 fn drawing_with<'a>(
     workspace: &'a mut Workspace,
     shaders: Option<&str>,
     scene: &RenderScene,
+    kept: Option<&std::path::Path>,
 ) -> Result<(&'a mut Drawing, Vec<Diagnostic>)> {
     let shaders = shaders.map(std::path::PathBuf::from);
     let shaders = shaders.map(|dir| {
@@ -427,7 +435,7 @@ fn drawing_with<'a>(
             "This is a bug in the engine. Please report it.",
         ));
     };
-    let warnings = open.load_models(scene, &root);
+    let warnings = open.load_models(scene, &root, kept);
     Ok((open, warnings))
 }
 
@@ -470,7 +478,8 @@ fn capture_frame(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
     };
     let prepared = prepare(workspace, args)?;
     let camera = camera_entity(&prepared, args)?;
-    let (open, model_warnings) = drawing(workspace, args, &prepared.scene)?;
+    let (open, model_warnings) =
+        drawing(workspace, args, &prepared.scene, prepared.kept.as_deref())?;
     let frame =
         open.renderer
             .render_view(&open.gpu, &prepared.scene, camera, width, height, view)?;
@@ -537,7 +546,8 @@ fn describe_view(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
     let limit = usize::try_from(args.int("limit").unwrap_or(50)).unwrap_or(50);
     let prepared = prepare(workspace, args)?;
     let camera = camera_entity(&prepared, args)?;
-    let (open, model_warnings) = drawing(workspace, args, &prepared.scene)?;
+    let (open, model_warnings) =
+        drawing(workspace, args, &prepared.scene, prepared.kept.as_deref())?;
     let description = open
         .renderer
         .describe(&open.gpu, &prepared.scene, camera, width, height)?;
@@ -705,7 +715,8 @@ impl Workspace {
         if let (Some(camera), Some(first)) = (camera, prepared.scene.cameras.first_mut()) {
             *first = camera(first);
         }
-        let (open, model_warnings) = drawing_with(self, None, &prepared.scene)?;
+        let (open, model_warnings) =
+            drawing_with(self, None, &prepared.scene, prepared.kept.as_deref())?;
         let frame =
             open.renderer
                 .render_view(&open.gpu, &prepared.scene, None, width, height, view)?;
@@ -761,7 +772,7 @@ impl Workspace {
         if let (Some(camera), Some(first)) = (camera, prepared.scene.cameras.first_mut()) {
             *first = camera(first);
         }
-        let (open, _) = drawing_with(self, None, &prepared.scene)?;
+        let (open, _) = drawing_with(self, None, &prepared.scene, prepared.kept.as_deref())?;
         let ids = open
             .renderer
             .id_buffer(&open.gpu, &prepared.scene, None, width, height)?;

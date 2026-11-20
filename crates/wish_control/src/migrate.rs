@@ -78,18 +78,24 @@ pub fn migrate_project(
     // asks its prefab file as it was.
     let mut read: BTreeMap<String, Value> = BTreeMap::new();
     for (name, path) in &documents {
-        let source = match fs::read_to_string(path) {
+        let source = if wish_asset::is_material(name) {
+            // With its size cap, like everywhere a material file is read.
+            wish_asset::read_material_file(path, name)
+        } else {
+            fs::read_to_string(path).map_err(|error| {
+                Diagnostic::error(
+                    "file_unreadable",
+                    format!("Could not read '{name}': {error}."),
+                    "Check that the file can be read and is UTF-8 text.",
+                )
+                .at_file(name.clone())
+            })
+        };
+        let source = match source {
             Ok(source) => source,
-            Err(error) => {
+            Err(problem) => {
                 if only.is_empty() || only.contains(name) {
-                    report.diagnostics.push(
-                        Diagnostic::error(
-                            "file_unreadable",
-                            format!("Could not read '{name}': {error}."),
-                            "Check that the file can be read and is UTF-8 text.",
-                        )
-                        .at_file(name.clone()),
-                    );
+                    report.diagnostics.push(problem);
                 }
                 continue;
             }

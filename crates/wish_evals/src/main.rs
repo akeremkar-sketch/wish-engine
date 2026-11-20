@@ -39,6 +39,7 @@ mod transcript;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value, json};
@@ -49,8 +50,29 @@ use crate::probe::Probe;
 use crate::tasks::{EvalTask, Task};
 use crate::transcript::{CLAIM_SUFFIX, Transcript, claim};
 
-/// Where the throwaway projects go (outside the repository).
-const WORK: &str = "C:/wish-build/evals";
+/// The harness's own folder, outside the repository and the person's home
+/// (`C:/wish-build` on Windows; the system's temporary folder elsewhere).
+fn work_root() -> PathBuf {
+    if cfg!(windows) {
+        PathBuf::from("C:/wish-build")
+    } else {
+        std::env::temp_dir().join("wish-build")
+    }
+}
+
+/// Where the projects of finished tries are kept, with their transcripts
+/// (`<label>/<model>/<task>-<n>` and `<task>-<n>.logs`).
+fn work() -> PathBuf {
+    work_root().join("evals")
+}
+
+/// Where a try's project lives while an agent works in it: a folder of its
+/// own that holds nothing else, outside every folder the agent may not read
+/// (`deny_rules`). The project moves to `work()` when the try is over.
+fn live_root() -> PathBuf {
+    work_root().join("evals-live")
+}
+
 /// The longest one agent run may take (the long task needs more).
 const TRY_LIMIT: Duration = Duration::from_secs(15 * 60);
 const LONG_TRY_LIMIT: Duration = Duration::from_secs(40 * 60);
@@ -214,7 +236,7 @@ fn false_success_on_the_card() -> Result<(), String> {
 
 /// Deliberately wrong results that the scorecard's checks must refute.
 fn refutations(tally: &mut Tally) {
-    let base = Path::new(WORK).join("selftest").join("refute");
+    let base = work().join("selftest").join("refute");
     let mut run = |name: &str, outcome: Result<(), String>| {
         count(&mut tally.refutations, outcome.is_ok());
         match outcome {
@@ -295,7 +317,7 @@ fn refutations(tally: &mut Tally) {
 fn selftest(tasks: &[&dyn EvalTask], with_refutations: bool) -> bool {
     let mut tally = Tally::default();
     for task in tasks {
-        let dir = Path::new(WORK).join("selftest").join(task.id());
+        let dir = work().join("selftest").join(task.id());
         let outcome = selftest_task(*task, &dir, &mut tally);
         count(&mut tally.tasks, outcome.is_ok());
         match outcome {
@@ -307,7 +329,7 @@ fn selftest(tasks: &[&dyn EvalTask], with_refutations: bool) -> bool {
     let example = DeclaredTask::parse(held_out::EXAMPLE);
     let format_ok = match example {
         Ok(example) => {
-            let dir = Path::new(WORK).join("selftest").join("held-out-format");
+            let dir = work().join("selftest").join("held-out-format");
             let outcome = selftest_task(&example, &dir, &mut tally);
             count(&mut tally.tasks, outcome.is_ok());
             match outcome {
@@ -369,14 +391,12 @@ fn selftest_held_out(folder: &Path) -> bool {
     };
     let mut tally = Tally::default();
     for (n, task) in tasks.iter().enumerate() {
-        let dir = Path::new(WORK)
-            .join("held-out-selftest")
-            .join(format!("{n}"));
+        let dir = work().join("held-out-selftest").join(format!("{n}"));
         let ok = selftest_task(task, &dir, &mut tally).is_ok();
         count(&mut tally.refutations, ok);
         let _ = std::fs::remove_dir_all(&dir);
     }
-    let _ = std::fs::remove_dir_all(Path::new(WORK).join("held-out-selftest"));
+    let _ = std::fs::remove_dir_all(work().join("held-out-selftest"));
     println!(
         "held-out: {} tasks, {} valid; follow-ups {}/{}",
         tasks.len(),
@@ -390,12 +410,81 @@ fn selftest_held_out(folder: &Path) -> bool {
 // --------------------------------------------------------------------------
 // Campaigns (spend model quota).
 
+/// The Claude Code client. `WISH_EVALS_CLIENT` names another program to run
+/// in its place (a fake client for testing the harness; it is given the
+/// same arguments and standard input).
 fn claude_command() -> Command {
-    Command::new(if cfg!(windows) {
-        "claude.cmd"
+    client_command(std::env::var_os("WISH_EVALS_CLIENT"))
+}
+
+fn client_command(program: Option<std::ffi::OsString>) -> Command {
+    Command::new(program.unwrap_or_else(|| {
+        if cfg!(windows) {
+            "claude.cmd"
+        } else {
+            "claude"
+        }
+        .into()
+    }))
+}
+
+/// A folder as the client's permission rules write an absolute path:
+/// `//c/wish-build/evals` for `C:\wish-build\evals`, `//home/x` for
+/// `/home/x`.
+fn rule_path(folder: &Path) -> Option<String> {
+    let folder = std::path::absolute(folder).ok()?;
+    let text = folder.to_string_lossy().replace('\\', "/");
+    let text = text
+        .strip_prefix("//?/")
+        .unwrap_or(&text)
+        .trim_end_matches('/')
+        .to_owned();
+    let bytes = text.as_bytes();
+    if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
+        Some(format!(
+            "//{}{}",
+            char::from(bytes[0]).to_ascii_lowercase(),
+            &text[2..]
+        ))
+    } else if text.starts_with('/') {
+        Some(format!("/{text}"))
     } else {
-        "claude"
-    })
+        None
+    }
+}
+
+/// The folders an agent may not read or edit: the kept tries of every
+/// campaign (other tries, the other model's solutions, transcripts and the
+/// hidden checks' reasons), the held-out folders, the repository (the hidden
+/// checks' code) and the person's home folder (the client's own session
+/// files, and the repository when it lives there). The live folder of a try
+/// is under none of them.
+fn denied_folders(held_out: Option<&Path>) -> Vec<PathBuf> {
+    let mut folders = vec![work(), PathBuf::from(held_out::DEFAULT_FOLDER)];
+    folders.extend(held_out.map(Path::to_path_buf));
+    folders.extend(held_out::repository());
+    folders.extend(
+        std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from),
+    );
+    folders.extend(held_out::client_folder());
+    folders
+}
+
+/// The client's deny rules for [`denied_folders`]: `Read(...)` (which also
+/// governs Grep and Glob) and `Edit(...)` (every tool that writes files).
+fn deny_rules(held_out: Option<&Path>) -> Vec<String> {
+    let mut rules = Vec::new();
+    for folder in denied_folders(held_out) {
+        if let Some(path) = rule_path(&folder) {
+            for tool in ["Read", "Edit"] {
+                let rule = format!("{tool}({path}/**)");
+                if !rules.contains(&rule) {
+                    rules.push(rule);
+                }
+            }
+        }
+    }
+    rules
 }
 
 /// The client's command line for one run. The prompt is never on it (it
@@ -406,8 +495,20 @@ fn agent_command(
     effort: &str,
     files: bool,
     resume: Option<&str>,
+    deny: &[String],
 ) -> Command {
-    let mut command = claude_command();
+    agent_command_with(claude_command(), dir, model, effort, files, resume, deny)
+}
+
+fn agent_command_with(
+    mut command: Command,
+    dir: &Path,
+    model: &str,
+    effort: &str,
+    files: bool,
+    resume: Option<&str>,
+    deny: &[String],
+) -> Command {
     command
         .current_dir(dir)
         .args(["-p", "--model", model, "--effort", effort])
@@ -439,10 +540,20 @@ fn agent_command(
             &["Bash", "Edit", "Write", "Read", "Glob", "Grep"][..]
         })
         .args(["NotebookEdit", "WebFetch", "WebSearch", "Task", "TodoWrite"])
+        // Nothing outside the try's own folder that could give the answer
+        // away (`denied_folders`).
+        .args(deny)
         .args(["--setting-sources", "project"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    // Its own process group, so that a stop reaches what it started
+    // (`stop_tree`).
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
     command
 }
 
@@ -460,9 +571,62 @@ fn agent(
     files: bool,
     resume: Option<&str>,
     limit: Duration,
+    deny: &[String],
+) -> (Transcript, f64) {
+    drive(
+        agent_command(dir, model, effort, files, resume, deny),
+        log,
+        prompt,
+        model,
+        limit,
+    )
+}
+
+/// How long the harness waits for the client's output to end once the
+/// client has exited or was stopped.
+const READER_GRACE: Duration = Duration::from_secs(10);
+
+/// Stops the client and every process it started. On Windows the client is
+/// a batch file whose child is the real client: killing the batch file alone
+/// left that child running, spending quota, editing the project and holding
+/// the output pipe (closing review of 1.0). `taskkill /T` ends the tree while
+/// its root still lives. On Unix the client leads its own process group
+/// (`agent_command_with`), and the group is killed.
+fn stop_tree(child: &mut std::process::Child) {
+    let pid = child.id().to_string();
+    if cfg!(windows) {
+        let taskkill = std::env::var_os("SystemRoot")
+            .map(|root| PathBuf::from(root).join("System32").join("taskkill.exe"))
+            .filter(|path| path.is_file())
+            .unwrap_or_else(|| PathBuf::from("taskkill"));
+        let _ = Command::new(taskkill)
+            .args(["/PID", &pid, "/T", "/F"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    } else {
+        let _ = Command::new("kill")
+            .args(["-KILL", "--", &format!("-{pid}")])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// Runs the client's `command` with `prompt` on standard input, at most
+/// `limit` long, and reads its transcript (written to `log`).
+fn drive(
+    mut command: Command,
+    log: &Path,
+    prompt: &str,
+    model: &str,
+    limit: Duration,
 ) -> (Transcript, f64) {
     let started = Instant::now();
-    let mut command = agent_command(dir, model, effort, files, resume);
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
@@ -490,34 +654,50 @@ fn agent(
             let _ = std::io::copy(&mut BufReader::new(stderr), &mut std::io::sink());
         });
     }
+    // The lines are shared, not returned by the thread: a process the
+    // client left behind may hold the pipe open, and the harness must not
+    // wait for it (see `READER_GRACE`).
     let stdout = child.stdout.take();
-    let reader = std::thread::spawn(move || {
-        let mut lines = Vec::new();
-        if let Some(stdout) = stdout {
-            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-                lines.push(line);
+    let read_so_far = Arc::new(Mutex::new(Vec::new()));
+    let (done, finished) = mpsc::channel::<()>();
+    {
+        let read_so_far = Arc::clone(&read_so_far);
+        std::thread::spawn(move || {
+            if let Some(stdout) = stdout {
+                for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                    if let Ok(mut lines) = read_so_far.lock() {
+                        lines.push(line);
+                    }
+                }
             }
-        }
-        lines
-    });
+            let _ = done.send(());
+        });
+    }
     let mut stopped = None;
     loop {
         match child.try_wait() {
             Ok(Some(_)) => break,
             Ok(None) if started.elapsed() > limit => {
-                let _ = child.kill();
+                stop_tree(&mut child);
                 stopped = Some("timed out".to_owned());
                 break;
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(500)),
             Err(error) => {
+                stop_tree(&mut child);
                 stopped = Some(error.to_string());
                 break;
             }
         }
     }
+    // The client's output ends when every process holding the pipe has
+    // gone; past the grace, what was read is the transcript.
+    let _ = finished.recv_timeout(READER_GRACE);
     let seconds = started.elapsed().as_secs_f64();
-    let lines = reader.join().unwrap_or_default();
+    let lines = read_so_far
+        .lock()
+        .map(|mut lines| std::mem::take(&mut *lines))
+        .unwrap_or_default();
     // One run per file, beside the project (removed again for held-out
     // tasks).
     if let Some(folder) = log.parent() {
@@ -545,10 +725,12 @@ struct Options {
     held_out: bool,
     /// Stop between tries before the running cost would pass this.
     max_cost: Option<f64>,
+    /// The client's deny rules (`deny_rules`).
+    deny: Vec<String>,
 }
 
-/// Where a try's transcripts and baseline go: beside its project, never in
-/// it.
+/// Where a try's transcripts and baseline go: beside where its project is
+/// kept, never in it, and never under the live folder an agent works in.
 fn logs_of(dir: &Path) -> PathBuf {
     dir.with_extension("logs")
 }
@@ -559,7 +741,18 @@ fn round1(x: f64) -> f64 {
 
 /// One try of a task: the agent, the check at the first attempt, repair
 /// rounds, then every measure of the card on the result.
-fn run_try(task: &dyn EvalTask, dir: &Path, model: &str, effort: &str, opts: &Options) -> Value {
+///
+/// The project is `dir` (the try's live folder: nothing else is in it) and
+/// the transcripts and the baseline go to `logs` (beside where the project
+/// is kept, never under the live folder).
+fn run_try(
+    task: &dyn EvalTask,
+    dir: &Path,
+    logs: &Path,
+    model: &str,
+    effort: &str,
+    opts: &Options,
+) -> Value {
     let mut row = Map::new();
     row.insert("task".to_owned(), json!(task.id()));
     row.insert("game".to_owned(), json!(task.files()));
@@ -577,9 +770,8 @@ fn run_try(task: &dyn EvalTask, dir: &Path, model: &str, effort: &str, opts: &Op
     };
     // Kept beside the try, so that a corrected check can be run again later
     // without running the agent again (`wish-evals recheck`).
-    let logs = logs_of(dir);
-    let _ = std::fs::remove_dir_all(&logs);
-    let _ = std::fs::create_dir_all(&logs);
+    let _ = std::fs::remove_dir_all(logs);
+    let _ = std::fs::create_dir_all(logs);
     let _ = std::fs::write(logs.join("baseline.json"), baseline.to_string());
     let before = people::scene_entities(dir);
     let limit = if task.id() == long_task::ID {
@@ -597,6 +789,7 @@ fn run_try(task: &dyn EvalTask, dir: &Path, model: &str, effort: &str, opts: &Op
         task.files(),
         None,
         limit,
+        &opts.deny,
     );
     let mut sessions: Vec<String> = t.session_id.iter().cloned().collect();
     let mut verdict = check(task, dir, &baseline);
@@ -624,6 +817,7 @@ fn run_try(task: &dyn EvalTask, dir: &Path, model: &str, effort: &str, opts: &Op
             task.files(),
             Some(&session),
             limit,
+            &opts.deny,
         );
         sessions.extend(again.session_id.clone());
         t.absorb(&again);
@@ -690,7 +884,7 @@ fn run_try(task: &dyn EvalTask, dir: &Path, model: &str, effort: &str, opts: &Op
     let mut people_ok = Value::Null;
     let mut tick = Value::Null;
     if passed {
-        let copy = dir.with_extension("measures");
+        let copy = beside(dir, "measures");
         if people::copy_project(dir, &copy).is_ok() {
             if task.files() {
                 replay = match measures::replay_holds(&copy) {
@@ -748,6 +942,7 @@ fn run_try(task: &dyn EvalTask, dir: &Path, model: &str, effort: &str, opts: &Op
             task.files(),
             None,
             limit,
+            &opts.deny,
         );
         sessions.extend(s.session_id.clone());
         let ok = follow_up_check(follow, dir);
@@ -865,14 +1060,64 @@ fn write_card(label: &str, card: &Value) -> Result<(PathBuf, PathBuf), String> {
     Ok((json_path, md_path))
 }
 
+/// The order of a campaign's tries, as (model, task, try): the long task's
+/// first try with the first model runs first (it is the largest unknown of
+/// the cost; with `--max-cost` a first measured long try shows early whether
+/// the cap holds), then task by task, each try with every model in turn, so
+/// that a stop at the cap leaves every model on the same tasks (the gap
+/// compares like with like).
+fn schedule(
+    tasks: usize,
+    long: Option<usize>,
+    models: usize,
+    tries: u32,
+) -> Vec<(usize, usize, u32)> {
+    let mut plan = Vec::new();
+    if let Some(long) = long
+        && models > 0
+        && tries > 0
+    {
+        plan.push((0, long, 1));
+    }
+    for t in 0..tasks {
+        for attempt in 1..=tries {
+            for m in 0..models {
+                if !(m == 0 && Some(t) == long && attempt == 1) {
+                    plan.push((m, t, attempt));
+                }
+            }
+        }
+    }
+    plan
+}
+
+/// `folder` with `.extension` added to its name (a label may hold dots, so
+/// not `with_extension`).
+fn beside(folder: &Path, extension: &str) -> PathBuf {
+    let name = folder
+        .file_name()
+        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+    folder.with_file_name(format!("{name}.{extension}"))
+}
+
+/// Moves a finished try's project from its live folder to where it is kept.
+fn keep(live: &Path, kept: &Path) -> Result<(), String> {
+    let _ = std::fs::remove_dir_all(kept);
+    if let Some(parent) = kept.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    if std::fs::rename(live, kept).is_ok() {
+        return Ok(());
+    }
+    // Another volume: copy, then remove the live folder.
+    people::copy_project(live, kept)?;
+    std::fs::remove_dir_all(live).map_err(|e| e.to_string())
+}
+
 /// A campaign: every task, every model, `tries` tries; then the scorecard.
-///
-/// Order: the long task's first try with the first model runs first (it is
-/// the largest unknown of the cost; with `--max-cost` a first measured long
-/// try shows early whether the cap holds), then every task in order, model
-/// by model. With `--max-cost`, the campaign stops between tries when the
-/// cost so far plus the mean cost of a try so far would pass the cap, and
-/// the card says so; what was measured is kept.
+/// The order is [`schedule`]'s. With `--max-cost`, the campaign stops
+/// between tries when the cost so far plus the mean cost of a try so far
+/// would pass the cap, and the card says so; what was measured is kept.
 fn campaign(
     tasks: &[&dyn EvalTask],
     models: &[(String, String)],
@@ -881,22 +1126,12 @@ fn campaign(
     opts: &Options,
     command: &str,
 ) -> bool {
-    let run_dir = Path::new(WORK).join(label);
-    // The schedule: (model, task, try).
-    let mut plan: Vec<(usize, usize, u32)> = Vec::new();
+    let run_dir = work().join(label);
+    // A try's project lives in a folder of its own while the agent works.
+    let live = live_root();
+    let _ = std::fs::remove_dir_all(&live);
     let long = tasks.iter().position(|t| t.id() == long_task::ID);
-    if let Some(long) = long {
-        plan.push((0, long, 1));
-    }
-    for m in 0..models.len() {
-        for t in 0..tasks.len() {
-            for attempt in 1..=tries {
-                if !(m == 0 && Some(t) == long && attempt == 1) {
-                    plan.push((m, t, attempt));
-                }
-            }
-        }
-    }
+    let plan = schedule(tasks.len(), long, models.len(), tries);
     let total = plan.len();
     let mut rows: Vec<Vec<Value>> = vec![Vec::new(); models.len()];
     let mut resolved: Vec<Vec<String>> = vec![Vec::new(); models.len()];
@@ -917,15 +1152,20 @@ fn campaign(
         }
         let (model, effort) = &models[m];
         let task = tasks[t];
-        let dir = run_dir.join(model).join(format!(
+        let name = format!(
             "{}-{attempt}",
             if opts.held_out {
                 format!("h{done}")
             } else {
                 task.id().to_owned()
             }
-        ));
-        let mut row = run_try(task, &dir, model, effort, opts);
+        );
+        // Kept here after the try (with its transcripts beside it); worked
+        // in at `dir`, which holds nothing else.
+        let kept = run_dir.join(model).join(&name);
+        let dir = live.join(format!("{label}-{model}-{name}"));
+        let logs = logs_of(&kept);
+        let mut row = run_try(task, &dir, &logs, model, effort, opts);
         done += 1;
         spent += row_cost(&row);
         for id in row["model_ids"].as_array().into_iter().flatten() {
@@ -954,9 +1194,12 @@ fn campaign(
                 map.insert("task".to_owned(), json!(format!("h{t}")));
             }
             let _ = std::fs::remove_dir_all(&dir);
-            let _ = std::fs::remove_dir_all(logs_of(&dir));
+            let _ = std::fs::remove_dir_all(&logs);
             println!("held-out: try {done} of {total} done");
         } else {
+            if let Err(reason) = keep(&dir, &kept) {
+                println!("could not keep the try's project: {reason}");
+            }
             println!(
                 "{} {model} {}#{attempt}: first {}, {} calls ({} errors, {} failed builds, {} repair turns), {} rounds, {:.0}s, ${:.3}{}",
                 if row["passed"] == true {
@@ -988,6 +1231,7 @@ fn campaign(
     if opts.held_out {
         let _ = std::fs::remove_dir_all(&run_dir);
     }
+    let _ = std::fs::remove_dir_all(&live);
     let runs: Vec<(String, String, Vec<Value>)> = models
         .iter()
         .zip(rows)
@@ -1016,7 +1260,7 @@ fn campaign(
             "repair_rounds": opts.repairs,
             "repair_feedback": "the hidden check's reason, in the resumed session",
             "second_agent": opts.second_agent,
-            "order": if long.is_some() { "the long task's first try with the first model, then every task in order, model by model" } else { "every task in order, model by model" },
+            "order": if long.is_some() { "the long task's first try with the first model, then task by task in order, each try with every model in turn (a stop at the cost cap leaves the models on the same tasks)" } else { "task by task in order, each try with every model in turn (a stop at the cost cap leaves the models on the same tasks)" },
             "max_cost_usd": opts.max_cost,
             "stopped_at_cap": stopped_at_cap,
             "tries_run": done,
@@ -1113,7 +1357,7 @@ fn main() -> std::process::ExitCode {
                     .and_then(|t| DeclaredTask::parse(&t));
                 return match task {
                     Ok(task) => {
-                        let dir = Path::new(WORK).join("selftest").join("task-file");
+                        let dir = work().join("selftest").join("task-file");
                         let outcome = selftest_task(&task, &dir, &mut Tally::default());
                         match &outcome {
                             Ok(notes) => println!("ok    {}  [{notes}]", task.id()),
@@ -1139,7 +1383,7 @@ fn main() -> std::process::ExitCode {
             // Checks the projects a run left behind again (after a check was
             // corrected); the agent is not run.
             let label = flag(&args, "--label").unwrap_or("run");
-            let run_dir = Path::new(WORK).join(label);
+            let run_dir = work().join(label);
             let mut passed = 0;
             let mut total = 0;
             let mut folders = vec![run_dir.clone()];
@@ -1180,7 +1424,7 @@ fn main() -> std::process::ExitCode {
         Some("rescore") => {
             // Reads a finished run's transcripts again (free).
             let label = flag(&args, "--label").unwrap_or("run");
-            let run_dir = Path::new(WORK).join(label);
+            let run_dir = work().join(label);
             let mut found: Vec<PathBuf> = Vec::new();
             let mut stack = vec![run_dir];
             while let Some(folder) = stack.pop() {
@@ -1332,6 +1576,7 @@ fn main() -> std::process::ExitCode {
                 second_agent: has(&args, "--second-agent"),
                 held_out: held.is_some(),
                 max_cost,
+                deny: deny_rules(held.as_deref()),
             };
             let held_tasks;
             let tasks: Vec<&dyn EvalTask> = match &held {
@@ -1372,7 +1617,7 @@ mod launch_tests {
     fn the_command_line_never_carries_a_line_break() {
         for files in [false, true] {
             for resume in [None, Some("session-id")] {
-                let command = agent_command(Path::new("."), "sonnet", "medium", files, resume);
+                let command = agent_command(Path::new("."), "sonnet", "medium", files, resume, &[]);
                 for arg in command.get_args() {
                     let arg = arg.to_string_lossy();
                     assert!(
@@ -1388,5 +1633,182 @@ mod launch_tests {
                 assert_eq!(args[1], "--model", "the prompt is not on the command line");
             }
         }
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("wish-evals-test-{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// A fake client that prints one line, then starts a child of its own
+    /// that keeps the output pipe open and writes `alive.txt` once a second
+    /// for about a minute (as the real client's batch file starts node).
+    fn fake_client(dir: &Path) -> PathBuf {
+        if cfg!(windows) {
+            std::fs::write(
+                dir.join("loop.cmd"),
+                "@echo off\r\nfor /l %%i in (1,1,60) do (\r\n  echo tick>>\"%~dp0alive.txt\"\r\n  ping -n 2 127.0.0.1 >nul\r\n)\r\n",
+            )
+            .unwrap();
+            let client = dir.join("client.cmd");
+            std::fs::write(
+                &client,
+                "@echo off\r\necho {\"type\":\"system\",\"subtype\":\"init\"}\r\ncmd /d /c \"%~dp0loop.cmd\"\r\n",
+            )
+            .unwrap();
+            client
+        } else {
+            std::fs::write(
+                dir.join("loop.sh"),
+                "i=0\nwhile [ $i -lt 60 ]; do echo tick >> \"$(dirname \"$0\")/alive.txt\"; sleep 1; i=$((i+1)); done\n",
+            )
+            .unwrap();
+            let client = dir.join("client.sh");
+            std::fs::write(
+                &client,
+                "#!/bin/sh\necho '{\"type\":\"system\",\"subtype\":\"init\"}'\nsh \"$(dirname \"$0\")/loop.sh\"\n",
+            )
+            .unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&client, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+            client
+        }
+    }
+
+    /// Closing review: on Windows the client is a batch file that starts the
+    /// real client as a child. Killing the batch file left the child running
+    /// (spending quota, editing the project) and holding the output pipe, so
+    /// the harness waited for it far past the try's limit.
+    #[test]
+    fn a_try_past_its_limit_stops_the_whole_client() {
+        let dir = scratch("timeout");
+        let client = fake_client(&dir);
+        let command = agent_command_with(
+            client_command(Some(client.into_os_string())),
+            &dir,
+            "sonnet",
+            "medium",
+            false,
+            None,
+            &[],
+        );
+        let limit = Duration::from_secs(3);
+        let started = Instant::now();
+        let (t, seconds) = drive(command, &dir.join("log.jsonl"), "prompt\n", "sonnet", limit);
+        let took = started.elapsed();
+        assert!(
+            took < limit + Duration::from_secs(15),
+            "the harness waited {took:?} for a try limited to {limit:?}"
+        );
+        assert_eq!(t.agent_error.as_deref(), Some("timed out"));
+        assert!(seconds >= 3.0, "{seconds}");
+        // The client's child is gone: its file stops growing.
+        let alive = dir.join("alive.txt");
+        let size = || std::fs::metadata(&alive).map_or(0, |m| m.len());
+        let before = size();
+        std::thread::sleep(Duration::from_secs(4));
+        assert_eq!(size(), before, "the client's child still runs");
+        let log = std::fs::read_to_string(dir.join("log.jsonl")).unwrap();
+        assert!(log.contains("\"init\""), "{log}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Closing review of 1.0: an agent with file tools could read other
+    /// tries, the other model's solutions, transcripts with the hidden
+    /// check's reason, the held-out folder and the repository. Each try now
+    /// works in a folder of its own, and the client is told not to read or
+    /// edit those places; the try's own folder is under none of them.
+    #[test]
+    fn the_agent_may_not_read_other_tries_the_checks_or_the_held_out_set() {
+        let held = PathBuf::from("D:/somewhere/held");
+        let rules = deny_rules(Some(&held));
+        for folder in [
+            work(),
+            PathBuf::from(held_out::DEFAULT_FOLDER),
+            held.clone(),
+            held_out::repository().unwrap(),
+        ] {
+            let path = rule_path(&folder).unwrap();
+            assert!(path.starts_with("//"), "{path}");
+            for tool in ["Read", "Edit"] {
+                let rule = format!("{tool}({path}/**)");
+                assert!(rules.contains(&rule), "{rule} missing from {rules:?}");
+            }
+        }
+        if cfg!(windows) {
+            assert!(rules.contains(&"Read(//c/wish-build/evals/**)".to_owned()));
+            assert!(rules.contains(&"Read(//d/somewhere/held/**)".to_owned()));
+        }
+        // The try's own folder is under no denied folder.
+        let live = rule_path(&live_root().join("label-sonnet-01_task-1")).unwrap();
+        for rule in &rules {
+            let denied = rule
+                .split_once('(')
+                .and_then(|(_, rest)| rest.strip_suffix("/**)"))
+                .unwrap();
+            assert!(
+                !(live == denied || live.starts_with(&format!("{denied}/"))),
+                "the live folder {live} is under {rule}"
+            );
+        }
+        // Every rule reaches the client, after --disallowedTools.
+        for files in [false, true] {
+            let command = agent_command(Path::new("."), "sonnet", "medium", files, None, &rules);
+            let args: Vec<String> = command
+                .get_args()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect();
+            let from = args.iter().position(|a| a == "--disallowedTools").unwrap();
+            let until = args.iter().position(|a| a == "--setting-sources").unwrap();
+            for rule in &rules {
+                assert!(args[from..until].contains(rule), "{rule}");
+            }
+        }
+    }
+
+    #[test]
+    fn rule_paths_are_the_clients_absolute_form() {
+        if cfg!(windows) {
+            assert_eq!(
+                rule_path(Path::new(r"C:\wish-build\evals")).as_deref(),
+                Some("//c/wish-build/evals")
+            );
+            assert_eq!(
+                rule_path(Path::new(r"\\?\D:\x\y\")).as_deref(),
+                Some("//d/x/y")
+            );
+        } else {
+            assert_eq!(rule_path(Path::new("/home/x")).as_deref(), Some("//home/x"));
+        }
+    }
+
+    /// Closing review of 1.0: model by model, a stop at the cost cap left
+    /// the second model on fewer tasks than the first, and the gap compared
+    /// different task sets. Task by task, every model runs each try in turn.
+    #[test]
+    fn the_schedule_runs_every_model_on_a_task_before_the_next() {
+        let plan = schedule(3, Some(2), 2, 2);
+        assert_eq!(plan[0], (0, 2, 1), "the long task's first try first");
+        assert_eq!(plan.len(), 3 * 2 * 2);
+        assert_eq!(&plan[1..5], &[(0, 0, 1), (1, 0, 1), (0, 0, 2), (1, 0, 2)]);
+        let mut sorted = plan.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), plan.len(), "no try twice");
+        assert_eq!(schedule(2, None, 1, 1), vec![(0, 0, 1), (0, 1, 1)]);
+    }
+
+    #[test]
+    fn a_label_with_dots_keeps_its_measures_beside_the_try() {
+        let dir = Path::new("C:/x/baseline-1.0-small-sonnet-01_a-1");
+        assert_eq!(
+            beside(dir, "measures"),
+            Path::new("C:/x/baseline-1.0-small-sonnet-01_a-1.measures")
+        );
     }
 }

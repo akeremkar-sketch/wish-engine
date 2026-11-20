@@ -376,6 +376,34 @@ fn a_placeholder_sound_and_picture_are_made() {
     );
 }
 
+/// The 1.0 closing review: a material file that someone broke after the
+/// browser showed it is not made again from the one field changed by hand
+/// (that would wipe everything else it wrote); the change is refused and
+/// the file stays as it is.
+#[test]
+fn a_broken_material_file_is_not_overwritten_by_hand() {
+    let dir = project("material-broken");
+    let mut app = open(&dir);
+    let new = named(&app, "New...");
+    click(&mut app, new);
+    let material = named(&app, "Material file");
+    click(&mut app, material);
+    let path = "assets/materials/material.mat.json";
+    type_number(&mut app, "alpha_cutoff", "0.25");
+    assert_eq!(app.status(), format!("set alpha_cutoff in {path}"));
+    // Someone half-way through editing the file by hand.
+    let broken = "{\n  \"format\": 1,\n  \"material\": {\n    \"alpha_cutoff\": 0.25,\n    \"roughness\": 0.8,\n";
+    std::fs::write(dir.join(path), broken).unwrap();
+    type_number(&mut app, "alpha_cutoff", "0.5");
+    assert_eq!(std::fs::read_to_string(dir.join(path)).unwrap(), broken);
+    assert!(
+        app.status()
+            .starts_with(&format!("could not make {path}: ")),
+        "{}",
+        app.status()
+    );
+}
+
 #[test]
 fn a_material_file_is_made_and_changed_by_hand() {
     let dir = project("material");

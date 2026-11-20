@@ -95,10 +95,10 @@ wish-evals campaign --label baseline-1.0-small --overwrite --models sonnet:mediu
 
 | | sonnet · medium | haiku · medium | gap |
 |---|---|---|---|
-| tasks passed in every try | 13 | 13 |  |
-| tasks passed in some tries | 0 | 0 |  |
-| tasks passed in no try | 0 | 0 |  |
-| spread of cost across tries (median CV) | – | – |  |
-| spread of time across tries (median CV) | – | – |  |
+| tasks passed in every try | – (one try per task) | – (one try per task) |  |
+| tasks passed in some tries | – (one try per task) | – (one try per task) |  |
+| tasks passed in no try | – (one try per task) | – (one try per task) |  |
+| spread of cost across tries (median CV) | – (one try per task) | – (one try per task) |  |
+| spread of time across tries (median CV) | – (one try per task) | – (one try per task) |  |
 
 Gap: rates in percentage points (first model minus second); costs and times as the second model's over the first's.

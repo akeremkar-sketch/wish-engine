@@ -36,7 +36,7 @@ pub use project::{FileKind, Project, ProjectFile, load_project};
 pub use index::{AssetIndex, is_document};
 pub use material::{
     MATERIAL_FORMAT, MATERIAL_SUFFIX, MAX_MATERIAL_BYTES, MaterialDocument, check_material,
-    is_material, material_schema, parse_material,
+    is_material, material_schema, material_too_large, parse_material, read_material_file,
 };
 pub use meta::{AssetMeta, META_FORMAT, meta_path, parse_meta, read_meta, write_meta};
 pub use moves::{DocumentEdit, MovePlan, apply_move, plan_move};

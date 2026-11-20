@@ -603,19 +603,23 @@ impl Renderer {
     }
 
     /// Rebuilds every pipeline from `library` and swaps them in; uploaded
-    /// models, textures and material files stay. If a shader has a mistake the error is returned and the
-    /// renderer keeps drawing with the shaders it had.
+    /// models, textures and material files stay, and so do the pooled
+    /// targets and buffers (they belong to no pipeline: bind groups are
+    /// built in each frame and never kept). If a shader has a mistake the
+    /// error is returned and the renderer keeps drawing with the shaders it
+    /// had.
     pub fn reload_shaders(&mut self, gpu: &Gpu, library: &ShaderLibrary) -> Result<()> {
-        let fresh = Self::with_shaders(gpu, library)?;
-        let models = std::mem::take(&mut self.models);
-        let materials = std::mem::take(&mut self.materials);
-        let pictures = std::mem::take(&mut self.ui_pictures);
-        // The pool goes with the old pipelines: its bind groups were made
-        // for their layouts.
-        *self = fresh;
-        self.models = models;
-        self.materials = materials;
-        self.ui_pictures = pictures;
+        let mut fresh = Self::with_shaders(gpu, library)?;
+        fresh.models = std::mem::take(&mut self.models);
+        fresh.materials = std::mem::take(&mut self.materials);
+        fresh.ui_pictures = std::mem::take(&mut self.ui_pictures);
+        std::mem::swap(&mut fresh.pool, &mut self.pool);
+        let old = std::mem::replace(self, fresh);
+        // The old pipelines and what else was made for them are let go of
+        // under the GPU lock, like all GPU work (the 1.0 closing review
+        // found them, and the pool, dropped outside it).
+        let _only_one = crate::gpu::gpu_lock();
+        drop(old);
         Ok(())
     }
 
@@ -931,5 +935,26 @@ mod tests {
         }
         // And the engine's own shaders define them all.
         assert!(check_shaders(&engine_shaders()).is_empty());
+    }
+
+    /// The 1.0 closing review: reloading the shaders kept nothing of the
+    /// pool, and let go of it outside the GPU lock. The pool's targets and
+    /// buffers belong to no pipeline, so they stay.
+    #[test]
+    fn the_pool_stays_through_a_shader_reload() {
+        let gpu = Gpu::new(crate::gpu::GpuOptions { software: true }).expect("a software adapter");
+        let mut renderer = Renderer::new(&gpu).unwrap();
+        gpu.checked("fill the pool", |gpu| {
+            renderer
+                .pool()
+                .buffer(gpu, "kept", wgpu::BufferUsages::UNIFORM, &[0; 100]);
+        })
+        .unwrap();
+        let kept = renderer.kept_bytes();
+        let made = renderer.pool_counts();
+        assert!(kept > 0);
+        renderer.reload_shaders(&gpu, &engine_shaders()).unwrap();
+        assert_eq!(renderer.kept_bytes(), kept, "the pool stays");
+        assert_eq!(renderer.pool_counts(), made);
     }
 }

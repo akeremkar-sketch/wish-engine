@@ -31,8 +31,9 @@ gereken iki şey:
 - **Windows:** oyun kodunu derlemek şimdilik Visual C++ çalışma zamanını (`VCRUNTIME140.dll`)
   ister; çoğu Windows bilgisayarında vardır. Motorun, editörün ve dışa aktarılan oyunların buna
   ihtiyacı yoktur.
-- **Linux:** ALSA kitaplığı (`libasound2`), bir Vulkan sürücüsü ya da OpenGL, ve bir masaüstünde
-  bulunan X11 ya da Wayland kitaplıkları.
+- **Linux:** glibc 2.35 ya da daha yenisi (Ubuntu 22.04, Debian 12), ALSA kitaplığı
+  (`libasound2`), bir Vulkan sürücüsü ya da OpenGL, ve bir masaüstünde bulunan X11 ya da Wayland
+  kitaplıkları.
 
 Bir proje klasörünü `wish-engine.exe`'nin üzerine bırakırsanız editör o projeyle açılır. Komut
 satırında aynı şey `wen edit`'tir.
@@ -167,9 +168,11 @@ Dil, karşılama ekranının sağ üstünden, sonra da proje menüsünden (*Dil*
   - *Bunu geri al* tek bir değişikliği, eski de olsa, kendi başına geri alır; yeter ki koyduğu
     değer hâlâ yerinde olsun.
 - **Denetim noktaları** (proje menüsü, *Denetim noktaları*):
-  - *Denetim noktası kaydet* bütün projeyi olduğu gibi saklar.
+  - *Denetim noktası kaydet* projenin sahnelerini, prefablarını, malzeme dosyalarını, meta
+    dosyalarını ve ayarlarını olduğu gibi saklar (resimleri ve sesleri saklamaz).
   - *Buna geri dön* ona geri döner; dönmek de geçmişte bir değişikliktir, geri alınabilir.
-  - *Şimdiyle karşılaştır* denetim noktasını ve şimdiyi yan yana gösterir.
+    Üzerine yazdığı malzeme, meta ve ayar dosyaları `.wish/trash/checkpoints/` içinde saklanır.
+  - *Şimdiyle karşılaştır* denetim noktasını ve şimdiyi yan yana gösterir (bugünkü dokularla).
 
 Dosyalar doğruluğun kaynağıdır. Bir sahne dosyasını başka bir programda düzenlemek sorun değildir:
 editör fark eder, değişiklik geçmişe *dosya* olarak girer. Bozuk bir dosya bildirilir, üzerine
@@ -405,4 +408,4 @@ Windows ve Linux'ta da çalışır).
 | Aynı sahne, tohum ve tuşlar aynı biçimde oynar; 10.000 tick'lik tekrarlar birebir oynar | `cargo test -p wish_control --test script_tools` |
 | Dışa aktarılan oyun editördeki gibi oynar | `cargo test -p wish_player --test export` (ayrı bir süreçte aynı dünya özeti) |
 | Biçim 1 olan bir dosya eskisi gibi görünür ve oynar; `wen migrate` anlamını korur | `cargo test -p wish_control --test look_lock` |
-| Bir sürüm arşivinin istedikleri | sürüm iş akışı her arşivi temiz bir GitHub makinesinde derler ve kullanır ([.github/workflows/release.yml](../../../.github/workflows/release.yml)); Visual C++ çalışma zamanı notu: [docs/design/M12-release-pipeline.md](../../design/M12-release-pipeline.md), bölüm 6 |
+| Bir sürüm arşivinin istedikleri | sürüm iş akışı her arşivi derler (Linux arşivini Ubuntu 22.04'te; bir program 2.35'ten yeni bir glibc isterse başarısız olur) ve açılmış kopyasından, makinenin Rust araçları olmadan, eksiksiz bir GitHub makine görüntüsünde kullanır: bu, arşivin geliştirici aracı istemediğini kanıtlar, çıplak bir sistemde yüklediği her kitaplığın bulunduğunu değil ([.github/workflows/release.yml](../../../.github/workflows/release.yml)); Visual C++ çalışma zamanı notu: [docs/design/M12-release-pipeline.md](../../design/M12-release-pipeline.md), bölüm 6 |

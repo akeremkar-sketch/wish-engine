@@ -1,7 +1,8 @@
 """Writes THIRD_PARTY_LICENSES.md: every library in the dependency tree (not
 the engine's own crates), its license and, once each, the license texts the
-library ships (LICENSE*, COPYING*, NOTICE*), then the third-party works that
-are not crates (EXTRA: the engine's font). Exported games and engine packages
+library ships (LICENSE*, COPYING*, NOTICE*), or for a library that ships
+none, its upstream text kept in licenses/ (OVERRIDES), then the third-party
+works that are not crates (EXTRA: the engine's font). Exported games and engine packages
 carry this file (M9, M12); a test checks that it names every library in
 Cargo.lock.
 
@@ -22,6 +23,41 @@ EXTRA = [
     ("Roboto (the engine's font)", "2.138", "Apache-2.0",
      ["crates/wish_text/fonts/LICENSE-Roboto.txt"]),
 ]
+# Crates that ship no license text of their own: the text from their
+# upstream repository, kept in licenses/ (from the root). Used only when the
+# crate's own folder has none. Sources (fetched 20 November 2026):
+# - taffy: DioxusLabs/taffy, LICENSE at the tag v0.15.1.
+# - drm-fourcc: danielzfranklin/drm-fourcc-rs, LICENSE on main (the upstream
+#   text has no copyright line).
+# - objc2 and its family (block2, objc-sys, objc2-*): madsmtm/objc2,
+#   LICENSE-MIT.txt on main (LICENSE.md there says which crates are MIT).
+# - dispatch: SSheldon/rust-dispatch has no license file and its manifest
+#   says MIT; the text is the MIT license of the same author's rust-objc
+#   repository (LICENSE.txt on master).
+OVERRIDES = {
+    "taffy": "licenses/taffy-LICENSE.txt",
+    "drm-fourcc": "licenses/drm-fourcc-rs-LICENSE.txt",
+    "dispatch": "licenses/rust-objc-LICENSE.txt",
+    "block2": "licenses/objc2-LICENSE-MIT.txt",
+    "objc-sys": "licenses/objc2-LICENSE-MIT.txt",
+    "objc2": "licenses/objc2-LICENSE-MIT.txt",
+}
+OVERRIDE_PREFIXES = [
+    ("objc2-", "licenses/objc2-LICENSE-MIT.txt"),
+]
+
+
+def override_for(name):
+    if name in OVERRIDES:
+        return OVERRIDES[name]
+    for prefix, file in OVERRIDE_PREFIXES:
+        if name.startswith(prefix):
+            return file
+    return None
+
+
+def read_text(path):
+    return open(path, encoding="utf-8", errors="replace").read().strip()
 
 
 def main():
@@ -46,9 +82,15 @@ def main():
             if not os.path.isfile(path) or not name.lower().startswith(TEXT_FILES):
                 continue
             try:
-                text = open(path, encoding="utf-8", errors="replace").read().strip()
+                text = read_text(path)
             except OSError:
                 continue
+            key = hashlib.sha256(text.encode()).hexdigest()[:12]
+            texts.setdefault(key, [text, []])[1].append(f"{package['name']} {package['version']}")
+            found.append(key)
+        override = override_for(package["name"])
+        if not found and override:
+            text = read_text(os.path.join(ROOT, override))
             key = hashlib.sha256(text.encode()).hexdigest()[:12]
             texts.setdefault(key, [text, []])[1].append(f"{package['name']} {package['version']}")
             found.append(key)
@@ -57,7 +99,7 @@ def main():
     for name, version, license, files in EXTRA:
         found = []
         for file in files:
-            text = open(os.path.join(ROOT, file), encoding="utf-8", errors="replace").read().strip()
+            text = read_text(os.path.join(ROOT, file))
             key = hashlib.sha256(text.encode()).hexdigest()[:12]
             texts.setdefault(key, [text, []])[1].append(f"{name} {version}")
             found.append(key)
@@ -66,7 +108,8 @@ def main():
         "# Third-party libraries",
         "",
         "Wish Engine and the games made with it use these libraries. Each is listed with its license;",
-        "the license texts the libraries ship follow, each text once, with the libraries it belongs to.",
+        "the license texts the libraries ship follow, each text once, with the libraries it belongs to",
+        "(for a library that ships none, the text of its source repository, kept in licenses/).",
         "Made by tools/third_party.py from Cargo.lock, with the works that are not libraries last.",
         "Engine packages also carry the Rust compiler (toolchain/): its own notices are in",
         "toolchain/share/doc/rust.",

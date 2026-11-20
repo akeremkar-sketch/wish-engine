@@ -66,7 +66,7 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     ),
     (
         "checkpoint_damaged",
-        "A checkpoint's description in .wish/checkpoints cannot be read. Delete it and save a new one.",
+        "A checkpoint's description in .wish/checkpoints cannot be read or names a path that is not a document of the project, so nothing is brought back. Delete it and save a new one.",
     ),
     (
         "checkpoint_exists",
@@ -79,6 +79,14 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "checkpoint_not_found",
         "There is no checkpoint of that name. checkpoint with action list shows them.",
+    ),
+    (
+        "checkpoint_restore_incomplete",
+        "Going back to a checkpoint stopped half-way (a file could not be written). The message lists what was brought back; scenes and prefabs can be undone in their history, and the files written over are in the trash folder it names. Fix the problem and restore again.",
+    ),
+    (
+        "checkpoint_textures_current",
+        "A checkpoint's picture is drawn with the textures as they are now: checkpoints keep scenes, prefabs and material files, not pictures. To compare a change of a picture, save the new picture under another name.",
     ),
     (
         "component_not_found",

@@ -12,7 +12,7 @@ use crate::workspace::Workspace;
 pub(crate) const CHECKPOINT: Tool = Tool {
     name: "checkpoint",
     title: "Checkpoints",
-    description: "A checkpoint keeps the project's scenes, prefabs and settings (wish.json, input.json) as they are now, to go back to later (\"before the agent started\") and to compare with (capture_frame with checkpoint draws a scene as it was). save (name optional: cp_1, cp_2...; note: a sentence for people), list, restore (each scene and prefab is brought back by one change in its own history, so going back can itself be undone or taken back on its own; scenes made after the checkpoint are kept; settings files are written back), delete. Stored in the project's .wish/checkpoints.",
+    description: "A checkpoint keeps the project's scenes, prefabs and settings (wish.json, input.json) as they are now, to go back to later (\"before the agent started\") and to compare with (capture_frame with checkpoint draws a scene as it was). save (name optional: cp_1, cp_2...; note: a sentence for people), list, restore (each scene and prefab is brought back by one change in its own history, so going back can itself be undone or taken back on its own; material and meta files and the settings files are written back, and the texts they replace are kept in the folder replaced_kept_in names; scenes made after the checkpoint are kept; a dry run marks what it would write back would_write_back), delete. Stored in the project's .wish/checkpoints.",
     params: &[
         Param::required(
             "action",
@@ -64,13 +64,16 @@ fn checkpoint(workspace: &mut Workspace, args: &Args, actor: &Actor) -> Result<M
             let note = args
                 .str("note")
                 .map(|n| n.chars().take(300).collect::<String>());
-            let manifest = workspace.save_checkpoint(
+            let (manifest, warnings) = workspace.save_checkpoint(
                 args.str("name"),
                 note.as_deref(),
                 actor,
                 args.flag("overwrite"),
             )?;
             out.insert("checkpoint".to_owned(), manifest);
+            if !warnings.is_empty() {
+                out.insert("diagnostics".to_owned(), json!(warnings));
+            }
         }
         "restore" => {
             let name = required_name(args, "restore")?;

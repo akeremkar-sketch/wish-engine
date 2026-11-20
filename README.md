@@ -45,7 +45,8 @@ default look (*Natural*). `python tools/readme_pictures.py` draws them all again
 
 ![The editor in its AI mode](docs/images/editor-ai.png)
 
-*The editor's AI mode: the game card, the live game, a plan, and the conversation with an agent.*
+*The editor's AI mode at the start of a project: the game card (not filled in yet), the live game,
+and the empty plan and conversation panels, with the ready requests for the agent.*
 
 ## What it does
 
@@ -140,9 +141,12 @@ the game SDK and the packed compiler, with every licence text and `SHA256SUMS`
   currently also needs the Visual C++ runtime (`VCRUNTIME140.dll`), which most Windows computers
   have; a fix is open ([docs/design/M12-release-pipeline.md](docs/design/M12-release-pipeline.md),
   section 6).
-- **Linux:** the ALSA library (`libasound2`), a Vulkan driver or OpenGL, and the usual X11 or
-  Wayland libraries of a desktop. The list is read from the libraries' features and checked in CI
-  on `ubuntu-latest`, not on a desktop.
+- **Linux:** glibc 2.35 or newer (Ubuntu 22.04, Debian 12), the ALSA library (`libasound2`), a
+  Vulkan driver or OpenGL, and the usual X11 or Wayland libraries of a desktop. The list is read
+  from the libraries' features. The release workflow builds the Linux archive on Ubuntu 22.04,
+  fails if any of its programs asks for a newer glibc, and runs it from the extracted copy on a
+  full GitHub runner image: that proves it needs no developer tools, not that a bare system has
+  every library it loads.
 
 ## Stability
 

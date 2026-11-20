@@ -336,23 +336,12 @@ pub fn load_project(root: &Path, registry: &Registry) -> Result<Project> {
         .filter(|(n, _)| crate::material::is_material(n))
     {
         // A file far larger than a material can be is not read.
-        let bytes = fs::metadata(path).map_or(0, |meta| meta.len());
-        if bytes > crate::material::MAX_MATERIAL_BYTES {
-            diagnostics.push(
-                Diagnostic::error(
-                    "material_file_too_large",
-                    format!(
-                        "'{name}' is {bytes} bytes; a material file is at most {} bytes.",
-                        crate::material::MAX_MATERIAL_BYTES
-                    ),
-                    "A material file holds a few numbers and paths. Pictures go in their own PNG files, which the material names.",
-                )
-                .at_file(name),
-            );
-            continue;
-        }
-        let Some(source) = read(path, name, &mut diagnostics) else {
-            continue;
+        let source = match crate::material::read_material_file(path, name) {
+            Ok(source) => source,
+            Err(problem) => {
+                diagnostics.push(problem);
+                continue;
+            }
         };
         let (material, problems) = crate::material::check_material(&source, name, &index);
         diagnostics.extend(problems);

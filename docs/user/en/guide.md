@@ -30,8 +30,8 @@ ships inside the folder, so no developer tool needs to be installed. Two things 
 must have:
 - **Windows:** building game code currently needs the Visual C++ runtime (`VCRUNTIME140.dll`),
   which most Windows computers have. The engine, the editor and exported games do not need it.
-- **Linux:** the ALSA library (`libasound2`), a Vulkan driver or OpenGL, and the X11 or Wayland
-  libraries a desktop has.
+- **Linux:** glibc 2.35 or newer (Ubuntu 22.04, Debian 12), the ALSA library (`libasound2`), a
+  Vulkan driver or OpenGL, and the X11 or Wayland libraries a desktop has.
 
 Drop a project folder on `wish-engine.exe` to open the editor on it. On the command line the same is
 `wen edit`.
@@ -169,10 +169,12 @@ The language is chosen at the top right of the welcome screen, and later in the 
   - *Undo this* takes back one change on its own, even an old one, as long as the value it set
     is still there.
 - **Checkpoints** (project menu, *Checkpoints*):
-  - *Save checkpoint* keeps the whole project as it is.
+  - *Save checkpoint* keeps the project's scenes, prefabs, material files, meta files and
+    settings as they are (not pictures or sounds).
   - *Go back to this* returns to it; going back is itself a change in the history, so it can be
-    undone.
-  - *Compare with now* shows the checkpoint and now side by side.
+    undone. Material, meta and settings files it writes over are kept in
+    `.wish/trash/checkpoints/`.
+  - *Compare with now* shows the checkpoint and now side by side (with today's textures).
 
 Files are the source of truth. Editing a scene file in another program is fine: the editor notices,
 the change enters the history as *file*, and a broken file is reported, never overwritten.
@@ -402,4 +404,4 @@ in CI on Windows and Linux).
 | The same scene, seed and keys play out the same way; replays of 10,000 ticks play back exactly | `cargo test -p wish_control --test script_tools` |
 | An exported game plays as it did in the editor | `cargo test -p wish_player --test export` (the same world hash, in a separate process) |
 | A file of format 1 looks and plays as it did; `wen migrate` keeps its meaning | `cargo test -p wish_control --test look_lock` |
-| What a release archive needs | the release workflow builds and uses each archive on a fresh GitHub runner ([.github/workflows/release.yml](../../../.github/workflows/release.yml)); the Visual C++ runtime note: [docs/design/M12-release-pipeline.md](../../design/M12-release-pipeline.md), section 6 |
+| What a release archive needs | the release workflow builds each archive (the Linux one on Ubuntu 22.04, failing if a program asks for a newer glibc than 2.35) and uses it from the extracted copy, without the runner's Rust tools, on a full GitHub runner image: that proves it needs no developer tools, not that a bare system has every library it loads ([.github/workflows/release.yml](../../../.github/workflows/release.yml)); the Visual C++ runtime note: [docs/design/M12-release-pipeline.md](../../design/M12-release-pipeline.md), section 6 |

@@ -66,6 +66,14 @@ fn wen_package_writes_the_same_archive_twice_with_its_licences() {
             assert!(out.join(&file).is_file(), "{file} is missing");
         }
         assert!(out.join("toolchain/share/doc/rust").is_dir());
+        // The package's SDK names no path of the machine that made it (it
+        // finds the packed compiler beside wen).
+        let sdk = std::fs::read_to_string(out.join("sdk/sdk.json")).unwrap();
+        assert!(!sdk.contains("rustc_path"), "{sdk}");
+        assert!(
+            out.join(format!("toolchain/bin/rustc{exe}")).is_file(),
+            "the packed compiler"
+        );
         assert!(out.join("templates").is_dir());
         assert!(out.join("packages").is_dir());
         for windows_only in ["wish-engine.ico", "clean-test.wsb", "clean-test.ps1"] {

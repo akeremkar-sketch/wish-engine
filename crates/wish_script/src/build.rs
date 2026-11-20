@@ -770,3 +770,77 @@ pub fn pack_toolchain(rustc: &Path, out: &Path) -> Result<Value> {
     .map_err(|e| io_failed("write toolchain.json", &e))?;
     Ok(description)
 }
+
+/// Makes the SDK pack in `sdk` one that can be shipped: its `sdk.json`
+/// without `rustc_path`, the absolute path of the compiler on the machine
+/// that made it (the path names that machine's user, and a package finds its
+/// own compiler in `toolchain/` first; see [`Toolchain::locate`]). Returns
+/// the description as written.
+pub fn sdk_for_package(sdk: &Path) -> Result<Value> {
+    let path = sdk.join(SDK_FILE);
+    let text = std::fs::read_to_string(&path).map_err(|e| io_failed("read sdk.json", &e))?;
+    let mut description: Value = serde_json::from_str(&text).map_err(|e| {
+        Diagnostic::error(
+            "script_sdk_missing",
+            format!("The SDK's sdk.json cannot be read: {e}."),
+            "Build the SDK pack again (`wen sdk`, or `wen package`).",
+        )
+    })?;
+    if let Some(map) = description.as_object_mut() {
+        map.remove("rustc_path");
+    }
+    std::fs::write(
+        &path,
+        serde_json::to_string_pretty(&description).unwrap_or_default(),
+    )
+    .map_err(|e| io_failed("write sdk.json", &e))?;
+    Ok(description)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+
+    fn absolute_paths(value: &Value) -> Vec<String> {
+        match value {
+            Value::String(text) if Path::new(text).is_absolute() || text.contains(":\\") => {
+                vec![text.clone()]
+            }
+            Value::Array(items) => items.iter().flat_map(absolute_paths).collect(),
+            Value::Object(map) => map.values().flat_map(absolute_paths).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Closing review of 1.0: a package's `sdk.json` carried the absolute
+    /// path of the packaging machine's compiler (with its user name).
+    #[test]
+    fn a_packaged_sdk_names_no_path_of_the_machine_that_made_it() {
+        let sdk = std::env::temp_dir().join("wish-script-test-sdk-for-package");
+        let _ = std::fs::remove_dir_all(&sdk);
+        std::fs::create_dir_all(&sdk).unwrap();
+        let compiler = std::env::temp_dir()
+            .join("someone")
+            .join(".rustup")
+            .join("bin")
+            .join("rustc");
+        let made = json!({
+            "format": 1,
+            "rustc": "rustc 1.100.0",
+            "rustc_path": compiler.display().to_string(),
+            "externs": { "wish_sdk": "wasm/libwish_sdk.rlib" },
+        });
+        std::fs::write(sdk.join(SDK_FILE), made.to_string()).unwrap();
+        let shipped = sdk_for_package(&sdk).unwrap();
+        let written: Value =
+            serde_json::from_str(&std::fs::read_to_string(sdk.join(SDK_FILE)).unwrap()).unwrap();
+        assert_eq!(shipped, written);
+        assert_eq!(absolute_paths(&written), Vec::<String>::new());
+        assert!(written.get("rustc_path").is_none());
+        assert_eq!(written["rustc"], made["rustc"]);
+        assert_eq!(written["externs"], made["externs"]);
+        let _ = std::fs::remove_dir_all(&sdk);
+    }
+}

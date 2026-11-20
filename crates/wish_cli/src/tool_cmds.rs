@@ -1100,12 +1100,15 @@ pub fn package(out: Option<&str>, as_json: bool) -> wish_core::Result<String> {
         )?;
     }
     let cargo = std::env::var_os("CARGO").map_or_else(|| "cargo".into(), std::path::PathBuf::from);
-    let sdk = wish_script::build::pack_sdk(
+    wish_script::build::pack_sdk(
         &cargo,
         &manifest,
         &beside.join("sdk-target"),
         &out.join("sdk"),
     )?;
+    // Without the path of this machine's compiler: the package uses its own
+    // (toolchain/, packed next).
+    let sdk = wish_script::build::sdk_for_package(&out.join("sdk"))?;
     let rustc = std::env::var_os("RUSTC").map_or_else(|| "rustc".into(), std::path::PathBuf::from);
     let toolchain = wish_script::build::pack_toolchain(&rustc, &out.join("toolchain"))?;
     if !out

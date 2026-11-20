@@ -5,7 +5,7 @@
 //! Everything here is a pure function of the recorded tries, so a card can
 //! be made again from its JSON (`wish-evals card --from <file>`).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Map, Value, json};
 
@@ -258,6 +258,39 @@ pub fn gap(a: &Value, b: &Value) -> Value {
     })
 }
 
+/// The task ids of some tries.
+fn task_ids(rows: &[Value]) -> BTreeSet<&str> {
+    rows.iter()
+        .map(|row| row["task"].as_str().unwrap_or_default())
+        .collect()
+}
+
+/// The gap between the first two models over the tasks both ran (a
+/// campaign stopped at its cost cap may leave one model on fewer tasks):
+/// each model's tries of those tasks are scored again and compared.
+/// `tasks` says how many tasks it uses, `tasks_left_out` how many the two
+/// models' columns count beyond them. No task in common: no gap.
+pub fn paired_gap(a: &(String, String, Vec<Value>), b: &(String, String, Vec<Value>)) -> Value {
+    let (ids_a, ids_b) = (task_ids(&a.2), task_ids(&b.2));
+    let shared: BTreeSet<&str> = ids_a.intersection(&ids_b).copied().collect();
+    if shared.is_empty() {
+        return Value::Null;
+    }
+    let only_shared = |rows: &[Value]| -> Vec<Value> {
+        rows.iter()
+            .filter(|row| shared.contains(row["task"].as_str().unwrap_or_default()))
+            .cloned()
+            .collect()
+    };
+    let mut out = gap(
+        &model_card(&a.0, &a.1, &only_shared(&a.2)),
+        &model_card(&b.0, &b.1, &only_shared(&b.2)),
+    );
+    out["tasks"] = json!(shared.len());
+    out["tasks_left_out"] = json!(ids_a.len() + ids_b.len() - 2 * shared.len());
+    out
+}
+
 /// The whole scorecard of a campaign: inputs, one card per model (in the
 /// order the models were run), the gap, and (for the open set) the tries.
 pub fn scorecard(inputs: &Value, runs: &[(String, String, Vec<Value>)], keep_tries: bool) -> Value {
@@ -265,8 +298,8 @@ pub fn scorecard(inputs: &Value, runs: &[(String, String, Vec<Value>)], keep_tri
         .iter()
         .map(|(model, effort, rows)| model_card(model, effort, rows))
         .collect();
-    let gap = match cards.as_slice() {
-        [a, b, ..] => gap(a, b),
+    let gap = match runs {
+        [a, b, ..] => paired_gap(a, b),
         _ => Value::Null,
     };
     let mut out = Map::new();
@@ -616,38 +649,64 @@ pub fn markdown(card: &Value) -> String {
         None,
     );
     header(&mut out, "7. Consistency");
+    // Consistency is across the tries of a task: with one try per task there
+    // is nothing to compare (every task "passed in every try" or "in none").
+    let consistency = |path: &'static str| {
+        move |c: &Value| {
+            if c["tries_per_task"].as_u64().unwrap_or(0) < 2 {
+                "– (one try per task)".to_owned()
+            } else {
+                show(at(c, path))
+            }
+        }
+    };
     row(
         &mut out,
         "tasks passed in every try",
-        &|c| show(at(c, "7_consistency.tasks_all_tries")),
+        &consistency("7_consistency.tasks_all_tries"),
         None,
     );
     row(
         &mut out,
         "tasks passed in some tries",
-        &|c| show(at(c, "7_consistency.tasks_mixed")),
+        &consistency("7_consistency.tasks_mixed"),
         None,
     );
     row(
         &mut out,
         "tasks passed in no try",
-        &|c| show(at(c, "7_consistency.tasks_no_try")),
+        &consistency("7_consistency.tasks_no_try"),
         None,
     );
     row(
         &mut out,
         "spread of cost across tries (median CV)",
-        &|c| show(at(c, "7_consistency.cost_cv_median")),
+        &consistency("7_consistency.cost_cv_median"),
         None,
     );
     row(
         &mut out,
         "spread of time across tries (median CV)",
-        &|c| show(at(c, "7_consistency.seconds_cv_median")),
+        &consistency("7_consistency.seconds_cv_median"),
         None,
     );
     if has_gap {
-        out.push_str("\nGap: rates in percentage points (first model minus second); costs and times as the second model's over the first's.\n");
+        out.push_str("\nGap: rates in percentage points (first model minus second); costs and times as the second model's over the first's.");
+        if let Some(tasks) = gap["tasks"].as_u64() {
+            out.push_str(&format!(
+                " It is computed over the {tasks} tasks both models ran"
+            ));
+            match gap["tasks_left_out"].as_u64() {
+                Some(left) if left > 0 => out.push_str(&format!(
+                    "; the models' own columns also count {left} task{} only one of them ran, so the gap is not the difference of the columns.",
+                    if left == 1 { "" } else { "s" }
+                )),
+                _ => out.push('.'),
+            }
+        }
+        out.push('\n');
+    } else if cards.len() >= 2 {
+        out.push_str("\nNo gap: the models ran no task in common.\n");
     }
     if inputs["set"] == "held-out" {
         out.push_str("\nHeld-out set: numbers only. No task, failure or transcript is recorded (M12 plan, \"The AI scorecard\").\n");
@@ -783,5 +842,78 @@ mod tests {
         let held = scorecard(&json!({ "set": "held-out" }), &fixture(), false);
         assert!(held.get("tries").is_none());
         assert!(markdown(&held).contains("numbers only"));
+    }
+
+    fn try_of(task: &str, passed: bool) -> Value {
+        json!({ "task": task, "passed_first": passed, "passed": passed,
+                "claim_first": "done", "claim_final": "done", "cost_usd": 0.1, "seconds": 10.0,
+                "seconds_to_result": if passed { json!(10.0) } else { Value::Null },
+                "check_errors": 0, "check_warnings": 0 })
+    }
+
+    /// Closing review of 1.0: a campaign stopped at its cost cap left the
+    /// second model on fewer tasks, and the gap compared the first model's
+    /// rate over every task with the second's over a few.
+    #[test]
+    fn the_gap_compares_only_the_tasks_both_models_ran() {
+        let runs = vec![
+            (
+                "sonnet".to_owned(),
+                "medium".to_owned(),
+                vec![try_of("1", true), try_of("2", false), try_of("3", false)],
+            ),
+            (
+                "haiku".to_owned(),
+                "medium".to_owned(),
+                vec![try_of("1", true)],
+            ),
+        ];
+        let card = scorecard(&json!({ "set": "open" }), &runs, true);
+        // Over task 1 alone both passed: no gap. Over the columns it would
+        // be 33.3 % against 100 %.
+        assert_eq!(card["gap"]["final_points"], json!(0.0), "{}", card["gap"]);
+        assert_eq!(card["gap"]["first_attempt_points"], json!(0.0));
+        assert_eq!(card["gap"]["tasks"], json!(1));
+        assert_eq!(card["gap"]["tasks_left_out"], json!(2));
+        let text = markdown(&card);
+        assert!(text.contains("over the 1 tasks both models ran"), "{text}");
+        assert!(text.contains("also count 2 tasks only one of them ran"));
+        // No task in common: no gap at all.
+        let apart = vec![
+            runs[0].clone(),
+            (
+                "haiku".to_owned(),
+                "medium".to_owned(),
+                vec![try_of("9", true)],
+            ),
+        ];
+        let card = scorecard(&json!({ "set": "open" }), &apart, true);
+        assert!(card["gap"].is_null());
+        assert!(markdown(&card).contains("No gap: the models ran no task in common."));
+    }
+
+    /// Closing review of 1.0: with one try per task, "tasks passed in every
+    /// try" was the number of passed tasks, which says nothing about
+    /// consistency.
+    #[test]
+    fn consistency_needs_two_tries_of_a_task() {
+        let runs = vec![(
+            "sonnet".to_owned(),
+            "medium".to_owned(),
+            vec![try_of("1", true), try_of("2", true)],
+        )];
+        let text = markdown(&scorecard(&json!({ "set": "open" }), &runs, true));
+        let section = &text[text.find("## 7. Consistency").unwrap()..];
+        assert!(
+            section.contains("| tasks passed in every try | – (one try per task) |"),
+            "{section}"
+        );
+        assert!(!section.contains("| tasks passed in every try | 2 |"));
+        // With two tries the counts are shown.
+        let text = markdown(&scorecard(&json!({ "set": "open" }), &fixture(), true));
+        assert!(
+            text.contains("| tasks passed in every try | 2 | 0 |  |"),
+            "{text}"
+        );
     }
 }

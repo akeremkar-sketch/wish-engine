@@ -955,14 +955,7 @@ fn changes_json(changes: &[String]) -> Value {
 }
 
 fn refuse_if_file_invalid(workspace: &Workspace, path: &str) -> Result<()> {
-    if let Some(problem) = &workspace.document(path)?.disk_problem {
-        let mut refusal = problem.clone();
-        refusal.severity = wish_core::Severity::Error;
-        refusal.code = "scene_file_invalid".into();
-        refusal.docs = "wish://docs/diagnostics/scene_file_invalid".to_owned();
-        return Err(refusal);
-    }
-    Ok(())
+    workspace.refuse_if_file_invalid(path)
 }
 
 fn edit_apply(workspace: &mut Workspace, args: &Args, actor: &Actor) -> Result<Map<String, Value>> {

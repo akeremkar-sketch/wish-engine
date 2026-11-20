@@ -156,13 +156,16 @@ beside the alias.
 
 Three tries per task (`--tries 3`, the default). Per model: tasks passed in
 every try, in some, in none; the median over tasks of the coefficient of
-variation of cost and of time across the tries.
+variation of cost and of time across the tries. With one try per task the
+Markdown card shows these rows as "– (one try per task)" (§11).
 
 ### The gap between the models
 
 For the first two models of a campaign (by default Sonnet 5.5 · medium, then
 Haiku 5.5 · medium): rates as percentage points (first minus second), costs
-and times as the second's over the first's.
+and times as the second's over the first's. It is computed over the tasks
+both models ran (`card::paired_gap`; `gap.tasks`, `gap.tasks_left_out`),
+and there is no gap when they ran none in common (§11).
 
 ## 3. The sets
 
@@ -252,10 +255,15 @@ ran, the order the tries ran in, and the cost cap with whether the campaign
 stopped at it (`inputs.method` holds the same). The open set's JSON keeps
 every try's row; the held-out one keeps none.
 
-A try's transcripts (one run per file: `run-1.jsonl`, `run-2.jsonl` for a
-repair round, `second.jsonl`) and its `baseline.json` are written beside its
-project (`<try>.logs/`), never in it: the second agent works in the project
-folder and must not read the first agent's transcript or the baseline.
+A try's project lives, while agents work in it, in a folder of its own
+(`C:/wish-build/evals-live/<label>-<model>-<task>-<n>`) and moves to
+`C:/wish-build/evals/<label>/<model>/<task>-<n>` when the try is over (held-out
+tries are deleted). Its transcripts (one run per file: `run-1.jsonl`,
+`run-2.jsonl` for a repair round, `second.jsonl`) and its `baseline.json` are
+written straight to where it is kept (`<task>-<n>.logs/`), never in the
+project and never under the live folder: the second agent works in the
+project folder and must not read the first agent's transcript or the
+baseline (§11 for the deny rules).
 `rescore` reads one run per file. A `--label` is a plain name (letters,
 digits, `-`, `_`, `.`; no `..`, no folders), and an existing result is not
 overwritten without `--overwrite`.
@@ -265,7 +273,9 @@ when the cost so far plus the mean cost of a try so far would pass the cap;
 the card says it stopped and after how many tries, and keeps what was
 measured. The long task's first try with the first model runs first: it is
 the largest unknown of the estimate, so the first measured long try shows
-early whether the cap holds.
+early whether the cap holds. Then the campaign goes task by task, each try
+with every model in turn (`schedule`), so that a stop at the cap leaves the
+models on the same tasks.
 
 ## 5. The self-test
 
@@ -485,3 +495,48 @@ client, so it could not see it. The prompt now goes in on standard input
 (`claude -p` reads it there), the client's error stream is drained, and
 `launch_tests::the_command_line_never_carries_a_line_break` guards it. The
 stopped start spent nothing.
+
+## 11. The closing review of 1.0 (20 November 2026)
+
+The independent closing review of 1.0 (docs/design/M12-closing-review.md)
+found four defects in the harness and the card; all were fixed, each with a
+regression test that failed first where one could.
+
+- **The try's time limit did not stop the agent on Windows.** The client is
+  `claude.cmd`, which starts the real client as a child; `Child::kill` ended
+  only the batch file, the child kept running (spending quota, editing the
+  project) and holding the output pipe, and the harness waited for it. Now
+  `stop_tree` ends the whole tree (`taskkill /PID <pid> /T /F` on Windows; on
+  Unix the client leads its own process group, and the group is killed), the
+  transcript reader is waited for at most 10 s (`READER_GRACE`), and the
+  try's seconds are taken after it. `WISH_EVALS_CLIENT` names another
+  program to run as the client. Test:
+  `launch_tests::a_try_past_its_limit_stops_the_whole_client` (a fake client
+  whose child keeps the pipe open; before the fix the harness waited 61 s
+  for a 3 s limit).
+- **An agent with file tools could read other tries, the other model's
+  solutions, transcripts with the hidden check's reason, the held-out folder
+  and the repository** (which holds the hidden checks' code). Each try now
+  works in its own live folder (§4), and the client gets deny rules for
+  `Read` (which also governs Grep and Glob) and `Edit` on the kept tries, the
+  default and the given held-out folder, the repository, the person's home
+  folder and the client's folder (`deny_rules`, in the client's absolute
+  form `//c/...` or `//home/...`, computed on the machine that runs it). On
+  Linux the harness's folders move to the system's temporary folder, out of
+  the home folder. Tests:
+  `launch_tests::the_agent_may_not_read_other_tries_the_checks_or_the_held_out_set`,
+  `rule_paths_are_the_clients_absolute_form`. **Not verified against a real
+  client** (that spends quota): that Claude Code applies these rules to
+  `Read`, `Grep` and `Glob` as documented, and reads a non-ASCII path in a
+  rule passed through `claude.cmd`. The build folder (`C:/wish-build/target`)
+  is not denied; it holds compiled code only.
+- **The gap compared different task sets** when the cap stopped the second
+  model early. The gap now scores both models again over the tasks both ran
+  and says how many (`card::tests::the_gap_compares_only_the_tasks_both_models_ran`),
+  and the schedule interleaves the models per task
+  (`the_schedule_runs_every_model_on_a_task_before_the_next`).
+- **The consistency rows with one try per task** read "tasks passed in every
+  try: 13". They now read "– (one try per task)"
+  (`card::tests::consistency_needs_two_tries_of_a_task`);
+  `baseline-1.0-small.md` was made again from its JSON (`wish-evals card
+  --from`), which changed only those rows.

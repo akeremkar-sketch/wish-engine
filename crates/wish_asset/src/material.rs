@@ -60,6 +60,51 @@ pub fn is_material(name: &str) -> bool {
     name.ends_with(MATERIAL_SUFFIX)
 }
 
+/// The diagnostic of a material file of `bytes` bytes, more than
+/// [`MAX_MATERIAL_BYTES`]; `name` is its project-relative path.
+pub fn material_too_large(name: &str, bytes: u64) -> Diagnostic {
+    Diagnostic::error(
+        "material_file_too_large",
+        format!("'{name}' is {bytes} bytes; a material file is at most {MAX_MATERIAL_BYTES} bytes."),
+        "A material file holds a few numbers and paths. Pictures go in their own PNG files, which the material names.",
+    )
+    .at_file(name)
+}
+
+/// Reads the material file at `file` (the project path `name`, for the
+/// diagnostics) as text, refusing one larger than [`MAX_MATERIAL_BYTES`]
+/// without reading it (`material_file_too_large`): every place that reads
+/// a material file whole goes through this, so a huge file named
+/// `*.mat.json` is never taken into memory.
+pub fn read_material_file(file: &std::path::Path, name: &str) -> Result<String> {
+    use std::io::Read;
+    let unreadable = |error: std::io::Error| {
+        Diagnostic::error(
+            "file_unreadable",
+            format!("Could not read '{name}': {error}."),
+            "Check that the file can be read and is UTF-8 text.",
+        )
+        .at_file(name)
+    };
+    let opened = std::fs::File::open(file).map_err(unreadable)?;
+    let bytes = opened.metadata().map_err(unreadable)?.len();
+    if bytes > MAX_MATERIAL_BYTES {
+        return Err(material_too_large(name, bytes));
+    }
+    // The file may grow between the length and the read: never more than
+    // the cap (and one byte to tell) is read.
+    let mut text = String::new();
+    opened
+        .take(MAX_MATERIAL_BYTES + 1)
+        .read_to_string(&mut text)
+        .map_err(unreadable)?;
+    let read = u64::try_from(text.len()).unwrap_or(u64::MAX);
+    if read > MAX_MATERIAL_BYTES {
+        return Err(material_too_large(name, read));
+    }
+    Ok(text)
+}
+
 /// The schema of what a material file holds: `MaterialFile`.
 pub fn material_schema() -> TypeSchema {
     MaterialFile::schema()

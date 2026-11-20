@@ -1,7 +1,8 @@
 # Third-party libraries
 
 Wish Engine and the games made with it use these libraries. Each is listed with its license;
-the license texts the libraries ship follow, each text once, with the libraries it belongs to.
+the license texts the libraries ship follow, each text once, with the libraries it belongs to
+(for a library that ships none, the text of its source repository, kept in licenses/).
 Made by tools/third_party.py from Cargo.lock, with the works that are not libraries last.
 Engine packages also carry the Rust compiler (toolchain/): its own notices are in
 toolchain/share/doc/rust.
@@ -39,8 +40,8 @@ toolchain/share/doc/rust.
 | bitflags | 1.3.2 | MIT/Apache-2.0 | 954f335b8baf, 14435fbcd271 |
 | bitflags | 2.13.2 | MIT OR Apache-2.0 | 954f335b8baf, 14435fbcd271 |
 | block-buffer | 0.10.4 | MIT OR Apache-2.0 | e8541ea93f02, 5ff5253f2cb9 |
-| block2 | 0.5.1 | MIT | - |
-| block2 | 0.6.2 | MIT | - |
+| block2 | 0.5.1 | MIT | 32ba93c38ef3 |
+| block2 | 0.6.2 | MIT | 32ba93c38ef3 |
 | borsh | 1.8.1 | MIT OR Apache-2.0 | 628e23a221a6, 30fefc3a7d6a |
 | borsh-derive | 1.8.1 | Apache-2.0 | 628e23a221a6, 30fefc3a7d6a |
 | bumpalo | 3.20.4 | MIT OR Apache-2.0 | 954f335b8baf, 5662394bebb1 |
@@ -92,7 +93,7 @@ toolchain/share/doc/rust.
 | cursor-icon | 1.2.0 | MIT OR Apache-2.0 OR Zlib | 756c9f923fd9, 0e4063eaaed0, 3d51f0acff0e |
 | dasp_sample | 0.11.0 | MIT OR Apache-2.0 | - |
 | digest | 0.10.7 | MIT OR Apache-2.0 | e8541ea93f02, 9c5127ab88e8 |
-| dispatch | 0.2.0 | MIT | - |
+| dispatch | 0.2.0 | MIT | 20712cc56fa0 |
 | dispatch2 | 0.3.1 | Zlib OR Apache-2.0 OR MIT | - |
 | dlib | 0.5.3 | MIT | 10e5daea68c3 |
 | document-features | 0.2.12 | MIT OR Apache-2.0 | c274f80372d9, 431b0387e5da |
@@ -101,7 +102,7 @@ toolchain/share/doc/rust.
 | dpi | 0.1.2 | Apache-2.0 AND MIT | 6dc0e068dcf3, e07664cb9e31 |
 | drm | 0.14.1 | MIT | 30fefc3a7d6a |
 | drm-ffi | 0.9.1 | MIT | 30fefc3a7d6a |
-| drm-fourcc | 2.2.0 | MIT | - |
+| drm-fourcc | 2.2.0 | MIT | 30fefc3a7d6a |
 | drm-sys | 0.8.1 | MIT | 30fefc3a7d6a |
 | dtor | 0.8.1 | Apache-2.0 OR MIT | 6dc0e068dcf3, bccaa8b6c09f |
 | ecolor | 0.37.0 | MIT OR Apache-2.0 | - |
@@ -219,35 +220,35 @@ toolchain/share/doc/rust.
 | num-traits | 0.2.19 | MIT OR Apache-2.0 | 954f335b8baf, 14435fbcd271 |
 | num_enum | 0.7.6 | BSD-3-Clause OR MIT OR Apache-2.0 | 85ad950cce87, 882b129495bc, 30fefc3a7d6a |
 | num_enum_derive | 0.7.6 | BSD-3-Clause OR MIT OR Apache-2.0 | 85ad950cce87, 882b129495bc, 30fefc3a7d6a |
-| objc-sys | 0.3.5 | MIT | - |
-| objc2 | 0.5.3 | MIT | - |
-| objc2 | 0.6.5 | MIT | - |
-| objc2-app-kit | 0.2.2 | MIT | - |
-| objc2-app-kit | 0.3.2 | Zlib OR Apache-2.0 OR MIT | - |
-| objc2-audio-toolbox | 0.3.2 | Zlib OR Apache-2.0 OR MIT | - |
-| objc2-avf-audio | 0.3.2 | Zlib OR Apache-2.0 OR MIT | - |
-| objc2-cloud-kit | 0.2.2 | MIT | - |
-| objc2-contacts | 0.2.2 | MIT | - |
-| objc2-core-audio | 0.3.2 | Zlib OR Apache-2.0 OR MIT | - |
-| objc2-core-audio-types | 0.3.2 | Zlib OR Apache-2.0 OR MIT | - |
-| objc2-core-data | 0.2.2 | MIT | - |
-| objc2-core-foundation | 0.3.2 | Zlib OR Apache-2.0 OR MIT | - |
-| objc2-core-graphics | 0.3.2 | Zlib OR Apache-2.0 OR MIT | - |
-| objc2-core-image | 0.2.2 | MIT | - |
-| objc2-core-location | 0.2.2 | MIT | - |
-| objc2-encode | 4.1.0 | MIT | - |
-| objc2-foundation | 0.2.2 | MIT | - |
-| objc2-foundation | 0.3.2 | MIT | - |
-| objc2-io-surface | 0.3.2 | Zlib OR Apache-2.0 OR MIT | - |
-| objc2-link-presentation | 0.2.2 | MIT | - |
-| objc2-metal | 0.2.2 | MIT | - |
-| objc2-metal | 0.3.2 | Zlib OR Apache-2.0 OR MIT | - |
-| objc2-quartz-core | 0.2.2 | MIT | - |
-| objc2-quartz-core | 0.3.2 | Zlib OR Apache-2.0 OR MIT | - |
-| objc2-symbols | 0.2.2 | MIT | - |
-| objc2-ui-kit | 0.2.2 | MIT | - |
-| objc2-uniform-type-identifiers | 0.2.2 | MIT | - |
-| objc2-user-notifications | 0.2.2 | MIT | - |
+| objc-sys | 0.3.5 | MIT | 32ba93c38ef3 |
+| objc2 | 0.5.3 | MIT | 32ba93c38ef3 |
+| objc2 | 0.6.5 | MIT | 32ba93c38ef3 |
+| objc2-app-kit | 0.2.2 | MIT | 32ba93c38ef3 |
+| objc2-app-kit | 0.3.2 | Zlib OR Apache-2.0 OR MIT | 32ba93c38ef3 |
+| objc2-audio-toolbox | 0.3.2 | Zlib OR Apache-2.0 OR MIT | 32ba93c38ef3 |
+| objc2-avf-audio | 0.3.2 | Zlib OR Apache-2.0 OR MIT | 32ba93c38ef3 |
+| objc2-cloud-kit | 0.2.2 | MIT | 32ba93c38ef3 |
+| objc2-contacts | 0.2.2 | MIT | 32ba93c38ef3 |
+| objc2-core-audio | 0.3.2 | Zlib OR Apache-2.0 OR MIT | 32ba93c38ef3 |
+| objc2-core-audio-types | 0.3.2 | Zlib OR Apache-2.0 OR MIT | 32ba93c38ef3 |
+| objc2-core-data | 0.2.2 | MIT | 32ba93c38ef3 |
+| objc2-core-foundation | 0.3.2 | Zlib OR Apache-2.0 OR MIT | 32ba93c38ef3 |
+| objc2-core-graphics | 0.3.2 | Zlib OR Apache-2.0 OR MIT | 32ba93c38ef3 |
+| objc2-core-image | 0.2.2 | MIT | 32ba93c38ef3 |
+| objc2-core-location | 0.2.2 | MIT | 32ba93c38ef3 |
+| objc2-encode | 4.1.0 | MIT | 32ba93c38ef3 |
+| objc2-foundation | 0.2.2 | MIT | 32ba93c38ef3 |
+| objc2-foundation | 0.3.2 | MIT | 32ba93c38ef3 |
+| objc2-io-surface | 0.3.2 | Zlib OR Apache-2.0 OR MIT | 32ba93c38ef3 |
+| objc2-link-presentation | 0.2.2 | MIT | 32ba93c38ef3 |
+| objc2-metal | 0.2.2 | MIT | 32ba93c38ef3 |
+| objc2-metal | 0.3.2 | Zlib OR Apache-2.0 OR MIT | 32ba93c38ef3 |
+| objc2-quartz-core | 0.2.2 | MIT | 32ba93c38ef3 |
+| objc2-quartz-core | 0.3.2 | Zlib OR Apache-2.0 OR MIT | 32ba93c38ef3 |
+| objc2-symbols | 0.2.2 | MIT | 32ba93c38ef3 |
+| objc2-ui-kit | 0.2.2 | MIT | 32ba93c38ef3 |
+| objc2-uniform-type-identifiers | 0.2.2 | MIT | 32ba93c38ef3 |
+| objc2-user-notifications | 0.2.2 | MIT | 32ba93c38ef3 |
 | object | 0.40.0 | Apache-2.0 OR MIT | 954f335b8baf, 3526044d67fd |
 | ogg | 0.8.0 | BSD-3-Clause | 352e146c7818 |
 | once_cell | 1.21.4 | MIT OR Apache-2.0 | 954f335b8baf, 30fefc3a7d6a |
@@ -342,7 +343,7 @@ toolchain/share/doc/rust.
 | strict-num | 0.1.1 | MIT | d6629d8c4e7d |
 | syn | 2.0.119 | MIT OR Apache-2.0 | 85ad950cce87, 30fefc3a7d6a |
 | syn | 3.0.10 | MIT OR Apache-2.0 | 85ad950cce87, 30fefc3a7d6a |
-| taffy | 0.15.1 | MIT | - |
+| taffy | 0.15.1 | MIT | e10a3d53c30f |
 | target-lexicon | 0.13.6 | Apache-2.0 WITH LLVM-exception | 2f213ec6b135 |
 | target-tuple | 1.0.2 | MIT OR Apache-2.0 | 85ad950cce87, 30fefc3a7d6a |
 | tempfile | 3.27.0 | MIT OR Apache-2.0 | 954f335b8baf, 7bdd5c5e8ad0 |
@@ -1117,7 +1118,7 @@ limitations under the License.
 
 ## Text 30fefc3a7d6a
 
-Used by: adler2 2.0.1, allocator-api2 0.2.21, anyhow 1.0.104, async-trait 0.1.92, atomic-waker 1.1.2, borsh 1.8.1, borsh-derive 1.8.1, concurrent-queue 2.5.0, drm 0.14.1, drm-ffi 0.9.1, drm-sys 0.8.1, fastrand 2.5.0, glam 0.30.10, glam 0.31.1, glam 0.32.1, glam 0.33.12, glam 0.34.3, glamx 0.3.1, glow 0.17.0, hermit-abi 0.5.3, itoa 1.0.19, khronos-egl 6.0.0, lazy_static 1.5.1, leb128fmt 0.1.0, linux-raw-sys 0.12.1, linux-raw-sys 0.4.15, linux-raw-sys 0.9.4, num_enum 0.7.6, num_enum_derive 0.7.6, once_cell 1.21.4, pin-project 1.1.13, pin-project-internal 1.1.13, pin-project-lite 0.2.17, polling 3.11.0, portable-atomic 1.15.0, portable-atomic-util 0.2.8, proc-macro-crate 3.5.0, proc-macro2 1.0.107, quote 1.0.47, rustc-hash 1.1.0, rustc-hash 2.1.3, rustix 0.38.44, rustix 1.1.6, rustversion 1.0.23, semver 1.0.28, serde 1.0.229, serde_core 1.0.229, serde_derive 1.0.229, serde_json 1.0.154, simd_cesu8 1.2.0, smol_str 0.2.2, syn 2.0.119, syn 3.0.10, target-tuple 1.0.2, thiserror 1.0.69, thiserror 2.0.21, thiserror-impl 1.0.69, thiserror-impl 2.0.21, trybuild 1.0.123, unicode-ident 1.0.27, wasip2 1.0.4+wasi-0.2.12, wasm-encoder 0.261.0, wasm-encoder 0.263.0, wasmparser 0.261.0, wasmparser 0.263.0, wasmprinter 0.261.0, wast 263.0.0, wat 1.263.0, wit-bindgen 0.57.1, x11-dl 2.21.0, zmij 1.0.23
+Used by: adler2 2.0.1, allocator-api2 0.2.21, anyhow 1.0.104, async-trait 0.1.92, atomic-waker 1.1.2, borsh 1.8.1, borsh-derive 1.8.1, concurrent-queue 2.5.0, drm 0.14.1, drm-ffi 0.9.1, drm-fourcc 2.2.0, drm-sys 0.8.1, fastrand 2.5.0, glam 0.30.10, glam 0.31.1, glam 0.32.1, glam 0.33.12, glam 0.34.3, glamx 0.3.1, glow 0.17.0, hermit-abi 0.5.3, itoa 1.0.19, khronos-egl 6.0.0, lazy_static 1.5.1, leb128fmt 0.1.0, linux-raw-sys 0.12.1, linux-raw-sys 0.4.15, linux-raw-sys 0.9.4, num_enum 0.7.6, num_enum_derive 0.7.6, once_cell 1.21.4, pin-project 1.1.13, pin-project-internal 1.1.13, pin-project-lite 0.2.17, polling 3.11.0, portable-atomic 1.15.0, portable-atomic-util 0.2.8, proc-macro-crate 3.5.0, proc-macro2 1.0.107, quote 1.0.47, rustc-hash 1.1.0, rustc-hash 2.1.3, rustix 0.38.44, rustix 1.1.6, rustversion 1.0.23, semver 1.0.28, serde 1.0.229, serde_core 1.0.229, serde_derive 1.0.229, serde_json 1.0.154, simd_cesu8 1.2.0, smol_str 0.2.2, syn 2.0.119, syn 3.0.10, target-tuple 1.0.2, thiserror 1.0.69, thiserror 2.0.21, thiserror-impl 1.0.69, thiserror-impl 2.0.21, trybuild 1.0.123, unicode-ident 1.0.27, wasip2 1.0.4+wasi-0.2.12, wasm-encoder 0.261.0, wasm-encoder 0.263.0, wasmparser 0.261.0, wasmparser 0.263.0, wasmprinter 0.261.0, wast 263.0.0, wat 1.263.0, wit-bindgen 0.57.1, x11-dl 2.21.0, zmij 1.0.23
 
 ```text
 Permission is hereby granted, free of charge, to any
@@ -2651,6 +2652,38 @@ Used by: block-buffer 0.10.4
 
 ```text
 Copyright (c) 2018-2019 The RustCrypto Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
+## Text 32ba93c38ef3
+
+Used by: block2 0.5.1, block2 0.6.2, objc-sys 0.3.5, objc2 0.5.3, objc2 0.6.5, objc2-app-kit 0.2.2, objc2-app-kit 0.3.2, objc2-audio-toolbox 0.3.2, objc2-avf-audio 0.3.2, objc2-cloud-kit 0.2.2, objc2-contacts 0.2.2, objc2-core-audio 0.3.2, objc2-core-audio-types 0.3.2, objc2-core-data 0.2.2, objc2-core-foundation 0.3.2, objc2-core-graphics 0.3.2, objc2-core-image 0.2.2, objc2-core-location 0.2.2, objc2-encode 4.1.0, objc2-foundation 0.2.2, objc2-foundation 0.3.2, objc2-io-surface 0.3.2, objc2-link-presentation 0.2.2, objc2-metal 0.2.2, objc2-metal 0.3.2, objc2-quartz-core 0.2.2, objc2-quartz-core 0.3.2, objc2-symbols 0.2.2, objc2-ui-kit 0.2.2, objc2-uniform-type-identifiers 0.2.2, objc2-user-notifications 0.2.2
+
+```text
+Copyright 2026 Mads Marquart
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -4349,6 +4382,34 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
+```
+
+## Text 20712cc56fa0
+
+Used by: dispatch 0.2.0
+
+```text
+MIT License
+
+Copyright (c) Steven Sheldon
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ```
 
 ## Text 10e5daea68c3
@@ -10307,6 +10368,35 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+```
+
+## Text e10a3d53c30f
+
+Used by: taffy 0.15.1
+
+```text
+MIT License
+
+Copyright (c) 2018 Visly Inc.
+Copyright (c) 2026 Taffy Authors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ```
 
 ## Text 7bdd5c5e8ad0

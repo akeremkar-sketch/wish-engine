@@ -51,8 +51,15 @@ impl Drawing {
 
     /// Uploads the models, material files and textures `scene` uses (again
     /// if their files changed). One that cannot be loaded is a warning: the
-    /// rest still draws.
-    pub fn load_models(&mut self, scene: &RenderScene, root: &Path) -> Vec<Diagnostic> {
+    /// rest still draws. `kept` is a checkpoint's copy of the project's
+    /// files, for a picture of the project as the checkpoint kept it: its
+    /// material files are used ([`load_materials_kept`]).
+    pub fn load_models(
+        &mut self,
+        scene: &RenderScene,
+        root: &Path,
+        kept: Option<&Path>,
+    ) -> Vec<Diagnostic> {
         let mut warnings = Vec::new();
         let mut paths: Vec<&str> = scene
             .draws
@@ -113,11 +120,12 @@ impl Drawing {
             root,
             &mut self.pictures,
         ));
-        warnings.extend(load_materials(
+        warnings.extend(load_materials_kept(
             &self.gpu,
             &mut self.renderer,
             scene,
             root,
+            kept,
             &mut self.materials,
         ));
         warnings
@@ -144,6 +152,9 @@ pub struct MaterialStamps {
     budget: u64,
     /// How many files were read whole (material files and pictures).
     reads: u64,
+    /// Where the material files were read from: a checkpoint's copy of
+    /// the project's files, or (`None`) the project.
+    kept: Option<PathBuf>,
 }
 
 impl Default for MaterialStamps {
@@ -164,6 +175,7 @@ impl MaterialStamps {
             failed_textures: BTreeMap::new(),
             budget: pixels.min(MAX_MATERIAL_TEXTURE_PIXELS),
             reads: 0,
+            kept: None,
         }
     }
 
@@ -213,29 +225,40 @@ fn png_size(file: &Path) -> Option<(u32, u32)> {
     Some((number(16)?, number(20)?))
 }
 
-/// Reads the material file `path` of the project as the look it holds.
-fn read_look(root: &Path, path: &str, bytes: u64) -> Result<wish_render::Look> {
-    if bytes > wish_asset::MAX_MATERIAL_BYTES {
-        return Err(Diagnostic::error(
-            "material_file_too_large",
-            format!(
-                "it is {bytes} bytes; a material file is at most {} bytes.",
-                wish_asset::MAX_MATERIAL_BYTES
-            ),
-            "A material file holds a few numbers and paths. Pictures go in their own PNG files, which the material names.",
-        ));
-    }
-    let text = std::fs::read_to_string(root.join(path)).map_err(|error| {
-        Diagnostic::error(
-            "file_unreadable",
-            format!("could not read it ({error})."),
-            "Check the path: asset_list with kind material shows the project's material files.",
-        )
+/// Reads the material file `path` (read from `file`) as the look it holds.
+fn read_look(file: &Path, path: &str) -> Result<wish_render::Look> {
+    let text = wish_asset::read_material_file(file, path).map_err(|problem| {
+        if problem.code == "file_unreadable" {
+            Diagnostic::error(
+                "file_unreadable",
+                problem.message.to_string(),
+                "Check the path: asset_list with kind material shows the project's material files.",
+            )
+        } else {
+            problem
+        }
     })?;
     let (material, texts) = wish_asset::parse_material(&text, path)?.decode()?;
     Ok(wish_render::Look::of(&material, &|reference| {
         texts.get(reference.text()).map(str::to_owned)
     }))
+}
+
+/// The most bytes a PNG file of the largest picture a texture or an
+/// interface picture may be (4096x4096 pixels) can need: 8 bytes a pixel
+/// (16 bits for each of four channels, which `wish_import::load_png`
+/// reads), with room for the file's own headers and blocks that do not
+/// compress. A larger file is not read at all.
+pub const MAX_PICTURE_FILE_BYTES: u64 = 8 * 4096 * 4096 + (1 << 20);
+
+/// Why a picture file of `bytes` bytes is not read, if it is larger than
+/// [`MAX_PICTURE_FILE_BYTES`].
+pub fn picture_file_too_large(bytes: u64) -> Option<String> {
+    (bytes > MAX_PICTURE_FILE_BYTES).then(|| {
+        format!(
+            "it is {bytes} bytes, more than any PNG of at most 4096x4096 pixels (16 bits a channel) needs."
+        )
+    })
 }
 
 /// Loads what the materials of `scene` need, from the project in `root`
@@ -264,7 +287,48 @@ pub fn load_materials(
     root: &Path,
     known: &mut MaterialStamps,
 ) -> Vec<Diagnostic> {
+    load_materials_kept(gpu, renderer, scene, root, None, known)
+}
+
+/// [`load_materials`] for a picture of the project as a checkpoint kept it:
+/// a material file is read from `kept` (the checkpoint's copy of the
+/// project's files) when the checkpoint holds it, from the project
+/// otherwise. Textures are read from the project: checkpoints do not keep
+/// pictures, and a picture drawn with a texture says so
+/// (`checkpoint_textures_current`).
+///
+/// `known` remembers where its material files were read from: asked for
+/// another place (a checkpoint, then the project again), every material
+/// file is read again, so the looks of one never stand in for the other.
+pub fn load_materials_kept(
+    gpu: &Gpu,
+    renderer: &mut Renderer,
+    scene: &RenderScene,
+    root: &Path,
+    kept: Option<&Path>,
+    known: &mut MaterialStamps,
+) -> Vec<Diagnostic> {
     let mut warnings = Vec::new();
+    if known.kept.as_deref() != kept {
+        let read: Vec<String> = known
+            .files
+            .keys()
+            .chain(known.failed_files.keys())
+            .cloned()
+            .collect();
+        for path in read {
+            renderer.remove_material(&path);
+        }
+        known.files.clear();
+        known.failed_files.clear();
+        known.kept = kept.map(Path::to_path_buf);
+    }
+    // Where the material file `path` is read from.
+    let source = |path: &str| -> PathBuf {
+        kept.map(|kept| kept.join(path))
+            .filter(|file| file.is_file())
+            .unwrap_or_else(|| root.join(path))
+    };
     // The material files.
     let mut files: Vec<&str> = scene
         .draws
@@ -306,7 +370,8 @@ pub fn load_materials(
                 "Material.file needs a file whose name ends in .mat.json; a picture goes into a material file's base_color_texture.".to_owned(),
             ))
         } else {
-            let stamp = stamp_of(&root.join(path));
+            let file = source(path);
+            let stamp = stamp_of(&file);
             if known.files.get(path) == Some(&stamp) && renderer.material(path).is_some() {
                 continue;
             }
@@ -318,7 +383,7 @@ pub fn load_materials(
                 continue;
             }
             known.reads += 1;
-            match read_look(root, path, stamp.0) {
+            match read_look(&file, path) {
                 Ok(look) => {
                     renderer.set_material(path, look);
                     known.files.insert(path.to_owned(), stamp);
@@ -374,6 +439,18 @@ pub fn load_materials(
         renderer.forget_texture(&key.0, key.1);
         known.textures.remove(&key);
         known.failed_textures.remove(&key);
+    }
+    if kept.is_some()
+        && let Some((first, _)) = wanted.keys().next()
+    {
+        warnings.push(
+            Diagnostic::warning(
+                "checkpoint_textures_current",
+                "The checkpoint's picture uses the textures as they are now: a checkpoint keeps material files, not pictures.",
+                "To compare a change of a picture, save the new picture under another name and point the material file at it.",
+            )
+            .at_file(first.clone()),
+        );
     }
     // A file wanted both ways is decoded once.
     let mut decoded: Option<(String, wish_import::Texture)> = None;
@@ -435,13 +512,10 @@ pub fn load_materials(
                 "it is not a PNG file.".to_owned(),
                 "Textures outside models are read from PNG files only. Convert the picture to PNG (8-bit) and name that file.".to_owned(),
             ))
-        } else if stamp.0 > 4 * 4096 * 4096 + (1 << 20) {
+        } else if let Some(why) = picture_file_too_large(stamp.0) {
             // Larger than any picture may be: not read at all.
             Err(not_loaded(
-                format!(
-                    "it is {} bytes, more than a 4096x4096 picture needs.",
-                    stamp.0
-                ),
+                why,
                 "Use a PNG of at most 4096x4096 pixels.".to_owned(),
             ))
         } else if let Some(problem) = png_size(&file)
@@ -559,14 +633,10 @@ pub fn load_ui_pictures(
             continue;
         }
         // Larger than any picture may be: not read at all.
-        let too_big = stamp.0 > 4 * 4096 * 4096 + (1 << 20);
-        let loaded = (if too_big {
+        let loaded = (if let Some(why) = picture_file_too_large(stamp.0) {
             Err(Diagnostic::error(
                 "image_invalid",
-                format!(
-                    "it is {} bytes, more than a 4096x4096 picture needs.",
-                    stamp.0
-                ),
+                why,
                 "Use a PNG of at most 4096x4096 pixels.",
             ))
         } else {
@@ -676,6 +746,17 @@ pub fn base64_decode(text: &str) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::base64;
+
+    #[test]
+    fn a_sixteen_bit_picture_of_the_largest_size_is_read() {
+        // 4096x4096 at 16 bits a channel is 128 MiB of pixels: a PNG of it
+        // that hardly compresses is read (the 1.0 closing review found the
+        // old cap, sized for 8 bits, refused it).
+        assert_eq!(super::picture_file_too_large(70 << 20), None);
+        assert_eq!(super::picture_file_too_large(128 << 20), None);
+        let refused = super::picture_file_too_large(130 << 20).unwrap();
+        assert!(refused.contains("16 bits"), "{refused}");
+    }
 
     #[test]
     fn base64_round_trips_and_rejects_garbage() {

@@ -60,7 +60,11 @@ Two things the map did not say, found on the way:
   person's computer that is a path in their home folder; in CI it is the
   runner's path. A packaged engine never reads it (it prefers
   `toolchain/bin/rustc` beside `wen`). Left as it is; noted for the closing
-  review.
+  review. **Fixed in the closing review of 1.0:** `wen package` writes the
+  package's `sdk.json` without it (`wish_script::build::sdk_for_package`,
+  unit-tested), and the release smoke checks that, finds the packed
+  `toolchain/bin/rustc`, and builds with the runner's rustup and cargo off
+  `PATH` and `RUSTUP_HOME`/`CARGO_HOME` pointing at an empty folder.
 
 ## 3. Decisions
 
@@ -234,7 +238,7 @@ Linux system packages:
 | `libxkbcommon0` (and `libxkbcommon-x11-0` on X11) | no | yes, opened at run time | keyboard in windows (winit) |
 | `libwayland-client0` (Wayland) or `libxcb1`, `libx11-6`, `libxcursor1`, `libxrandr2`, `libxi6` (X11) | no | yes, opened at run time | windows (winit, softbuffer) |
 | `xdg-utils` | no | optional | the launcher opens its error report |
-| glibc as new as the build machine's | no | yes | everything (built on `ubuntu-latest`, section 6) |
+| glibc 2.35 or newer (Ubuntu 22.04, Debian 12) | no | yes | everything (built on `ubuntu-22.04`, section 6) |
 
 The run-time list is read from the crates' features (`cargo tree --target
 x86_64-unknown-linux-gnu -e features`), not tried on a Linux desktop.
@@ -346,9 +350,13 @@ was not run anywhere: everything about it is in "Not verified" below.
   it is.
 - **A Linux clean-environment check** (the counterpart of
   `clean-test.wsb`): package 3 runs the package in a bare container in CI.
-- **The glibc baseline**: the Linux archive is built on `ubuntu-latest`, so
-  it needs a glibc at least as new as the symbols that build uses. Building
-  on the oldest supported runner would lower it; package 3 decides.
+- **The glibc baseline** (decided in the closing review of 1.0): the Linux
+  archive is built on the pinned `ubuntu-22.04` runner, and a release step
+  fails if any ELF file of the package asks for a `GLIBC_` symbol version
+  above 2.35. The README and both guides state glibc 2.35 or newer (Ubuntu
+  22.04, Debian 12). Not done: a smoke run in a bare container of the
+  oldest stated system (the runner image has far more libraries than a
+  bare system).
 - **Split debug information** as a release file (`.pdb` and `.debug`) to
   read crash reports' backtraces: later.
 - **Measured LTO choices** (fat, one codegen unit): later; the dist `wen.exe`

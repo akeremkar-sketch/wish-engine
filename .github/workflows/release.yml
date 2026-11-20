@@ -17,11 +17,19 @@ on:
     paths:
       - .github/workflows/release.yml
       - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - THIRD_PARTY_LICENSES.md
+      - licenses/**
+      - crates/wish_cli/src/launcher.rs
       - crates/wish_cli/src/tool_cmds.rs
       - crates/wish_control/src/archive.rs
+      - crates/wish_control/src/engines.rs
       - crates/wish_control/src/licenses.rs
       - crates/wish_control/src/release.rs
       - crates/wish_script/src/build.rs
+      - examples/**
+      - packages/**
       - tools/third_party.py
   workflow_dispatch:
 
@@ -44,7 +52,7 @@ jobs:
     outputs:
       version: ${{ steps.read.outputs.version }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
       - name: Read the workspace version; a tag must be that version
@@ -84,7 +92,10 @@ jobs:
             # lack VCRUNTIME140.dll. With --target the flag stays off build
             # scripts and proc macros.
             rustflags: -C target-feature=+crt-static
-          - os: ubuntu-latest
+          # Pinned, not ubuntu-latest: the Linux programs need the glibc of
+          # the system they are built on or newer, and 22.04's 2.35 is the
+          # floor the README and the guides state.
+          - os: ubuntu-22.04
             platform: linux-x86_64
             target: x86_64-unknown-linux-gnu
             archive: tar.gz
@@ -100,7 +111,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
       # As in CI: the Linux runner needs room for the build.
@@ -126,6 +137,30 @@ jobs:
           export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
           "target/$TARGET/dist/wen$EXE" package --out "$RUNNER_TEMP/release/package"
           ls -l "$RUNNER_TEMP/release"
+      # The floor the README and the guides state: glibc 2.35 (Ubuntu 22.04,
+      # Debian 12). Every ELF file of the package (wen, the player, the
+      # launcher, the SDK's macro libraries, the packed compiler) must ask for
+      # no newer GLIBC_ symbol version.
+      - name: The Linux programs need glibc 2.35 or older
+        if: runner.os == 'Linux'
+        run: |
+          floor=2.35
+          bad=0
+          checked=0
+          while IFS= read -r -d '' file; do
+            if [ "$(head -c 4 "$file" | od -An -c | tr -d ' \n')" != '177ELF' ]; then
+              continue
+            fi
+            checked=$((checked + 1))
+            need=$(objdump -T "$file" 2>/dev/null | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -Vu | tail -n 1)
+            if [ -n "$need" ] && [ "$(printf '%s\n%s\n' "$need" "$floor" | sort -V | tail -n 1)" != "$floor" ]; then
+              echo "::error::${file#"$RUNNER_TEMP/release/package/"} needs glibc $need; the stated floor is $floor"
+              bad=1
+            fi
+          done < <(find "$RUNNER_TEMP/release/package" -type f -print0)
+          echo "$checked ELF files checked against glibc $floor"
+          test "$checked" -gt 0
+          exit "$bad"
       - name: Check the checksum
         working-directory: ${{ runner.temp }}/release
         run: sha256sum -c SHA256SUMS
@@ -151,11 +186,31 @@ jobs:
           done
           test -d "$RUNNER_TEMP/unpacked/$STEM/toolchain/share/doc/rust"
       # Only the extracted copy: its programs, its packed compiler, its SDK
-      # and its player (on Linux this also proves the execute bits).
+      # and its player (on Linux this also proves the execute bits). The
+      # runner's rustup and cargo are taken off PATH and pointed at an empty
+      # folder, so game code can only build with the packed compiler. This
+      # runs on a full runner image, not on a bare system: it proves the
+      # archive needs no developer tools, not that a bare system has every
+      # library the programs load.
       - name: "From the extracted archive alone: version, new, build, test, export, play"
         run: |
-          wen="$RUNNER_TEMP/unpacked/$STEM/wen$EXE"
+          package="$RUNNER_TEMP/unpacked/$STEM"
+          wen="$package/wen$EXE"
           game="$RUNNER_TEMP/smoke"
+          test -f "$package/toolchain/bin/rustc$EXE"
+          if grep -q rustc_path "$package/sdk/sdk.json"; then
+            echo "::error file=crates/wish_script/src/build.rs::The package's sdk.json names the build machine's compiler (rustc_path)."
+            exit 1
+          fi
+          empty="$RUNNER_TEMP/no-rust"
+          mkdir -p "$empty"
+          PATH="$(printf '%s' "$PATH" | tr ':' '\n' | grep -v -i -e '\.cargo' -e rustup | paste -sd ':' -)"
+          export PATH RUSTUP_HOME="$empty" CARGO_HOME="$empty"
+          unset WISH_RUSTC WISH_SDK RUSTC
+          if command -v rustc; then
+            echo "::error::A rustc is still on PATH, so the smoke cannot prove the packed compiler is used."
+            exit 1
+          fi
           test "$("$wen" version)" = "wen $VERSION"
           "$wen" new "$game" --name Smoke
           "$wen" build --root "$game"
@@ -163,7 +218,7 @@ jobs:
           "$wen" export --root "$game" --name smoke
           "$game/exports/smoke/smoke$EXE" --headless --frames 60
       - name: Keep the archive and its checksum
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ env.STEM }}
           path: |
@@ -182,7 +237,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: artifacts
       - name: Join the two checksum lists and check them

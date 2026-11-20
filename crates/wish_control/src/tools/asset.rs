@@ -539,17 +539,10 @@ fn material_info(
     out: &mut Map<String, Value>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    let source = match std::fs::read_to_string(root.join(path)) {
+    let source = match wish_asset::read_material_file(&root.join(path), path) {
         Ok(source) => source,
-        Err(error) => {
-            diagnostics.push(
-                Diagnostic::error(
-                    "file_unreadable",
-                    format!("Could not read '{path}': {error}."),
-                    "Check that the file can be read and is UTF-8 text.",
-                )
-                .at_file(path),
-            );
+        Err(problem) => {
+            diagnostics.push(problem);
             return;
         }
     };

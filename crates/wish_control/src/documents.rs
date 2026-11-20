@@ -761,9 +761,37 @@ impl Workspace {
     }
 
     /// A document read from `text` as if it were the file `path`, without
-    /// opening it (a checkpoint's copy).
-    pub(crate) fn load_detached(&self, text: &str, path: &str) -> Result<SceneDocument> {
-        load_document(text, path, self.registry(), &self.docs.prefabs).map(|(doc, _)| doc)
+    /// opening it (a checkpoint's copy), its instances built from
+    /// `prefabs` (the checkpoint's: [`Self::prefab_library`] with the
+    /// prefabs it kept).
+    pub(crate) fn load_detached(
+        &self,
+        text: &str,
+        path: &str,
+        prefabs: &Arc<PrefabLibrary>,
+    ) -> Result<SceneDocument> {
+        load_document(text, path, self.registry(), prefabs).map(|(doc, _)| doc)
+    }
+
+    /// The prefabs as the project's prefab files are now (read again if
+    /// one changed, so a first call of a process has them too).
+    pub(crate) fn prefab_library(&mut self) -> Result<Arc<PrefabLibrary>> {
+        self.refresh_prefabs()?;
+        Ok(Arc::clone(&self.docs.prefabs))
+    }
+
+    /// Refuses a change of the open document `path` while its file is
+    /// invalid (changed outside the engine): `scene_file_invalid`, so a
+    /// person's half-finished edit is never overwritten.
+    pub(crate) fn refuse_if_file_invalid(&self, path: &str) -> Result<()> {
+        if let Some(problem) = &self.document(path)?.disk_problem {
+            let mut refusal = problem.clone();
+            refusal.severity = wish_core::Severity::Error;
+            refusal.code = "scene_file_invalid".into();
+            refusal.docs = "wish://docs/diagnostics/scene_file_invalid".to_owned();
+            return Err(refusal);
+        }
+        Ok(())
     }
 
     /// Makes the open document `path` equal to `target`: by one transaction

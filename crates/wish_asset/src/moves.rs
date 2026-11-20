@@ -185,13 +185,18 @@ pub fn plan_move(root: &Path, from: &str, to: &str, registry: &Registry) -> Resu
         if !(file.ends_with(".scene.json") || file.ends_with(".prefab.json") || material) {
             continue;
         }
-        let original = fs::read_to_string(path).map_err(|error| {
-            failure(
-                "file_unreadable",
-                format!("Could not read '{file}': {error}."),
-                "Check that the file can be read and is UTF-8 text.",
-            )
-        })?;
+        let original = if material {
+            // Read with its size cap, like everywhere a material is read.
+            crate::material::read_material_file(path, file)?
+        } else {
+            fs::read_to_string(path).map_err(|error| {
+                failure(
+                    "file_unreadable",
+                    format!("Could not read '{file}': {error}."),
+                    "Check that the file can be read and is UTF-8 text.",
+                )
+            })?
+        };
         let mut value = read_document(&original, file)?;
         let mut changes = 0;
         let mut rewrite = |_: &str, reference: &mut String| {

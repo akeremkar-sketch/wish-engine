@@ -3551,12 +3551,34 @@ impl EditorApp {
             // it writes is read again first, not taken from the panel, so
             // a change an agent made meanwhile is kept.
             let now = self.call("asset_info", &json!({ "path": path }));
-            let mut written = now["written"].as_object().cloned().unwrap_or_default();
-            written.insert(field.clone(), value);
-            let made = self.call(
-                "asset_create",
-                &json!({ "path": path, "material": written, "overwrite": true }),
-            );
+            // A file that does not read as a material now (someone is
+            // half-way through editing it, or it is far too large) has no
+            // `written`: it is not made again from this one field, which
+            // would wipe everything else it writes. (A material that names
+            // a missing texture still reads, and can be changed: that is
+            // how the texture is fixed.)
+            let problem = now["diagnostics"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|d| d["severity"] == "error")
+                .map(|d| d["message"].as_str().unwrap_or_default().to_owned());
+            let made = match now["written"].as_object() {
+                Some(written) if now["ok"] == true => {
+                    let mut written = written.clone();
+                    written.insert(field.clone(), value);
+                    self.call(
+                        "asset_create",
+                        &json!({ "path": path, "material": written, "overwrite": true }),
+                    )
+                }
+                _ => {
+                    let message = problem
+                        .or_else(|| now["error"]["message"].as_str().map(str::to_owned))
+                        .unwrap_or_else(|| t("it did not work").to_owned());
+                    json!({ "ok": false, "error": { "message": message } })
+                }
+            };
             self.status = if made["ok"] == true {
                 tf(
                     "set {field} in {path}",

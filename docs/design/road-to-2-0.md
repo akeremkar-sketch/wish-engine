@@ -114,7 +114,10 @@ the gamepad, the presenter, editor picking and asset import, which come later.
 ### 1.2: the format window and the screen (about 14)
 
 - The migration step and a compatibility corpus first: projects written by 1.0
-  and 1.1 open, migrate and keep their meaning in CI.
+  and 1.1 open, migrate and keep their meaning in CI. A file migrated by
+  editing (written in the newer format on its next save) raises the `engine`
+  key of `wish.json` the way `wen migrate` does, so that an older launcher
+  never picks an engine that refuses it (1.0 closing review, D9).
 - Player-indexed actions and replay format 2, as one hash-and-format change.
 - Gamepad, with focus navigation for the in-game interface (2 packages).
 - Save games (2 packages) and scene switching at run time as recorded,
