@@ -37,7 +37,7 @@ and the README pictures `docs/images/editor.png`, `editor-ai.png`:
 
 ## 3. Directions drawn
 
-Three mockups on one canvas (an Artifact, private to the user):
+Three mockups of the editor on one canvas (an Artifact, private to the user):
 
 - **A · Workshop.** The familiar three columns: a menu bar (File, Edit,
   Create, View, Game, Help) and Play in the middle of the top bar; Scene
@@ -60,7 +60,33 @@ controls with white text, `#9C82FF` for lines and selection, `#B9A8FF` for
 accent text), cool dark greys, green only for "saved", red only for
 recording and errors, and the axis colours.
 
-## 4. Next
+## 4. The opening, the start screen and the details
+
+Second user request the same day: the start screen is redesigned too, the
+mark gets a beautiful opening animation when the engine starts, and the
+interface gets this kind of care throughout. Two more boards on the canvas,
+shared by every direction:
+
+- **Opening animation.** The mark is the wishing wand of `vector::draw_wand`
+  (an ivory rod, its grip, a five-pointed gold star at the tip; never a
+  four-pointed sparkle, never a continuous arc at rest). The animation keeps
+  the code's story (the wand swings up, its trail breaks into four motes of
+  dust as it stops with a small flick, the star turns into place and its
+  light glows once) and adds the name and a progress line under it. The
+  grip and the trail move from orange to the purple accent, so the mark and
+  the interface share one colour; the star and the motes stay gold. With
+  "reduce motion" the still mark shows at once.
+- **Start screen (the Hub).** A side bar with the mark and the version;
+  "What shall we make?" with New project and Open a folder; a "Make a wish"
+  box that starts a project with the AI helper; templates as picture cards;
+  recent projects with their path, engine version (a project that opens
+  with another engine says so) and an Open button; the AI helper's state.
+- **Details everywhere.** One mark in the window icon, the opening, the
+  Hub and the top bar; focus rings for the keyboard; tooltips that name the
+  shortcut; empty panels that say the next step; a short notice for saves
+  and undo; panel changes animated briefly and never with "reduce motion".
+
+## 5. Next
 
 The user picks a direction (or a mix). Then: a package plan (the theme
 tokens, the menu bar and command ids, the scene camera, the inspector, the
