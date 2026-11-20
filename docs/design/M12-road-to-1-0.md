@@ -58,7 +58,8 @@ others as today; "AI with small games" 64 → about 67, "commercial release"
 
 The short path makes three of the user's decisions urgent: the name (2),
 downloading (3) and merging to `main` (4) are needed before the release
-candidates. The name is answered (20 November 2026: "Wish Engine" stays).
+candidates. The name and downloading are answered (20 November 2026: "Wish Engine"
+stays; GitHub Releases).
 
 User request: "Considering these evaluations, how can we make the engine
 better: a general plan, and a beautiful and strong entry into 1.0." Highest
@@ -354,6 +355,9 @@ one is treated as decided.
 3. *(open, urgent)* Downloading: GitHub Releases as the download address of
    1.0. The index repository and the HTTP/TLS library (the download layer
    inside the engine) stay open and have no release number.
+   **Answered, 20 November 2026: yes, GitHub Releases**
+   (https://github.com/akeremkar-sketch/wish-engine/releases). The release workflow already makes a draft
+   release there on a three-number tag; a person publishes it.
 4. *(open, urgent)* Merging to `main`, so the public sees the current state
    and the release pipeline can tag it.
 5. *(open; release 1.6)* Where the art of the showcase games and starter

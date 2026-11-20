@@ -13,5 +13,5 @@
    - The engine connects to no AI service unless you connect one.
    - If you connect an assistant (such as Claude Code), that service's own terms and privacy policy apply, and any fees or quotas are between you and that service.
    - The assistant works only in your open project, in the permission mode you choose.
-6. **Updates.** New versions are published at [download address]; the engine downloads no update by itself.
+6. **Updates.** New versions are published at https://github.com/akeremkar-sketch/wish-engine/releases; the engine downloads no update by itself.
 7. **Contact.** [contact address]

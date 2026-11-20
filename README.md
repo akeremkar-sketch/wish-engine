@@ -14,7 +14,9 @@ one history, signed with who made them.
 ## Status: not released yet
 
 The code is at version 0.1.0 on the way to **1.0**. No release has been published, so there is
-nothing to download yet: build it from source (below). Versions are three numbers; the betas and
+nothing to download yet: build it from source (below). Releases will be published on the
+repository's [Releases page](https://github.com/akeremkar-sketch/wish-engine/releases), each with its archives for Windows and Linux
+and a `SHA256SUMS` file. Versions are three numbers; the betas and
 release candidates of 1.0 will be `0.x.0` tags.
 
 **What 1.0 is:** an engine in which one person, an AI agent, or both together can make a small or
