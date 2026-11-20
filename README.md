@@ -43,7 +43,7 @@ default look (*Natural*). `python tools/readme_pictures.py` draws them all again
 | ![A level 400 m wide made of primitives, with cascaded shadows](docs/images/outdoor.png) | ![The Hop example](docs/images/hop.png) |
 | A level 400 m wide, built with one `edit_apply` call on a new project: cascaded shadows, sky light, fog, bloom, colour grading, FXAA. | [examples/hop](examples/hop): 3D jumping. |
 | ![The Bricks example](docs/images/bricks.png) | ![The editor with the showcase open](docs/images/editor.png) |
-| [examples/bricks](examples/bricks): 2D, with an orthographic camera. | The editor by hand: hierarchy, scene view with a gizmo, inspector, assets. |
+| [examples/bricks](examples/bricks): 2D, with an orthographic camera. | The editor by hand: a menu bar and toolbar, the hierarchy with its filter, the scene view with its floating tools and a gizmo, the inspector, the assets. |
 
 ![The editor in its AI mode](docs/images/editor-ai.png)
 
