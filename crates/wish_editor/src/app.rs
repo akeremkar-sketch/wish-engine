@@ -147,6 +147,8 @@ struct UiState {
     rename: Option<(String, String)>,
     /// Where the timeline slider was put while the button is still down.
     timeline: Option<usize>,
+    /// The hierarchy's filter: only rows whose name has these letters.
+    filter: String,
 }
 
 /// The editor as a window's content.
@@ -5042,6 +5044,15 @@ impl EditorApp {
                 }
             });
         });
+        // The filter: only the rows whose name has what is typed (any case).
+        let mut filter = self.ui_state.borrow().filter.clone();
+        ui.add(
+            egui::TextEdit::singleline(&mut filter)
+                .hint_text(t("Filter entities"))
+                .desired_width(f32::INFINITY),
+        );
+        let wanted = filter.trim().to_lowercase();
+        self.ui_state.borrow_mut().filter = filter;
         ui.separator();
         let typing = self.ui_state.borrow().rename.is_some() || self.play.is_some();
         if !typing
@@ -5059,9 +5070,19 @@ impl EditorApp {
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 1.0;
             for row in &self.rows {
+                if !wanted.is_empty() && !row.id.to_lowercase().contains(&wanted) {
+                    continue;
+                }
                 let selected = self.selected.contains(&row.id);
+                // How many it holds, quietly after its name.
+                let children = self
+                    .rows
+                    .iter()
+                    .filter(|other| other.parent.as_deref() == Some(row.id.as_str()))
+                    .count();
                 ui.horizontal(|ui| {
-                    ui.add_space(row.depth as f32 * 14.0);
+                    let depth = if wanted.is_empty() { row.depth } else { 0 };
+                    ui.add_space(depth as f32 * 14.0);
                     let renaming = {
                         let state = self.ui_state.borrow();
                         state
@@ -5099,6 +5120,13 @@ impl EditorApp {
                     if response.clicked() {
                         actions.select =
                             Some((row.id.clone(), ui.input(|input| input.modifiers.command)));
+                    }
+                    if children > 0 {
+                        ui.label(
+                            egui::RichText::new(children.to_string())
+                                .size(11.0)
+                                .color(crate::style::pal().weak),
+                        );
                     }
                     if response.double_clicked() {
                         self.ui_state.borrow_mut().rename = Some((row.id.clone(), row.id.clone()));
@@ -5392,8 +5420,23 @@ impl EditorApp {
                     .color(color),
                 );
                 ui.separator();
-                ui.add(egui::Label::new(&self.status).truncate())
-                    .on_hover_text(&self.status);
+                // The selection, quietly at the right end (not the
+                // engine's version: a picture of the window must not change
+                // with a release).
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if !self.selected.is_empty() {
+                        ui.label(
+                            egui::RichText::new(tf(
+                                "{count} selected",
+                                &[("count", &self.selected.len())],
+                            ))
+                            .color(crate::style::pal().weak),
+                        );
+                        ui.separator();
+                    }
+                    ui.add(egui::Label::new(&self.status).truncate())
+                        .on_hover_text(&self.status);
+                });
             });
         });
         if self.ai_mode {

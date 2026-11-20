@@ -606,12 +606,9 @@ fn numbers(
                 }
             } else {
                 let mut number = item.as_f64().unwrap_or(0.0);
-                let mut drag = DragValue::new(&mut number).speed(0.02).max_decimals(4);
-                if let Some(prefix) = ["x: ", "y: ", "z: ", "w: "]
-                    .get(index)
-                    .filter(|_| length <= 4)
-                {
-                    drag = drag.prefix(*prefix);
+                let drag = DragValue::new(&mut number).speed(0.02).max_decimals(4);
+                if length <= 4 && !color {
+                    axis(ui, index);
                 }
                 if ui.add(drag).changed() {
                     *item = json!(number);
@@ -621,6 +618,18 @@ fn numbers(
         }
     });
     finish(ui, view, key, changed, Value::Array(items))
+}
+
+/// The letter of a vector's part in its axis colour (X red, Y green, Z
+/// blue, as the handles in the view; W quiet), before its number.
+fn axis(ui: &mut Ui, index: usize) {
+    let (letter, color) = match index {
+        0 => ("X", egui::Color32::from_rgb(229, 83, 75)),
+        1 => ("Y", egui::Color32::from_rgb(107, 191, 89)),
+        2 => ("Z", egui::Color32::from_rgb(79, 143, 230)),
+        _ => ("W", crate::style::pal().weak),
+    };
+    ui.label(egui::RichText::new(letter).size(11.0).strong().color(color));
 }
 
 /// A rotation, edited as degrees about X, Y, Z (yaw about Y first, as
@@ -637,13 +646,13 @@ fn quaternion(ui: &mut Ui, view: &InspectorView<'_>, key: &str, value: &Value) -
     }
     let mut changed = false;
     ui.horizontal(|ui| {
-        for (degree, prefix) in degrees.iter_mut().zip(["x: ", "y: ", "z: "]) {
+        for (index, degree) in degrees.iter_mut().enumerate() {
+            axis(ui, index);
             if ui
                 .add(
                     DragValue::new(degree)
                         .speed(0.5)
-                        .suffix(format!(" {}", t("deg")))
-                        .prefix(prefix),
+                        .suffix(format!(" {}", t("deg"))),
                 )
                 .changed()
             {

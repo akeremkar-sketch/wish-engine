@@ -42,7 +42,7 @@ Without a project, the editor opens on the **welcome screen**:
    - **Claude Code**, if it is installed: the editor's Agent panel will use it.
    - **Nobody**: you make the game by hand.
 
-   Any other MCP agent can connect later (project menu, *Connect an outside agent...*).
+   Any other MCP agent can connect later (*AI* menu, *Connect an outside agent...*).
 2. **Start from**:
    - an empty project (a camera, a sun, a ground and starter game code), or
    - a template:
@@ -57,23 +57,26 @@ Press **Create**. The engine makes the project, builds its game code and opens t
 same window. On the right, **Open a game** lists the projects you opened lately, or takes the path
 of any project folder.
 
-The language is chosen at the top right of the welcome screen, and later in the project menu
+The language is chosen at the top right of the welcome screen, and later in the *View* menu
 (*Language*). There are 12 languages.
 
 ## 2. The editor
 
 | Place | What it shows |
 |---|---|
-| Top bar | The project menu (named after the project), the scene, *Undo* / *Redo*, *Play* / *Pause* / *Step* / *Stop*, the view, the gizmo mode (*Move*, *Rotate*, *Scale*, *World* / *Local*, *Snap*), *Agent* |
-| Left: *Hierarchy* | The entities of the scene, as a tree. *Search* filters it. |
-| Middle | **Scene** view: the scene through the editor's own camera. Click to select; drag the gizmo to move, rotate or scale. In a wide window the **Game** view is beside it: the game as the player sees it, through the scene's camera and with the game's interface (top bar, *Game view* shows or hides it). While the game runs, the scene view keeps the editor's camera, so you can look around the running game. |
+| Menu bar | *File*, *Edit*, *Create*, *View*, *Game*, *AI*, *Help*; the project and the scene; *Search everything* (Ctrl+K, the command palette) |
+| Toolbar | *Undo* / *Redo*, the scene, *Play* / *Pause* / *Step* / *Stop*, *Record*, *Manual* / *With AI*, *Agent* |
+| Left: *Hierarchy* | The entities of the scene, as a tree. *Filter entities* narrows it; a row with children shows how many. |
+| Middle | **Scene** view: the scene through the editor's own camera. Click to select; drag the gizmo to move, rotate or scale. In a wide window the **Game** view is beside it: the game as the player sees it, through the scene's camera and with the game's interface (*Game view* at the view's top right shows or hides it). While the game runs, the scene view keeps the editor's camera, so you can look around the running game. The gizmo's tools (*Move*, *Rotate*, *Scale*, *World* / *Local*, *Snap*, *Reset camera*) float at the view's top left. |
 | Right: *Inspector* | The selected entity's components and their fields. Each field has its unit and range. |
 | Bottom tabs | *Assets*, *Console*, *Problems*, *Performance*, *History*, *Activity* |
-| Status line | What the last action did, and the number of errors and warnings |
+| Status line | What the last action did, the number of errors and warnings, and how many entities are selected |
 
 **Moving around the view:**
 - Hold the right mouse button and move the mouse to look around.
 - While it is held, **W A S D** move, **Q / E** go down / up, and **Shift** is faster.
+- **Alt** and the left button turn around the point ahead (orbit); the middle button slides; the
+  wheel zooms; **F** frames the selection (*View → Frame the selection*).
 - *Reset camera* returns to the scene's camera.
 
 **Shortcuts:**
@@ -84,11 +87,16 @@ The language is chosen at the top right of the welcome screen, and later in the 
 | Ctrl+Z | Undo |
 | Ctrl+Y or Ctrl+Shift+Z | Redo |
 | Ctrl+P | Play / stop |
+| Ctrl+D | Duplicate the selection (with its children) |
+| Ctrl+N | New scene (a camera, the ground and the sun) |
+| Ctrl+Shift+N | Create an empty entity (the *Create* menu has the rest) |
+| F | Frame the selection |
+| Ctrl+K | Command palette |
 | F2 | Rename the selected entity |
 | Delete | Delete the selected entities |
 | Escape | Cancel a drag |
 
-**Views** (top bar):
+**Views** (the box at the view's top right, or *View → Shading*):
 - *Shaded*: the picture.
 - *Entity colours*: each entity in its own colour.
 - *Depth*, *Normals*, *Wireframe*.
@@ -157,7 +165,7 @@ The language is chosen at the top right of the welcome screen, and later in the 
   - Opening a prefab from *Assets* edits it like a scene.
 - **Notes:** each entity can carry free-form notes (the *Notes* box in the inspector). An agent
   reads them too.
-- **Project settings** (project menu, *Settings...*):
+- **Project settings** (*File → Settings...*):
   - the name;
   - the default scene;
   - the **input map**: actions such as `move` or `jump`, and the keys that drive them.
@@ -168,7 +176,7 @@ The language is chosen at the top right of the welcome screen, and later in the 
   - Every change: who made it (you, an agent, or a file edited outside) and when.
   - *Undo this* takes back one change on its own, even an old one, as long as the value it set
     is still there.
-- **Checkpoints** (project menu, *Checkpoints*):
+- **Checkpoints** (*Edit → Checkpoints*):
   - *Save checkpoint* keeps the project's scenes, prefabs, material files, meta files and
     settings as they are (not pictures or sounds).
   - *Go back to this* returns to it; going back is itself a change in the history, so it can be
@@ -203,7 +211,7 @@ the change enters the history as *file*, and a broken file is reported, never ov
 Game logic is Rust in `scripts/src/lib.rs`, built to WebAssembly by the engine.
 
 - **Building:**
-  - *Build code* in the project menu, or `wen build`.
+  - *Game → Build code* (Ctrl+B), or `wen build`.
   - Errors show with file, line and a hint.
   - A failed build keeps the last good code running.
 - **Editing:**
@@ -222,7 +230,7 @@ Game logic is Rust in `scripts/src/lib.rs`, built to WebAssembly by the engine.
 
 ### The AI mode
 
-The switch in the top bar changes the editor's face: **Manual | With AI**. Same project, same history, same files; only the screen changes. Your choice is remembered.
+The switch in the toolbar changes the editor's face: **Manual | With AI**. Same project, same history, same files; only the screen changes. Your choice is remembered.
 
 *With AI* puts the manual panels aside and shows:
 
@@ -242,14 +250,14 @@ The design is the project's `design/game.json` (in git, not an asset). Agents do
 
 ### The Agent panel (in the manual mode)
 
-**The Agent panel** (*Agent* in the top bar):
+**The Agent panel** (*Agent* in the toolbar, or *AI → Show or hide the agent panel*):
 1. Write what you want in *What should the agent do?* and press *Send*.
 2. *Point in the view*, then click entities, to show the agent what you mean.
 3. The transcript shows what the agent says and every tool it calls.
 
 A **checkpoint is saved before every task**, so you can always go back.
 
-**Permission modes** (project menu, *Permissions*):
+**Permission modes** (*AI → Permissions*):
 
 | Mode | What happens |
 |---|---|
@@ -275,7 +283,7 @@ The engine is complete without any AI. An assistant is a faster way to do the sa
 
 **Packages** bring themes, workspaces, languages, recipes and templates. A package is a folder with a `wish-package.json`.
 - A package names the engine versions it works with in `engine`. While the engine's version starts with 0, write a lower bound such as `">=0.2"`: a bare `"0.2"` means 0.2.x only, and every newer 0.x engine refuses the package (`package_engine_mismatch`).
-- *Project menu → Packages...* lists what is installed and installs a package from its folder: *Install into the project* (it travels with the project: `packages/` and `wish.lock` record exactly which files), or *Install for me* (for every project you open on this computer).
+- *File → Packages...* lists what is installed and installs a package from its folder: *Install into the project* (it travels with the project: `packages/` and `wish.lock` record exactly which files), or *Install for me* (for every project you open on this computer).
 - *Remove* moves a package to the trash; nothing is deleted.
 - The project's lock is checked: if a package's files change, the window says so; *Write the lock again* if the change is yours.
 - **The package index:** under *From the package index*, name the index folder (a folder of packages; it is remembered), type a few words and press *Search*. Each package shows its newest version that works with this engine: *Add to the project*, *Add for me*, or *Update* when a newer compatible version is there. The Hub's *Packages* tab has the same search for your own packages.
@@ -283,7 +291,7 @@ The engine is complete without any AI. An assistant is a faster way to do the sa
 
 **Engine versions:** several versions of the engine can live side by side. The Hub's *Engine versions* tab lists them; *Add an engine* remembers another engine's folder where it is (the folder with `wen` and `wish-engine.json`; nothing is copied), *Remove* forgets one. A project opens with the version it was made with (its `wish.json` says which); if that one is not on the computer, with the newest one that opens it unchanged (each engine knows from which version on it opens projects without changing their files); otherwise this engine opens it and says why: a newer project needs its own version, and an older one made before a file format changed will have its files changed when they are saved. The recent projects list shows when a project was made with another version. On the command line: `wen engines`, `wen engines add <folder>`, `wen engines pick <project>`.
 
-**Themes:** *Project menu → Theme* switches the editor's look at once: Atelier (the default), Midnight, High contrast, and any theme a package brings.
+**Themes:** *View → Theme* switches the editor's look at once: Atelier (the default), Midnight, High contrast, and any theme a package brings.
 
 **Workspaces:** in the AI mode, the *Workspace* box above the game card picks what the card is for. *Story game* asks for the setting, characters, tone, choices and endings, and brings its own ready requests; *Default* is the engine's card for any game. Nothing you wrote is lost when you switch.
 
@@ -291,7 +299,7 @@ The engine is complete without any AI. An assistant is a faster way to do the sa
 
 ## 8. Exporting a game
 
-Project menu, *Export game* (or `wen export`):
+*File → Export game* (or `wen export`):
 - The project is checked first.
 - The game code must be built.
 - The result is `exports/<name>/`:

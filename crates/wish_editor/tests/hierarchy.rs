@@ -4,7 +4,7 @@
 //!
 //! The coordinates are the layout of a 1280x720 window over a new project
 //! with a one-row top bar: hierarchy rows at y = 93 (camera), 119 (ground),
-//! 144 (sun); the "+" button at (156, 55) and "Delete" at (195, 55). The
+//! 144 (sun); the title row's "+" and "Delete" are found by name. The
 //! redesign's menu bar and toolbar move everything down by the same amount:
 //! [`dy`] measures it from where the camera's row is, and [`pos`] adds it.
 
@@ -21,8 +21,6 @@ use wish_editor::{EditorApp, ids};
 const CAMERA: [f32; 2] = [58.0, 93.0];
 const GROUND: [f32; 2] = [58.0, 119.0];
 const SUN: [f32; 2] = [50.0, 144.0];
-const ADD: [f32; 2] = [156.0, 55.0];
-const DELETE: [f32; 2] = [195.0, 55.0];
 
 /// How far below the one-row layout the hierarchy is now.
 fn dy(app: &EditorApp) -> f32 {
@@ -33,6 +31,17 @@ fn dy(app: &EditorApp) -> f32 {
         .map(|w| w.rect)
         .expect("the camera's row");
     row.center().y - CAMERA[1]
+}
+
+/// The middle of a button of the hierarchy's title row, by its name.
+fn button(app: &EditorApp, label: &str) -> [f32; 2] {
+    let rect = app
+        .widgets()
+        .iter()
+        .find(|w| w.role == "Button" && w.label.as_deref() == Some(label) && w.rect.min.x < 220.0)
+        .map(|w| w.rect)
+        .unwrap_or_else(|| panic!("no '{label}' in the hierarchy"));
+    [rect.center().x, rect.center().y]
 }
 
 /// A place of the one-row layout, where it is now.
@@ -151,16 +160,17 @@ fn clicking_rows_selects_and_ctrl_adds() {
 fn add_and_delete_are_single_undoable_calls_by_a_human() {
     let (mut app, _dir) = app("add");
     play(&mut app, json!([{ "idle": 2 }]));
-    let dy = dy(&app);
-    play(&mut app, json!([click(pos(ADD, dy)), { "idle": 1 }]));
+    let add = button(&app, "+");
+    play(&mut app, json!([click(add), { "idle": 1 }]));
     assert!(ids(app.rows()).contains("entity_1"), "{:?}", app.rows());
     assert_eq!(app.selection(), ["entity_1"]);
     assert_eq!(app.status(), "added entity_1");
     // A second one gets the next free name.
-    play(&mut app, json!([click(pos(ADD, dy)), { "idle": 1 }]));
+    play(&mut app, json!([click(add), { "idle": 1 }]));
     assert!(ids(app.rows()).contains("entity_2"));
     // Delete removes the selected one.
-    play(&mut app, json!([click(pos(DELETE, dy)), { "idle": 1 }]));
+    let delete = button(&app, "Delete");
+    play(&mut app, json!([click(delete), { "idle": 1 }]));
     assert!(!ids(app.rows()).contains("entity_2"), "{:?}", app.rows());
     assert!(ids(app.rows()).contains("entity_1"));
     assert!(app.selection().is_empty());
@@ -308,8 +318,8 @@ fn a_change_made_since_the_editor_looked_is_not_overwritten() {
     // ...and the person, still looking at the old hierarchy, deletes
     // "ground" (selected before the agent's change).
     app.select(&["ground"]);
-    let dy = dy(&app);
-    play(&mut app, json!([click(pos(DELETE, dy))]));
+    let delete = button(&app, "Delete");
+    play(&mut app, json!([click(delete)]));
     // Nothing the person did overwrote the agent's work: "terrain" is there,
     // and the person is told what happened.
     play(&mut app, json!([{ "seconds": 0.5 }, { "idle": 2 }]));
@@ -335,4 +345,57 @@ fn top_menu(item: &str) -> &'static str {
         "Theme" | "Language" | "Reset camera" | "Shading" => "View",
         _ => "Game",
     }
+}
+
+/// The redesign (R4): the hierarchy's filter keeps only the rows whose name
+/// has what is typed, and a row with children shows how many.
+#[test]
+fn the_filter_narrows_the_rows_and_parents_show_their_count() {
+    let (mut app, _dir) = app("filter");
+    let made = app.call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "spawn", "id": "lens", "parent": "camera",
+            "components": { "Transform": {} } }] }),
+    );
+    assert_eq!(made["ok"], true, "{made}");
+    play(&mut app, json!([{ "seconds": 0.5 }, { "idle": 2 }]));
+    let in_tree = |app: &EditorApp, label: &str| {
+        app.widgets().iter().any(|w| {
+            w.rect.min.x < 220.0
+                && (w.label.as_deref() == Some(label) || w.value.as_deref() == Some(label))
+        })
+    };
+    assert!(in_tree(&app, "1"), "the camera holds one");
+    let filter = app
+        .widgets()
+        .iter()
+        .find(|w| w.role == "TextInput" && w.label.as_deref() == Some("Filter entities"))
+        .map(|w| w.rect)
+        .expect("the filter");
+    play(
+        &mut app,
+        json!([
+            { "events": [{ "click": [filter.center().x, filter.center().y] }] },
+            { "events": [{ "text": "GRO" }] },
+            { "idle": 2 }
+        ]),
+    );
+    assert!(in_tree(&app, "ground"));
+    let left: Vec<_> = app
+        .widgets()
+        .iter()
+        .filter(|w| w.rect.min.x < 220.0)
+        .map(|w| {
+            (
+                w.role.clone(),
+                w.label.clone(),
+                w.value.clone(),
+                w.rect.min.y,
+            )
+        })
+        .collect();
+    assert!(
+        !in_tree(&app, "camera") && !in_tree(&app, "sun"),
+        "{left:?}"
+    );
 }

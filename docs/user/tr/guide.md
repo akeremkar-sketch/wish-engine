@@ -44,7 +44,7 @@ Proje olmadan editör **karşılama ekranıyla** açılır:
    - **Claude Code** kuruluysa: editörün Ajan paneli onu kullanır.
    - **Kimse**: oyunu elle yaparsınız.
 
-   Başka bir MCP ajanı sonradan bağlanabilir (proje menüsü, *Dış ajanı bağla...*).
+   Başka bir MCP ajanı sonradan bağlanabilir (*Yapay zekâ* menüsü, *Dış ajanı bağla...*).
 2. **Neyle başlansın?**
    - boş proje (bir kamera, bir güneş, bir zemin ve başlangıç oyun kodu), ya da
    - bir şablon:
@@ -59,22 +59,25 @@ Proje olmadan editör **karşılama ekranıyla** açılır:
 Sağdaki **Bir oyun aç** son açtığınız projeleri listeler ya da herhangi bir proje klasörünün yolunu
 alır.
 
-Dil, karşılama ekranının sağ üstünden, sonra da proje menüsünden (*Dil*) seçilir. 12 dil var.
+Dil, karşılama ekranının sağ üstünden, sonra da *Görünüm* menüsünden (*Dil*) seçilir. 12 dil var.
 
 ## 2. Editör
 
 | Yer | Ne gösterir |
 |---|---|
-| Üst çubuk | Proje menüsü (projenin adını taşır), sahne, *Geri al* / *Yinele*, *Oynat* / *Duraklat* / *Adım* / *Durdur*, görünüm, tutamaç kipi (*Taşı*, *Döndür*, *Ölçekle*, *Dünya* / *Yerel*, *Yapış*), *Ajan* |
-| Sol: *Hiyerarşi* | Sahnenin nesneleri, ağaç olarak. *Ara* süzer. |
-| Orta | **Sahne** görünümü: sahne, editörün kendi kamerasından. Tıklayınca seçer; tutamacı sürükleyince taşır, döndürür ya da ölçekler. Geniş pencerede yanında **Oyun** görünümü vardır: oyuncunun gördüğü oyun, sahnenin kamerasından ve oyunun arayüzüyle (üst çubukta *Oyun görünümü* açar/kapatır). Oyun koşarken sahne görünümü editör kamerasında kalır; koşan oyunun içinde dolaşabilirsiniz. |
+| Menü çubuğu | *Dosya*, *Düzen*, *Oluştur*, *Görünüm*, *Oyun*, *Yapay zekâ*, *Yardım*; proje ve sahne; *Her şeyde ara* (Ctrl+K, komut paleti) |
+| Araç çubuğu | *Geri al* / *Yinele*, sahne, *Oynat* / *Duraklat* / *Adım* / *Durdur*, *Kaydet*, *Elle* / *Yapay zekâyla*, *Ajan* |
+| Sol: *Hiyerarşi* | Sahnenin nesneleri, ağaç olarak. *Nesneleri süz* daraltır; alt öğesi olan satır kaç tane olduğunu gösterir. |
+| Orta | **Sahne** görünümü: sahne, editörün kendi kamerasından. Tıklayınca seçer; tutamacı sürükleyince taşır, döndürür ya da ölçekler. Geniş pencerede yanında **Oyun** görünümü vardır: oyuncunun gördüğü oyun, sahnenin kamerasından ve oyunun arayüzüyle (görünümün sağ üstündeki *Oyun görünümü* açar/kapatır). Oyun koşarken sahne görünümü editör kamerasında kalır; koşan oyunun içinde dolaşabilirsiniz. Tutamaç araçları (*Taşı*, *Döndür*, *Ölçekle*, *Dünya* / *Yerel*, *Yapış*, *Kamerayı sıfırla*) görünümün sol üstünde durur. |
 | Sağ: *Denetçi* | Seçili nesnenin bileşenleri ve alanları. Her alanın birimi ve aralığı vardır. |
 | Alt sekmeler | *Varlıklar* (dosyalar), *Konsol*, *Sorunlar*, *Performans*, *Geçmiş*, *Etkinlik* |
-| Durum satırı | Son eylemin ne yaptığı, hata ve uyarı sayısı |
+| Durum satırı | Son eylemin ne yaptığı, hata ve uyarı sayısı, kaç nesnenin seçili olduğu |
 
 **Görünümde dolaşmak:**
 - Sağ fare düğmesini basılı tutup fareyi oynatınca etrafa bakarsınız.
 - Basılıyken **W A S D** ilerletir, **Q / E** alçaltır / yükseltir, **Shift** hızlandırır.
+- **Alt** ve sol tuş öndeki noktanın çevresinde döndürür (yörünge); orta tuş kaydırır; tekerlek
+  yakınlaştırır; **F** seçileni çerçeveler (*Görünüm → Seçileni çerçevele*).
 - *Kamerayı sıfırla* sahnenin kamerasına döner.
 
 **Kısayollar:**
@@ -85,11 +88,16 @@ Dil, karşılama ekranının sağ üstünden, sonra da proje menüsünden (*Dil*
 | Ctrl+Z | Geri al |
 | Ctrl+Y ya da Ctrl+Shift+Z | Yinele |
 | Ctrl+P | Oynat / durdur |
+| Ctrl+D | Seçileni (alt öğeleriyle) çoğalt |
+| Ctrl+N | Yeni sahne (kamera, zemin ve güneş) |
+| Ctrl+Shift+N | Boş bir nesne oluştur (*Oluştur* menüsünde diğerleri var) |
+| F | Seçileni çerçevele |
+| Ctrl+K | Komut paleti |
 | F2 | Seçili nesneyi yeniden adlandır |
 | Delete | Seçili nesneleri sil |
 | Escape | Sürüklemeyi iptal et |
 
-**Görünümler** (üst çubuk):
+**Görünümler** (görünümün sağ üstündeki kutu, ya da *Görünüm → Gölgelendirme*):
 - *Gölgeli*: resmin kendisi.
 - *Nesne renkleri*: her nesne kendi renginde.
 - *Derinlik*, *Normaller*, *Tel kafes*.
@@ -156,7 +164,7 @@ Dil, karşılama ekranının sağ üstünden, sonra da proje menüsünden (*Dil*
   - *Prefab'a geri döndür* bir örneğin değişikliklerini geri alır.
   - *Varlıklar*'dan bir prefab açınca sahne gibi düzenlenir.
 - **Notlar:** her nesne serbest notlar taşıyabilir (denetçideki *Notlar* kutusu). Ajan da okur.
-- **Proje ayarları** (proje menüsü, *Ayarlar...*):
+- **Proje ayarları** (*Dosya → Ayarlar...*):
   - ad;
   - varsayılan sahne;
   - **girdi haritası**: `move`, `jump` gibi eylemler ve onları süren tuşlar.
@@ -167,7 +175,7 @@ Dil, karşılama ekranının sağ üstünden, sonra da proje menüsünden (*Dil*
   - Her değişiklik: kim yaptı (siz, bir ajan ya da dışarıda düzenlenen bir dosya) ve ne zaman.
   - *Bunu geri al* tek bir değişikliği, eski de olsa, kendi başına geri alır; yeter ki koyduğu
     değer hâlâ yerinde olsun.
-- **Denetim noktaları** (proje menüsü, *Denetim noktaları*):
+- **Denetim noktaları** (*Düzen → Denetim noktaları*):
   - *Denetim noktası kaydet* projenin sahnelerini, prefablarını, malzeme dosyalarını, meta
     dosyalarını ve ayarlarını olduğu gibi saklar (resimleri ve sesleri saklamaz).
   - *Buna geri dön* ona geri döner; dönmek de geçmişte bir değişikliktir, geri alınabilir.
@@ -203,7 +211,7 @@ asla yazılmaz.
 Oyun mantığı `scripts/src/lib.rs` içinde Rust ile yazılır; motor onu WebAssembly'ye derler.
 
 - **Derleme:**
-  - Proje menüsünde *Kodu derle*, ya da `wen build`.
+  - *Oyun → Kodu derle* (Ctrl+B), ya da `wen build`.
   - Hatalar dosya, satır ve ipucuyla gösterilir.
   - Derleme başarısız olursa son çalışan kod çalışmaya devam eder.
 - **Düzenleme:**
@@ -223,7 +231,7 @@ Oyun mantığı `scripts/src/lib.rs` içinde Rust ile yazılır; motor onu WebAs
 
 ### Yapay zekâ modu
 
-Üst çubuktaki anahtar editörün iki yüzü arasında geçiş yapar: **Elle | Yapay zekâyla**. Aynı proje, aynı geçmiş, aynı dosyalar; yalnızca ekran değişir. Seçiminiz hatırlanır.
+Araç çubuğundaki anahtar editörün iki yüzü arasında geçiş yapar: **Elle | Yapay zekâyla**. Aynı proje, aynı geçmiş, aynı dosyalar; yalnızca ekran değişir. Seçiminiz hatırlanır.
 
 *Yapay zekâyla* modunda elle düzenleme panelleri çekilir, yerine şunlar gelir:
 
@@ -243,14 +251,14 @@ Tasarım projede `design/game.json` dosyasındadır (git'e girer, varlık sayıl
 
 ### Ajan paneli (elle modda)
 
-**Ajan paneli** (üst çubukta *Ajan*):
+**Ajan paneli** (araç çubuğunda *Ajan*, ya da *Yapay zekâ → Ajan panelini göster ya da gizle*):
 1. *Ajan ne yapsın?* kutusuna ne istediğinizi yazın ve *Gönder*'e basın.
 2. *Görünümde işaret et*, sonra nesnelere tıklayın: ajana neyi kastettiğinizi gösterir.
 3. Döküm, ajanın söylediklerini ve çağırdığı her aracı gösterir.
 
 **Her görevden önce bir denetim noktası kaydedilir**, yani her zaman geri dönebilirsiniz.
 
-**İzin kipleri** (proje menüsü, *İzinler*):
+**İzin kipleri** (*Yapay zekâ → İzinler*):
 
 | Kip | Ne olur |
 |---|---|
@@ -276,7 +284,7 @@ Motor hiçbir yapay zekâ olmadan eksiksizdir. Yardımcı, aynı işleri yapman�
 
 **Paketler** tema, çalışma alanı, dil, tarif ve şablon getirir. Paket, içinde `wish-package.json` olan bir klasördür.
 - Paket, çalıştığı motor sürümlerini `engine` alanında söyler. Motorun sürümü 0 ile başladığı sürece `">=0.2"` gibi bir alt sınır yazın: tek başına `"0.2"` yalnızca 0.2.x demektir ve daha yeni her 0.x motoru paketi reddeder (`package_engine_mismatch`).
-- *Proje menüsü → Paketler...* kurulu olanları listeler ve klasöründen paket kurar: *Projeye yükle* (projeyle birlikte taşınır; `packages/` ve `wish.lock` hangi dosyaların olduğunu tam olarak kaydeder) ya da *Benim için yükle* (bu bilgisayarda açtığınız her proje için).
+- *Dosya → Paketler...* kurulu olanları listeler ve klasöründen paket kurar: *Projeye yükle* (projeyle birlikte taşınır; `packages/` ve `wish.lock` hangi dosyaların olduğunu tam olarak kaydeder) ya da *Benim için yükle* (bu bilgisayarda açtığınız her proje için).
 - *Kaldır* paketi çöp kutusuna taşır; hiçbir şey silinmez.
 - Projenin kilidi denetlenir: bir paketin dosyaları değişirse pencere bunu söyler; değişiklik sizinse *Kilidi yeniden yaz*.
 - **Paket dizini:** *Paket dizininden* bölümünde dizin klasörünü yazın (paketlerden oluşan bir klasör; hatırlanır), birkaç sözcük yazıp *Ara*'ya basın. Her paket, bu motorla çalışan en yeni sürümünü gösterir: *Projeye ekle*, *Benim için ekle* ya da daha yeni uyumlu bir sürüm varsa *Güncelle*. Hub'ın *Paketler* sekmesinde kendi paketleriniz için aynı arama vardır.
@@ -284,7 +292,7 @@ Motor hiçbir yapay zekâ olmadan eksiksizdir. Yardımcı, aynı işleri yapman�
 
 **Motor sürümleri:** motorun birden çok sürümü yan yana durabilir. Hub'ın *Motor sürümleri* sekmesi onları listeler; *Motor ekle* başka bir motorun klasörünü olduğu yerde hatırlar (`wen` ve `wish-engine.json` içeren klasör; hiçbir şey kopyalanmaz), *Kaldır* birini unutur. Bir proje, yapıldığı sürümle açılır (`wish.json` hangisi olduğunu söyler); o sürüm bilgisayarda yoksa onu değiştirmeden açabilen en yeni sürümle (her motor, hangi sürümden itibaren projeleri dosyalarını değiştirmeden açtığını bilir); o da yoksa bu motor açar ve nedenini söyler: daha yeni bir proje kendi sürümünü ister; bir dosya biçimi değişmeden önce yapılmış eski bir projenin dosyaları ise kaydedilince değişir. Son projeler listesi, başka bir sürümle yapılmış projeyi gösterir. Komut satırında: `wen engines`, `wen engines add <klasör>`, `wen engines pick <proje>`.
 
-**Temalar:** *Proje menüsü → Tema* editörün görünümünü hemen değiştirir: Atelier (varsayılan), Midnight, High contrast ve paketlerin getirdiği her tema.
+**Temalar:** *Görünüm → Tema* editörün görünümünü hemen değiştirir: Atelier (varsayılan), Midnight, High contrast ve paketlerin getirdiği her tema.
 
 **Çalışma alanları:** yapay zekâ modunda oyun kartının üstündeki *Çalışma alanı* kutusu kartın ne için olduğunu seçer. *Hikâye oyunu* mekânı, karakterleri, tonu, seçimleri ve sonları sorar ve kendi hazır isteklerini getirir; *Varsayılan* motorun her oyun için kartıdır. Geçiş yaptığınızda yazdığınız hiçbir şey kaybolmaz.
 
@@ -292,7 +300,7 @@ Motor hiçbir yapay zekâ olmadan eksiksizdir. Yardımcı, aynı işleri yapman�
 
 ## 8. Oyunu dışa aktarma
 
-Proje menüsü, *Oyunu dışa aktar* (ya da `wen export`):
+*Dosya → Oyunu dışa aktar* (ya da `wen export`):
 - Önce proje denetlenir.
 - Oyun kodu derlenmiş olmalıdır.
 - Sonuç `exports/<ad>/` klasörüdür:

@@ -1,7 +1,7 @@
 # M12: the editor redesign before 1.0
 
 **Status:** direction A (Workshop) chosen by the user, 20 November 2026;
-packages R1 to R3 done; R4 in progress.
+packages R1 to R4 done; R5 in progress.
 
 ## 1. Request and scope
 
@@ -118,10 +118,25 @@ images refreshed with `UPDATE_GOLDEN=1` and looked at).
    scale, world/local, snap); camera, shading and Scene | Game at its top
    right; an orbit camera (drag, right-drag to pan, wheel to zoom, F to
    frame the selection) and a hint line.
+   *As built:* Alt and the left button orbit (a plain left drag still
+   selects and moves handles, as before), the middle button pans, the
+   wheel zooms, right-drag with WASD still flies; New scene needed no new
+   tool (`edit_apply` with `create`).
 4. **R4 · Panels.** The hierarchy with a filter and counts on groups; the
    inspector as cards with plain labels, units, axis colours on vectors, an
    "advanced" fold and prefab changes marked; assets as picture tiles; a
    status bar that says what was saved.
+   *As built:* the hierarchy's filter and child counts; X/Y/Z in the axis
+   colours before each number of a vector and of a rotation; the status
+   bar names how many are selected. **Field names stay the schema's own**
+   (`roughness`, `fov_y_deg`): they are the words an agent uses through
+   MCP, so a person and an agent share one vocabulary, and the inspector
+   already shows each field's unit and description. The components were
+   already collapsible sections; prefab changes were already marked. The
+   asset tiles and the "advanced" fold are left for release 1.1 (the list
+   reads well at the editor's density, and a fold needs a schema flag).
+   Every change is written at once, so "saved" says nothing new: the status
+   bar does not claim it.
 5. **R5 · Opening, Hub and details.** The opening animation with the name
    and a progress line, the Hub of section 4, tooltips that name shortcuts,
    focus rings, empty states with a next step, notices for saves and undo,
