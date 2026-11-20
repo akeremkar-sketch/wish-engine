@@ -10,8 +10,10 @@ use egui::{
 };
 
 /// The editor's colours and corners (M10a): a theme. The engine's default
-/// is Atelier (warm near-black, paper-white text, signal orange for what to
-/// do next, teal for what is chosen); theme packages bring others. Every
+/// is Atelier: neutral graphite greys, one calm blue for what is chosen and
+/// what to do next, green only for running, red only for recording and
+/// errors, small corners (redesigned before 1.0:
+/// `docs/design/M12-editor-redesign.md`); theme packages bring others. Every
 /// panel reads the theme through [`pal`], so a new theme needs no rebuild.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Theme {
@@ -64,28 +66,28 @@ pub struct Theme {
 /// The engine's own theme, Atelier (the same as
 /// `packages/wish.theme.atelier/atelier.json`, which a test checks).
 pub const ATELIER: Theme = Theme {
-    backdrop: [21, 20, 18, 255],
-    panel: Color32::from_rgb(29, 28, 25),
-    raised: Color32::from_rgb(37, 35, 32),
-    widget: Color32::from_rgb(46, 44, 40),
-    hover: Color32::from_rgb(58, 55, 50),
-    pressed: Color32::from_rgb(70, 66, 60),
-    line: Color32::from_rgb(52, 49, 44),
-    hover_line: Color32::from_rgb(92, 87, 78),
-    text: Color32::from_rgb(237, 230, 216),
-    weak: Color32::from_rgb(158, 150, 136),
-    accent: Color32::from_rgb(255, 107, 44),
-    select: Color32::from_rgb(72, 196, 180),
-    accent_soft: Color32::from_rgb(30, 64, 60),
-    go: Color32::from_rgb(110, 200, 120),
-    red: Color32::from_rgb(236, 88, 80),
-    amber: Color32::from_rgb(232, 172, 64),
-    sun: Color32::from_rgb(250, 204, 92),
-    sky: Color32::from_rgb(120, 186, 240),
-    field: Color32::from_rgb(14, 15, 20),
-    icon: Color32::from_rgb(200, 205, 222),
+    backdrop: [28, 29, 32, 255],
+    panel: Color32::from_rgb(37, 38, 42),
+    raised: Color32::from_rgb(44, 45, 50),
+    widget: Color32::from_rgb(44, 45, 50),
+    hover: Color32::from_rgb(51, 52, 58),
+    pressed: Color32::from_rgb(58, 59, 66),
+    line: Color32::from_rgb(54, 55, 61),
+    hover_line: Color32::from_rgb(74, 76, 85),
+    text: Color32::from_rgb(225, 226, 230),
+    weak: Color32::from_rgb(155, 157, 166),
+    accent: Color32::from_rgb(61, 111, 208),
+    select: Color32::from_rgb(91, 143, 234),
+    accent_soft: Color32::from_rgb(47, 78, 133),
+    go: Color32::from_rgb(95, 191, 110),
+    red: Color32::from_rgb(217, 96, 90),
+    amber: Color32::from_rgb(226, 176, 74),
+    sun: Color32::from_rgb(226, 192, 106),
+    sky: Color32::from_rgb(143, 179, 233),
+    field: Color32::from_rgb(28, 29, 32),
+    icon: Color32::from_rgb(183, 185, 193),
     radius_widget: 3,
-    radius_window: 5,
+    radius_window: 4,
     radius_menu: 4,
 };
 
@@ -111,6 +113,25 @@ pub fn on_accent() -> Color32 {
     } else {
         Color32::WHITE
     }
+}
+
+/// The accent as text or as an icon on a panel: a dark accent (made for
+/// filled buttons with white text) is lightened toward white so it stays
+/// readable on the panels; a light accent is used as it is. Worked out from
+/// the theme, so a theme file needs no key of its own for it.
+pub fn accent_text() -> Color32 {
+    let accent = pal().accent;
+    let light = 0.299 * f32::from(accent.r())
+        + 0.587 * f32::from(accent.g())
+        + 0.114 * f32::from(accent.b());
+    if light >= 150.0 {
+        return accent;
+    }
+    let toward = |channel: u8| {
+        let c = f32::from(channel);
+        (c + (255.0 - c) * 0.45).round().clamp(0.0, 255.0) as u8
+    };
+    Color32::from_rgb(toward(accent.r()), toward(accent.g()), toward(accent.b()))
 }
 
 impl Theme {
@@ -268,20 +289,20 @@ pub fn apply(context: &Context) {
         style.text_styles = [
             (
                 TextStyle::Small,
-                FontId::new(11.5, FontFamily::Proportional),
+                FontId::new(11.0, FontFamily::Proportional),
             ),
-            (TextStyle::Body, FontId::new(13.5, FontFamily::Proportional)),
+            (TextStyle::Body, FontId::new(12.5, FontFamily::Proportional)),
             (
                 TextStyle::Button,
-                FontId::new(13.5, FontFamily::Proportional),
+                FontId::new(12.5, FontFamily::Proportional),
             ),
             (
                 TextStyle::Heading,
-                FontId::new(17.0, FontFamily::Proportional),
+                FontId::new(15.0, FontFamily::Proportional),
             ),
             (
                 TextStyle::Monospace,
-                FontId::new(12.5, FontFamily::Monospace),
+                FontId::new(12.0, FontFamily::Monospace),
             ),
         ]
         .into();
@@ -302,21 +323,21 @@ pub fn apply(context: &Context) {
         visuals.window_corner_radius = CornerRadius::same(theme.radius_window);
         visuals.menu_corner_radius = CornerRadius::same(theme.radius_menu);
         visuals.window_shadow = Shadow {
-            offset: [0, 6],
-            blur: 18,
-            spread: 0,
-            color: Color32::from_black_alpha(110),
-        };
-        visuals.popup_shadow = Shadow {
             offset: [0, 4],
             blur: 12,
             spread: 0,
-            color: Color32::from_black_alpha(100),
+            color: Color32::from_black_alpha(90),
+        };
+        visuals.popup_shadow = Shadow {
+            offset: [0, 2],
+            blur: 8,
+            spread: 0,
+            color: Color32::from_black_alpha(90),
         };
         visuals.faint_bg_color = pal().raised;
         visuals.extreme_bg_color = theme.field;
         visuals.code_bg_color = theme.field;
-        visuals.hyperlink_color = pal().accent;
+        visuals.hyperlink_color = accent_text();
         visuals.warn_fg_color = pal().amber;
         visuals.error_fg_color = pal().red;
         visuals.selection.bg_fill = pal().accent_soft;
@@ -342,7 +363,9 @@ pub fn apply(context: &Context) {
             state.bg_fill = fill;
             state.weak_bg_fill = fill;
             state.corner_radius = round;
-            state.bg_stroke = Stroke::NONE;
+            // Widgets carry a thin outline, as in professional tools: a
+            // field or a button reads as one without a loud fill.
+            state.bg_stroke = Stroke::new(1.0, pal().line);
             state.fg_stroke = Stroke::new(1.0, pal().text);
             state.expansion = 0.0;
         }
@@ -406,8 +429,10 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
 /// its colour (for the hierarchy).
 pub fn entity_icon(components: &[String], prefab: bool) -> (Icon, Color32) {
     let has = |name: &str| components.iter().any(|c| c == name);
+    // Quiet icons: only prefabs (blue), cameras and lights carry a colour,
+    // so the tree reads as a list, not a palette.
     if prefab {
-        return (Icon::Prefab, pal().select);
+        return (Icon::Prefab, pal().sky);
     }
     if has("Camera") {
         (Icon::Camera, pal().sky)
@@ -416,15 +441,15 @@ pub fn entity_icon(components: &[String], prefab: bool) -> (Icon, Color32) {
     } else if has("PointLight") || has("SpotLight") {
         (Icon::Bulb, pal().sun)
     } else if components.iter().any(|c| c.starts_with("Ui")) {
-        (Icon::Text, Color32::from_rgb(120, 214, 200))
+        (Icon::Text, pal().weak)
     } else if has("AudioSource") || has("AudioListener") {
-        (Icon::Sound, Color32::from_rgb(244, 140, 186))
+        (Icon::Sound, pal().weak)
     } else if has("Sprite") {
-        (Icon::Image, Color32::from_rgb(244, 160, 110))
+        (Icon::Image, pal().weak)
     } else if has("ParticleEmitter") {
-        (Icon::Spark, Color32::from_rgb(244, 160, 110))
+        (Icon::Spark, pal().weak)
     } else if has("Model") || has("Primitive") {
-        (Icon::Cube, Color32::from_rgb(170, 178, 204))
+        (Icon::Cube, pal().weak)
     } else {
         (Icon::Dot, pal().weak)
     }
@@ -472,14 +497,6 @@ pub fn tool_button(
             Color32::TRANSPARENT
         };
         painter.rect_filled(rect, f32::from(pal().radius_widget), fill);
-        if selected {
-            painter.rect_stroke(
-                rect,
-                f32::from(pal().radius_widget),
-                Stroke::new(1.0, pal().select),
-                egui::StrokeKind::Inside,
-            );
-        }
         let color = if !enabled {
             Color32::from_rgb(86, 92, 110)
         } else {
@@ -520,9 +537,10 @@ pub fn tool_group<R>(ui: &mut Ui, width: f32, add: impl FnOnce(&mut Ui) -> R) ->
         ui.end_row();
     }
     egui::Frame::new()
-        .fill(pal().raised)
-        .corner_radius(CornerRadius::same(4))
-        .inner_margin(Margin::same(2))
+        .fill(pal().field)
+        .stroke(Stroke::new(1.0, pal().line))
+        .corner_radius(CornerRadius::same(pal().radius_widget))
+        .inner_margin(Margin::same(1))
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
             ui.horizontal(add).inner
@@ -530,24 +548,10 @@ pub fn tool_group<R>(ui: &mut Ui, width: f32, add: impl FnOnce(&mut Ui) -> R) ->
         .inner
 }
 
-/// A panel's title: small, letter-spaced capitals in the quiet colour,
-/// like a label on a drawer.
+/// A panel's title: plain words in the text colour, as a professional
+/// tool's panel tab reads (not shouted in capitals).
 pub fn panel_title(ui: &mut Ui, text: &str) {
-    ui.label(
-        egui::RichText::new(caps(text))
-            .size(11.5)
-            .extra_letter_spacing(1.2)
-            .color(pal().weak),
-    );
-}
-
-/// Capitals in the interface's language (Turkish dotted i becomes İ).
-pub fn caps(text: &str) -> String {
-    if crate::i18n::language().code == "tr" {
-        text.replace('i', "İ").to_uppercase()
-    } else {
-        text.to_uppercase()
-    }
+    ui.label(egui::RichText::new(text).size(12.5).color(pal().text));
 }
 
 /// The engine's mark, in its own colours, in `rect` (square).

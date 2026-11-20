@@ -4838,7 +4838,7 @@ impl EditorApp {
                         true,
                         self.cockpit.open,
                         true,
-                        Some(crate::style::pal().accent),
+                        Some(crate::style::accent_text()),
                     )
                     .on_hover_text(t("The agent's panel: ask, point at things, watch it work"))
                     .clicked()

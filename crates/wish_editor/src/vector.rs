@@ -252,8 +252,9 @@ fn rgba(color: (u8, u8, u8), alpha: f64) -> AlphaColor<Srgb> {
 
 /// The wand's colour (on the editor's dark grounds).
 const BONE: (u8, u8, u8) = (237, 230, 216);
-/// The grip and the trail (the interface's accent).
-const WIN: (u8, u8, u8) = (255, 107, 44);
+/// The grip and the trail: the mark's own purple (the only place the
+/// interface shows it).
+const WIN: (u8, u8, u8) = (156, 130, 255);
 /// The star and the motes.
 const GOLD: (u8, u8, u8) = (255, 186, 92);
 
@@ -338,7 +339,7 @@ const STAR: f64 = 12.0;
 const ROD: f64 = LENGTH - 6.0;
 
 /// The engine's mark, a wishing wand, on a 100-unit grid:
-/// a bone-coloured rod with an orange grip and a soft gold five-pointed
+/// a bone-coloured rod with a purple grip and a soft gold five-pointed
 /// star at its tip. `t` runs over its
 /// start-up animation (0 to 1; 1 and after: the still mark): the wand is
 /// raised and swept up, its tip drawing an arc; as it stops (with a little

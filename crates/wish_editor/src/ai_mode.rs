@@ -303,7 +303,7 @@ pub(crate) fn switch(ui: &mut Ui, ai: bool) -> Option<bool> {
                     ),
                 ] {
                     let chosen = ai == on;
-                    let tint = if chosen { Some(if on { crate::style::pal().accent } else { crate::style::pal().select }) } else { None };
+                    let tint = if chosen { Some(if on { crate::style::accent_text() } else { crate::style::pal().select }) } else { None };
                     if crate::style::tool_button(ui, icon, name, true, chosen, true, tint)
                         .on_hover_text(hover)
                         .clicked()
@@ -664,7 +664,7 @@ fn plan(ui: &mut Ui, view: &AiView, state: &mut AiState, actions: &mut AiActions
             .add_enabled(
                 next.is_some() && view.cockpit.run.is_none(),
                 egui::Button::new(
-                    RichText::new(t("Do the next step")).color(crate::style::pal().accent),
+                    RichText::new(t("Do the next step")).color(crate::style::accent_text()),
                 ),
             )
             .on_hover_text(t("The agent does the first step that is not done"))
@@ -801,7 +801,7 @@ fn notes(ui: &mut Ui, view: &AiView, state: &mut AiState, actions: &mut AiAction
         .add_enabled(
             view.cockpit.run.is_none(),
             egui::Button::new(
-                RichText::new(t("Send the notes to the agent")).color(crate::style::pal().accent),
+                RichText::new(t("Send the notes to the agent")).color(crate::style::accent_text()),
             ),
         )
         .on_hover_text(t(
@@ -879,7 +879,7 @@ fn health(ui: &mut Ui, view: &AiView, actions: &mut AiActions) {
             .add_enabled(
                 (errors > 0 || failed || view.unbuilt) && view.cockpit.run.is_none(),
                 egui::Button::new(
-                    RichText::new(t("Let the agent fix it")).color(crate::style::pal().accent),
+                    RichText::new(t("Let the agent fix it")).color(crate::style::accent_text()),
                 ),
             )
             .on_hover_text(t(
@@ -1018,7 +1018,7 @@ fn ask(ui: &mut Ui, view: &AiView, actions: &mut AiActions) {
         card_frame(ui, crate::style::pal().accent_soft, |ui| {
             ui.label(
                 RichText::new(t("The agent asks"))
-                    .color(crate::style::pal().accent)
+                    .color(crate::style::accent_text())
                     .size(11.5),
             );
             ui.add(

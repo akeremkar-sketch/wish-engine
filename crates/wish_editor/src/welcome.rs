@@ -1727,7 +1727,7 @@ fn option_face(
     let icon_rect =
         egui::Rect::from_min_size(rect.min + egui::vec2(0.0, 2.0), egui::vec2(26.0, 26.0));
     let color = if enabled {
-        crate::style::pal().accent
+        crate::style::accent_text()
     } else {
         crate::style::pal().weak
     };
@@ -1862,7 +1862,7 @@ fn open_game(ui: &mut Ui, welcome: &mut Welcome, asked: &mut Asked) {
             ),
             (
                 Icon::Chat,
-                crate::style::pal().accent,
+                crate::style::accent_text(),
                 t("The Agent panel: point at things in the scene and say what to change."),
             ),
             (
