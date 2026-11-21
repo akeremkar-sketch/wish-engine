@@ -97,9 +97,10 @@ rule 4). The `cargo test` commands are free and run in CI on Windows and Linux.
 | The agent evaluation: **41 of 41 tasks** passed by Claude Code with Sonnet 5.5 · medium, one try each, on 16 November 2026 (the engine of commit ef23aac, the end of M7, before the rendering work of M12) | `wish-evals run --tries 1 --model sonnet --effort medium` (**spends model quota**); `wish-evals selftest` checks the tasks for free | [evals/results/m7-sonnet-5-5-medium.json](evals/results/m7-sonnet-5-5-medium.json); [evals/README.md](evals/README.md) |
 | Eight scene tasks in the same words, Claude Code with Sonnet 5.5 · medium, on 18 November 2026, before the render work of M12: Unity 6.3 passed 7/8 for 0.80 $ and 6.8 tool calls a task; Wish Engine passed 8/8 for 0.70 $ and 5.0, and, measured again after the first round of AI efficiency work (recorded with commit 2881adb; Unity was not run again), 8/8 for 0.53 $ and 3.4. One run each; two runs of the same Wish build differed by 10% in cost. The tasks were written by the Wish Engine side | `python tools/compare/run.py run --engine wish --model sonnet --effort medium` (**spends model quota**; the Unity leg needs a Unity install: [tools/compare/README.md](tools/compare/README.md)) | [evals/results/compare-2026-11-18.md](evals/results/compare-2026-11-18.md), section "After the efficiency work" |
 | The default look, *Natural* | chosen by eye by the project's owner on 19 November 2026, from pictures of nine scenes | [docs/design/M12-look-lock.md](docs/design/M12-look-lock.md) |
+| Sound on Windows | heard by the project's owner on 21 November 2026, playing the showcase exported from the Windows release archive (after its hissing placeholder wind was removed) | [docs/design/M12-beta-self-test.md](docs/design/M12-beta-self-test.md) |
 
 Not checked yet: the release archives on a computer that has never had a developer tool installed
-(see below), sound by ear on either system, and the editor in the hands of people who have not seen it
+(see below), sound by ear on Linux, and the editor in the hands of people who have not seen it
 before (a test with three people is planned).
 
 ## Getting started

@@ -82,8 +82,8 @@ yazabilirsiniz. Lütfen şunları yazın:
 
 ## 5. Bu betadaki bilinen eksikler
 
-- **Ses** çalışıyor ama henüz her sistemde kulakla denenmedi; bir oyun
-  sessizse bildirin.
+- **Ses** Windows'ta kulakla denendi, Linux'ta henüz denenmedi; bir oyun
+  sessizse ya da sesi bozuk geliyorsa bildirin.
 - **Windows:** oyun kodunu derlemek için Microsoft Visual C++
   Redistributable (`VCRUNTIME140.dll`) gerekir; çoğu Windows'ta zaten
   vardır. *Kodu derle* bunun eksik olduğunu söylerse

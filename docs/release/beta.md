@@ -79,8 +79,8 @@ and choose **Beta feedback** (anything: confusing, slow, ugly, missing) or
 
 ## 5. Known gaps in this beta
 
-- **Sound** works but has not yet been checked by ear on every system; tell
-  us if a game is silent.
+- **Sound** has been checked by ear on Windows, not yet on Linux; tell us
+  if a game is silent or sounds wrong.
 - **Windows:** building game code needs the Microsoft Visual C++
   Redistributable (`VCRUNTIME140.dll`), which most Windows machines already
   have. If *Build code* says it is missing, install the
