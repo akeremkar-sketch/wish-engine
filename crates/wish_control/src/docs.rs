@@ -533,12 +533,24 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "Prefabs cannot contain prefab instances yet. Place the parts directly in the prefab.",
     ),
     (
+        "net_ack_invalid",
+        "A client of online play acknowledged a state message the host never sent it. The acknowledgement was ignored; a modified or broken client sends these.",
+    ),
+    (
         "net_bind_failed",
         "A UDP port for online play (or a simulated address in a test) could not be opened: another program uses it, or the address is not this machine's. Pick another port, or 0 to let the system choose one.",
     ),
     (
         "net_closed",
         "A connection of online play ended normally: the other side, or this one, closed it. Nothing went wrong; join or host again to play on.",
+    ),
+    (
+        "net_component_not_replicable",
+        "A component listed for replication cannot be sent: the engine keeps it itself (Hierarchy), its name is longer than 128 bytes, or its schema is not well formed. Replicate the components the game writes.",
+    ),
+    (
+        "net_component_unknown",
+        "A component listed for replication is not registered in the host's world. Name it as scene files do, and make sure the game module (or the engine) registers it before the match starts.",
     ),
     (
         "net_config_invalid",
@@ -561,8 +573,20 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "A client pinned the host's public key (from discovery or given by hand) and the host answered with another one: someone may stand between them, or the host started a new match. Get the host's key again and join again.",
     ),
     (
+        "net_input_out_of_window",
+        "A client sent input stamped further ahead of the host's tick than the input window (120 ticks by default). The frame was dropped: the client's clock is broken, or it was modified.",
+    ),
+    (
+        "net_input_wrong_player",
+        "A client sent input for a player id that is not its own. The message was dropped: a client only ever sends its own player's input, so a modified client tried to move someone else.",
+    ),
+    (
         "net_key_rejected",
         "The other side of an online connection sent a public key that gives no shared secret (a point of low order). Nothing was sent to it: the other program is broken or hostile.",
+    ),
+    (
+        "net_message_invalid",
+        "A client sent a replication message that does not parse or breaks a limit (larger than 2 KiB, more than 8 input frames or 32 actions in a frame). It was dropped and nothing was applied: the other program is broken, of another version, or hostile.",
     ),
     (
         "net_message_too_large",
@@ -571,6 +595,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "net_not_connected",
         "A message was sent before the connection was open. Wait for the Connected event first.",
+    ),
+    (
+        "net_players_full",
+        "A peer joined a match whose player ids are all taken (16: the host's own and 15 others), so it was disconnected. Wait for a player to leave.",
     ),
     (
         "net_protocol_violation",
@@ -605,8 +633,16 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "The UDP socket of online play failed. Check that the network is up and that a firewall allows the program to use UDP.",
     ),
     (
+        "net_state_invalid",
+        "A client got a state message from the host that it cannot read (malformed, or changing a value it never had). It was dropped; the host runs another version of the game or is broken.",
+    ),
+    (
         "net_timed_out",
         "Nothing arrived from the other side of an online connection for timeout_ms (10 seconds by default): the other machine left, crashed or lost its network.",
+    ),
+    (
+        "net_types_mismatch",
+        "A client's game does not have every component type the host replicates, or has one with another layout. Host and players must run the same build of the game.",
     ),
     (
         "net_unknown_peer",

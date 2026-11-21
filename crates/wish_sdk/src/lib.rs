@@ -81,6 +81,7 @@ pub use wish_types::{
 };
 pub use wish_types::{AmbientSource, Antialiasing, Bloom, ColorGrading, Fog};
 pub use wish_types::{MAX_PLAYERS, PlayerActionSlots, PlayerActionState, PlayerId, Players};
+pub use wish_types::{NetGroups, NetOwner, NetViewer, NetVisibility, Replicated};
 
 pub use physics::{Ray, RayHit, raycast};
 
@@ -107,6 +108,7 @@ pub mod prelude {
         ButtonClicked, Pointer, UiAlign, UiButton, UiDirection, UiImage, UiInteraction, UiJustify,
         UiLayout, UiLength, UiNode, UiPosition, UiSettings, UiText, UiTextAlign, UiUnit,
     };
+    pub use crate::{NetGroups, NetOwner, NetViewer, NetVisibility, Replicated};
     pub use crate::{ParticleEmitter, ParticleState, Projection, Sprite};
     pub use crate::{PlayerActions, PlayerId, Players};
 }
