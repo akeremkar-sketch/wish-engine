@@ -84,7 +84,7 @@ pub(crate) const CAPTURE_FRAME: Tool = Tool {
 pub(crate) const DESCRIBE_VIEW: Tool = Tool {
     name: "describe_view",
     title: "What the camera sees",
-    description: "Says what a camera sees without a picture: for each visible entity its pixel count, how much of it is not hidden by other things (visible_percent), its box on screen [left, top, right, bottom] and its distance in meters; and the entities that are drawn but not visible (hidden behind something, or outside the picture); the sprites (their box in the picture and layer; a sprite that shows a sprite sheet also says its clip, frame (its place in the clip) and sheet_frame) and particle emitters (the box their particles cover, how many are alive); and the in-game interface (interface: each box that shows something, its box in the picture, its text, whether it is a button and if the pointer is over it); and stats, what drawing the lit picture of this view takes (draw_calls, triangles, shadow_casters, shadow_cascades, point_lights, spot_lights: counts, the same on every machine; effects: which of sky_light, sun_disc, fog, bloom, color_grading and fxaa it uses). A see-through entity is marked blended: true, and what shows through it counts as visible too; stats.blended_surfaces counts them. Use it to check that what you built is on screen and not blocked, what the interface says, and what makes a scene heavy.",
+    description: "Says what a camera sees without a picture. For each visible entity: its pixel count, how much of it is not hidden by other things (visible_percent), its box on screen [left, top, right, bottom] and its distance in meters; and the entities that are drawn but not visible (hidden behind something, or outside the picture); the sprites (their box in the picture and layer; a sprite that shows a sprite sheet also says its clip, frame (its place in the clip) and sheet_frame) and particle emitters (the box their particles cover, how many are alive); and the in-game interface (interface: each box that shows something, its box in the picture, its text, whether it is a button and if the pointer is over it); and stats, what drawing the lit picture of this view takes (draw_calls, triangles, shadow_casters, shadow_cascades, point_lights, spot_lights: counts, the same on every machine; effects: which of sky_light, sun_disc, fog, bloom, color_grading and fxaa it uses). A see-through entity is marked blended: true, and what shows through it counts as visible too; stats.blended_surfaces counts them. Use it to check that what you built is on screen and not blocked, what the interface says, and what makes a scene heavy. Tilemaps are listed under tilemaps: file, layer, box in the picture, the cells on screen [x0, y0, x1, y1] and how many tiles show; with point: [x, y] (a pixel of the picture), also the cell under it and each layer's tile there.",
     params: &[
         SCENE,
         SESSION,
@@ -107,6 +107,11 @@ pub(crate) const DESCRIBE_VIEW: Tool = Tool {
             "List at most this many visible entities (nearest first).",
         )
         .or("50"),
+        Param::optional(
+            "point",
+            Kind::Array,
+            "A pixel [x, y] of the picture (from its top left): each tilemap says which cell and which tile of each layer is under it.",
+        ),
         SHADERS,
     ],
     mutates: false,
@@ -554,6 +559,34 @@ fn describe_view(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
     let overlay = open
         .renderer
         .overlay_elements(&prepared.scene, camera, width, height)?;
+    let tilemaps = open
+        .renderer
+        .tilemap_elements(&prepared.scene, camera, width, height)?;
+    let point = match args.value("point") {
+        None => None,
+        Some(value) => Some(
+            value
+                .as_array()
+                .filter(|pair| pair.len() == 2)
+                .and_then(|pair| Some([pair[0].as_f64()? as f32, pair[1].as_f64()? as f32]))
+                .filter(|[x, y]| x.is_finite() && y.is_finite())
+                .ok_or_else(|| {
+                    Diagnostic::error(
+                        "invalid_parameter",
+                        "\"point\" must be a pixel [x, y] of the picture.",
+                        "Write it like [320, 180]: from the picture's top left corner.",
+                    )
+                    .at_path("/point")
+                })?,
+        ),
+    };
+    let under = match point {
+        Some(point) => {
+            open.renderer
+                .tiles_under(&prepared.scene, camera, (width, height), point)?
+        }
+        None => Vec::new(),
+    };
     open.renderer.trim(KEPT_AFTER_A_TOOL_CALL);
     let adapter = adapter_json(open);
     let name = |entity: Entity| {
@@ -658,6 +691,40 @@ fn describe_view(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
     }
     if !particles.is_empty() {
         out.insert("particles".to_owned(), json!(particles));
+    }
+    let maps: Vec<Value> = tilemaps
+        .into_iter()
+        .take(limit)
+        .map(|element| {
+            let mut entry = json!({
+                "entity": name(element.entity),
+                "map": element.map,
+                "layer": element.layer,
+                "tiles": element.tiles,
+            });
+            match element.bounding_box {
+                Some(found) => entry["bounding_box"] = json!(found),
+                None => entry["on_screen"] = json!(false),
+            }
+            if let Some(cells) = element.cells {
+                entry["cells"] = json!(cells);
+            }
+            if !element.loaded {
+                entry["loaded"] = json!(false);
+            }
+            if let Some(found) = under.iter().find(|under| under.entity == element.entity) {
+                let layers: Map<String, Value> = found
+                    .layers
+                    .iter()
+                    .map(|(layer, tile)| (layer.clone(), json!(tile)))
+                    .collect();
+                entry["under_point"] = json!({ "cell": found.cell, "tiles": layers });
+            }
+            entry
+        })
+        .collect();
+    if !maps.is_empty() {
+        out.insert("tilemaps".to_owned(), json!(maps));
     }
     if !interface.is_empty() {
         out.insert("interface".to_owned(), json!(interface));

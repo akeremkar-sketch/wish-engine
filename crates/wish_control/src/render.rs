@@ -592,14 +592,23 @@ pub fn load_ui_pictures(
     root: &Path,
     known: &mut BTreeMap<String, Stamp>,
 ) -> Vec<Diagnostic> {
-    // Sprite sheets first: their pictures are loaded with the others.
+    // Sprite sheets and tilemaps first: their pictures are loaded with the
+    // others.
     let mut warnings = load_sprite_sheets(renderer, scene, root, known);
+    warnings.extend(load_tilemaps(renderer, scene, root, known));
     let sheet_pictures: Vec<String> = scene
         .sprites
         .iter()
         .filter_map(|view| view.animation.as_ref())
         .filter_map(|animation| renderer.sprite_sheet(&animation.sheet))
         .map(|sheet| sheet.image.clone())
+        .chain(
+            scene
+                .tilemaps
+                .iter()
+                .filter_map(|view| renderer.tilemap(&view.map))
+                .map(|grid| grid.image.clone()),
+        )
         .collect();
     let mut paths: Vec<&str> = scene
         .ui
@@ -752,6 +761,106 @@ pub fn load_sprite_sheets(
             Err(problem) => {
                 renderer.remove_sprite_sheet(path);
                 known.remove(path);
+                warnings.push(not_loaded(&problem.message, &problem.hint));
+            }
+        }
+    }
+    warnings
+}
+
+/// The key under which `known` keeps the stamp of `file`, read for the
+/// tilemap `map` (the map, its tileset, the tileset's sheet): a tilemap is
+/// read again when any of them changed. A newline is never in a path.
+fn tilemap_key(map: &str, file: &str) -> String {
+    format!("{map}\n{file}")
+}
+
+/// Loads the tilemaps the `Tilemap`s of `scene` name into the renderer,
+/// with their tilesets (and a tileset's sprite sheet), again if any of
+/// those files changed since `known` says they were read. A map that cannot
+/// be used is a warning (`tilemap_not_loaded`) and is forgotten: nothing is
+/// drawn for it. Every file is read with its size cap and checked whole.
+pub fn load_tilemaps(
+    renderer: &mut Renderer,
+    scene: &RenderScene,
+    root: &Path,
+    known: &mut BTreeMap<String, Stamp>,
+) -> Vec<Diagnostic> {
+    let mut paths: Vec<&str> = scene
+        .tilemaps
+        .iter()
+        .map(|view| view.map.as_str())
+        .collect();
+    paths.sort_unstable();
+    paths.dedup();
+    let mut warnings = Vec::new();
+    for path in paths {
+        let not_loaded = |why: &str, hint: &str| {
+            Diagnostic::warning(
+                "tilemap_not_loaded",
+                format!("The tilemap '{path}' was not drawn: {why}"),
+                hint.to_owned(),
+            )
+            .at_file(path)
+        };
+        if wish_core::asset::validate_asset_ref(path).is_err() || !wish_asset::is_tilemap(path) {
+            warnings.push(not_loaded(
+                "it is not a tilemap file in the project (*.tilemap.json).",
+                "Tilemap.map names a tilemap such as \"maps/station.tilemap.json\" (asset_create makes one from a tileset).",
+            ));
+            renderer.remove_tilemap(path);
+            continue;
+        }
+        let prefix = tilemap_key(path, "");
+        let fresh = renderer.tilemap(path).is_some()
+            && known
+                .range(prefix.clone()..)
+                .take_while(|(key, _)| key.starts_with(&prefix))
+                .all(|(key, stamp)| stamp_of(&root.join(&key[prefix.len()..])) == *stamp)
+            && known.contains_key(&tilemap_key(path, path));
+        if fresh {
+            continue;
+        }
+        let stale: Vec<String> = known
+            .range(prefix.clone()..)
+            .take_while(|(key, _)| key.starts_with(&prefix))
+            .map(|(key, _)| key.clone())
+            .collect();
+        for key in stale {
+            known.remove(&key);
+        }
+        let loaded = wish_asset::read_tilemap(root, path).and_then(|map| {
+            let tileset = wish_asset::read_tileset(root, &map.tileset)?;
+            let (image, tiles) = tileset.frames(root)?;
+            let mut read = vec![path.to_owned(), map.tileset.clone()];
+            if let wish_asset::TileSource::Sheet(sheet) = &tileset.source {
+                read.push(sheet.clone());
+            }
+            Ok((map, image, tiles, read))
+        });
+        match loaded {
+            Ok((map, image, tiles, read)) => {
+                renderer.set_tilemap(
+                    path,
+                    wish_render::TileGrid {
+                        image,
+                        tiles,
+                        layers: map
+                            .layers
+                            .into_iter()
+                            .map(|layer| wish_render::TileGridLayer {
+                                name: layer.name,
+                                chunks: layer.chunks,
+                            })
+                            .collect(),
+                    },
+                );
+                for file in read {
+                    known.insert(tilemap_key(path, &file), stamp_of(&root.join(&file)));
+                }
+            }
+            Err(problem) => {
+                renderer.remove_tilemap(path);
                 warnings.push(not_loaded(&problem.message, &problem.hint));
             }
         }

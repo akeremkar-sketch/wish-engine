@@ -45,6 +45,7 @@ pub mod scaffold;
 mod scenarios;
 mod script;
 mod sessions;
+mod tilemaps;
 pub mod tool;
 mod tools;
 pub mod types;

@@ -79,11 +79,14 @@ pub(crate) struct InspectorActions {
     pub notes: Option<(String, String)>,
     /// Apply a named look to the scene (its id: `natural`).
     pub look: Option<String>,
+    /// What the tile palette asks for (release 1.1).
+    pub paint: crate::tile_palette::PaintActions,
 }
 
 impl InspectorActions {
     pub fn any(&self) -> bool {
-        self.look.is_some()
+        self.paint.any()
+            || self.look.is_some()
             || self.set.is_some()
             || self.add.is_some()
             || self.remove.is_some()
@@ -110,6 +113,9 @@ pub(crate) struct InspectorView<'a> {
     pub state: &'a RefCell<InspectorState>,
     /// Nothing is selected: the scene's resources are shown instead.
     pub resources: bool,
+    /// The tile palette and the project folder (its pictures), when a
+    /// tilemap can be painted.
+    pub paint: Option<(&'a crate::tile_palette::TilePaint, &'a std::path::Path)>,
 }
 
 /// The components every inspected entity has, in the first one's order.
@@ -271,6 +277,12 @@ pub(crate) fn panel(ui: &mut Ui, view: &InspectorView<'_>, actions: &mut Inspect
                         };
                         if let Some((field, new)) = fields(ui, view, &name, schema, value) {
                             actions.set = Some((name.clone(), field, new));
+                        }
+                        if name == "Tilemap"
+                            && view.inspected.len() == 1
+                            && let Some((paint, root)) = view.paint
+                        {
+                            crate::tile_palette::section(ui, paint, root, &mut actions.paint);
                         }
                         let remove = if view.resources {
                             t("Remove resource")

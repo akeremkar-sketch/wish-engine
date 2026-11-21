@@ -340,6 +340,19 @@ pub struct SpriteAnimation {
     pub frame: u32,
 }
 
+/// A tilemap where it stands.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TilemapView {
+    /// The entity.
+    pub entity: Entity,
+    /// Its world matrix.
+    pub world: Mat4,
+    /// Its `Tilemap` component.
+    pub tilemap: wish_types::tilemap::Tilemap,
+    /// The tilemap file's project path (`*.tilemap.json`).
+    pub map: String,
+}
+
 /// A particle emitter where it stands.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EmitterView {
@@ -452,6 +465,8 @@ pub struct RenderScene {
     pub fonts: wish_text::Fonts,
     /// The sprites, in entity order.
     pub sprites: Vec<SpriteView>,
+    /// The tilemaps, in entity order.
+    pub tilemaps: Vec<TilemapView>,
     /// The particle emitters, in entity order.
     pub emitters: Vec<EmitterView>,
     /// The simulation time shown (`Time.elapsed`), for particles.
@@ -568,6 +583,7 @@ pub fn extract(world: &World) -> Result<RenderScene> {
             .cloned()
             .unwrap_or_default(),
         sprites: Vec::new(),
+        tilemaps: Vec::new(),
         emitters: Vec::new(),
         time: wish_particles::now(world),
         names: BTreeMap::new(),
@@ -608,6 +624,18 @@ pub fn extract(world: &World) -> Result<RenderScene> {
                     image,
                     animation,
                 });
+            }
+            if let Some(tilemap) = world.get::<wish_types::tilemap::Tilemap>(entity).copied() {
+                let map = world.text(tilemap.map.text()).unwrap_or_default();
+                let map = map.split('#').next().unwrap_or(map);
+                if !map.is_empty() {
+                    scene.tilemaps.push(TilemapView {
+                        entity,
+                        world: placement,
+                        tilemap,
+                        map: map.to_owned(),
+                    });
+                }
             }
             if let Some(emitter) = world
                 .get::<wish_types::particles::ParticleEmitter>(entity)

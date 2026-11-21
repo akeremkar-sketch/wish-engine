@@ -176,7 +176,7 @@ pub struct SheetDocument {
     pub sheet: Map<String, Value>,
 }
 
-fn at(node: &Node, file: &str, diagnostic: Diagnostic) -> Diagnostic {
+pub(crate) fn at(node: &Node, file: &str, diagnostic: Diagnostic) -> Diagnostic {
     let diagnostic = diagnostic.at_line(node.span.line, Some(node.span.column));
     if file.is_empty() {
         diagnostic
@@ -187,7 +187,7 @@ fn at(node: &Node, file: &str, diagnostic: Diagnostic) -> Diagnostic {
 
 /// Puts the line and column of the value a diagnostic's pointer names on
 /// it, and the file.
-fn locate(root: &Node, file: &str, mut diagnostic: Diagnostic) -> Diagnostic {
+pub(crate) fn locate(root: &Node, file: &str, mut diagnostic: Diagnostic) -> Diagnostic {
     if let Some(located) = diagnostic
         .location
         .path
@@ -270,7 +270,7 @@ fn invalid(pointer: &str, message: impl Into<String>, hint: impl Into<String>) -
 
 /// A JSON number that is whole and not negative (`32`, or `32.0` as a
 /// number box writes it).
-fn whole_number(value: &Value) -> Option<u64> {
+pub(crate) fn whole_number(value: &Value) -> Option<u64> {
     value.as_u64().or_else(|| {
         value
             .as_f64()
@@ -280,7 +280,7 @@ fn whole_number(value: &Value) -> Option<u64> {
 }
 
 /// A whole number from `low` to `high` at `pointer`.
-fn whole(value: &Value, pointer: &str, low: u64, high: u64) -> Result<u32> {
+pub(crate) fn whole(value: &Value, pointer: &str, low: u64, high: u64) -> Result<u32> {
     let Some(number) = whole_number(value) else {
         return Err(Diagnostic::error(
             "type_mismatch",
@@ -302,7 +302,7 @@ fn whole(value: &Value, pointer: &str, low: u64, high: u64) -> Result<u32> {
 }
 
 /// A pair of whole numbers `[a, b]` at `pointer`.
-fn pair(value: &Value, pointer: &str, low: u64, high: u64) -> Result<[u32; 2]> {
+pub(crate) fn pair(value: &Value, pointer: &str, low: u64, high: u64) -> Result<[u32; 2]> {
     let items = value
         .as_array()
         .filter(|items| items.len() == 2)
@@ -321,7 +321,12 @@ fn pair(value: &Value, pointer: &str, low: u64, high: u64) -> Result<[u32; 2]> {
 }
 
 /// Checks that an object has only `known` keys.
-fn known_keys(map: &Map<String, Value>, known: &[&str], pointer: &str, what: &str) -> Result<()> {
+pub(crate) fn known_keys(
+    map: &Map<String, Value>,
+    known: &[&str],
+    pointer: &str,
+    what: &str,
+) -> Result<()> {
     for key in map.keys() {
         if !known.contains(&key.as_str()) {
             return Err(Diagnostic::error(
@@ -401,7 +406,7 @@ impl SheetDocument {
             }
         };
         let frames = match (self.sheet.get("grid"), self.sheet.get("frames")) {
-            (Some(grid), None) => grid_frames(grid)?,
+            (Some(grid), None) => grid_frames(grid, "sheet_invalid")?,
             (None, Some(list)) => listed_frames(list)?,
             (Some(_), Some(_)) => {
                 return Err(invalid(
@@ -471,7 +476,13 @@ impl SheetDocument {
     }
 }
 
-fn grid_frames(grid: &Value) -> Result<Vec<[u32; 4]>> {
+/// The frames a grid cuts, numbered left to right, then down. A grid that
+/// says too little is an error of `code` (`sheet_invalid`, or the code of
+/// the file kind that borrows the grid, such as a tileset).
+pub(crate) fn grid_frames(grid: &Value, code: &'static str) -> Result<Vec<[u32; 4]>> {
+    let invalid = |pointer: &str, message: String, hint: &str| {
+        Diagnostic::error(code, message, hint).at_path(pointer.to_owned())
+    };
     let Value::Object(grid) = grid else {
         return Err(Diagnostic::error(
             "type_mismatch",
@@ -486,7 +497,7 @@ fn grid_frames(grid: &Value) -> Result<Vec<[u32; 4]>> {
         None => {
             return Err(invalid(
                 "/grid",
-                "The grid does not say how large a frame is (\"frame\").",
+                "The grid does not say how large a frame is (\"frame\").".to_owned(),
                 "Add \"frame\": [width, height] in pixels, such as [32, 32].",
             ));
         }

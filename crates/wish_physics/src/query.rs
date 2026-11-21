@@ -58,6 +58,7 @@ pub fn query_state(world: &World) -> Result<Cow<'_, PhysicsState>> {
     for entity in present {
         sync_entity(world, &mut state, entity)?;
     }
+    crate::tiles::sync(world, &mut state, &mut Vec::new())?;
     // Collision detection only: places the colliders in the query tree and
     // finds contacts; nothing moves.
     // The contacts found here are reported by the first step (Rapier reports

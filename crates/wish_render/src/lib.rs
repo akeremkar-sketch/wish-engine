@@ -39,8 +39,8 @@ pub use components::{
 };
 pub use extract::{
     CameraView, ColliderView, Draw, EmitterView, LightView, LocalLightView, Look, MaterialData,
-    Mesh, RenderScene, SkyData, SpriteAnimation, SpriteView, SurfaceData, TEXTURE_SLOTS, UiBoxView,
-    UiTextView, extract, slot_is_colour,
+    Mesh, RenderScene, SkyData, SpriteAnimation, SpriteView, SurfaceData, TEXTURE_SLOTS,
+    TilemapView, UiBoxView, UiTextView, extract, slot_is_colour,
 };
 pub use gpu::{AdapterSummary, Created, Gpu, GpuOptions};
 pub use image::{ImageDiff, RgbaImage, Tolerance};
@@ -50,5 +50,7 @@ pub use renderer::{
     engine_shaders_from_dir, exposure_multiplier, project_to_pixel,
 };
 pub use shader::{CheckedShader, ComposedShader, ShaderLibrary, SourceLine, check_wgsl};
-pub use sprites::{OverlayElement, SpriteSheet};
+pub use sprites::{
+    OverlayElement, SpriteSheet, TileGrid, TileGridLayer, TileUnder, TilemapElement,
+};
 pub use ui::{UiElement, UiPicture, ui_elements};

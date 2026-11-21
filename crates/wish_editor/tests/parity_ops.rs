@@ -1688,3 +1688,230 @@ fn top_menu(item: &str) -> &'static str {
         _ => "Game",
     }
 }
+
+/// The lowest widget on the window (the inspector's palette is under the
+/// component's fields) whose label or value is `text`, other than text,
+/// scrolled into the inspector's view.
+fn lowest(app: &mut EditorApp, text: &str) -> Rect {
+    let panel = app
+        .widgets()
+        .iter()
+        .filter(|w| w.role == "ScrollBar" && w.rect.min.x > 1200.0 && w.rect.min.y < 300.0)
+        .map(|w| w.rect)
+        .next();
+    for _ in 0..40 {
+        let found = lowest_now(app, text);
+        let Some(panel) = panel else {
+            return found;
+        };
+        let y = found.center().y;
+        if y > panel.min.y + 8.0 && y < panel.max.y - 8.0 {
+            return found;
+        }
+        let step = if y >= panel.max.y - 8.0 { -10.0 } else { 10.0 };
+        play(
+            app,
+            json!([{ "events": [{ "pointer": [panel.min.x - 40.0, panel.center().y] }, { "scroll": [0, step] }] },
+                   { "seconds": 0.2 }, { "idle": 2 }]),
+        );
+    }
+    panic!("{text} does not come into view")
+}
+
+fn lowest_now(app: &EditorApp, text: &str) -> Rect {
+    app.widgets()
+        .iter()
+        .filter(|w| w.role != "TextRun" && w.role != "Label")
+        .filter(|w| w.label.as_deref() == Some(text) || w.value.as_deref() == Some(text))
+        .map(|w| w.rect)
+        .max_by(|a, b| a.min.y.total_cmp(&b.min.y))
+        .unwrap_or_else(|| panic!("nothing called '{text}'"))
+}
+
+/// Presses on the view at cell `from` of the map, moves to cell `to` and
+/// lets go: one stroke.
+fn stroke(app: &mut EditorApp, from: (i32, i32), to: (i32, i32)) {
+    // The 2D project's camera shows 10 m from top to bottom; the map's
+    // origin is at (-4, -3).
+    let area = app.scene_view_area();
+    let meter = area.height() / 10.0;
+    let at = |(x, y): (i32, i32)| {
+        [
+            area.center().x + (-4.0 + x as f32 + 0.5) * meter,
+            area.center().y - (-3.0 + y as f32 + 0.5) * meter,
+        ]
+    };
+    play(
+        app,
+        json!([
+            { "events": [{ "pointer": at(from) }] },
+            { "events": [{ "press": "primary" }] },
+            { "events": [{ "pointer": at(to) }] },
+            { "events": [{ "release": "primary" }] },
+            { "idle": 2 }
+        ]),
+    );
+}
+
+/// The tiles of a layer of the map file in a rectangle, rows top first.
+fn tiles(app: &mut EditorApp, map: &str, layer: &str, from: [i32; 2], to: [i32; 2]) -> Value {
+    let got = app.call(
+        "tilemap_edit",
+        &json!({ "tilemap": map, "action": "get", "from": from, "to": to }),
+    );
+    assert_eq!(got["ok"], true, "{got}");
+    got["rows"][layer].clone()
+}
+
+#[test]
+fn a_tilemap_is_painted_by_hand() {
+    use wish_control::project::ProjectKind;
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("editor-q-tilemap");
+    let _ = std::fs::remove_dir_all(&dir);
+    wish_control::scaffold::create_project_of_kind(&dir, "Editor Test", "wen", ProjectKind::D2)
+        .unwrap();
+    // A picture of two 16 x 16 tiles: grey, then orange.
+    std::fs::create_dir_all(dir.join("assets/tiles")).unwrap();
+    let mut pixels = Vec::new();
+    for _ in 0..16 {
+        for x in 0..32 {
+            pixels.extend_from_slice(&if x < 16 {
+                [120, 120, 130, 255]
+            } else {
+                [230, 140, 40, 255]
+            });
+        }
+    }
+    let picture = wish_render::RgbaImage {
+        width: 32,
+        height: 16,
+        pixels,
+    };
+    std::fs::write(
+        dir.join("assets/tiles/station.png"),
+        picture.to_png().unwrap(),
+    )
+    .unwrap();
+    let mut app = open(&dir);
+    // New... > Tileset of the selected picture, New... > Tilemap of it.
+    let row = named(&app, "assets/tiles/station.png");
+    click(&mut app, row);
+    let new = named(&app, "New...");
+    click(&mut app, new);
+    let tileset = named(&app, "Tileset");
+    click(&mut app, tileset);
+    let set = "assets/tiles/station.tileset.json";
+    assert_eq!(app.status(), format!("made {set}"));
+    assert_eq!(
+        written(&dir, set),
+        json!({ "format": 1, "image": "assets/tiles/station.png",
+                "grid": { "frame": [16, 16], "columns": 2, "rows": 1 } })
+    );
+    let new = named(&app, "New...");
+    click(&mut app, new);
+    let tilemap = named(&app, "Tilemap");
+    click(&mut app, tilemap);
+    let map = "maps/map.tilemap.json";
+    assert_eq!(app.status(), format!("made {map}"));
+    // An entity shows it (made as any entity is).
+    let done = app.call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "spawn", "id": "map", "components": {
+            "Transform": { "translation": [-4, -3, 0] }, "Tilemap": { "map": map } } }] }),
+    );
+    assert_eq!(done["ok"], true, "{done}");
+    play(&mut app, json!([{ "seconds": 0.5 }, { "idle": 2 }]));
+    app.select(&["map"]);
+    play(&mut app, json!([{ "idle": 3 }]));
+    // The palette: the brush, tile 1, made solid.
+    let brush = lowest(&mut app, "Brush");
+    click(&mut app, brush);
+    let one = lowest(&mut app, "1");
+    click(&mut app, one);
+    let solid = lowest(&mut app, "Solid tile");
+    click(&mut app, solid);
+    assert_eq!(
+        written(&dir, set)["tiles"],
+        json!({ "1": { "solid": true } }),
+        "{}",
+        app.status()
+    );
+    // A brush stroke on the walls layer (the last, chosen first): one call.
+    stroke(&mut app, (0, 0), (3, 0));
+    assert_eq!(app.status(), format!("painted 4 cell(s) of {map}"));
+    assert_eq!(
+        tiles(&mut app, map, "walls", [0, 0], [3, 0]),
+        json!([[1, 1, 1, 1]])
+    );
+    // A rectangle.
+    let rectangle = lowest(&mut app, "Rectangle");
+    click(&mut app, rectangle);
+    stroke(&mut app, (0, 1), (2, 3));
+    assert_eq!(
+        tiles(&mut app, map, "walls", [0, 1], [3, 3]),
+        json!([[1, 1, 1, -1], [1, 1, 1, -1], [1, 1, 1, -1]])
+    );
+    // The floor, filled with tile 0 inside the map's painted part.
+    let layer = lowest(&mut app, "walls");
+    click(&mut app, layer);
+    let floor = named(&app, "floor");
+    click(&mut app, floor);
+    let zero = lowest(&mut app, "0");
+    click(&mut app, zero);
+    let fill = lowest(&mut app, "Fill");
+    click(&mut app, fill);
+    stroke(&mut app, (1, 1), (1, 1));
+    assert_eq!(
+        tiles(&mut app, map, "floor", [0, 0], [3, 3]),
+        json!([[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]])
+    );
+    // The eraser on the walls.
+    let layer = lowest(&mut app, "floor");
+    click(&mut app, layer);
+    let walls = named(&app, "walls");
+    click(&mut app, walls);
+    let erase = lowest(&mut app, "Erase");
+    click(&mut app, erase);
+    stroke(&mut app, (0, 0), (1, 0));
+    assert_eq!(
+        tiles(&mut app, map, "walls", [0, 0], [3, 0]),
+        json!([[-1, -1, 1, 1]])
+    );
+    // The picker takes a cell's tile and hands back the brush.
+    let picker = lowest(&mut app, "Picker");
+    click(&mut app, picker);
+    stroke(&mut app, (2, 2), (2, 2));
+    assert_eq!(app.status(), "picked tile 1");
+    // Ctrl+Z while painting takes the last stroke back: the eraser's.
+    play(
+        &mut app,
+        json!([
+            { "events": [{ "modifiers": { "ctrl": true } }] },
+            { "events": [{ "key": "Z", "ctrl": true }] },
+            { "events": [{ "key": "Z", "ctrl": true, "up": true }, { "modifiers": {} }] },
+            { "idle": 2 }
+        ]),
+    );
+    assert_eq!(
+        tiles(&mut app, map, "walls", [0, 0], [3, 0]),
+        json!([[1, 1, 1, 1]])
+    );
+    // Every stroke and the undo are the person's, in the map's history.
+    let history = app.call("edit_history", &json!({ "scene": map }));
+    let actions: Vec<(String, String)> = history["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| {
+            (
+                e["action"].as_str().unwrap().to_owned(),
+                e["actor"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    let expected: Vec<(String, String)> = ["undo", "edit", "edit", "edit", "edit"]
+        .iter()
+        .map(|action| ((*action).to_owned(), "human".to_owned()))
+        .collect();
+    assert_eq!(actions, expected, "{history}");
+}

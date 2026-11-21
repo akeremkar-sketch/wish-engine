@@ -53,6 +53,9 @@ pub struct Workspace {
     /// The player program `project_export` copies, if not the one next to
     /// the running program (M9).
     pub(crate) player_path: Option<PathBuf>,
+    /// Open tilemaps with their histories, and the walls of the project's
+    /// maps (release 1.1).
+    pub(crate) tilemaps: crate::tilemaps::Tilemaps,
 }
 
 impl std::fmt::Debug for Workspace {
@@ -112,6 +115,7 @@ impl Workspace {
             activity: crate::activity::Activity::default(),
             policy: crate::policy::Policy::default(),
             player_path: None,
+            tilemaps: crate::tilemaps::Tilemaps::default(),
         };
         workspace.load_built_module();
         Ok(workspace)

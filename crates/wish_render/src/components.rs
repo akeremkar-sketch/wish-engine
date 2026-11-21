@@ -29,5 +29,8 @@ pub fn register(world: &mut World) -> Result<()> {
     world.register_resource::<Fog>()?;
     world.register_resource::<ColorGrading>()?;
     world.register_resource::<Bloom>()?;
+    // Release 1.1: tilemaps (registered last, so earlier types keep their
+    // places).
+    world.register_component::<wish_types::tilemap::Tilemap>()?;
     Ok(())
 }

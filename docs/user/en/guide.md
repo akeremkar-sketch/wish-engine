@@ -136,8 +136,8 @@ The language is chosen at the top right of the welcome screen, and later in the 
 - **Assets** (bottom tab):
   - Models, images and sounds of the project, filtered by kind.
   - Drag one into the view to place it.
-  - *New...* makes a placeholder sound or picture, a *Material file*, or a *Sprite sheet* of the
-    selected picture.
+  - *New...* makes a placeholder sound or picture, a *Material file*, a *Sprite sheet* or a
+    *Tileset* of the selected picture, or a *Tilemap* of the selected (or first) tileset.
   - *Rename / move...* moves a file and updates every reference to it.
   - *Open outside* opens it in the program your system uses.
 - **Looks (materials and textures):**
@@ -174,6 +174,17 @@ The language is chosen at the top right of the welcome screen, and later in the 
   - Then add a `SpriteAnimator` to the entity with the `Sprite`, and type the sheet in `sheet`
     and a clip in `clip`. While the game runs the clip plays; game code switches clips with
     `animator.play(text("walk"))`.
+- **Tilemaps (2D rooms, walls, floors):**
+  - Select a picture of tiles, then *Assets*, *New...*, *Tileset* (16-pixel tiles), and *New...*,
+    *Tilemap* (a map of it with a `floor` and a `walls` layer).
+  - Add a `Tilemap` to an entity and type the map in `map` (`cell_size` is a cell's size in
+    meters). With the entity selected, the inspector shows the *Tile palette* under the component:
+    choose the layer (*Paint on layer*), a tool (*Brush*, *Rectangle*, *Fill*, *Erase*, *Picker*)
+    and a tile, then press and drag in the view. Each stroke is one change in the map's own
+    history: Ctrl+Z while painting takes the last one back. *Solid tile* makes the chosen tile a
+    wall: solid tiles stop characters (in a layer whose `collide` is on).
+  - The map is drawn under the sprites of its `layer`; `y_sort` draws those sprites lower over
+    higher, for games seen from above.
 - **Prefabs:**
   - *Make prefab* turns the selection into a reusable piece.
   - Instances show *Instance of {prefab}*; their changed fields are marked.
@@ -407,7 +418,8 @@ recorded before the files were rewritten no longer match and have to be recorded
 wish.json             the project: name, kind (2D or 3D), default scene
 scenes/               scenes (*.scene.json) and prefabs (*.prefab.json)
 assets/               models (.glb/.gltf), images (.png), sounds (.wav/.ogg),
-                      material files (*.mat.json), sprite sheets (*.sheet.json)
+                      material files (*.mat.json), sprite sheets (*.sheet.json),
+                      tilesets (*.tileset.json), tilemaps (*.tilemap.json)
 scripts/src/lib.rs    game code
 input.json            actions and their keys
 tests/                scenario tests (*.test.json) and golden pictures

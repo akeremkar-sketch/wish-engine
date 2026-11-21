@@ -1,4 +1,5 @@
-//! Finding asset references in scene, prefab, material and sheet files.
+//! Finding asset references in scene, prefab, material, sheet, tileset and
+//! tilemap files.
 //!
 //! The component schemas say which fields are [`wish_core::AssetRef`]s, so a
 //! file is searched field by field, not by looking for strings that happen to
@@ -22,7 +23,7 @@ pub struct RefUse {
     pub reference: String,
 }
 
-type Visitor<'a> = dyn FnMut(&str, &mut String) + 'a;
+pub(crate) type Visitor<'a> = dyn FnMut(&str, &mut String) + 'a;
 
 fn walk(schema: &TypeSchema, value: &mut Value, pointer: &str, visit: &mut Visitor<'_>) {
     if !schema.contains_text() {
@@ -189,7 +190,8 @@ pub fn refs_in_value(registry: &Registry, document: &Value) -> Vec<RefUse> {
 /// single diagnostic. A reference of a `Material` to a file of the wrong
 /// kind (`Material.file` to something that is not a material file, a
 /// texture field to something that is not a PNG, `SpriteAnimator.sheet` to
-/// something that is not a sprite sheet) is reported too.
+/// something that is not a sprite sheet, `Tilemap.map` to something that
+/// is not a tilemap) is reported too.
 pub fn check_source(
     source: &str,
     file: &str,
@@ -208,7 +210,8 @@ pub fn check_source(
             .check(&used.reference)
             .err()
             .or_else(|| crate::material::kind_problem(&used.pointer, &used.reference))
-            .or_else(|| crate::sheet::kind_problem(&used.pointer, &used.reference));
+            .or_else(|| crate::sheet::kind_problem(&used.pointer, &used.reference))
+            .or_else(|| crate::tiles::kind_problem(&used.pointer, &used.reference));
         let Some(problem) = problem else {
             continue;
         };

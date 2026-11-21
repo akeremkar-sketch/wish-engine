@@ -21,17 +21,26 @@
 //! ([`SpriteSheet`], given by whoever reads the project's files, as
 //! pictures are).
 //!
+//! **Tilemaps.** A tilemap's tiles are rectangles of the same batches
+//! ([`TileGrid`], given like sheets): one per tile, its corners worked out
+//! from whole cell coordinates so that neighbours share exactly the same
+//! corner values (no seams, no overlaps); chunks outside the picture are
+//! skipped. A map sorts as one flat thing: every tile has the map's layer
+//! and its entity's distance, and comes before the sprites of the same
+//! layer and distance. With `Tilemap.y_sort`, the sprites of the map's layer
+//! sort by height (design note `docs/design/1.1-tilemaps.md` §6).
+//!
 //! **Nine slices.** A sprite with `slice` borders drawn at a `size` other
 //! than its picture's is nine rectangles: the corners keep their size, the
 //! edges and the middle stretch.
 
-use std::collections::BTreeMap;
-use std::sync::Mutex;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, Mutex};
 
 use wish_core::math::{Mat4, Vec3, Vec4};
 use wish_core::{Diagnostic, Entity};
 
-use crate::extract::{CameraView, RenderScene, SpriteView};
+use crate::extract::{CameraView, RenderScene, SpriteView, TilemapView};
 use crate::gpu::Gpu;
 use crate::renderer::Pool;
 use crate::ui::UiPicture;
@@ -62,6 +71,138 @@ pub struct SpriteSheet {
     /// Each clip's frames (sheet frame numbers, in order), by the clip's
     /// name.
     pub clips: BTreeMap<String, Vec<u32>>,
+}
+
+/// The side of a tilemap chunk, in cells (the layout of
+/// `wish_asset::tiles::ChunkTiles`).
+pub const TILE_CHUNK: i32 = 16;
+
+/// A tilemap, as the renderer needs it: its tileset's picture, every
+/// tile's rectangle in it, and the layers' chunks (given by whoever reads
+/// the project's files, like sheets: the renderer never touches the disk).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TileGrid {
+    /// The tileset picture's project path (kept like any sprite picture,
+    /// `Renderer::set_ui_picture`).
+    pub image: String,
+    /// Each tile: left, top, width, height in the picture's pixels.
+    pub tiles: Vec<[u32; 4]>,
+    /// The layers, drawn in this order.
+    pub layers: Vec<TileGridLayer>,
+}
+
+/// One layer of a [`TileGrid`].
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TileGridLayer {
+    /// Its name.
+    pub name: String,
+    /// Its chunks by chunk coordinates: 256 tile numbers each, row by row
+    /// from the chunk's bottom row, -1 for an empty cell.
+    pub chunks: BTreeMap<(i32, i32), Arc<[i32; 256]>>,
+}
+
+impl TileGrid {
+    /// The tile of layer `layer` at cell `(x, y)` (-1 for none).
+    pub fn tile(&self, layer: usize, x: i32, y: i32) -> i32 {
+        let key = (x.div_euclid(TILE_CHUNK), y.div_euclid(TILE_CHUNK));
+        let index = (y.rem_euclid(TILE_CHUNK) * TILE_CHUNK + x.rem_euclid(TILE_CHUNK)) as usize;
+        self.layers
+            .get(layer)
+            .and_then(|layer| layer.chunks.get(&key))
+            .map_or(-1, |chunk| chunk[index])
+    }
+}
+
+/// Whether every number of a matrix is finite.
+fn finite(matrix: &Mat4) -> bool {
+    matrix.to_cols_array().iter().all(|v| v.is_finite())
+}
+
+/// The corner of cell corner `(x, y)` of a map in the world: computed the
+/// same way for every tile that shares it.
+fn cell_corner(view: &TilemapView, cell: [f32; 2], x: i32, y: i32) -> Vec3 {
+    view.world
+        .transform_point3(Vec3::new(x as f32 * cell[0], y as f32 * cell[1], 0.0))
+}
+
+/// Whether a quad with these corners may be in the picture of `view_proj`
+/// (conservative: one that reaches behind the camera counts).
+fn may_show(corners: &[Vec3; 4], view_proj: &Mat4) -> bool {
+    let mut low = [f32::MAX; 2];
+    let mut high = [f32::MIN; 2];
+    let mut behind = 0;
+    for corner in corners {
+        let clip: Vec4 = *view_proj * corner.extend(1.0);
+        if clip.w <= 1e-6 {
+            behind += 1;
+            continue;
+        }
+        let (x, y) = (clip.x / clip.w, clip.y / clip.w);
+        low = [low[0].min(x), low[1].min(y)];
+        high = [high[0].max(x), high[1].max(y)];
+    }
+    if behind == 4 {
+        return false;
+    }
+    if behind > 0 {
+        return true;
+    }
+    high[0] >= -1.0 && low[0] <= 1.0 && high[1] >= -1.0 && low[1] <= 1.0
+}
+
+/// The tiles of a map that may show through `view_proj`: (layer, cell x,
+/// cell y, tile), layer by layer, chunk by chunk; chunks outside the
+/// picture are skipped whole.
+fn visible_tiles<'a>(
+    view: &'a TilemapView,
+    grid: &'a TileGrid,
+    view_proj: &'a Mat4,
+) -> impl Iterator<Item = (usize, i32, i32, u32)> + 'a {
+    let cell = view.tilemap.cell();
+    grid.layers
+        .iter()
+        .enumerate()
+        .flat_map(move |(layer, tiles)| {
+            tiles
+                .chunks
+                .iter()
+                .filter(move |&(&(cx, cy), _)| {
+                    let (x0, y0) = (cx * TILE_CHUNK, cy * TILE_CHUNK);
+                    let (x1, y1) = (x0 + TILE_CHUNK, y0 + TILE_CHUNK);
+                    may_show(
+                        &[
+                            cell_corner(view, cell, x0, y0),
+                            cell_corner(view, cell, x1, y0),
+                            cell_corner(view, cell, x1, y1),
+                            cell_corner(view, cell, x0, y1),
+                        ],
+                        view_proj,
+                    )
+                })
+                .flat_map(move |(&(cx, cy), chunk)| {
+                    chunk.iter().enumerate().filter_map(move |(index, tile)| {
+                        let tile = u32::try_from(*tile).ok()?;
+                        let index = index as i32;
+                        Some((
+                            layer,
+                            cx * TILE_CHUNK + index % TILE_CHUNK,
+                            cy * TILE_CHUNK + index / TILE_CHUNK,
+                            tile,
+                        ))
+                    })
+                })
+        })
+}
+
+/// The four corners of a cell of a map (bottom left, bottom right, top
+/// right, top left).
+fn cell_quad(view: &TilemapView, cell: [f32; 2], x: i32, y: i32) -> [Vec3; 4] {
+    [
+        cell_corner(view, cell, x, y),
+        cell_corner(view, cell, x + 1, y),
+        cell_corner(view, cell, x + 1, y + 1),
+        cell_corner(view, cell, x, y + 1),
+    ]
 }
 
 /// What a sprite shows once its animator is taken into account.
@@ -321,6 +462,9 @@ struct Item {
     smooth: bool,
     layer: i32,
     distance: f32,
+    /// In a layer whose sprites sort by height (`Tilemap.y_sort`): the
+    /// height that decides (higher first); tiles come first of all.
+    height: Option<f32>,
 }
 
 /// Consecutive instances drawn with one picture and one sampler.
@@ -350,6 +494,14 @@ impl Overlay {
     }
 }
 
+/// What the renderer keeps that sprites and tilemaps show: pictures,
+/// sprite sheets and tilemaps, by project path.
+pub(crate) type Kept<'a> = (
+    &'a BTreeMap<String, UiPicture>,
+    &'a BTreeMap<String, SpriteSheet>,
+    &'a BTreeMap<String, TileGrid>,
+);
+
 /// Prepares the sprites and particles of `scene` seen through `camera` in
 /// a picture of `aspect`; `None` when there are none. What could not be
 /// shown as written is added to `warnings`.
@@ -357,15 +509,63 @@ pub(crate) fn build(
     scene: &RenderScene,
     camera: &CameraView,
     aspect: f32,
-    (pictures, sheets): (&BTreeMap<String, UiPicture>, &BTreeMap<String, SpriteSheet>),
+    (pictures, sheets, grids): Kept<'_>,
     warnings: &mut Vec<Diagnostic>,
 ) -> Option<Overlay> {
-    if scene.sprites.is_empty() && scene.emitters.is_empty() {
+    if scene.sprites.is_empty() && scene.emitters.is_empty() && scene.tilemaps.is_empty() {
         return None;
     }
     let mut items: Vec<Item> = Vec::new();
     let distance = |point: Vec3| -camera.view.transform_point3(point).z;
     let names = |entity: Entity| scene.name_of(entity);
+    let view_proj = camera.projection(aspect) * camera.view;
+    // The layers whose sprites sort by height.
+    let by_height: BTreeSet<i32> = scene
+        .tilemaps
+        .iter()
+        .filter(|view| view.tilemap.y_sort)
+        .map(|view| view.tilemap.layer)
+        .collect();
+    // Tilemaps first: at the same layer and distance, a map is under the
+    // sprites standing on it.
+    for view in &scene.tilemaps {
+        let Some(grid) = grids.get(&view.map) else {
+            // The loader said why (`tilemap_not_loaded`).
+            continue;
+        };
+        let Some(picture) = pictures.get(&grid.image) else {
+            continue;
+        };
+        let colour = view.tilemap.color.to_array();
+        if !colour.iter().all(|c| c.is_finite()) || !finite(&view.world) {
+            continue;
+        }
+        let cell = view.tilemap.cell();
+        let depth = distance(view.world.transform_point3(Vec3::ZERO));
+        let (pw, ph) = (picture.width.max(1) as f32, picture.height.max(1) as f32);
+        let height = by_height
+            .contains(&view.tilemap.layer)
+            .then_some(f32::INFINITY);
+        for (_, x, y, tile) in visible_tiles(view, grid, &view_proj) {
+            let Some([tx, ty, tw, th]) = grid.tiles.get(tile as usize).copied() else {
+                // A tile the tileset lacks draws nothing (`check` says so).
+                continue;
+            };
+            let (l, t) = (tx as f32, ty as f32);
+            let (r, b) = (l + tw as f32, t + th as f32);
+            items.push(Item {
+                corners: cell_quad(view, cell, x, y),
+                uv: [l / pw, t / ph, r / pw, b / ph],
+                texture: Some(grid.image.clone()),
+                colour,
+                disc: false,
+                smooth: view.tilemap.smooth,
+                layer: view.tilemap.layer,
+                distance: depth,
+                height,
+            });
+        }
+    }
     for view in &scene.sprites {
         let shown = shown(view, sheets, &names, Some(warnings));
         let Some((pieces, outline)) = sprite_pieces(view, &shown, pictures) else {
@@ -379,6 +579,9 @@ pub(crate) fn build(
             .image
             .and_then(|path| pictures.get(path).map(|p| (path, p)));
         let centre = (outline[0] + outline[2]) * 0.5;
+        let height = by_height
+            .contains(&view.sprite.layer)
+            .then(|| view.world.transform_point3(Vec3::ZERO).y);
         for (corners, [l, t, r, b]) in pieces {
             let (texture, uv) = match picture {
                 Some((path, picture)) => {
@@ -396,6 +599,7 @@ pub(crate) fn build(
                 smooth: view.sprite.smooth,
                 layer: view.sprite.layer,
                 distance: distance(centre),
+                height,
             });
         }
     }
@@ -425,6 +629,7 @@ pub(crate) fn build(
                 smooth: true,
                 layer: 0,
                 distance: distance(p),
+                height: by_height.contains(&0).then_some(p.y),
             });
         }
     }
@@ -442,11 +647,16 @@ pub(crate) fn build(
         ));
         items.truncate(MAX_INSTANCES);
     }
-    // Back to front: lower layers first, then farther first. Stable, so a
-    // sliced sprite's pieces stay together and in order.
+    // Back to front: lower layers first, then (in a layer sorted by
+    // height) higher first, then farther first. Stable, so a sliced
+    // sprite's pieces and a map's tiles stay together and in order.
     items.sort_by(|a, b| {
         a.layer
             .cmp(&b.layer)
+            .then_with(|| match (a.height, b.height) {
+                (Some(ha), Some(hb)) => hb.total_cmp(&ha),
+                _ => std::cmp::Ordering::Equal,
+            })
             .then(b.distance.total_cmp(&a.distance))
     });
     let mut instances = Vec::with_capacity(items.len() * INSTANCE_BYTES as usize);
@@ -479,7 +689,7 @@ pub(crate) fn build(
     Some(Overlay {
         instances,
         batches,
-        view_proj: camera.projection(aspect) * camera.view,
+        view_proj,
     })
 }
 
@@ -577,6 +787,145 @@ pub(crate) fn elements(
             particles: Some(alive),
             layer: None,
             animation: None,
+        });
+    }
+    found
+}
+
+/// What `describe` says about a tilemap.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TilemapElement {
+    /// The entity.
+    pub entity: Entity,
+    /// The tilemap file.
+    pub map: String,
+    /// The sprite layer it is drawn on.
+    pub layer: i32,
+    /// The box its tiles on screen cover in the picture: left, top, right,
+    /// bottom, in pixels; `None` when none is on screen (or the map is not
+    /// loaded).
+    pub bounding_box: Option<[i32; 4]>,
+    /// The cells of the tiles on screen: lowest x and y, highest x and y.
+    pub cells: Option<[i32; 4]>,
+    /// How many tiles are on screen (over all its layers).
+    pub tiles: u32,
+    /// Whether the renderer has the map (its file read and its tileset's
+    /// picture loaded).
+    pub loaded: bool,
+}
+
+/// The tilemaps of `scene` as a `width` × `height` picture seen through
+/// `camera` shows them.
+pub(crate) fn tilemap_elements(
+    scene: &RenderScene,
+    camera: &CameraView,
+    (width, height): (u32, u32),
+    pictures: &BTreeMap<String, UiPicture>,
+    grids: &BTreeMap<String, TileGrid>,
+) -> Vec<TilemapElement> {
+    let view_proj = camera.projection(width as f32 / height.max(1) as f32) * camera.view;
+    let mut found = Vec::new();
+    for view in &scene.tilemaps {
+        let grid = grids
+            .get(&view.map)
+            .filter(|grid| pictures.contains_key(&grid.image));
+        let mut element = TilemapElement {
+            entity: view.entity,
+            map: view.map.clone(),
+            layer: view.tilemap.layer,
+            bounding_box: None,
+            cells: None,
+            tiles: 0,
+            loaded: grid.is_some(),
+        };
+        if let Some(grid) = grid
+            && finite(&view.world)
+        {
+            let cell = view.tilemap.cell();
+            let mut corners: Vec<Vec3> = Vec::new();
+            for (_, x, y, tile) in visible_tiles(view, grid, &view_proj) {
+                if tile as usize >= grid.tiles.len() {
+                    continue;
+                }
+                let quad = cell_quad(view, cell, x, y);
+                if picture_box(&quad, &view_proj, width, height).is_none() {
+                    continue;
+                }
+                element.tiles += 1;
+                element.cells = Some(match element.cells {
+                    None => [x, y, x, y],
+                    Some([x0, y0, x1, y1]) => [x0.min(x), y0.min(y), x1.max(x), y1.max(y)],
+                });
+                corners.extend(quad);
+            }
+            element.bounding_box = picture_box(&corners, &view_proj, width, height);
+        }
+        found.push(element);
+    }
+    found
+}
+
+/// What is under a point of the picture on one tilemap.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TileUnder {
+    /// The tilemap's entity.
+    pub entity: Entity,
+    /// The cell under the point.
+    pub cell: [i32; 2],
+    /// Each layer's name and its tile there (-1 for none), in layer order.
+    pub layers: Vec<(String, i32)>,
+}
+
+/// The cell of each loaded tilemap of `scene` under the pixel `point` of a
+/// `width` × `height` picture seen through `camera`: the line through the
+/// pixel meets each map's plane at one point.
+pub(crate) fn tiles_under(
+    scene: &RenderScene,
+    camera: &CameraView,
+    (width, height): (u32, u32),
+    point: [f32; 2],
+    grids: &BTreeMap<String, TileGrid>,
+) -> Vec<TileUnder> {
+    let view_proj = camera.projection(width as f32 / height.max(1) as f32) * camera.view;
+    let inverse = view_proj.inverse();
+    let ndc_x = point[0] / width.max(1) as f32 * 2.0 - 1.0;
+    let ndc_y = 1.0 - point[1] / height.max(1) as f32 * 2.0;
+    let near = inverse.project_point3(Vec3::new(ndc_x, ndc_y, 0.0));
+    let far = inverse.project_point3(Vec3::new(ndc_x, ndc_y, 1.0));
+    let direction = far - near;
+    let mut found = Vec::new();
+    for view in &scene.tilemaps {
+        let Some(grid) = grids.get(&view.map) else {
+            continue;
+        };
+        if !finite(&view.world) {
+            continue;
+        }
+        // The map's plane: through its origin, facing its own +Z.
+        let origin = view.world.transform_point3(Vec3::ZERO);
+        let normal = view.world.transform_vector3(Vec3::Z);
+        let across = direction.dot(normal);
+        if across.abs() < 1e-9 {
+            continue;
+        }
+        let along = (origin - near).dot(normal) / across;
+        let hit = near + direction * along;
+        let local = view.world.inverse().transform_point3(hit);
+        let cell = view.tilemap.cell();
+        let (x, y) = ((local.x / cell[0]).floor(), (local.y / cell[1]).floor());
+        if !(x.is_finite() && y.is_finite()) || x.abs() > 1.0e6 || y.abs() > 1.0e6 {
+            continue;
+        }
+        let (x, y) = (x as i32, y as i32);
+        found.push(TileUnder {
+            entity: view.entity,
+            cell: [x, y],
+            layers: grid
+                .layers
+                .iter()
+                .enumerate()
+                .map(|(index, layer)| (layer.name.clone(), grid.tile(index, x, y)))
+                .collect(),
         });
     }
     found

@@ -297,6 +297,61 @@ fn create_menu(ui: &mut Ui, view: &BrowserView<'_>, actions: &mut BrowserActions
             ));
             ui.close();
         }
+        // A tileset of the same picture: tiles of 16 pixels (larger when
+        // the picture would have more than a tileset holds), made solid and
+        // painted with in the tile palette.
+        if ui
+            .add_enabled(picture.is_some(), egui::Button::new(t("Tileset")))
+            .clicked()
+            && let Some(picture) = picture
+        {
+            let (width, height) = png_size(&view.root.join(picture)).unwrap_or((16, 16));
+            let (width, height) = (width.clamp(1, 4096), height.clamp(1, 4096));
+            let mut side = 16;
+            while (width / side).max(1) * (height / side).max(1) > 4096 {
+                side *= 2;
+            }
+            let frame = [side.min(width), side.min(height)];
+            let stem = picture
+                .rsplit('/')
+                .next()
+                .unwrap_or(picture)
+                .trim_end_matches(".png")
+                .trim_end_matches(".PNG");
+            let folder = picture.rsplit_once('/').map_or("assets", |(folder, _)| folder);
+            let path = free_name(view, folder, stem, "tileset.json");
+            actions.create = Some((
+                path,
+                json!({ "tileset": {
+                    "image": picture,
+                    "grid": { "frame": frame, "columns": (width / frame[0]).max(1), "rows": (height / frame[1]).max(1) }
+                } }),
+            ));
+            ui.close();
+        }
+        // A map of the selected tileset (or the project's first), with a
+        // floor and a walls layer: an entity shows it with a Tilemap.
+        let tileset = view
+            .selected
+            .filter(|path| path.ends_with(".tileset.json"))
+            .or_else(|| {
+                view.assets
+                    .iter()
+                    .map(|asset| asset.path.as_str())
+                    .find(|path| path.ends_with(".tileset.json"))
+            });
+        if ui
+            .add_enabled(tileset.is_some(), egui::Button::new(t("Tilemap")))
+            .clicked()
+            && let Some(tileset) = tileset
+        {
+            let path = free_name(view, "maps", "map", "tilemap.json");
+            actions.create = Some((
+                path,
+                json!({ "tilemap": { "tileset": tileset, "layers": ["floor", "walls"] } }),
+            ));
+            ui.close();
+        }
     });
 }
 

@@ -521,6 +521,10 @@ const SEARCH_WORDS: &[(&str, &str)] = &[
         "SpriteAnimator",
         "2d animation animated sprite sheet spritesheet frames frame clip clips walk cycle flipbook flip book",
     ),
+    (
+        "Tilemap",
+        "2d tile tiles tileset tilemap grid map level room rooms wall walls floor dungeon top-down topdown platformer paint brush",
+    ),
     ("AudioSource", "sound music sfx"),
     ("ParticleEmitter", "particles fire smoke sparks effect vfx"),
 ];

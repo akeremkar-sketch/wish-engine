@@ -337,7 +337,7 @@ impl Renderer {
             scene,
             view,
             aspect,
-            (&self.ui_pictures, &self.sprite_sheets),
+            (&self.ui_pictures, &self.sprite_sheets, &self.tile_grids),
             &mut warnings,
         );
         let interface = (!scene.ui.is_empty())

@@ -217,6 +217,14 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "A file could not be written. Check that the folder exists, can be written to, and that no other program has the file locked.",
     ),
     (
+        "fill_too_large",
+        "A tilemap_edit fill would reach more than 65,536 cells. Close the region with walls first, or paint rectangles.",
+    ),
+    (
+        "fill_unbounded",
+        "A tilemap_edit fill starts outside the painted part of the map (or the map is empty), where nothing would stop it. Fill inside the map's painted part, or paint a rectangle with rect.",
+    ),
+    (
         "font_invalid",
         "A font file of the project cannot be read (not a TrueType or OpenType font, damaged, or larger than 32 MiB). Text asking for it is drawn with the engine's font (Roboto). Re-export or replace the file.",
     ),
@@ -431,6 +439,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "kind_change",
         "A move would turn a file into a folder or the other way round. Move files to files and folders to folders.",
+    ),
+    (
+        "layer_not_found",
+        "A tilemap_edit operation names a layer the map does not have; the hint lists its layers. add_layer makes one.",
     ),
     (
         "layout_mismatch",
@@ -689,6 +701,14 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "SpriteAnimator.sheet names a file that is not a sprite sheet (*.sheet.json). Make a sheet that names the picture in its \"image\" (asset_create with a .sheet.json path and sheet {image, grid or frames, clips}) and name that file here.",
     ),
     (
+        "not_a_tilemap_file",
+        "Tilemap.map names a file that is not a tilemap (*.tilemap.json). Make one with asset_create (a .tilemap.json path and tilemap {tileset, layers}) and name it here.",
+    ),
+    (
+        "not_a_tileset_file",
+        "A tilemap's tileset names a file that is not a tileset (*.tileset.json). Make a tileset with asset_create (a .tileset.json path and tileset {image, grid, tiles}) and name it in the map.",
+    ),
+    (
         "not_an_instance",
         "The operation works on prefab instances only, and the entity is not one.",
     ),
@@ -804,6 +824,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "package_without_player",
         "The player program is not built beside wen, so the package cannot export games. Build wish_player first.",
+    ),
+    (
+        "paint_too_large",
+        "One tilemap_edit call would change more than 65,536 cells (or one rectangle covers more). Paint in several calls; each is its own step in the history.",
     ),
     (
         "path_case_mismatch",
@@ -1225,6 +1249,42 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "A texture is larger than this GPU accepts per side. Scale it down in the modelling tool.",
     ),
     (
+        "tile_not_in_tileset",
+        "A tilemap holds a tile number its tileset does not have (or a tileset gives properties to a frame its sheet lacks); such a cell draws nothing. Paint tiles the tileset has (asset_info on it lists them), or make the tileset larger. A warning of check.",
+    ),
+    (
+        "tilemap_file_invalid",
+        "A tilemap file was changed on disk (by hand) and no longer reads; tilemap_edit and edit_history refuse to change it, so a half-finished edit is never overwritten. Fix the file (check shows where) or restore it from a checkpoint.",
+    ),
+    (
+        "tilemap_file_too_large",
+        "A tilemap file is larger than 4 MiB and is not read. Split the map into several tilemaps, each its own entity with a Tilemap.",
+    ),
+    (
+        "tilemap_invalid",
+        "A tilemap file (or asset_create's tilemap) says something a tilemap cannot: no tileset, a layer without a name or with a name twice, a chunk key that is not \"x,y\" in range. The message and the JSON pointer say where; the hint says how to write it.",
+    ),
+    (
+        "tilemap_not_found",
+        "tilemap_edit or edit_history names a tilemap file that does not exist. asset_list with kind tilemap lists the project's maps; asset_create with a .tilemap.json path makes one.",
+    ),
+    (
+        "tilemap_not_loaded",
+        "Render warning: a Tilemap names a map that could not be drawn (missing, not a *.tilemap.json, a mistake in it, or its tileset, the tileset's sheet or its picture could not be read: the message says which). Nothing is drawn for it; check lists everything wrong with the project's tilemaps and tilesets.",
+    ),
+    (
+        "tilemap_too_large",
+        "A tilemap would have more than 4096 chunks of 16 x 16 cells (a million cells) or more than 16 layers. Split the map into several tilemaps (each its own entity with a Tilemap), or erase what is not needed.",
+    ),
+    (
+        "tileset_file_too_large",
+        "A tileset file is larger than 256 KiB and is not read. Give properties only to tiles that have some, or split the tiles over two tilesets.",
+    ),
+    (
+        "tileset_invalid",
+        "A tileset file (or asset_create's tileset) says something a tileset cannot: no picture or sheet, a picture without a grid, a tile number that is not one, a collision shape on a tile that is not solid or that has no area. The message and the JSON pointer say where; the hint says how to write it.",
+    ),
+    (
         "too_many_checkpoints",
         "The project keeps at most 200 checkpoints. Delete old ones.",
     ),
@@ -1361,6 +1421,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "unknown_system",
         "No system has that name. sim_start lists the session's systems.",
+    ),
+    (
+        "unknown_tile",
+        "A tilemap_edit operation paints a tile number the map's tileset does not have; nothing was changed. Use a tile the tileset has (asset_info on the tileset lists them), or -1 to erase.",
     ),
     (
         "unknown_tool",
@@ -1946,6 +2010,11 @@ beside the `Sprite`: the engine moves it every tick and writes the frame shown; 
 `animator.play(text(\"walk\"))`, and `describe_view` says each sprite's clip and frame. Sprites are not lit; higher
 `layer` is drawn over lower. For 2D physics set `PhysicsSettings.profile` to
 `SideView2D` or `TopDown2D` (see Physics): no per-body locks are needed.
+
+Rooms and walls are a tilemap: `asset_create` makes a tileset (`*.tileset.json`: a PNG and a `grid`; `tiles`
+{\"8\": {solid: true}}) and a tilemap (`*.tilemap.json`: the tileset and `layers`); a `Tilemap { map, cell_size }`
+entity draws it and makes solid tiles walls. Paint with `tilemap_edit` (one change per call; `edit_history` with the map
+as scene undoes it).
 
 A `ParticleEmitter { rate, burst, lifetime, speed, spread_deg, gravity, size_start/end, color_start/end, seed,
 start_time, duration, max, playing }` gives off soft round particles in a cone around its entity's +Y axis.

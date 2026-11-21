@@ -22,6 +22,7 @@ pub mod script;
 mod settings;
 mod style;
 mod themes;
+mod tile_palette;
 mod vector;
 pub mod welcome;
 mod workspaces;

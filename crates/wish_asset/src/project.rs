@@ -31,6 +31,10 @@ pub enum FileKind {
     Material,
     /// `*.sheet.json`.
     Sheet,
+    /// `*.tileset.json`.
+    Tileset,
+    /// `*.tilemap.json`.
+    Tilemap,
 }
 
 /// One document of the project.
@@ -382,7 +386,8 @@ fn same(a: &serde_json::Value, b: &serde_json::Value) -> bool {
     }
 }
 
-/// Loads and checks every prefab, scene, meta and material file below
+/// Loads and checks every prefab, scene, meta, material, sheet, tileset and
+/// tilemap file below
 /// `root`: syntax, schema, references between entities, prefab rules and
 /// that referenced asset files exist. Prefabs load first, so that scenes can
 /// use them. Nothing stops at the first problem.
@@ -511,6 +516,50 @@ pub fn load_project(root: &Path, registry: &Registry) -> Result<Project> {
             canonical: sheet
                 .as_ref()
                 .map(crate::sheet::SheetDocument::to_canonical)
+                .transpose()?,
+            older_format: None,
+        });
+    }
+
+    for (name, path) in listing.iter().filter(|(n, _)| crate::tiles::is_tileset(n)) {
+        let source = match crate::tiles::read_tileset_file(path, name) {
+            Ok(source) => source,
+            Err(problem) => {
+                diagnostics.push(problem);
+                continue;
+            }
+        };
+        let (tileset, problems) = crate::tiles::check_tileset(&source, name, &index, Some(root));
+        diagnostics.extend(problems);
+        files.push(ProjectFile {
+            path: name.clone(),
+            kind: FileKind::Tileset,
+            source,
+            canonical: tileset
+                .as_ref()
+                .map(crate::tiles::TilesetDocument::to_canonical)
+                .transpose()?,
+            older_format: None,
+        });
+    }
+
+    for (name, path) in listing.iter().filter(|(n, _)| crate::tiles::is_tilemap(n)) {
+        let source = match crate::tiles::read_tilemap_file(path, name) {
+            Ok(source) => source,
+            Err(problem) => {
+                diagnostics.push(problem);
+                continue;
+            }
+        };
+        let (map, problems) = crate::tiles::check_tilemap(&source, name, &index, Some(root));
+        diagnostics.extend(problems);
+        files.push(ProjectFile {
+            path: name.clone(),
+            kind: FileKind::Tilemap,
+            source,
+            canonical: map
+                .as_ref()
+                .map(crate::tiles::Tilemap::to_canonical)
                 .transpose()?,
             older_format: None,
         });

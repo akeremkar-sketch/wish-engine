@@ -2,7 +2,8 @@
 //!
 //! [`plan_move`] works out everything a move changes without touching the
 //! disk; [`apply_move`] then does it: the file or folder is renamed, and
-//! every scene, prefab, material and sheet file that referred to something in it
+//! every scene, prefab, material, sheet, tileset and tilemap file that
+//! referred to something in it
 //! is rewritten, all or nothing (a failure half-way puts everything back, including folders
 //! the move created).
 //!
@@ -26,6 +27,7 @@ use crate::material::is_material;
 use crate::meta::meta_path;
 use crate::refs::{path_and_suffix, read_document, visit_document, visit_material, visit_sheet};
 use crate::sheet::is_sheet;
+use crate::tiles::{is_tilemap, is_tileset};
 
 /// A scene, prefab, material or sheet file that a move rewrites.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -154,12 +156,14 @@ pub fn plan_move(root: &Path, from: &str, to: &str, registry: &Registry) -> Resu
     if is_file
         && (is_document(from) != is_document(to)
             || is_material(from) != is_material(to)
-            || is_sheet(from) != is_sheet(to))
+            || is_sheet(from) != is_sheet(to)
+            || is_tileset(from) != is_tileset(to)
+            || is_tilemap(from) != is_tilemap(to))
     {
         return Err(failure(
             "kind_change",
             format!("Moving '{from}' to '{to}' would turn it into a different kind of file."),
-            "Keep the ending: assets stay assets, and a .scene.json, .prefab.json, .meta.json, .mat.json or .sheet.json file keeps its ending.",
+            "Keep the ending: assets stay assets, and a .scene.json, .prefab.json, .meta.json, .mat.json, .sheet.json, .tileset.json or .tilemap.json file keeps its ending.",
         ));
     }
     if root.join(to).exists() {
@@ -188,14 +192,23 @@ pub fn plan_move(root: &Path, from: &str, to: &str, registry: &Registry) -> Resu
     for (file, path) in &listing {
         let material = is_material(file);
         let sheet = is_sheet(file);
-        if !(file.ends_with(".scene.json") || file.ends_with(".prefab.json") || material || sheet) {
+        let tileset = is_tileset(file);
+        let tilemap = is_tilemap(file);
+        if !(file.ends_with(".scene.json")
+            || file.ends_with(".prefab.json")
+            || material
+            || sheet
+            || tileset
+            || tilemap)
+        {
             continue;
         }
         let original = if material {
             // Read with its size cap, like everywhere a material is read.
             crate::material::read_material_file(path, file)?
-        } else if sheet {
-            crate::sheet::read_sheet_file(path, file)?
+        } else if sheet || tileset || tilemap {
+            // Each with its own size cap.
+            crate::index::read_document_asset(path, file)?
         } else {
             fs::read_to_string(path).map_err(|error| {
                 failure(
@@ -219,6 +232,12 @@ pub fn plan_move(root: &Path, from: &str, to: &str, registry: &Registry) -> Resu
         } else if sheet {
             // The picture a sheet is cut from.
             visit_sheet(&mut value, &mut rewrite);
+        } else if tileset {
+            // The picture or sheet a tileset's tiles come from.
+            crate::tiles::visit_tileset(&mut value, &mut rewrite);
+        } else if tilemap {
+            // The tileset a tilemap paints with.
+            crate::tiles::visit_tilemap(&mut value, &mut rewrite);
         } else {
             visit_document(registry, &mut value, &mut rewrite);
         }
