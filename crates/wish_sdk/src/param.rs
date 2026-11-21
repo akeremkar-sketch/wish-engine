@@ -9,16 +9,28 @@ use wish_schema::{Component, Event, Resource};
 
 use crate::abi::{next_spawn, push_command};
 use crate::command::{Command, Target};
-use crate::frame::{Section, section_count};
+use crate::frame::{FrameReader, Section, section_count};
 use crate::manifest::TypeTable;
 
 /// A system parameter: something a `#[system]` function takes. The engine
-/// fills one frame section per parameter, in order.
+/// fills one frame section per manifest entry, in order; most parameters
+/// have one entry, a few (such as [`PlayerActions`]) several.
 pub trait SystemParam: Sized {
     /// The parameter's entry in the manifest.
     fn describe(types: &mut TypeTable) -> Value;
     /// Reads the parameter from its section.
     fn fetch(section: Section) -> Self;
+    /// Every manifest entry of the parameter, in order (`#[system]` calls
+    /// this; the default is the one entry of [`SystemParam::describe`]).
+    fn describe_into(types: &mut TypeTable, entries: &mut Vec<Value>) {
+        entries.push(Self::describe(types));
+    }
+    /// Reads the parameter from the frame, one section per entry
+    /// (`#[system]` calls this; the default reads one with
+    /// [`SystemParam::fetch`]).
+    fn fetch_from(frame: &mut FrameReader) -> Self {
+        Self::fetch(frame.next_section())
+    }
 }
 
 fn decode<T: wish_schema::Plain>(bytes: &[u8], name: &str) -> T {
@@ -336,6 +348,88 @@ impl SystemParam for Actions {
     fn fetch(section: Section) -> Self {
         Self {
             state: decode(section.bytes(), "ActionState"),
+        }
+    }
+}
+
+/// Every player's input this tick, for a game with more than one player
+/// (a session started with several players, release 1.1). Player 0 is the
+/// first player, the same as [`Actions`]; in a single-player game there is
+/// only player 0, so the same code runs alone and with others.
+///
+/// ```ignore
+/// #[system]
+/// fn walk(players: PlayerActions, mut bodies: Query<(&Avatar, &mut Transform)>, time: Res<Time>) {
+///     for (avatar, transform) in bodies.iter_mut() {
+///         let walk = players.of(avatar.player).axis2("move");
+///         transform.translation += Vec3::new(walk.x, 0.0, -walk.y) * 4.0 * time.delta;
+///     }
+/// }
+/// ```
+///
+/// It reads three resources (`ActionState`, `Players`, `PlayerActionState`,
+/// about 8 KiB in all), so ask for it only in systems that need other
+/// players than player 0.
+pub struct PlayerActions {
+    first: wish_types::ActionState,
+    count: u32,
+    all: wish_types::PlayerActionState,
+}
+
+impl PlayerActions {
+    /// How many players the session has (1 in a single-player game).
+    pub fn count(&self) -> u32 {
+        self.count
+    }
+
+    /// The players' ids, in order: 0 to `count() - 1`.
+    pub fn ids(&self) -> impl Iterator<Item = wish_types::PlayerId> + use<> {
+        0..self.count
+    }
+
+    /// The actions of `player`, read like [`Actions`]. An id that is not a
+    /// player of the session reads as at rest.
+    pub fn of(&self, player: wish_types::PlayerId) -> Actions {
+        if player == 0 {
+            return Actions { state: self.first };
+        }
+        let slots = (player < self.count)
+            .then(|| self.all.of(player))
+            .flatten()
+            .map(|entry| entry.slots)
+            .unwrap_or_default();
+        Actions {
+            state: wish_types::ActionState { slots },
+        }
+    }
+}
+
+impl SystemParam for PlayerActions {
+    fn describe(types: &mut TypeTable) -> Value {
+        Actions::describe(types)
+    }
+    /// From one section only player 0 can be read; `#[system]` uses
+    /// [`SystemParam::fetch_from`], which reads all three.
+    fn fetch(section: Section) -> Self {
+        Self {
+            first: Actions::fetch(section).state,
+            count: 1,
+            all: wish_types::PlayerActionState::default(),
+        }
+    }
+    fn describe_into(types: &mut TypeTable, entries: &mut Vec<Value>) {
+        entries.push(Actions::describe(types));
+        entries.push(Res::<wish_types::Players>::describe(types));
+        entries.push(Res::<wish_types::PlayerActionState>::describe(types));
+    }
+    fn fetch_from(frame: &mut FrameReader) -> Self {
+        let first = Actions::fetch(frame.next_section()).state;
+        let players: wish_types::Players = decode(frame.next_section().bytes(), "Players");
+        let all = decode(frame.next_section().bytes(), "PlayerActionState");
+        Self {
+            first,
+            count: players.count.clamp(1, wish_types::MAX_PLAYERS as u32),
+            all,
         }
     }
 }

@@ -4,7 +4,7 @@
 //! `replays/<name>.replay.jsonl`, one JSON object per line:
 //!
 //! ```text
-//! {"kind":"header","format":1,"scene":"scenes/main.scene.json","scene_hash":"…","seed":7,"tick_rate":60,"code":"…","ticks":600}
+//! {"kind":"header","format":1,"scene":"scenes/main.scene.json","scene_hash":"…","seed":7,"tick_rate":60,"code":"…","ticks":600,"engine":"1.1.0","executor":"wasmtime"}
 //! {"kind":"input","tick":0,"values":{"move":[0,1]}}      (only when the player's input changes)
 //! {"kind":"hashes","bits":64,"values":"<16 hex digits per tick>"}
 //! ```
@@ -13,6 +13,14 @@
 //! the same input at the same ticks, and compares the world's hash after
 //! every tick: the first tick that differs is where the replay and the game
 //! parted ways.
+//!
+//! **Format 2** (release 1.1) is a replay of a session with more than one
+//! player: the header says `"players": N` and every input line says whose
+//! input it is, `"player": 1`. A single-player replay stays format 1, so an
+//! engine of 1.0 still reads every single-player replay, and refuses a
+//! multi-player one instead of playing player 1's input as player 0's.
+//! `engine` and `executor` (ADR-028, rule 2) were added to the header of
+//! both formats in 1.1; a replay without them was recorded before.
 
 use std::path::Path;
 
@@ -45,7 +53,14 @@ pub(crate) struct Replay {
     pub code: Option<String>,
     /// The session's asset fingerprint (`None` in replays from before M6).
     pub assets: Option<String>,
-    pub inputs: Vec<(u64, wish_input::Values)>,
+    /// The engine version that recorded it (`None` before 1.1).
+    pub engine: Option<String>,
+    /// What ran its game code (`None` before 1.1).
+    pub executor: Option<String>,
+    /// How many players the session had (1 in format 1).
+    pub players: usize,
+    /// (tick, player, what that player does from then on).
+    pub inputs: Vec<(u64, usize, wish_input::Values)>,
     pub hashes: Vec<u64>,
 }
 
@@ -74,13 +89,23 @@ impl Replay {
             text.push_str(&value.to_string());
             text.push('\n');
         };
-        line(json!({
-            "kind": "header", "format": 1, "scene": self.scene, "scene_hash": self.scene_hash,
-            "seed": self.seed, "tick_rate": self.tick_rate, "code": self.code, "ticks": self.ticks(),
-            "assets": self.assets,
-        }));
-        for (tick, values) in &self.inputs {
-            line(json!({ "kind": "input", "tick": tick, "values": values }));
+        let several = self.players > 1;
+        let mut header = json!({
+            "kind": "header", "format": if several { 2 } else { 1 }, "scene": self.scene,
+            "scene_hash": self.scene_hash, "seed": self.seed, "tick_rate": self.tick_rate,
+            "code": self.code, "ticks": self.ticks(), "assets": self.assets,
+            "engine": self.engine, "executor": self.executor,
+        });
+        if several {
+            header["players"] = json!(self.players);
+        }
+        line(header);
+        for (tick, player, values) in &self.inputs {
+            if several {
+                line(json!({ "kind": "input", "tick": tick, "player": player, "values": values }));
+            } else {
+                line(json!({ "kind": "input", "tick": tick, "values": values }));
+            }
         }
         let digits: String = self.hashes.iter().map(|h| format!("{h:016x}")).collect();
         line(json!({ "kind": "hashes", "bits": 64, "values": digits }));
@@ -113,7 +138,14 @@ impl Replay {
                             .map_err(|_| {
                                 invalid(file, number, "'values' must map actions to [x, y]")
                             })?;
-                    inputs.push((tick, values));
+                    let player = match value.get("player") {
+                        None => Some(0),
+                        Some(player) => player.as_u64().and_then(|p| usize::try_from(p).ok()),
+                    }
+                    .ok_or_else(|| {
+                        invalid(file, number, "'player' must be a player id (0, 1, ...)")
+                    })?;
+                    inputs.push((tick, player, (number, values)));
                 }
                 Some("hashes") if hashes.is_none() => {
                     let digits = value
@@ -135,13 +167,50 @@ impl Replay {
         }
         let header = header.ok_or_else(|| invalid(file, 1, "the replay has no header"))?;
         let hashes = hashes.ok_or_else(|| invalid(file, 1, "the replay has no hashes"))?;
-        if header["format"] != 1 {
-            return Err(invalid(
-                file,
-                1,
-                "this replay has a format the engine does not read",
-            ));
+        let players = match header["format"].as_u64() {
+            Some(1) if header.get("players").is_none() => 1,
+            Some(2) => header
+                .get("players")
+                .and_then(Value::as_u64)
+                .and_then(|n| usize::try_from(n).ok())
+                .filter(|n| (2..=wish_input::MAX_PLAYERS).contains(n))
+                .ok_or_else(|| {
+                    invalid(
+                        file,
+                        1,
+                        &format!(
+                            "a format-2 replay says how many players it has, 2 to {}",
+                            wish_input::MAX_PLAYERS
+                        ),
+                    )
+                })?,
+            Some(1) => {
+                return Err(invalid(
+                    file,
+                    1,
+                    "a format-1 replay has one player, so its header has no 'players'",
+                ));
+            }
+            _ => {
+                return Err(invalid(
+                    file,
+                    1,
+                    "this replay has a format the engine does not read",
+                ));
+            }
+        };
+        let mut checked = Vec::with_capacity(inputs.len());
+        for (tick, player, (number, values)) in inputs {
+            if player >= players {
+                return Err(invalid(
+                    file,
+                    number,
+                    &format!("player {player} is not one of the replay's {players} player(s)"),
+                ));
+            }
+            checked.push((tick, player, values));
         }
+        let inputs = checked;
         let text_of = |key: &str| {
             header
                 .get(key)
@@ -175,10 +244,55 @@ impl Replay {
                 .get("assets")
                 .and_then(Value::as_str)
                 .map(str::to_owned),
+            engine: header
+                .get("engine")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            executor: header
+                .get("executor")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            players,
             inputs,
             hashes,
         })
     }
+}
+
+/// The version of this engine, as replays carry it.
+const ENGINE: &str = env!("CARGO_PKG_VERSION");
+
+/// What playing `replay` here differs in from what recorded it: another
+/// engine version or executor is allowed and said (ADR-028, rule 2), so a
+/// divergence is reported against the right cause.
+fn made_by(replay: &Replay) -> Vec<Diagnostic> {
+    let mut notes = Vec::new();
+    match replay.engine.as_deref() {
+        Some(ENGINE) => {}
+        Some(other) => notes.push(Diagnostic::warning(
+            "replay_engine_changed",
+            format!("The replay was recorded by engine {other}; this is engine {ENGINE}."),
+            "A patch release (the same first two numbers) never changes what a simulation computes; another minor version may (ADR-028): a divergence below may just be that. Record the replay again with this engine to keep it.",
+        )),
+        None => notes.push(Diagnostic::warning(
+            "replay_engine_changed",
+            format!("The replay does not say which engine recorded it (replays say so from 1.1 on); this is engine {ENGINE}."),
+            "A replay from an older engine may diverge at its first tick because the engine's types changed, not the game: record it again with this engine to keep it.",
+        )),
+    }
+    if let Some(other) = replay.executor.as_deref()
+        && other != wish_script::EXECUTOR
+    {
+        notes.push(Diagnostic::warning(
+            "replay_executor_changed",
+            format!(
+                "The replay's game code ran on '{other}'; here it runs on '{}'.",
+                wish_script::EXECUTOR
+            ),
+            "Only an executor that gives the same hashes as the others in CI is supported (ADR-028): a divergence below may be the executor, not the game.",
+        ));
+    }
+    notes
 }
 
 /// A name a replay can have: it becomes a file name.
@@ -293,6 +407,9 @@ impl Workspace {
             tick_rate: session.app.config().tick_rate_hz,
             code: trail.code.clone(),
             assets: Some(trail.assets.clone()),
+            engine: Some(ENGINE.to_owned()),
+            executor: Some(wish_script::EXECUTOR.to_owned()),
+            players: session.players.max(1),
             inputs: trail.inputs.clone(),
             hashes: trail.hashes.iter().map(|h| short(*h)).collect(),
         };
@@ -315,6 +432,9 @@ impl Workspace {
         out.insert("path".to_owned(), json!(path));
         out.insert("ticks".to_owned(), json!(replay.ticks()));
         out.insert("input_changes".to_owned(), json!(replay.inputs.len()));
+        if replay.players > 1 {
+            out.insert("players".to_owned(), json!(replay.players));
+        }
         out.insert("dry_run".to_owned(), json!(dry_run));
         out.insert(
             "final_hash".to_owned(),
@@ -386,9 +506,10 @@ impl Workspace {
                 "That is how to ask \"does the game still play the same?\": if the replay passes, the change did not alter the run.",
             ));
         }
+        notes.extend(made_by(&replay));
         let opened = self.open_document(&replay.scene, false)?;
         notes.extend(opened);
-        let (id, _) = self.start_session(&replay.scene, replay.seed, Vec::new())?;
+        let (id, _) = self.start_session(&replay.scene, replay.seed, replay.players, Vec::new())?;
         let now = self.session(&id)?.assets.clone();
         if replay
             .assets
@@ -404,16 +525,18 @@ impl Workspace {
         let cancel = self.cancel.clone();
         let session = self.session_mut(&id)?;
         let mut next = 0;
-        let mut values = wish_input::Values::new();
+        let mut values = vec![wish_input::Values::new(); replay.players];
         let mut diverged: Option<(u64, u64, u64)> = None;
         let mut cancelled = false;
         let mut failures = Vec::new();
         let mut ran = 0;
         for (tick, expected) in (0..replay.ticks()).zip(&replay.hashes) {
-            while let Some((at, next_values)) = replay.inputs.get(next)
+            while let Some((at, player, next_values)) = replay.inputs.get(next)
                 && *at <= tick
             {
-                values.clone_from(next_values);
+                if let Some(slot) = values.get_mut(*player) {
+                    slot.clone_from(next_values);
+                }
                 next += 1;
             }
             if cancel
@@ -423,7 +546,7 @@ impl Workspace {
                 cancelled = true;
                 break;
             }
-            wish_input::apply(session.app.world_mut(), &session.input, &values)?;
+            wish_input::apply_players(session.app.world_mut(), &session.input, &values)?;
             failures.extend(session.app.step()?.failures);
             ran += 1;
             let actual = short(session.app.hash());
@@ -436,6 +559,9 @@ impl Workspace {
         out.insert("name".to_owned(), json!(name));
         out.insert("ticks".to_owned(), json!(replay.ticks()));
         out.insert("ticks_run".to_owned(), json!(ran));
+        if replay.players > 1 {
+            out.insert("players".to_owned(), json!(replay.players));
+        }
         let passed = diverged.is_none() && !cancelled;
         out.insert("passed".to_owned(), json!(passed));
         if cancelled {

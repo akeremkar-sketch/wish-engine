@@ -28,7 +28,10 @@ pub use audio::{
     AudioBus, AudioListener, AudioOneShot, AudioPlayback, AudioSettings, AudioSource, PlaySound,
     SoundEnded, SoundStarted,
 };
-pub use input::{ActionSlot, ActionState, MAX_ACTIONS, action_id};
+pub use input::{
+    ActionSlot, ActionState, MAX_ACTIONS, MAX_PLAYERS, PlayerActionSlots, PlayerActionState,
+    PlayerId, Players, action_id,
+};
 pub use particles::{ParticleEmitter, ParticleState};
 pub use physics::{
     BodyForce, BodyImpulse, BodyKind, BodyVelocity, CharacterController, CharacterMotion,

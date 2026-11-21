@@ -13,6 +13,12 @@
 //! A test starts a session on the scene with the seed, runs its steps in
 //! order, and fails at the first step that does not hold, saying which
 //! step, at which tick, and what the values in the condition were.
+//!
+//! A game for several players (release 1.1) says how many at the top,
+//! `"players": 2`, and a run step gives the others' input by player id,
+//! `{ "input": { "move": [1, 0] }, "players": { "1": { "move": [-1, 0] } }, "frames": 60 }`
+//! (`input` is player 0's). Without `players` a test has one player, as
+//! every test before it.
 
 use std::path::Path;
 
@@ -47,6 +53,7 @@ fn invalid(file: &str, path: &str, what: &str) -> Diagnostic {
 enum Step {
     Run {
         input: Option<Value>,
+        players: Option<Value>,
         frames: u64,
         until: Option<String>,
     },
@@ -69,6 +76,7 @@ enum Step {
 struct Spec {
     scene: String,
     seed: u64,
+    players: usize,
     steps: Vec<Step>,
 }
 
@@ -89,6 +97,23 @@ fn parse(text: &str, file: &str) -> Result<Spec> {
     let scene = text_of(&value, "scene")
         .ok_or_else(|| invalid(file, "/scene", "a test names its scene"))?;
     let seed = value.get("seed").and_then(Value::as_u64).unwrap_or(0);
+    let players = match value.get("players") {
+        None => 1,
+        Some(count) => count
+            .as_u64()
+            .and_then(|n| usize::try_from(n).ok())
+            .filter(|n| (1..=wish_input::MAX_PLAYERS).contains(n))
+            .ok_or_else(|| {
+                invalid(
+                    file,
+                    "/players",
+                    &format!(
+                        "'players' is how many players the game has, 1 to {}",
+                        wish_input::MAX_PLAYERS
+                    ),
+                )
+            })?,
+    };
     let list = value
         .get("steps")
         .and_then(Value::as_array)
@@ -105,6 +130,7 @@ fn parse(text: &str, file: &str) -> Result<Spec> {
         let at = format!("/steps/{index}");
         let known = [
             "input",
+            "players",
             "frames",
             "until",
             "max_frames",
@@ -169,12 +195,18 @@ fn parse(text: &str, file: &str) -> Result<Spec> {
                 })?;
             steps.push(Step::Run {
                 input: step.get("input").cloned(),
+                players: step.get("players").cloned(),
                 frames: u64::try_from(frames).unwrap_or(1),
                 until,
             });
         }
     }
-    Ok(Spec { scene, seed, steps })
+    Ok(Spec {
+        scene,
+        seed,
+        players,
+        steps,
+    })
 }
 
 fn val_json(value: &Val) -> Value {
@@ -367,7 +399,9 @@ impl Workspace {
         let started = (|| -> Result<String> {
             let scene = self.scene_path(Some(&spec.scene))?;
             self.open_document(&scene, false)?;
-            Ok(self.start_session(&scene, spec.seed, Vec::new())?.0)
+            Ok(self
+                .start_session(&scene, spec.seed, spec.players, Vec::new())?
+                .0)
         })();
         let id = match started {
             Ok(id) => id,
@@ -399,9 +433,16 @@ impl Workspace {
             let failed = match step {
                 Step::Run {
                     input,
+                    players,
                     frames,
                     until,
-                } => self.run_step(id, index, input.as_ref(), *frames, until.as_deref()),
+                } => self.run_step(
+                    id,
+                    index,
+                    (input.as_ref(), players.as_ref()),
+                    *frames,
+                    until.as_deref(),
+                ),
                 Step::Expect {
                     expression,
                     entity,
@@ -441,12 +482,12 @@ impl Workspace {
         &mut self,
         id: &str,
         index: usize,
-        input: Option<&Value>,
+        (input, players): (Option<&Value>, Option<&Value>),
         frames: u64,
         until: Option<&str>,
     ) -> Option<Map<String, Value>> {
         let tick = self.session(id).map_or(0, |s| s.app.tick());
-        let values = match crate::tools::parse_input(self, id, input) {
+        let values = match crate::tools::parse_inputs(self, id, input, players) {
             Ok(values) => values,
             Err(problem) => return Some(problem_failure("input", &problem).with_step(index)),
         };

@@ -226,6 +226,19 @@ fn examples() -> Vec<(&'static str, Value)> {
         ("replay", json!({ "action": "run", "name": "parity" })),
         ("replay", json!({ "action": "run", "name": "nothing" })),
         ("sim_stop", json!({ "session": "s3" })),
+        // Players (release 1.1): a session of two, each with their input, and
+        // a player the session does not have.
+        ("sim_start", json!({ "players": 2 })),
+        (
+            "sim_step",
+            json!({ "session": "s5", "frames": 2, "input": { "move": [0, 1] },
+                    "players": { "1": { "move": [1, 0], "jump": true } } }),
+        ),
+        (
+            "sim_step",
+            json!({ "session": "s5", "players": { "4": { "jump": true } } }),
+        ),
+        ("sim_stop", json!({ "session": "s5" })),
         // Scenario tests: none yet, then one that cannot be found.
         ("test_run", json!({})),
         ("test_run", json!({ "paths": ["tests/win.test.json"] })),
@@ -915,6 +928,21 @@ fn two_process_calls() -> Vec<(&'static str, Vec<(&'static str, Value)>)> {
                     json!({ "action": "save", "session": "s3", "name": "twice" }),
                 ),
                 ("replay", json!({ "action": "run", "name": "twice" })),
+                // Two players: a format-2 replay (the engine version in its
+                // header) recorded and played back.
+                ("sim_start", json!({ "players": 2 })),
+                ("replay", json!({ "action": "record", "session": "s5" })),
+                (
+                    "sim_step",
+                    json!({ "session": "s5", "frames": 4, "input": { "move": [0, 1] },
+                            "players": { "1": { "move": [-1, 0] } } }),
+                ),
+                (
+                    "replay",
+                    json!({ "action": "save", "session": "s5", "name": "duo" }),
+                ),
+                ("replay", json!({ "action": "run", "name": "duo" })),
+                ("sim_stop", json!({ "session": "s5" })),
             ],
         ),
         (

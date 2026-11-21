@@ -78,6 +78,23 @@ fn recorded() -> Defaults {
     old
 }
 
+/// [`recorded`] with the types the engine added since format 1 (release
+/// 1.1 on: `Players`, `PlayerActionState`, ...) at their defaults now. A
+/// file written before a type existed cannot hold it, so the type means
+/// there what its defaults say: a format changes by addition (ADR-028,
+/// rule 5), and the record of format 1 is never edited.
+fn recorded_with_additions() -> Defaults {
+    let mut record = recorded();
+    let engine = wish_control::migrate::engine_defaults().unwrap();
+    for (name, value) in engine.components {
+        record.components.entry(name).or_insert(value);
+    }
+    for (name, value) in engine.resources {
+        record.resources.entry(name).or_insert(value);
+    }
+    record
+}
+
 const MAIN: &str = "scenes/main.scene.json";
 
 /// Relabels the project's scene as a file of format 1: what a project made
@@ -243,7 +260,7 @@ fn a_look_is_applied_in_one_step_and_the_answer_says_what_it_set() {
 
 #[test]
 fn every_look_is_a_full_set_of_clean_values_plain_is_format_1_and_natural_the_defaults() {
-    let record = recorded();
+    let record = recorded_with_additions();
     let looks = wish_control::looks::looks().unwrap();
     let (_dir, mut ws) = project("clean");
     let me = parse_actor("claude-code");
@@ -682,7 +699,7 @@ fn corpus(record: &Defaults) -> Corpus {
 
 #[test]
 fn a_migrated_file_means_under_the_new_defaults_what_it_meant_under_the_old() {
-    let record = recorded();
+    let record = recorded_with_additions();
     let (files, prefabs) = corpus(&record);
     let prefab_has = |prefab: &str, entity: &str, component: &str| {
         prefabs

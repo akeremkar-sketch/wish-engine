@@ -25,7 +25,7 @@ pub use design::{
     BRIEF_FIELDS, CardField, DESIGN_FILE, card_fields, read_design, summary as design_summary,
 };
 pub use engines::{act as engines_act, act_in as engines_act_in};
-pub(crate) use sim::parse_input;
+pub(crate) use sim::parse_inputs;
 pub use view::{IdPicture, Picture, PictureSource};
 
 /// How much a tool tells: `summary` (the default, cheapest), `normal`, `full`.

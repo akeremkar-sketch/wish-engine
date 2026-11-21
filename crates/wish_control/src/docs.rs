@@ -853,6 +853,14 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "Nothing was recorded yet; run some ticks with sim_step before saving.",
     ),
     (
+        "replay_engine_changed",
+        "The replay was recorded by another engine version (or does not say which: replays say so from 1.1 on). It still plays; a patch release never changes a simulation's result, another minor version may, so a divergence may be the engine and not the game.",
+    ),
+    (
+        "replay_executor_changed",
+        "The replay's game code ran on another executor than this one. It still plays; a divergence may be the executor and not the game.",
+    ),
+    (
         "replay_exists",
         "A replay of that name exists. Choose another name or pass overwrite.",
     ),
@@ -1256,6 +1264,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "unknown_parent",
         "The parent an entity names does not exist in the scene.",
+    ),
+    (
+        "unknown_player",
+        "A player id the session does not have (ids are 0 to the session's player count - 1). Start the session with more players (sim_start players), or a test with \"players\": N.",
     ),
     (
         "unknown_prefab_entity",
@@ -1774,6 +1786,10 @@ fn collect(
   `commands.set_parent(child, parent)`. They happen after the system, in order.
 - `Actions` (names from input.json): `held("jump")`, `pressed("jump")` (this tick only), `released("jump")`,
   `axis("throttle")` (-1..1), `axis2("move")` (`Vec2`: x right, y forward). A name not in input.json reads as rest.
+- Several players (a session started with `sim_start` `players`, a test with `"players": N`): `players: PlayerActions`
+  has `count()`, `ids()` (0 to count - 1) and `of(id)`, which reads like `Actions` (`players.of(1).axis2("move")`).
+  `Actions` is player 0. Keep whose an entity is in your own component (`player: PlayerId`, a `u32`). Alone, there is
+  one player, 0, so the same code runs single-player.
 - `Res<Time>`: `tick`, `delta` (seconds per tick, 1/60), `elapsed`.
 - Randomness: `random_f32()` (0..1), `random_range(a, b)`, `random_u64()`: the system's own seeded stream.
 - Logging: `wish_sdk::info!("x = {}", x)`, `warn!`, `error!` (shown in logs_get, kind "script").
