@@ -294,13 +294,20 @@ fn an_outside_agent_and_the_cockpit_agent_work_together() {
         play(&mut app, json!([{ "seconds": 0.05 }, { "idle": 1 }]));
     }
     assert!(outside_run.is_over() && !app.agent_running());
-    let names = ids(app.rows());
-    for id in ["tower", "wall", "crate", "barrel", "star"] {
-        assert!(names.contains(id), "{id} is there: {names:?}");
-    }
     let history = app
         .call("edit_history", &json!({ "limit": 50 }))
         .to_string();
+    let activity = app.call("activity_get", &json!({ "limit": 50 })).to_string();
+    let names = ids(app.rows());
+    for id in ["tower", "wall", "crate", "barrel", "star"] {
+        assert!(
+            names.contains(id),
+            "{id} is there: {names:?}
+rename: {renamed}
+history: {history}
+activity: {activity}"
+        );
+    }
     for who in ["agent:outside", "agent:cockpit", "human"] {
         assert!(history.contains(who), "{who} in {history}");
     }
