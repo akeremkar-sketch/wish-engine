@@ -278,10 +278,14 @@ fn an_outside_agent_and_the_cockpit_agent_work_together() {
     );
     let send = named(&app, "Send");
     click(&mut app, send);
-    app.call(
+    // The person's own edit while both agents work. Its answer is kept: a
+    // run under heavy load once lost this rename (21 November 2026), and the
+    // answer says whether it was refused or never applied.
+    let renamed = app.call(
         "edit_apply",
         &json!({ "ops": [{ "op": "rename", "id": "sun", "to": "star" }] }),
     );
+    assert_eq!(renamed["ok"], true, "the person's rename: {renamed}");
     for _ in 0..300 {
         outside_run.poll();
         if !app.agent_running() && outside_run.is_over() {
