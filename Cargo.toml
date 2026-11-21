@@ -115,6 +115,17 @@ ab_glyph = "0.2.32"
 flate2 = "1"
 sha2 = { version = "0.10", default-features = false }
 
+# Online play (wish_net only, ADR-029). RustCrypto's ChaCha20-Poly1305
+# (Apache-2.0 OR MIT; chacha20 is already in the tree through rand) seals
+# every data packet; x25519-dalek (BSD-3-Clause) agrees the keys, with
+# `static_secrets` so a host keeps one key pair per match and `zeroize` so
+# secrets are wiped when dropped. getrandom (MIT OR Apache-2.0, already in
+# the tree) gives the operating system's randomness. Key derivation is
+# SHA-256 (sha2 above). Audited, pure Rust, no runtime, no clock.
+chacha20poly1305 = { version = "0.11", default-features = false }
+getrandom = "0.4"
+x25519-dalek = { version = "3", default-features = false, features = ["static_secrets", "zeroize"] }
+
 # Procedural macros. syn 3, the same major version serde_derive uses, so the
 # build compiles one syn.
 proc-macro2 = "1"

@@ -533,6 +533,90 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "Prefabs cannot contain prefab instances yet. Place the parts directly in the prefab.",
     ),
     (
+        "net_bind_failed",
+        "A UDP port for online play (or a simulated address in a test) could not be opened: another program uses it, or the address is not this machine's. Pick another port, or 0 to let the system choose one.",
+    ),
+    (
+        "net_closed",
+        "A connection of online play ended normally: the other side, or this one, closed it. Nothing went wrong; join or host again to play on.",
+    ),
+    (
+        "net_config_invalid",
+        "A setting of online play is out of its range (players, message size, queue size, timeouts, rate, or a discovery game id or match name longer than 64 bytes). The location names the setting and the hint gives its range.",
+    ),
+    (
+        "net_connect_timed_out",
+        "A client trying to join a match got no answer from the host in time. Check the address and port, that the host is running and that a firewall lets UDP through; across the internet, use a relay.",
+    ),
+    (
+        "net_crypto_failed",
+        "A packet of online play could not be sealed. This should never happen (packets are far below the cipher's limit): it is an engine bug, please report it.",
+    ),
+    (
+        "net_entropy_failed",
+        "The operating system gave no random numbers, so online play could not make its keys. Restart the program; report it if it stays.",
+    ),
+    (
+        "net_host_key_mismatch",
+        "A client pinned the host's public key (from discovery or given by hand) and the host answered with another one: someone may stand between them, or the host started a new match. Get the host's key again and join again.",
+    ),
+    (
+        "net_key_rejected",
+        "The other side of an online connection sent a public key that gives no shared secret (a point of low order). Nothing was sent to it: the other program is broken or hostile.",
+    ),
+    (
+        "net_message_too_large",
+        "An online message is larger than max_message_size (64 KiB by default, at most 1 MiB). Send less (a delta instead of the whole state), split it, or raise the limit on both sides.",
+    ),
+    (
+        "net_not_connected",
+        "A message was sent before the connection was open. Wait for the Connected event first.",
+    ),
+    (
+        "net_protocol_violation",
+        "A peer that holds the connection's keys sent frames that break the protocol (malformed frames, fragment counts above the limit, messages out of shape), so the host closed that connection. The other program is broken or hostile.",
+    ),
+    (
+        "net_replaced",
+        "The same address joined a match again with a new key (a player's game restarted), so the old connection was closed. Nothing needs doing.",
+    ),
+    (
+        "net_room_code_invalid",
+        "A room code is 4 to 12 of the letters and digits ABCDEFGHJKLMNPQRSTUVWXYZ23456789 (no I, O, 0 or 1); spaces and dashes are ignored and small letters count as capitals.",
+    ),
+    (
+        "net_room_code_wrong",
+        "The host refused the room code a client gave. Type the code the host shows again.",
+    ),
+    (
+        "net_room_full",
+        "The match already has as many players as it takes. Wait for a player to leave, or ask the host to allow more players.",
+    ),
+    (
+        "net_send_queue_full",
+        "Too many bytes wait to be sent to (or acknowledged by) one peer: it is slow, or the network is bad. Send less often, or send state unreliably so that new state replaces old.",
+    ),
+    (
+        "net_sequence_exhausted",
+        "A connection's reliable channel used all its sequence numbers (about four billion fragments). Close the connection and join again.",
+    ),
+    (
+        "net_socket_failed",
+        "The UDP socket of online play failed. Check that the network is up and that a firewall allows the program to use UDP.",
+    ),
+    (
+        "net_timed_out",
+        "Nothing arrived from the other side of an online connection for timeout_ms (10 seconds by default): the other machine left, crashed or lost its network.",
+    ),
+    (
+        "net_unknown_peer",
+        "A message was sent to, or a disconnect asked for, a peer that has no connection (it left, or never joined). Use the peers the endpoint lists or a Connected event.",
+    ),
+    (
+        "net_version_mismatch",
+        "The two sides of an online connection speak different versions of the network protocol. Both machines must run the same release of the game or the engine.",
+    ),
+    (
         "no_camera",
         "The scene has no camera to draw from. Add an entity with Camera and Transform components.",
     ),
