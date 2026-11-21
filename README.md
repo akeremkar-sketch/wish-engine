@@ -11,13 +11,14 @@ one history, signed with who made them.
 
 *Islands, the showcase game in [examples/islands](examples/islands), from its own camera.*
 
-## Status: not released yet
+## Status: public beta 0.9.0
 
-The code is at version 0.1.0 on the way to **1.0**. No release has been published, so there is
-nothing to download yet: build it from source (below). Releases will be published on the
-repository's [Releases page](https://github.com/akeremkar-sketch/wish-engine/releases), each with its archives for Windows and Linux
-and a `SHA256SUMS` file. Versions are three numbers; the betas and
-release candidates of 1.0 will be `0.x.0` tags.
+**[Wish Engine 0.9.0](https://github.com/akeremkar-sketch/wish-engine/releases/tag/0.9.0)**, the
+first public beta of 1.0, was published on 21 November 2026: an archive for Windows and one for
+Linux, each with the toolchain inside (nothing else to install), and a `SHA256SUMS` file. Unpack
+the archive and open `wish-engine` (the editor) or use `wen` (the command line). Testers: the
+[tester's guide](docs/release/beta.md) ([Türkçe](docs/user/tr/beta.md)) says what to try and how to
+report it. Versions are three numbers; the betas and release candidates of 1.0 are `0.x.0` tags.
 
 **What 1.0 is:** an engine in which one person, an AI agent, or both together can make a small or
 medium desktop 3D game and prove that it works, with a default look signed off by eye. It is

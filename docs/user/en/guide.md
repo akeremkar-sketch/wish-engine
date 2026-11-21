@@ -21,8 +21,9 @@ This guide follows a game from the first start to an exported game.
 
 ## 1. Install and first start
 
-No release has been published yet: build the engine from source, or make the release archive
-yourself, as the [README](../../../README.md#getting-started) says.
+Download the archive for your system from the repository's
+[Releases page](https://github.com/akeremkar-sketch/wish-engine/releases) (the first is the beta
+0.9.0), or build the engine from source as the [README](../../../README.md#getting-started) says.
 
 Unpack the Wish Engine archive anywhere and run `wish-engine.exe` on Windows (for a shortcut, the
 icon is `wish-engine.ico` in the folder), or `wish-engine` on Linux. The compiler for game code

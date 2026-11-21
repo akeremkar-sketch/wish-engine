@@ -39,7 +39,11 @@ the 1.0.0 tag.
    read `env!("CARGO_PKG_VERSION")` instead, tests that mean a fixed old
    version keep it; `engines::OPENS_FROM` stays 0.1.0 (no format changed
    since). Full gate, then the tag (user's yes), the draft, the user
-   publishes it and sends the guide to the testers.
+   publishes it and sends the guide to the testers. **Done 21 November
+   2026:** the release workflow passed on the tag (Windows and Linux
+   archives checked from their unpacked copies) and the user published
+   [0.9.0](https://github.com/akeremkar-sketch/wish-engine/releases/tag/0.9.0);
+   the README's "Status" says "public beta".
 2. **Two weeks.** Triage every issue the day it comes: a fix with a test,
    or a reason written on the issue; the README's "Status" says "beta".
 3. **Release candidate 0.10.0** with the fixes; a few days without a new

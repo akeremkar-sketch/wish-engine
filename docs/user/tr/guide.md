@@ -21,8 +21,10 @@ Bu kılavuz bir oyunu ilk açılıştan dışa aktarılmış hâline kadar izler
 
 ## 1. Kurulum ve ilk açılış
 
-Henüz yayımlanmış bir sürüm yok: motoru kaynak koddan derleyin ya da sürüm arşivini
-[README](../../../README.md#getting-started)'de anlatıldığı gibi kendiniz yapın.
+Sisteminize uygun arşivi deponun
+[Sürümler (Releases) sayfasından](https://github.com/akeremkar-sketch/wish-engine/releases) indirin
+(ilki 0.9.0 betasıdır) ya da motoru [README](../../../README.md#getting-started)'de anlatıldığı gibi
+kaynak koddan derleyin.
 
 Wish Engine arşivini istediğiniz yere açın; Windows'ta `wish-engine.exe`'yi (kısayol için simge
 klasördeki `wish-engine.ico`), Linux'ta `wish-engine`'i çalıştırın. Oyun kodunun derleyicisi
