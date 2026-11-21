@@ -54,7 +54,7 @@ USAGE:
     wen view --example <name> --scene <file> [--root <folder>] [--size <w>x<h>]
              [--view <view>] [--software] [--shaders <folder>] [--exit-after <frames>]
     wen shaders [--dir <folder>] [--json]
-    wen new <folder> [--name <name>] [--template <name>] [--json]
+    wen new <folder> [--name <name>] [--kind 2d|3d] [--template <name>] [--json]
     wen build [--root <folder>] [--dry-run] [--json]
     wen export [--root <folder>] [--name <name>] [--overwrite] [--json]
     wen test [files...] [--root <folder>] [--update-golden] [--json]
@@ -283,12 +283,18 @@ fn execute_any(args: Args) -> Result<Outcome> {
             dir,
             name,
             template,
-        } => tool_cmds::new_project(dir, name.as_deref(), template.as_deref(), args.json).map(
-            |text| Outcome {
-                text,
-                success: true,
-            },
-        ),
+            kind,
+        } => tool_cmds::new_project(
+            dir,
+            name.as_deref(),
+            template.as_deref(),
+            kind.as_deref(),
+            args.json,
+        )
+        .map(|text| Outcome {
+            text,
+            success: true,
+        }),
         Command::Build { root, dry_run } => {
             // The answer carries no duration (ADR-027, rule 2): the command
             // line measures the call itself.

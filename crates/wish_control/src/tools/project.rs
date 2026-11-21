@@ -81,6 +81,7 @@ fn project_info(workspace: &mut Workspace, _: &Args, _: &Actor) -> Result<Map<St
                     "scene": config.scene,
                     "engine": config.engine,
                     "example": config.example,
+                    "kind": config.kind().name(),
                 }),
             );
         }

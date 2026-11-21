@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use serde_json::json;
 use wish_core::{Diagnostic, Result};
 
-use crate::project::{PROJECT_FILE, ProjectConfig};
+use crate::project::{PROJECT_FILE, ProjectConfig, ProjectKind};
 
 fn unwritable(path: &Path, error: &std::io::Error) -> Diagnostic {
     Diagnostic::error(
@@ -37,11 +37,13 @@ fn write(root: &Path, relative: &str, text: &str, written: &mut Vec<String>) -> 
     Ok(())
 }
 
-/// The scene a new project starts with.
-fn starting_scene() -> Result<String> {
-    wish_scene::json::to_canonical(&json!({
-        "format": wish_scene::FORMAT,
-        "entities": {
+/// The entities (id to `{ "components": ... }`) a new scene of a project of
+/// `kind` starts with: a camera, the ground and the sun for 3D; for 2D an
+/// orthographic camera and nothing else (sprites are not lit, and there is
+/// no ground). The editor's *New scene* uses the same.
+pub fn starting_entities(kind: ProjectKind) -> serde_json::Value {
+    match kind {
+        ProjectKind::D3 => json!({
             "camera": { "components": {
                 "Camera": { "fov_y_deg": 50 },
                 "Transform": { "translation": [0, 2, 7], "rotation": [-0.0871557, 0, 0, 0.9961947] }
@@ -55,7 +57,21 @@ fn starting_scene() -> Result<String> {
                 "DirectionalLight": { "illuminance_lux": 100000 },
                 "Transform": { "rotation": [-0.4545195, 0.3304543, 0.1786597, 0.8067046] }
             } }
-        }
+        }),
+        ProjectKind::D2 => json!({
+            "camera": { "components": {
+                "Camera": { "projection": "Orthographic", "ortho_height": 10 },
+                "Transform": { "translation": [0, 0, 10] }
+            } }
+        }),
+    }
+}
+
+/// The scene a new project starts with.
+fn starting_scene(kind: ProjectKind) -> Result<String> {
+    wish_scene::json::to_canonical(&json!({
+        "format": wish_scene::FORMAT,
+        "entities": starting_entities(kind)
     }))
 }
 
@@ -104,6 +120,38 @@ wish_sdk::export! {
 }
 ";
 
+/// The game code a new 2D project starts with: the same small example,
+/// turning around the Z axis (the one a flat picture turns around).
+const STARTING_CODE_2D: &str =
+    "//! The game's code: components and systems, in Rust, with the engine's SDK.
+//! The engine compiles it to WebAssembly with `script_build` (or `wen build`);
+//! no Cargo or other tools are needed. A running game picks up the new code
+//! between two ticks and keeps its state.
+
+use wish_sdk::prelude::*;
+
+/// Turns an entity around the Z axis, as a flat picture turns.
+#[component]
+pub struct Spin {
+    /// How fast it turns.
+    #[schema(unit = \"rad/s\", range = -50.0..=50.0, default = 1.0)]
+    pub speed: f32,
+}
+
+/// Turns every entity that has a `Spin`.
+#[system]
+fn spin(mut spinning: Query<(&mut Transform, &Spin)>, time: Res<Time>) {
+    for (transform, spin) in spinning.iter_mut() {
+        transform.rotation = Quat::from_rotation_z(spin.speed * time.delta) * transform.rotation;
+    }
+}
+
+wish_sdk::export! {
+    components: [Spin],
+    systems: [spin],
+}
+";
+
 fn mcp_config(command: &str) -> String {
     let text = serde_json::to_string_pretty(&json!({
         "mcpServers": { "wish": { "command": command, "args": ["mcp"] } }
@@ -112,7 +160,13 @@ fn mcp_config(command: &str) -> String {
     format!("{text}\n")
 }
 
-fn guide(name: &str) -> String {
+fn guide(name: &str, kind: ProjectKind) -> String {
+    let kind_note = match kind {
+        ProjectKind::D3 => "",
+        ProjectKind::D2 => {
+            "\n## This is a 2D project\n\n- The scene has an orthographic `Camera` (it shows `ortho_height` meters from top to bottom, looking along -Z) and no ground or sun: `Sprite`s are not lit.\n- Make things with `Sprite` (+ `Collider` and `RigidBody` for physics); the Create menu of the editor lists sprites first. A 2D project can still hold 3D.\n"
+        }
+    };
     format!(
         "# {name}\n\
 \n\
@@ -170,14 +224,27 @@ Built in, set up with components (`schema_get` and `docs_search` say how; `wish:
   `text(...)`; `describe_view` lists the interface; `sim_step` input `pointer` and `click` press buttons.\n\
 - Particles: `ParticleEmitter`. 2D: an orthographic `Camera` and `Sprite`s.\n\
 - Reading values: scene tools read the scene file; pass `session` to `entity_get` / `entity_query` to read a\n\
-  running game.\n"
+  running game.\n{kind_note}"
     )
 }
 
 /// Creates a project in `dir` (made if missing). Refuses a folder that
 /// already has a `wish.json`. `command` is how MCP clients start the engine
 /// (`wen`, or its full path). Returns the files written, project-relative.
+/// A 3D project (see [`create_project_of_kind`]).
 pub fn create_project(dir: &Path, name: &str, command: &str) -> Result<Vec<String>> {
+    create_project_of_kind(dir, name, command, ProjectKind::D3)
+}
+
+/// Like [`create_project`], for a project of `kind`: its `wish.json` says
+/// the kind, and the scene, the game code and the agent guide start from
+/// what that kind needs (2D: an orthographic camera, no ground).
+pub fn create_project_of_kind(
+    dir: &Path,
+    name: &str,
+    command: &str,
+    kind: ProjectKind,
+) -> Result<Vec<String>> {
     let name = check_new(dir, name)?;
     refuse_existing(
         dir,
@@ -193,20 +260,21 @@ pub fn create_project(dir: &Path, name: &str, command: &str) -> Result<Vec<Strin
         .chain(AGENT_FILES.iter().copied()),
     )?;
     let mut written = Vec::new();
-    write(
-        dir,
-        PROJECT_FILE,
-        &ProjectConfig::new(name).to_canonical()?,
-        &mut written,
-    )?;
+    let mut config = ProjectConfig::new(name);
+    config.kind = Some(kind);
+    write(dir, PROJECT_FILE, &config.to_canonical()?, &mut written)?;
     write(
         dir,
         "scenes/main.scene.json",
-        &starting_scene()?,
+        &starting_scene(kind)?,
         &mut written,
     )?;
     write(dir, "assets/.gitkeep", "", &mut written)?;
-    write(dir, "scripts/src/lib.rs", STARTING_CODE, &mut written)?;
+    let code = match kind {
+        ProjectKind::D3 => STARTING_CODE,
+        ProjectKind::D2 => STARTING_CODE_2D,
+    };
+    write(dir, "scripts/src/lib.rs", code, &mut written)?;
     write(dir, "tests/boots.test.json", STARTING_TEST, &mut written)?;
     write(
         dir,
@@ -214,7 +282,7 @@ pub fn create_project(dir: &Path, name: &str, command: &str) -> Result<Vec<Strin
         &wish_input::InputMap::starter().to_canonical()?,
         &mut written,
     )?;
-    write_agent_files(dir, name, command, &mut written)?;
+    write_agent_files(dir, name, command, kind, &mut written)?;
     Ok(written)
 }
 
@@ -250,10 +318,11 @@ fn write_agent_files(
     dir: &Path,
     name: &str,
     command: &str,
+    kind: ProjectKind,
     written: &mut Vec<String>,
 ) -> Result<()> {
     write(dir, ".mcp.json", &mcp_config(command), written)?;
-    write(dir, "CLAUDE.md", &guide(name), written)?;
+    write(dir, "CLAUDE.md", &guide(name, kind), written)?;
     write(dir, ".gitignore", ".wish/\ntarget/\n*.wish-tmp\n", written)
 }
 
@@ -326,6 +395,8 @@ pub struct Template {
     pub name: String,
     /// Its folder.
     pub path: PathBuf,
+    /// Its kind (`wish.json`'s `kind`; 3D when it says none).
+    pub kind: ProjectKind,
 }
 
 /// Where the templates are: `WISH_TEMPLATES`, else `templates/` beside the
@@ -358,7 +429,8 @@ pub fn templates(folder: &Path) -> Vec<Template> {
             let config = crate::project::read_project(&path).ok()??;
             Some(Template {
                 id,
-                name: config.name,
+                name: config.name.clone(),
+                kind: config.kind(),
                 path,
             })
         })
@@ -400,7 +472,8 @@ pub fn package_templates() -> Vec<Template> {
             if let Ok(Some(config)) = crate::project::read_project(&path) {
                 found.push(Template {
                     id,
-                    name: config.name,
+                    name: config.name.clone(),
+                    kind: config.kind(),
                     path,
                 });
             }
@@ -459,11 +532,15 @@ pub fn create_from_template(
     }
     config.name = name.to_owned();
     config.engine = env!("CARGO_PKG_VERSION").to_owned();
+    // A new project says its kind, whatever the template said (a template
+    // from before release 1.1 is a 3D one).
+    let kind = config.kind();
+    config.kind = Some(kind);
     write(dir, PROJECT_FILE, &config.to_canonical()?, &mut written)?;
     if !dir.join("assets").exists() {
         write(dir, "assets/.gitkeep", "", &mut written)?;
     }
-    write_agent_files(dir, name, command, &mut written)?;
+    write_agent_files(dir, name, command, kind, &mut written)?;
     written.sort();
     Ok(written)
 }

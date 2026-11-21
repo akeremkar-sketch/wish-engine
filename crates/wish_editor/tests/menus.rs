@@ -161,3 +161,56 @@ fn new_scene_makes_a_scene_with_a_camera_and_opens_it() {
     play(&mut app, json!([{ "seconds": 0.5 }, { "idle": 2 }]));
     assert_eq!(app.scene(), "scenes/scene_2.scene.json");
 }
+
+/// A 2D project (release 1.1, package 1): the Create menu lists sprites
+/// first, a camera made by hand is orthographic, and a new scene starts
+/// with an orthographic camera and nothing else. The kind is read from the
+/// project (`project_info`), nowhere else.
+#[test]
+fn a_2d_project_lists_sprites_first_and_starts_flat() {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("editor-menus-2d");
+    let _ = std::fs::remove_dir_all(&dir);
+    wish_control::scaffold::create_project_of_kind(
+        &dir,
+        "Flat",
+        "wen",
+        wish_control::project::ProjectKind::D2,
+    )
+    .unwrap();
+    let mut workspace = Workspace::open(WorkspaceOptions {
+        root: dir.clone(),
+        example: None,
+    })
+    .unwrap();
+    workspace.set_software(true);
+    let mut app = EditorApp::new(workspace);
+    play(&mut app, json!([{ "idle": 2 }]));
+
+    // The menu: Sprite above Empty above Cube (a 3D project: Empty first).
+    let create = named(&app, "Create");
+    click(&mut app, create);
+    let y = |app: &EditorApp, text: &str| named(app, text).min.y;
+    assert!(y(&app, "Sprite") < y(&app, "Empty"), "sprites first");
+    assert!(y(&app, "Empty") < y(&app, "Cube"));
+    let sprite = named(&app, "Sprite");
+    click(&mut app, sprite);
+    assert!(ids(app.rows()).contains("sprite_1"), "{:?}", app.rows());
+
+    // A camera made by hand looks at the flat scene head on.
+    menu(&mut app, "Create", "Camera");
+    assert_eq!(
+        components(&mut app, "camera_1")["Camera"]["projection"],
+        "Orthographic"
+    );
+
+    // A new scene: an orthographic camera, no ground, no sun.
+    menu(&mut app, "File", "New scene");
+    play(&mut app, json!([{ "seconds": 0.5 }, { "idle": 2 }]));
+    assert_eq!(app.scene(), "scenes/scene_1.scene.json", "{}", app.status());
+    let names: Vec<String> = app.rows().iter().map(|row| row.id.clone()).collect();
+    assert_eq!(names, ["camera"], "{names:?}");
+    assert_eq!(
+        components(&mut app, "camera")["Camera"]["projection"],
+        "Orthographic"
+    );
+}

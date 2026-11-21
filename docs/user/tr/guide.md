@@ -47,15 +47,17 @@ Proje olmadan editör **karşılama ekranıyla** açılır:
    - **Kimse**: oyunu elle yaparsınız.
 
    Başka bir MCP ajanı sonradan bağlanabilir (*Yapay zekâ* menüsü, *Dış ajanı bağla...*).
-2. **Neyle başlansın?**
-   - boş proje (bir kamera, bir güneş, bir zemin ve başlangıç oyun kodu), ya da
-   - bir şablon:
-     - *Islands*: 3B platform oyunu, vitrin oyunu;
-     - *Hop*: 3B zıplama;
-     - *Collect*: yukarıdan bakılan 3B;
-     - *Bricks*: 2B;
-     - *Quiz*: yalnızca arayüz.
-3. **Ad ve yer.** Yeni projeler varsayılan olarak `Belgeler/Wish Projects` altına gider.
+2. **Nasıl bir oyun?** **3B** (uzayda modeller, ışıklar ve bir kamera) ya da **2B** (düz ekranda
+   sprite'lar). Tür yalnızca başlangıç noktasını belirler: 2B proje ortografik bir kamerayla ve
+   zemin olmadan başlar, *Oluştur* menüsü önce sprite'ları sıralar; 2B bir proje yine de 3B şeyler
+   içerebilir, tersi de geçerlidir. Tür `wish.json` içine yazılır (`"kind": "2d"`); türü olmayan
+   proje 3B projedir.
+3. **Neyle başlansın?** O türün şablonları:
+   - 3B: boş proje (bir kamera, bir güneş, bir zemin ve başlangıç oyun kodu) ya da bir şablon:
+     *Islands* (3B platform oyunu, vitrin oyunu), *Hop* (3B zıplama), *Collect* (yukarıdan bakılan
+     3B), *Quiz* (yalnızca arayüz);
+   - 2B: boş proje (ortografik bir kamera ve başlangıç oyun kodu) ya da *Bricks*.
+4. **Ad ve yer.** Yeni projeler varsayılan olarak `Belgeler/Wish Projects` altına gider.
 
 **Oluştur**'a basın. Motor projeyi yapar, oyun kodunu derler ve editörü aynı pencerede açar.
 Sağdaki **Bir oyun aç** son açtığınız projeleri listeler ya da herhangi bir proje klasörünün yolunu
@@ -323,6 +325,9 @@ için dışa aktarmak sonraki bir sürümde gelecek.
 wen new oyunum --template islands
 ```
 
+2B bir proje: `wen new oyunum --kind 2d` (boş) ya da `wen new oyunum --template bricks`.
+`--kind` verilmezse şablonun kendi türü kullanılır, boş proje 3B olur.
+
 ```bash
 wen edit --root oyunum
 ```
@@ -391,7 +396,7 @@ dilinizdedir.
 ## 11. Proje klasöründe neler var
 
 ```text
-wish.json             proje: ad, varsayılan sahne
+wish.json             proje: ad, tür (2B ya da 3B), varsayılan sahne
 scenes/               sahneler (*.scene.json) ve prefab'lar (*.prefab.json)
 assets/               modeller (.glb/.gltf), resimler (.png), sesler (.wav/.ogg),
                       malzeme dosyaları (*.mat.json)

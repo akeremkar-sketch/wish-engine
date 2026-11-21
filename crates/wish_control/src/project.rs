@@ -24,8 +24,46 @@ pub const PROJECT_FILE: &str = "wish.json";
 /// The format version this engine writes and reads.
 pub const PROJECT_FORMAT: u64 = 1;
 
-const KEYS: &[&str] = &["engine", "format", "name", "packages", "scene", "types"];
+const KEYS: &[&str] = &[
+    "engine", "format", "kind", "name", "packages", "scene", "types",
+];
 const TYPE_KEYS: &[&str] = &["example"];
+
+/// What a project is mostly made of (release 1.1): a flat game of sprites
+/// or a game in space. The kind sets defaults (the editor's Create menu,
+/// a new scene's camera, a new project's templates); it never limits what
+/// a project can hold.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ProjectKind {
+    /// Sprites and an orthographic camera.
+    D2,
+    /// Models and a perspective camera. What a project without a `kind`
+    /// is: every project before release 1.1.
+    #[default]
+    D3,
+}
+
+impl ProjectKind {
+    /// The spellings `wish.json` and `wen new --kind` take.
+    pub const NAMES: &'static [&'static str] = &["2d", "3d"];
+
+    /// The kind spelled `name` (`2d`, `3d`; case does not matter).
+    pub fn parse(name: &str) -> Option<Self> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "2d" => Some(Self::D2),
+            "3d" => Some(Self::D3),
+            _ => None,
+        }
+    }
+
+    /// Its spelling in `wish.json`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::D2 => "2d",
+            Self::D3 => "3d",
+        }
+    }
+}
 
 /// What `wish.json` says.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -41,9 +79,20 @@ pub struct ProjectConfig {
     /// The project's packages (M10): id → version requirement. Written
     /// only when there is one, so older projects stay byte-identical.
     pub packages: std::collections::BTreeMap<String, String>,
+    /// The project's kind, when the file says one. Written only when set,
+    /// so projects from before release 1.1 stay byte-identical; read it
+    /// with [`ProjectConfig::kind`], which answers `3d` without it.
+    pub kind: Option<ProjectKind>,
 }
 
 impl ProjectConfig {
+    /// The project's kind: what the file says, else `3d`. The one place
+    /// that answers the question (the editor's Create menu and new scenes
+    /// ask it; the 2D mode will).
+    pub fn kind(&self) -> ProjectKind {
+        self.kind.unwrap_or_default()
+    }
+
     /// A new project's configuration.
     pub fn new(name: &str) -> Self {
         Self {
@@ -52,6 +101,7 @@ impl ProjectConfig {
             scene: "scenes/main.scene.json".to_owned(),
             example: None,
             packages: std::collections::BTreeMap::new(),
+            kind: None,
         }
     }
 
@@ -65,6 +115,9 @@ impl ProjectConfig {
         object.insert("engine".to_owned(), Value::String(self.engine.clone()));
         object.insert("format".to_owned(), Value::from(PROJECT_FORMAT));
         object.insert("name".to_owned(), Value::String(self.name.clone()));
+        if let Some(kind) = self.kind {
+            object.insert("kind".to_owned(), Value::String(kind.name().to_owned()));
+        }
         if !self.packages.is_empty() {
             object.insert(
                 "packages".to_owned(),
@@ -310,12 +363,41 @@ pub fn parse_project(source: &str) -> Result<ProjectConfig> {
             ));
         }
     }
+    let kind = match object.get("kind") {
+        None => None,
+        Some(Value::String(given)) => match ProjectKind::parse(given) {
+            Some(kind) => Some(kind),
+            None => {
+                return Err(problem(
+                    &node,
+                    "/kind",
+                    format!("'kind' in '{PROJECT_FILE}' must be \"2d\" or \"3d\", but is '{given}'."),
+                    &format!(
+                        "{} Leave 'kind' out to open the project as a 3D project (what every project from before release 1.1 is).",
+                        wish_core::suggest::unknown_name_hint(given, ProjectKind::NAMES)
+                    ),
+                )
+                .with_candidates(ProjectKind::NAMES.iter().copied()));
+            }
+        },
+        Some(other) => {
+            return Err(problem(
+                &node,
+                "/kind",
+                format!(
+                    "'kind' in '{PROJECT_FILE}' must be a text, \"2d\" or \"3d\", but is {other}."
+                ),
+                "Write \"kind\": \"2d\" for a flat game of sprites, \"3d\" for a game in space, or leave it out (3D).",
+            ));
+        }
+    };
     Ok(ProjectConfig {
         name,
         engine,
         scene,
         example,
         packages,
+        kind,
     })
 }
 

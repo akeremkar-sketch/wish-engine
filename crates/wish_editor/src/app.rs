@@ -159,6 +159,9 @@ pub struct EditorApp {
     workspace: Workspace,
     canvas: Canvas,
     project: String,
+    /// The project's kind (2D or 3D): the Create menu and a new scene
+    /// start from what it needs. The one place the editor reads it.
+    project_kind: wish_control::project::ProjectKind,
     scene: String,
     scenes: Vec<String>,
     revision: u64,
@@ -546,6 +549,7 @@ impl EditorApp {
             workspace,
             canvas: Canvas::new(1, 1, crate::style::pal().backdrop),
             project: String::new(),
+            project_kind: wish_control::project::ProjectKind::default(),
             scene: String::new(),
             scenes: Vec::new(),
             revision: u64::MAX,
@@ -1398,6 +1402,10 @@ impl EditorApp {
             return;
         }
         self.project = info["project"]["name"].as_str().unwrap_or("").to_owned();
+        self.project_kind = info["project"]["kind"]
+            .as_str()
+            .and_then(wish_control::project::ProjectKind::parse)
+            .unwrap_or_default();
         self.scenes = info["scenes"]
             .as_array()
             .map(|all| {
@@ -3466,21 +3474,17 @@ impl EditorApp {
         let path = (1..)
             .map(|n| format!("scenes/scene_{n}.scene.json"))
             .find(|path| !self.scenes.contains(path))?;
-        let ops = json!([
-            { "op": "spawn", "id": "camera", "components": {
-                "Camera": { "fov_y_deg": 50 },
-                "Transform": { "translation": [0, 2, 7], "rotation": [-0.0871557, 0, 0, 0.9961947] }
-            } },
-            { "op": "spawn", "id": "ground", "components": {
-                "Primitive": { "shape": "Plane" },
-                "Material": { "base_color": [0.45, 0.45, 0.42, 1], "roughness": 0.9 },
-                "Transform": { "scale": [30, 1, 30] }
-            } },
-            { "op": "spawn", "id": "sun", "components": {
-                "DirectionalLight": { "illuminance_lux": 100000 },
-                "Transform": { "rotation": [-0.4545195, 0.3304543, 0.1786597, 0.8067046] }
-            } }
-        ]);
+        // What a new project of this kind starts with (a 3D one: a camera,
+        // the ground and the sun; a 2D one: an orthographic camera).
+        let starting = wish_control::scaffold::starting_entities(self.project_kind);
+        let ops: Vec<Value> = starting
+            .as_object()
+            .into_iter()
+            .flatten()
+            .map(|(id, entity)| {
+                json!({ "op": "spawn", "id": id, "components": entity["components"] })
+            })
+            .collect();
         let made = self.call(
             "edit_apply",
             &json!({ "scene": path.clone(), "create": true, "ops": ops }),
@@ -4062,7 +4066,16 @@ impl EditorApp {
             && let Some((_, _, components)) = CREATE_KINDS.iter().find(|(k, _, _)| *k == kind)
         {
             let id = self.unused_id(kind);
-            let op = json!({ "op": "spawn", "id": id, "components": components() });
+            let components = if kind == "camera"
+                && self.project_kind == wish_control::project::ProjectKind::D2
+            {
+                // A 2D project's camera looks at the flat scene head on.
+                wish_control::scaffold::starting_entities(self.project_kind)["camera"]["components"]
+                    .clone()
+            } else {
+                components()
+            };
+            let op = json!({ "op": "spawn", "id": id, "components": components });
             if self.edit(&tf("added {id}", &[("id", &id)]), vec![op]) {
                 self.selected = vec![id];
                 self.picture_stale = true;
@@ -4892,13 +4905,19 @@ impl EditorApp {
             });
         });
         ui.menu_button(t("Create"), |ui| {
-            for (index, (kind, name, _)) in CREATE_KINDS.iter().enumerate() {
-                if matches!(index, 1 | 4 | 8) {
+            for (group_index, group) in create_groups(self.project_kind).iter().enumerate() {
+                if group_index > 0 {
                     ui.separator();
                 }
-                let id = format!("create.{kind}");
-                if item(ui, name(), key(&id), editing) {
-                    actions.create = Some(*kind);
+                for wanted in *group {
+                    let Some((kind, name, _)) = CREATE_KINDS.iter().find(|(k, _, _)| k == wanted)
+                    else {
+                        continue;
+                    };
+                    let id = format!("create.{kind}");
+                    if item(ui, name(), key(&id), editing) {
+                        actions.create = Some(*kind);
+                    }
                 }
             }
         });
@@ -6116,6 +6135,26 @@ const CREATE_KINDS: &[CreateKind] = &[
         || json!({ "Transform": {}, "ParticleEmitter": {} }),
     ),
 ];
+
+/// The Create menu's groups for a project of `kind` (ids of
+/// [`CREATE_KINDS`]; a separator between groups). A 2D project lists
+/// sprites first and the lights last.
+fn create_groups(kind: wish_control::project::ProjectKind) -> &'static [&'static [&'static str]] {
+    match kind {
+        wish_control::project::ProjectKind::D3 => &[
+            &["empty"],
+            &["cube", "sphere", "plane"],
+            &["camera", "directional_light", "point_light", "spot_light"],
+            &["sprite", "particles"],
+        ],
+        wish_control::project::ProjectKind::D2 => &[
+            &["sprite", "particles"],
+            &["empty", "camera"],
+            &["cube", "sphere", "plane"],
+            &["directional_light", "point_light", "spot_light"],
+        ],
+    }
+}
 
 /// The operations that copy `node` (a `scene_get` node with full detail)
 /// and its children under new ids, each next to the old name (`crate_3`

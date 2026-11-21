@@ -362,7 +362,7 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     ),
     (
         "invalid_project_file",
-        "wish.json is malformed: an unknown setting, a wrong value, or a missing name, format or scene. The location points at the setting.",
+        "wish.json is malformed: an unknown setting, a wrong value (a kind that is not \"2d\" or \"3d\"), or a missing name, format or scene. The location points at the setting.",
     ),
     (
         "invalid_project_name",
@@ -1035,6 +1035,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "system_order_cycle",
         "System ordering constraints form a circle (a before b before a).",
+    ),
+    (
+        "template_kind_mismatch",
+        "wen new was given a --kind and a --template of the other kind (a 2D template for a 3D project, or the other way round). The hint names the template's kind.",
     ),
     (
         "test_not_found",

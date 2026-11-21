@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 
 use egui::{RichText, Ui};
 use serde_json::{Value, json};
+use wish_control::project::ProjectKind;
 use wish_control::scaffold::Template;
 use wish_control::{Workspace, WorkspaceOptions};
 use wish_window::{Picture, Shell, ShellEvent};
@@ -127,7 +128,9 @@ struct Welcome {
     /// not this engine's.
     recent_made: Vec<Option<String>>,
     assistant: Assistant,
-    /// The template chosen (`None`: an empty project).
+    /// The kind of game chosen (2D or 3D): which templates are offered.
+    kind: ProjectKind,
+    /// The template chosen (`None`: an empty project of the kind).
     template: Option<usize>,
     name: String,
     /// The name offered (while `name` is still it, it follows the
@@ -319,6 +322,7 @@ impl Launcher {
             recent,
             recent_made,
             assistant,
+            kind: ProjectKind::D3,
             template,
             folder: options.projects_folder.display().to_string(),
             offered: name.clone(),
@@ -650,6 +654,7 @@ impl Launcher {
                 .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
         ));
         let _ = std::fs::remove_dir_all(&making);
+        let kind = welcome.kind;
         let made = match welcome.template.and_then(|i| self.options.templates.get(i)) {
             Some(template) => wish_control::scaffold::create_from_template(
                 &making,
@@ -657,7 +662,12 @@ impl Launcher {
                 &self.options.command,
                 &template.path,
             ),
-            None => wish_control::scaffold::create_project(&making, &name, &self.options.command),
+            None => wish_control::scaffold::create_project_of_kind(
+                &making,
+                &name,
+                &self.options.command,
+                kind,
+            ),
         };
         let placed = made
             .map_err(|error| format!("{} {}", error.message, error.hint))
@@ -1243,6 +1253,9 @@ fn hub_act(
     }
     if let Some(id) = hub.template {
         welcome.template = templates.iter().position(|template| template.id == id);
+        if let Some(template) = welcome.template.and_then(|i| templates.get(i)) {
+            welcome.kind = template.kind;
+        }
         welcome.tab = crate::hub::Tab::Projects;
         acted = true;
     }
@@ -1590,11 +1603,55 @@ fn new_game(ui: &mut Ui, welcome: &mut Welcome, templates: &[Template], claude: 
         });
 
         ui.add_space(14.0);
-        step_title(ui, 2, t("2. Start from"));
+        step_title(ui, 2, t("2. What kind of game?"));
         ui.add_space(4.0);
-        // The showcase first: it shows the most of the engine; the empty
-        // project last.
-        let mut order: Vec<Option<usize>> = (0..templates.len()).map(Some).collect();
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 10.0;
+            for (kind, icon, name, detail) in [
+                (
+                    ProjectKind::D3,
+                    Icon::Cube,
+                    t("3D"),
+                    t("Models, lights and a camera in space: adventures, arenas, worlds."),
+                ),
+                (
+                    ProjectKind::D2,
+                    Icon::Image,
+                    t("2D"),
+                    t("Sprites on a flat screen: platformers, top-down games, puzzles."),
+                ),
+            ] {
+                let response = choice(
+                    ui,
+                    egui::vec2(half, 74.0),
+                    welcome.kind == kind,
+                    true,
+                    name,
+                    |painter, rect, enabled| {
+                        option_face(painter, rect, icon, name, detail, enabled)
+                    },
+                );
+                if response.clicked() && welcome.kind != kind {
+                    welcome.kind = kind;
+                    // A template of the other kind is not offered any more:
+                    // the first of this kind (the showcase first) is chosen.
+                    welcome.template = templates
+                        .iter()
+                        .position(|template| template.id == "islands" && template.kind == kind)
+                        .or_else(|| templates.iter().position(|template| template.kind == kind));
+                }
+            }
+        });
+
+        ui.add_space(14.0);
+        step_title(ui, 3, t("3. Start from"));
+        ui.add_space(4.0);
+        // The templates of the kind, the showcase first: it shows the most
+        // of the engine; the empty project last.
+        let mut order: Vec<Option<usize>> = (0..templates.len())
+            .filter(|&i| templates[i].kind == welcome.kind)
+            .map(Some)
+            .collect();
         order.sort_by_key(|index| index.is_none_or(|i| templates[i].id != "islands"));
         order.push(None);
         let columns = 3;
@@ -1612,11 +1669,18 @@ fn new_game(ui: &mut Ui, welcome: &mut Welcome, templates: &[Template], claude: 
                             about(&templates[i].id).unwrap_or(""),
                             welcome.pictures.get(i).and_then(Option::as_ref),
                         ),
-                        None => (
-                            t("Empty project"),
-                            t("A camera, a sun, a ground and starter game code."),
-                            welcome.empty_picture.as_ref(),
-                        ),
+                        None => match welcome.kind {
+                            ProjectKind::D3 => (
+                                t("Empty 3D"),
+                                t("A camera, a sun, a ground and starter game code."),
+                                welcome.empty_picture.as_ref(),
+                            ),
+                            ProjectKind::D2 => (
+                                t("Empty 2D"),
+                                t("An orthographic camera and starter game code."),
+                                welcome.empty_picture.as_ref(),
+                            ),
+                        },
                     };
                     let response = choice(
                         ui,
@@ -1702,7 +1766,7 @@ fn action_bar(ui: &mut Ui, welcome: &mut Welcome, asked: &mut Asked) {
         ui.vertical(|ui| {
             ui.set_width(width);
             ui.add_space(4.0);
-            step_title(ui, 3, t("3. Name and place"));
+            step_title(ui, 4, t("4. Name and place"));
             ui.horizontal(|ui| {
                 let field = ((width - 260.0) * 0.5).max(120.0);
                 ui.label(RichText::new(t("Name")).color(crate::style::pal().weak));
