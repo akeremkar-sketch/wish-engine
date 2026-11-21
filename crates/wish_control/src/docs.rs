@@ -1542,16 +1542,12 @@ Tests: `tests/*.test.json` (`{{ \"format\": 1, \"scene\": ..., \"seed\": 1, \"st
 Physics (`Collider`, `RigidBody`, `CharacterController`, `CollisionStarted`, `physics_query`), sound (`AudioSource`,\n\
 `PlaySound`; `logs_get` kinds [\"audio\"]), lights (`PointLight`, `SpotLight`), animation (`AnimationPlayer`), the in-game\n\
 interface (`UiNode`, `UiText`, `UiButton`; `describe_view` lists it; `sim_step` input `pointer` and `click`), particles\n\
-(`ParticleEmitter`), 2D (orthographic `Camera`, `Sprite`). `asset_create` makes placeholder sounds and pictures, and\n\
-material files (`*.mat.json`, type `MaterialFile`: textures, tiling, cut-outs) that a `Material` names in its `file`.\n\
-Picture quality is the `RenderSettings` resource (shadows on or off, the shadow map's size, `antialiasing`); `capture_frame`\n\
-and `describe_view` give `stats`: what the picture costs in draw calls, triangles and lights, and which effects it used.\n\
-The look is data too, and a scene has the look `natural` by default: `Ambient` `source: \"Sky\"` lights surfaces from\n\
-the sky's own colours, `Sky` `sun_size_deg` draws the sun's disc, `Fog` (`density`, `height_falloff`) fades far things into\n\
-the horizon, `Bloom` (`strength`) makes what is brighter than white glow (an emissive `Material`, the sun's disc),\n\
-`ColorGrading` sets contrast, saturation, white balance and a vignette, `RenderSettings` `antialiasing` smooths edges and\n\
-`shadow_cascades` keeps shadows near the camera sharp (up to `shadow_distance` meters; `view: \"shadow_cascades\"` shows\n\
-them). A whole look at once: `edit_apply` `apply_look` (`plain` is none of it).\n\
+(`ParticleEmitter`). 2D: orthographic `Camera`, `Sprite`, sprite sheets (`*.sheet.json`) played by `SpriteAnimator`,\n\
+`PhysicsSettings` `profile` `TopDown2D` / `SideView2D`. Players: `sim_start` `players`, `sim_step` `players`, `PlayerActions`.\n\
+`asset_create` makes placeholder sounds and pictures, sprite sheets, and material files (`*.mat.json`: textures, tiling,\n\
+cut-outs) that a `Material` names in its `file`. `capture_frame` and `describe_view` give `stats` (draw calls, triangles,\n\
+lights, effects). The look is data (`Ambient`, `Sky`, `Fog`, `Bloom`, `ColorGrading`, `RenderSettings`); a scene starts\n\
+with the look `natural`, and `edit_apply` `apply_look` sets a whole look (`plain` is none of it).\n\
 **`wish://docs/recipes` has working pieces of games** (a platformer character, a follow camera, pickups with a score,\n\
 checkpoints, moving platforms, a win screen and a button, a 2D scene, a texture on a box, tests): start from them.\n\
 \n\
