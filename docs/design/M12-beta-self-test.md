@@ -41,6 +41,7 @@ section 5). The user listened while it ran and reported the first finding.
 | F10 | low | An exported game's window has the system's plain icon. | Recorded for release 1.1: a game's own icon is a setting the project does not have yet. |
 | F12 | low | `wen edit --help` answers with an error instead of help (the error does list the valid names). | Recorded for release 1.1: help for every subcommand. |
 | N1 | note | Under the automation tool, the window lost focus between steps; the first click after that sometimes opened the wrong menu. With the window focused, menus open correctly every time, and a headless probe with the press and release in separate frames is correct. | Not reproduced by hand; to be checked by a person. |
+| U1 | medium | **Asked by the user after trying the beta:** the line between the scene view and the game view could not be moved, and neither view could be maximized or closed from its own corner ("like Unity"). | Fixed as the redesign's package R6 (`M12-editor-redesign.md` §5): a draggable split, maximize/restore by button, menu or Shift+Space, close from the game view's corner. Test `wish_editor/tests/view_layout.rs`. |
 | N2 | note | Duplicate puts the copy exactly on the original (as Unity does), so nothing seems to happen; the wheel zooms toward the view's middle, not the pointer. | Kept for 1.0; noted for the editor's next release. |
 
 ## 3. What this test cannot say

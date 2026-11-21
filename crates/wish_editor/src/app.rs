@@ -11,7 +11,7 @@
 //! changed the scene meanwhile the call is refused and the person is told,
 //! instead of overwriting their work.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use egui::{Align, Layout, Pos2, Rect, Sense, Ui, pos2, vec2};
@@ -239,6 +239,11 @@ pub struct EditorApp {
     /// The controls that float on the scene view (last frame's places): a
     /// press on them is theirs, not the view's.
     view_overlays: RefCell<Vec<Rect>>,
+    /// The scene view's share of the middle when the game view is beside
+    /// it (the line between them is dragged; a double click centres it).
+    view_split: Cell<f32>,
+    /// The view that fills the editor (the panels hidden), if one does.
+    maximized: Cell<Option<Maximized>>,
     pointer: Option<(f32, f32)>,
     modifiers: Modifiers,
     /// Where a primary-button press began over the view.
@@ -557,6 +562,8 @@ impl EditorApp {
             orbiting: false,
             panning: false,
             view_overlays: RefCell::new(Vec::new()),
+            view_split: Cell::new(0.5),
+            maximized: Cell::new(None),
             pointer: None,
             modifiers: Modifiers::default(),
             press: None,
@@ -2028,6 +2035,7 @@ impl EditorApp {
             "view.game_view" => actions.toggle_game_view = true,
             "view.reset_camera" => actions.reset_camera = true,
             "view.frame" => actions.frame |= self.play.is_none(),
+            "view.maximize" => self.toggle_maximized(None),
             "project.check" => actions.show_problems = true,
             "project.build_code" => actions.build_code = true,
             "project.run_tests" => actions.run_tests = true,
@@ -4618,6 +4626,17 @@ impl EditorApp {
             pos2(area.max.x - 8.0, area.min.y + 44.0),
         );
         floating(ui, band, true, |ui| {
+            let (icon, word) = if self.maximized.get() == Some(Maximized::Scene) {
+                (Icon::Restore, t("Restore the view"))
+            } else {
+                (Icon::Maximize, t("Maximize the view"))
+            };
+            if tool_button(ui, icon, word, false, false, true, None)
+                .on_hover_text(format!("{word} (Shift+Space)"))
+                .clicked()
+            {
+                self.toggle_maximized(Some(Maximized::Scene));
+            }
             if tool_button(
                 ui,
                 Icon::Screen,
@@ -4655,6 +4674,62 @@ impl EditorApp {
                     }
                 });
         })
+    }
+
+    /// The game view's own controls, floating at its top right: maximize
+    /// (or restore) and close.
+    fn game_view_tools(&self, ui: &mut Ui, area: Rect, actions: &mut Actions) -> Rect {
+        use crate::style::{Icon, tool_button};
+        let band = Rect::from_min_max(
+            pos2(area.min.x + 8.0, area.min.y + 8.0),
+            pos2(area.max.x - 8.0, area.min.y + 44.0),
+        );
+        floating(ui, band, true, |ui| {
+            if tool_button(
+                ui,
+                Icon::Close,
+                t("Close the game view"),
+                false,
+                false,
+                true,
+                None,
+            )
+            .on_hover_text(t("Close the game view"))
+            .clicked()
+            {
+                self.maximized.set(None);
+                actions.toggle_game_view = true;
+            }
+            let (icon, word) = if self.maximized.get() == Some(Maximized::Game) {
+                (Icon::Restore, t("Restore the game view"))
+            } else {
+                (Icon::Maximize, t("Maximize the game view"))
+            };
+            if tool_button(ui, icon, word, false, false, true, None)
+                .on_hover_text(format!("{word} (Shift+Space)"))
+                .clicked()
+            {
+                self.toggle_maximized(Some(Maximized::Game));
+            }
+        })
+    }
+
+    /// Maximizes `which` view (`None`: the one under the pointer, else the
+    /// scene view), or brings the maximized one back.
+    fn toggle_maximized(&self, which: Option<Maximized>) {
+        if self.maximized.get().is_some() {
+            self.maximized.set(None);
+            return;
+        }
+        let over_game = self
+            .pointer
+            .is_some_and(|(x, y)| self.game_viewport.contains(pos2(x, y)));
+        let which = which.unwrap_or(if over_game {
+            Maximized::Game
+        } else {
+            Maximized::Scene
+        });
+        self.maximized.set(Some(which));
     }
 
     /// The menu bar's menus: File, Edit, Create, View, Game, AI, Help.
@@ -4853,6 +4928,14 @@ impl EditorApp {
             {
                 actions.toggle_game_view = true;
                 ui.close();
+            }
+            let shown = if self.maximized.get().is_some() {
+                t("Restore the view")
+            } else {
+                t("Maximize the view")
+            };
+            if item(ui, shown, key("view.maximize"), true) {
+                self.toggle_maximized(None);
             }
             if item(
                 ui,
@@ -5466,85 +5549,92 @@ impl EditorApp {
             self.ai_layout(ui, viewport, game_area, &mut actions);
             return actions;
         }
-        egui::Panel::bottom("assets")
-            .resizable(true)
-            .default_size(170.0)
-            .size_range(110.0..=420.0)
-            .show(ui, |ui| {
-                crate::panels::tabs(ui, self.tab, self.found.len(), &mut actions.panels);
-                ui.separator();
-                match self.tab {
-                    Tab::Assets => {
-                        // A selected material file is edited with the
-                        // inspector's widgets, over the MaterialFile schema.
-                        let widgets = InspectorView {
-                            inspected: &[],
-                            schemas: &self.schemas,
-                            resources: false,
-                            entities: Vec::new(),
-                            assets: &self.assets,
-                            copied: None,
-                            state: &self.inspector_state,
-                        };
-                        let view = BrowserView {
-                            assets: &self.files,
-                            selected: self.asset_selected.as_deref(),
-                            detail: self.asset_detail.as_ref(),
-                            root: self.workspace.root(),
-                            state: &self.browser_state,
-                            material: self
-                                .material_schema
-                                .as_ref()
-                                .map(|schema| (schema, &widgets)),
-                        };
-                        crate::browser::panel(ui, &view, &mut actions.browser);
-                    }
-                    Tab::Console => crate::panels::console(ui, &self.log, &mut actions.panels),
-                    Tab::Activity => {
-                        let mut agents_only = self.agents_only.get();
-                        crate::panels::activity(
+        // A maximized view fills the editor: the panels step aside (the
+        // menu bar, the toolbar and the status bar stay).
+        let full_view = self.maximized.get().is_some();
+        if !full_view {
+            egui::Panel::bottom("assets")
+                .resizable(true)
+                .default_size(170.0)
+                .size_range(110.0..=420.0)
+                .show(ui, |ui| {
+                    crate::panels::tabs(ui, self.tab, self.found.len(), &mut actions.panels);
+                    ui.separator();
+                    match self.tab {
+                        Tab::Assets => {
+                            // A selected material file is edited with the
+                            // inspector's widgets, over the MaterialFile schema.
+                            let widgets = InspectorView {
+                                inspected: &[],
+                                schemas: &self.schemas,
+                                resources: false,
+                                entities: Vec::new(),
+                                assets: &self.assets,
+                                copied: None,
+                                state: &self.inspector_state,
+                            };
+                            let view = BrowserView {
+                                assets: &self.files,
+                                selected: self.asset_selected.as_deref(),
+                                detail: self.asset_detail.as_ref(),
+                                root: self.workspace.root(),
+                                state: &self.browser_state,
+                                material: self
+                                    .material_schema
+                                    .as_ref()
+                                    .map(|schema| (schema, &widgets)),
+                            };
+                            crate::browser::panel(ui, &view, &mut actions.browser);
+                        }
+                        Tab::Console => crate::panels::console(ui, &self.log, &mut actions.panels),
+                        Tab::Activity => {
+                            let mut agents_only = self.agents_only.get();
+                            crate::panels::activity(
+                                ui,
+                                &self.activity,
+                                &self.proposals,
+                                &mut agents_only,
+                                &mut actions.panels,
+                            );
+                            self.agents_only.set(agents_only);
+                        }
+                        Tab::Problems => {
+                            crate::panels::problems(ui, &self.found, &mut actions.panels)
+                        }
+                        Tab::Performance => {
+                            crate::panels::performance(ui, &self.timings, self.play.is_some());
+                        }
+                        Tab::History => crate::panels::history(
                             ui,
-                            &self.activity,
-                            &self.proposals,
-                            &mut agents_only,
+                            &self.history,
+                            (self.can_undo, self.can_redo),
                             &mut actions.panels,
-                        );
-                        self.agents_only.set(agents_only);
+                        ),
                     }
-                    Tab::Problems => crate::panels::problems(ui, &self.found, &mut actions.panels),
-                    Tab::Performance => {
-                        crate::panels::performance(ui, &self.timings, self.play.is_some());
-                    }
-                    Tab::History => crate::panels::history(
-                        ui,
-                        &self.history,
-                        (self.can_undo, self.can_redo),
-                        &mut actions.panels,
-                    ),
-                }
-            });
-        egui::Panel::left("hierarchy")
-            .default_size(220.0)
-            .show(ui, |ui| self.hierarchy(ui, &mut actions));
-        egui::Panel::right("inspector")
-            .default_size(300.0)
-            .show(ui, |ui| {
-                let view = InspectorView {
-                    inspected: &self.inspected,
-                    schemas: if self.inspecting_resources {
-                        &self.resource_schemas
-                    } else {
-                        &self.schemas
-                    },
-                    resources: self.inspecting_resources,
-                    entities: self.rows.iter().map(|row| row.id.as_str()).collect(),
-                    assets: &self.assets,
-                    copied: self.clipboard.as_ref().map(|(name, _)| name.as_str()),
-                    state: &self.inspector_state,
-                };
-                inspector::panel(ui, &view, &mut actions.inspector);
-            });
-        if self.cockpit.open {
+                });
+            egui::Panel::left("hierarchy")
+                .default_size(220.0)
+                .show(ui, |ui| self.hierarchy(ui, &mut actions));
+            egui::Panel::right("inspector")
+                .default_size(300.0)
+                .show(ui, |ui| {
+                    let view = InspectorView {
+                        inspected: &self.inspected,
+                        schemas: if self.inspecting_resources {
+                            &self.resource_schemas
+                        } else {
+                            &self.schemas
+                        },
+                        resources: self.inspecting_resources,
+                        entities: self.rows.iter().map(|row| row.id.as_str()).collect(),
+                        assets: &self.assets,
+                        copied: self.clipboard.as_ref().map(|(name, _)| name.as_str()),
+                        state: &self.inspector_state,
+                    };
+                    inspector::panel(ui, &view, &mut actions.inspector);
+                });
+        }
+        if self.cockpit.open && !full_view {
             egui::Panel::right("cockpit")
                 .default_size(320.0)
                 .show(ui, |ui| {
@@ -5568,33 +5658,82 @@ impl EditorApp {
             .show(ui, |ui| {
                 let full = ui.max_rect();
                 // The game view beside the scene view, when it is wanted and
-                // the middle is wide enough for both.
-                let split = self.game_view && full.width() >= GAME_VIEW_MIN_WIDTH;
-                let area = if split {
-                    let half = ((full.width() - VIEW_GAP) * 0.5).floor();
-                    *game_area = Rect::from_min_max(
-                        pos2(full.min.x + half + VIEW_GAP, full.min.y),
-                        full.max,
-                    );
-                    Rect::from_min_size(full.min, vec2(half, full.height()))
-                } else {
-                    full
+                // the middle is wide enough for both; or one view filling the
+                // middle when it is maximized.
+                let maximized = self.maximized.get();
+                let split = maximized.is_none() && self.game_view && full.width() >= GAME_VIEW_MIN_WIDTH;
+                let mut overlays = Vec::new();
+                let area = match maximized {
+                    Some(Maximized::Game) => {
+                        *game_area = full;
+                        Rect::NOTHING
+                    }
+                    Some(Maximized::Scene) => full,
+                    None if split => {
+                        let room = full.width() - VIEW_GAP;
+                        let left = (room * self.view_split.get().clamp(0.2, 0.8)).floor();
+                        *game_area = Rect::from_min_max(
+                            pos2(full.min.x + left + VIEW_GAP, full.min.y),
+                            full.max,
+                        );
+                        // The line between the views: dragged to share the
+                        // middle differently, double-clicked to centre it.
+                        let line = Rect::from_min_max(
+                            pos2(full.min.x + left - 2.0, full.min.y),
+                            pos2(full.min.x + left + VIEW_GAP + 2.0, full.max.y),
+                        );
+                        let handle = ui
+                            .interact(line, ui.scope_id().with("view-split"), Sense::click_and_drag())
+                            .on_hover_text(t("Drag to share the middle between the views; double-click to centre"));
+                        if handle.hovered() || handle.dragged() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                        }
+                        if handle.dragged()
+                            && let Some(at) = handle.interact_pointer_pos()
+                        {
+                            self.view_split
+                                .set(((at.x - full.min.x) / room.max(1.0)).clamp(0.2, 0.8));
+                        }
+                        if handle.double_clicked() {
+                            self.view_split.set(0.5);
+                        }
+                        let color = if handle.hovered() || handle.dragged() {
+                            crate::style::pal().select
+                        } else {
+                            crate::style::pal().line
+                        };
+                        ui.painter().rect_filled(
+                            Rect::from_min_max(
+                                pos2(full.min.x + left, full.min.y),
+                                pos2(full.min.x + left + VIEW_GAP, full.max.y),
+                            ),
+                            0.0,
+                            color,
+                        );
+                        overlays.push(line);
+                        Rect::from_min_size(full.min, vec2(left, full.height()))
+                    }
+                    None => full,
                 };
                 *viewport = area;
                 if split {
                     view_badge(ui, area, t("Scene"));
                     view_badge(ui, *game_area, t("Game"));
                 }
+                if *game_area != Rect::NOTHING {
+                    overlays.push(self.game_view_tools(ui, *game_area, &mut actions));
+                }
                 // The view's own controls float on it (the redesign, R3):
                 // the handles' tools at its top left, what it shows at its
                 // top right, how to move around at its bottom left. A press
                 // on them is theirs, not the view's.
-                let mut overlays = Vec::new();
-                if self.play.is_none() {
-                    overlays.push(self.view_tools(ui, area, &mut actions));
-                    view_hint(ui, area);
+                if area != Rect::NOTHING {
+                    if self.play.is_none() {
+                        overlays.push(self.view_tools(ui, area, &mut actions));
+                        view_hint(ui, area);
+                    }
+                    overlays.push(self.view_shows(ui, area, &mut actions));
                 }
-                overlays.push(self.view_shows(ui, area, &mut actions));
                 *self.view_overlays.borrow_mut() = overlays;
                 // A file dragged from the browser is dropped on the view.
                 let target = ui.allocate_rect(area, Sense::hover());
@@ -5902,6 +6041,13 @@ const GAME_VIEW_MIN_WIDTH: f32 = 900.0;
 const VIEW_GAP: f32 = 4.0;
 
 /// A view's name in its top-left corner ("Scene", "Game").
+/// The view that fills the editor when maximized.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Maximized {
+    Scene,
+    Game,
+}
+
 /// One entry of the Create menu: its id (its command is `create.<id>`, and
 /// new entities are named `<id>_<n>`), the menu's word for it, and the
 /// components it is made with (as `edit_apply`'s `spawn` takes them).

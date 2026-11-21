@@ -408,6 +408,12 @@ pub enum Icon {
     Chat,
     /// The engine's wishing wand (the AI mode).
     Wish,
+    /// Make a view fill the editor.
+    Maximize,
+    /// Bring a maximized view back to its place.
+    Restore,
+    /// Close (a view).
+    Close,
 }
 
 /// Draws `icon` in `rect` (it is square; the smaller side counts) in

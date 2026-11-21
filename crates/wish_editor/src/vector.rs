@@ -152,6 +152,13 @@ fn parts(icon: Icon) -> &'static [Part] {
             Line("M12 1.5 L12 4.5 M12 19.5 L12 22.5 M1.5 12 L4.5 12 M19.5 12 L22.5 12"),
         ],
         Icon::Dot => &[Disc(12.0, 12.0, 3.5)],
+        Icon::Maximize => &[Line(
+            "M4 9.5 L4 4 L9.5 4 M14.5 4 L20 4 L20 9.5 M20 14.5 L20 20 L14.5 20 M9.5 20 L4 20 L4 14.5",
+        )],
+        Icon::Restore => &[Line(
+            "M9.5 4 L9.5 9.5 L4 9.5 M14.5 4 L14.5 9.5 L20 9.5 M20 14.5 L14.5 14.5 L14.5 20 M9.5 20 L9.5 14.5 L4 14.5",
+        )],
+        Icon::Close => &[Line("M6 6 L18 18 M18 6 L6 18")],
         Icon::Wish => &[
             Line("M4.5 19.5 L13.2 10.8"),
             Soft(

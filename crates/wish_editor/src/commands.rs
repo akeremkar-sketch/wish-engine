@@ -143,6 +143,11 @@ pub(crate) const COMMANDS: &[Command] = &[
         keys: "",
     },
     Command {
+        id: "view.maximize",
+        name: || t("Maximize or restore the view"),
+        keys: "Shift+Space",
+    },
+    Command {
         id: "view.frame",
         name: || t("Frame the selection"),
         keys: "F",

@@ -1,7 +1,8 @@
 # M12: the editor redesign before 1.0
 
 **Status:** direction A (Workshop) chosen by the user, 20 November 2026;
-packages R1 to R5 done (the README pictures are redrawn with them).
+packages R1 to R5 done (the README pictures are redrawn with them); R6, the
+views' layout, added after the beta self-test (21 November 2026).
 
 ## 1. Request and scope
 
@@ -141,3 +142,14 @@ images refreshed with `UPDATE_GOLDEN=1` and looked at).
    and a progress line, the Hub of section 4, tooltips that name shortcuts,
    focus rings, empty states with a next step, notices for saves and undo,
    "reduce motion" respected; README pictures and both guides updated.
+6. **R6 · The views' layout** (user request after trying the beta,
+   21 November 2026: "like Unity"). The line between the scene view and
+   the game view is dragged to share the middle (20% to 80%; a double
+   click centres it; the cursor shows the resize arrows). Either view is
+   maximized to fill the editor and restored: a button in the view's own
+   corner, *View > Maximize the view*, or **Shift+Space** over the view
+   (command `view.maximize`); the panels step aside while the menu bar,
+   the toolbar and the status bar stay. The game view closes from its own
+   corner and comes back from the scene view's *Game view* button. The
+   split and the maximized view are the window's state, not a preference
+   (they are not written anywhere). Tests: `wish_editor/tests/view_layout.rs`.
