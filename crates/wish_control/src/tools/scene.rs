@@ -173,9 +173,13 @@ pub(crate) const EDIT_APPLY: Tool = Tool {
 pub(crate) const EDIT_HISTORY: Tool = Tool {
     name: "edit_history",
     title: "History, undo and redo",
-    description: "The scene's change history (who changed which entities, newest first) and undo / redo. Changes made by people, agents and by editing the file directly are all in one history.",
+    description: "The scene's change history (who changed which entities, newest first) and undo / redo. Changes made by people, agents and by editing the file directly are all in one history. A tilemap file (*.tilemap.json) given as scene has a history of its own, used the same way: each entry says how many cells and which layers it changed.",
     params: &[
-        SCENE,
+        Param::optional(
+            "scene",
+            Kind::String,
+            "The scene file, project-relative (default: the project's scene from wish.json), or a tilemap file (*.tilemap.json) for that map's painting history.",
+        ),
         Param::optional(
             "action",
             Kind::Choice(&["list", "undo", "redo", "revert"]),
@@ -1040,6 +1044,24 @@ fn edit_history(
     args: &Args,
     actor: &Actor,
 ) -> Result<Map<String, Value>> {
+    if let Some(map) = args
+        .str("scene")
+        .filter(|path| path.trim().ends_with(wish_asset::TILEMAP_SUFFIX))
+    {
+        let path = crate::tilemaps::normalize_map_path(workspace.root(), map, "/scene")?;
+        return crate::tilemaps::history(
+            workspace,
+            &path,
+            (
+                args.str("action").unwrap_or("list"),
+                args.int("revision").and_then(|r| u64::try_from(r).ok()),
+                args.int("steps").unwrap_or(1),
+                usize::try_from(args.int("limit").unwrap_or(20)).unwrap_or(20),
+            ),
+            actor,
+            args.flag("dry_run"),
+        );
+    }
     let (path, notes) = open(workspace, args, false)?;
     let action = args.str("action").unwrap_or("list");
     let mut out = Map::new();

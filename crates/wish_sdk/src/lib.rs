@@ -68,6 +68,7 @@ pub use wish_core::{AssetRef, Color, Entity, Text, math};
 pub use wish_schema::{component, event, resource, schema};
 pub use wish_sdk_macros::system;
 pub use wish_types::PhysicsProfile;
+pub use wish_types::Tilemap;
 pub use wish_types::{
     ActionSlot, ActionState, Ambient, AnimationFinished, AnimationPlayer, AudioBus, AudioListener,
     AudioPlayback, AudioSettings, AudioSource, BodyForce, BodyImpulse, BodyKind, BodyVelocity,
@@ -107,7 +108,7 @@ pub mod prelude {
         ButtonClicked, Pointer, UiAlign, UiButton, UiDirection, UiImage, UiInteraction, UiJustify,
         UiLayout, UiLength, UiNode, UiPosition, UiSettings, UiText, UiTextAlign, UiUnit,
     };
-    pub use crate::{ParticleEmitter, ParticleState, Projection, Sprite, SpriteAnimator};
+    pub use crate::{ParticleEmitter, ParticleState, Projection, Sprite, SpriteAnimator, Tilemap};
     pub use crate::{PlayerActions, PlayerId, Players};
 }
 

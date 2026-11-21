@@ -119,6 +119,37 @@ fn examples() -> Vec<(&'static str, Value)> {
             json!({ "path": "assets/dot.png", "picture": { "shape": "circle", "width": 16, "height": 16, "color": [1, 0, 0, 1] } }),
         ),
         ("asset_create", json!({ "path": "assets/music.mp3" })),
+        // Tilemaps (release 1.1): a tileset of the picture, a map, a stroke,
+        // a mistake, a look, the map's history and an undo.
+        (
+            "asset_create",
+            json!({ "path": "assets/tiles.tileset.json", "tileset": { "image": "assets/dot.png",
+                "grid": { "frame": [8, 8], "columns": 2, "rows": 2 }, "tiles": { "1": { "solid": true } } } }),
+        ),
+        (
+            "asset_create",
+            json!({ "path": "maps/room.tilemap.json", "tilemap": { "tileset": "assets/tiles.tileset.json", "layers": ["floor", "walls"] } }),
+        ),
+        (
+            "tilemap_edit",
+            json!({ "tilemap": "maps/room.tilemap.json", "ops": [
+                { "op": "rect", "layer": "walls", "from": [0, 0], "to": [5, 3], "tile": 1 },
+                { "op": "rect", "layer": "walls", "from": [1, 1], "to": [4, 2], "tile": -1 },
+                { "op": "fill", "layer": "floor", "at": [2, 2], "tile": 0 }] }),
+        ),
+        (
+            "tilemap_edit",
+            json!({ "tilemap": "maps/room.tilemap.json", "ops": [{ "op": "set", "layer": "wals", "cells": [[0, 0, 1]] }] }),
+        ),
+        (
+            "tilemap_edit",
+            json!({ "tilemap": "maps/room.tilemap.json", "action": "get", "from": [0, 0], "to": [5, 3] }),
+        ),
+        ("edit_history", json!({ "scene": "maps/room.tilemap.json" })),
+        (
+            "edit_history",
+            json!({ "scene": "maps/room.tilemap.json", "action": "undo", "dry_run": true }),
+        ),
         ("project_settings", json!({})),
         (
             "project_settings",
@@ -861,6 +892,30 @@ fn two_process_calls() -> Vec<(&'static str, Vec<(&'static str, Value)>)> {
             vec![
                 ("asset_info", json!({ "path": "scenes/main.scene.json" })),
                 ("asset_info", json!({ "path": "assets/dot.png" })),
+            ],
+        ),
+        (
+            "tilemap_edit",
+            vec![
+                (
+                    "asset_create",
+                    json!({ "path": "assets/tiles.tileset.json", "tileset": { "image": "assets/dot.png",
+                        "grid": { "frame": [8, 8], "columns": 2, "rows": 2 }, "tiles": { "1": { "solid": true } } } }),
+                ),
+                (
+                    "asset_create",
+                    json!({ "path": "maps/room.tilemap.json", "tilemap": { "tileset": "assets/tiles.tileset.json", "layers": ["walls"] } }),
+                ),
+                (
+                    "tilemap_edit",
+                    json!({ "tilemap": "maps/room.tilemap.json", "ops": [
+                        { "op": "rect", "layer": "walls", "from": [0, 0], "to": [3, 2], "tile": 1 }] }),
+                ),
+                (
+                    "tilemap_edit",
+                    json!({ "tilemap": "maps/room.tilemap.json", "action": "get", "from": [0, 0], "to": [3, 2] }),
+                ),
+                ("edit_history", json!({ "scene": "maps/room.tilemap.json" })),
             ],
         ),
         (

@@ -256,6 +256,10 @@ fn build_app(
     }
     crate::script::propagation_after_all(&mut app)?;
     wish_transform::update_global_transforms(app.world_mut())?;
+    // The walls of the project's tilemaps, before physics is prepared, so
+    // that it builds them with the rest.
+    let tile_shapes = workspace.tile_shapes();
+    wish_physics::install_tile_shapes(app.world_mut(), tile_shapes.clone());
     // Physics knows the scene before the first tick, so that questions
     // asked during it (game code's ray casts) see it.
     wish_physics::prepare(app.world_mut())?;
@@ -287,6 +291,26 @@ fn build_app(
             print.write_u32(clip.frames);
             print.write_u32(clip.fps.to_bits());
             print.write_u32(u32::from(clip.looping));
+        }
+    }
+    // Tilemaps' walls are part of what physics reads.
+    if !tile_shapes.is_empty() {
+        print.write_str("tilemaps");
+        for (map, shapes) in &tile_shapes {
+            print.write_str(map);
+            print.write_u64(shapes.boxes.len() as u64);
+            for cell in shapes.boxes.iter().flatten() {
+                print.write_u32(*cell as u32);
+            }
+            print.write_u64(shapes.outlines.len() as u64);
+            for ([x, y], outline) in &shapes.outlines {
+                print.write_u32(*x as u32);
+                print.write_u32(*y as u32);
+                for [px, py] in outline {
+                    print.write_u32(px.to_bits());
+                    print.write_u32(py.to_bits());
+                }
+            }
         }
     }
     print.write_u64(font_print);

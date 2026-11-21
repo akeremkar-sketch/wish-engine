@@ -501,6 +501,8 @@ pub struct Renderer {
     sprite_textures: crate::sprites::SpriteTextures,
     /// Sprite sheets, by project path.
     sprite_sheets: BTreeMap<String, crate::sprites::SpriteSheet>,
+    /// Tilemaps, by project path.
+    tile_grids: BTreeMap<String, crate::sprites::TileGrid>,
     /// Targets and buffers kept from frame to frame. Locked for
     /// the whole of a call, readback included: two threads sharing a
     /// renderer take turns (as the GPU lock makes them do anyway). Always
@@ -608,6 +610,7 @@ impl Renderer {
             ui_pictures: BTreeMap::new(),
             sprite_textures: crate::sprites::SpriteTextures::default(),
             sprite_sheets: BTreeMap::new(),
+            tile_grids: BTreeMap::new(),
             pool: Mutex::new(Pool::default()),
         })
     }
@@ -625,6 +628,7 @@ impl Renderer {
         fresh.ui_pictures = std::mem::take(&mut self.ui_pictures);
         fresh.sprite_textures = std::mem::take(&mut self.sprite_textures);
         fresh.sprite_sheets = std::mem::take(&mut self.sprite_sheets);
+        fresh.tile_grids = std::mem::take(&mut self.tile_grids);
         std::mem::swap(&mut fresh.pool, &mut self.pool);
         let old = std::mem::replace(self, fresh);
         // The old pipelines and what else was made for them are let go of
@@ -656,6 +660,65 @@ impl Renderer {
     /// sprites that name it show their own picture.
     pub fn remove_sprite_sheet(&mut self, path: &str) {
         self.sprite_sheets.remove(path);
+    }
+
+    /// Keeps a tilemap under its project path (`Tilemap.map`), replacing
+    /// one of the same path: entities whose `Tilemap` names it draw its
+    /// tiles from its tileset's picture (kept with
+    /// [`Renderer::set_ui_picture`] under the grid's `image`).
+    pub fn set_tilemap(&mut self, path: &str, grid: crate::sprites::TileGrid) {
+        self.tile_grids.insert(path.to_owned(), grid);
+    }
+
+    /// Forgets the tilemap `path` (it could not be read any more): nothing
+    /// is drawn for it.
+    pub fn remove_tilemap(&mut self, path: &str) {
+        self.tile_grids.remove(path);
+    }
+
+    /// The tilemap kept under `path`.
+    pub fn tilemap(&self, path: &str) -> Option<&crate::sprites::TileGrid> {
+        self.tile_grids.get(path)
+    }
+
+    /// The tilemaps of `scene` as a `width` × `height` picture from
+    /// `camera` (or the first camera) shows them: their boxes, the cells
+    /// and how many tiles are on screen.
+    pub fn tilemap_elements(
+        &self,
+        scene: &RenderScene,
+        camera: Option<Entity>,
+        width: u32,
+        height: u32,
+    ) -> Result<Vec<crate::sprites::TilemapElement>> {
+        let view = choose_camera(scene, camera)?;
+        Ok(crate::sprites::tilemap_elements(
+            scene,
+            view,
+            (width, height),
+            &self.ui_pictures,
+            &self.tile_grids,
+        ))
+    }
+
+    /// The cell and tiles of each tilemap of `scene` under the pixel
+    /// `point` (x right, y down from the top left) of a `width` × `height`
+    /// picture from `camera` (or the first camera).
+    pub fn tiles_under(
+        &self,
+        scene: &RenderScene,
+        camera: Option<Entity>,
+        (width, height): (u32, u32),
+        point: [f32; 2],
+    ) -> Result<Vec<crate::sprites::TileUnder>> {
+        let view = choose_camera(scene, camera)?;
+        Ok(crate::sprites::tiles_under(
+            scene,
+            view,
+            (width, height),
+            point,
+            &self.tile_grids,
+        ))
     }
 
     /// The sprite sheet kept under `path`.

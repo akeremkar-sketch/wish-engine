@@ -29,12 +29,13 @@ pub const NON_ASSET_FOLDERS: &[&str] = &[
 pub const EXPORTS_FOLDER: &str = "exports/";
 
 /// Whether a file name is an engine document: a scene, a prefab, a meta
-/// file, a material file or a sprite sheet. Documents are strict, canonical
+/// file, a material file, a sprite sheet, a tileset or a tilemap.
+/// Documents are strict, canonical
 /// JSON with a format number, which `wen check`, `wen fmt` and `wen migrate`
 /// work on.
 ///
 /// Scenes, prefabs and meta files are not assets. Material files and sprite
-/// sheets are both documents and assets ([`AssetIndex`] lists them),
+/// sheets, tilesets and tilemaps are all both documents and assets ([`AssetIndex`] lists them),
 /// because scenes refer to them the way they refer to a model.
 pub fn is_document(name: &str) -> bool {
     [".scene.json", ".prefab.json", ".meta.json"]
@@ -44,19 +45,27 @@ pub fn is_document(name: &str) -> bool {
 }
 
 /// Whether a file name is a document that is also an asset: a material
-/// file or a sprite sheet.
+/// file, a sprite sheet, a tileset or a tilemap.
 pub fn is_document_asset(name: &str) -> bool {
-    crate::material::is_material(name) || crate::sheet::is_sheet(name)
+    crate::material::is_material(name)
+        || crate::sheet::is_sheet(name)
+        || crate::tiles::is_tileset(name)
+        || crate::tiles::is_tilemap(name)
 }
 
 /// Reads a document that is also an asset (a material file or a sprite
 /// sheet, [`is_document_asset`]) with its kind's size cap
-/// (`material_file_too_large`, `sheet_file_too_large`): every place that
+/// (`material_file_too_large`, `sheet_file_too_large`,
+/// `tileset_file_too_large`, `tilemap_file_too_large`): every place that
 /// reads such a file whole goes through this or its kind's own reader.
 /// Any other file is read as a material file is, with the same cap.
 pub fn read_document_asset(file: &Path, name: &str) -> Result<String> {
     if crate::sheet::is_sheet(name) {
         crate::sheet::read_sheet_file(file, name)
+    } else if crate::tiles::is_tileset(name) {
+        crate::tiles::read_tileset_file(file, name)
+    } else if crate::tiles::is_tilemap(name) {
+        crate::tiles::read_tilemap_file(file, name)
     } else {
         crate::material::read_material_file(file, name)
     }
@@ -66,7 +75,10 @@ pub fn read_document_asset(file: &Path, name: &str) -> Result<String> {
 pub fn is_too_large(problem: &Diagnostic) -> bool {
     matches!(
         &*problem.code,
-        "material_file_too_large" | "sheet_file_too_large"
+        "material_file_too_large"
+            | "sheet_file_too_large"
+            | "tileset_file_too_large"
+            | "tilemap_file_too_large"
     )
 }
 

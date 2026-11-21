@@ -138,8 +138,8 @@ Dil, karşılama ekranının sağ üstünden, sonra da *Görünüm* menüsünden
 - **Varlıklar** (alt sekme; projenin dosyaları):
   - Projenin modelleri, resimleri ve sesleri, türe göre süzülür.
   - Görünüme sürükleyince sahneye yerleşir.
-  - *Yeni...* yer tutucu bir ses ya da resim, bir *Malzeme dosyası* ya da seçili resmin
-    *Sprite sayfası*nı yapar.
+  - *Yeni...* yer tutucu bir ses ya da resim, bir *Malzeme dosyası*, seçili resmin *Sprite
+    sayfası*nı ya da *Karo seti*ni, ya da seçili (veya ilk) karo setinin *Karo haritası*nı yapar.
   - *Yeniden adlandır / taşı...* dosyayı taşır ve ona yapılan bütün başvuruları günceller.
   - *Dışarıda aç* sisteminizin kullandığı programla açar.
 - **Görünüşler (malzemeler ve dokular):**
@@ -175,6 +175,17 @@ Dil, karşılama ekranının sağ üstünden, sonra da *Görünüm* menüsünden
   - Sonra `Sprite` olan nesneye bir `SpriteAnimator` ekleyin; `sheet` alanına sayfayı, `clip`
     alanına bir klibi yazın. Oyun çalışırken klip oynar; oyun kodu klibi
     `animator.play(text("walk"))` ile değiştirir.
+- **Karo haritaları (2B odalar, duvarlar, zeminler):**
+  - Karolardan oluşan bir resim seçin, sonra *Varlıklar*, *Yeni...*, *Karo seti* (16 piksellik
+    karolar) ve *Yeni...*, *Karo haritası* (`floor` ve `walls` katmanlı bir harita).
+  - Bir nesneye `Tilemap` ekleyin ve `map` alanına haritayı yazın (`cell_size` bir hücrenin metre
+    cinsinden boyutudur). Nesne seçiliyken denetçi, bileşenin altında *Karo paleti*ni gösterir:
+    katmanı (*Boyanacak katman*), bir aracı (*Fırça*, *Dikdörtgen*, *Doldur*, *Sil*, *Damlalık*)
+    ve bir karoyu seçin, sonra görünümde basıp sürükleyin. Her fırça darbesi haritanın kendi
+    geçmişinde tek bir değişikliktir: boyarken Ctrl+Z sonuncuyu geri alır. *Katı karo* seçili
+    karoyu duvar yapar: katı karolar karakterleri durdurur (`collide` açık olan katmanda).
+  - Harita kendi `layer` katmanındaki sprite'ların altında çizilir; `y_sort` bu sprite'ları,
+    yukarıdan görülen oyunlar için, aşağıdakini yukarıdakinin üstüne çizer.
 - **Prefab'lar:**
   - *Prefab yap* seçimi yeniden kullanılabilir bir parçaya çevirir.
   - Örnekler *{prefab} örneği* diye görünür; değiştirilmiş alanları işaretlidir.
@@ -412,7 +423,8 @@ dilinizdedir.
 wish.json             proje: ad, tür (2B ya da 3B), varsayılan sahne
 scenes/               sahneler (*.scene.json) ve prefab'lar (*.prefab.json)
 assets/               modeller (.glb/.gltf), resimler (.png), sesler (.wav/.ogg),
-                      malzeme dosyaları (*.mat.json), sprite sayfaları (*.sheet.json)
+                      malzeme dosyaları (*.mat.json), sprite sayfaları (*.sheet.json),
+                      karo setleri (*.tileset.json), karo haritaları (*.tilemap.json)
 scripts/src/lib.rs    oyun kodu
 input.json            eylemler ve tuşları
 tests/                senaryo testleri (*.test.json) ve altın resimler

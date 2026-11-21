@@ -61,6 +61,28 @@ fn ops_summary(ops: &Value) -> String {
 fn summary(tool: &str, args: &Value) -> String {
     match tool {
         "edit_apply" => ops_summary(&args["ops"]),
+        "tilemap_edit" => {
+            let all = args["ops"]
+                .as_array()
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            let mut parts: Vec<String> = all
+                .iter()
+                .take(6)
+                .map(|op| {
+                    format!(
+                        "{} {}",
+                        op["op"].as_str().unwrap_or("?"),
+                        op["layer"].as_str().unwrap_or("")
+                    )
+                })
+                .collect();
+            if all.len() > 6 {
+                parts.push(format!("and {} more", all.len() - 6));
+            }
+            let map = args["tilemap"].as_str().unwrap_or("");
+            format!("{map}: {}", parts.join(", "))
+        }
         "edit_history" => {
             let action = args["action"].as_str().unwrap_or("list");
             match args["revision"].as_u64() {
@@ -104,6 +126,15 @@ impl Activity {
                 entry[key] = json!(value);
             }
         }
+        // A tilemap's history is reached as a scene's is (edit_history with
+        // the map as scene), so its changes carry it as their scene.
+        if tool == "tilemap_edit"
+            && let Some(map) = answer["tilemap"]
+                .as_str()
+                .or_else(|| args["tilemap"].as_str())
+        {
+            entry["scene"] = json!(map);
+        }
         if let Some(reason) = args["reason"].as_str() {
             entry["reason"] = json!(short(reason, 500));
         }
@@ -112,6 +143,16 @@ impl Activity {
             if tool == "edit_apply"
                 && args["dry_run"] != true
                 && args["session"].is_null()
+                && let Some(revision) = answer["revision"].as_u64()
+            {
+                entry["revision"] = json!(revision);
+            }
+            // A stroke on a tilemap, too (one that changed something).
+            if tool == "tilemap_edit"
+                && args["dry_run"] != true
+                && args["action"] != "get"
+                && answer["cells_changed"].as_u64().is_some()
+                && answer["diagnostics"].is_null()
                 && let Some(revision) = answer["revision"].as_u64()
             {
                 entry["revision"] = json!(revision);

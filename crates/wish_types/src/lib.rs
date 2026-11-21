@@ -19,6 +19,7 @@ pub mod particles;
 pub mod physics;
 pub mod render;
 pub mod sprite;
+pub mod tilemap;
 pub mod time;
 pub mod transform;
 pub mod ui;
@@ -44,6 +45,7 @@ pub use render::{
     RenderSettings, Shape, Sky, SpotLight,
 };
 pub use sprite::{Sprite, SpriteAnimator};
+pub use tilemap::Tilemap;
 pub use time::Time;
 pub use transform::{GLOBAL_TRANSFORM, GlobalTransform, Transform, world_position};
 pub use ui::{

@@ -230,6 +230,9 @@ pub struct EditorApp {
     view: View,
     /// The fly camera, made from the scene's first camera on first use.
     eye: RefCell<Option<FlyCamera>>,
+    /// Painting the selected tilemap (release 1.1): the tool, the layer,
+    /// the tile, the stroke being made.
+    paint: crate::tile_palette::TilePaint,
     movement: Movement,
     looking: bool,
     /// How far ahead of the scene view's eye it turns around and zooms
@@ -560,6 +563,7 @@ impl EditorApp {
             problems: (0, 0),
             view: View::Lit,
             eye: RefCell::new(None),
+            paint: crate::tile_palette::TilePaint::default(),
             movement: Movement::default(),
             looking: false,
             focus: 8.0,
@@ -942,6 +946,290 @@ impl EditorApp {
     }
 
     /// The camera as last drawn, over the picture's place on the window.
+    /// What the palette needs of the selected tilemap, read again when the
+    /// selection, the scene or the map changed: the map's layers, its
+    /// tileset's tiles, the entity's place. Nothing selected with a
+    /// `Tilemap`: no palette, and the tool is put down.
+    fn refresh_palette(&mut self) {
+        let key = (self.selected.clone(), self.revision, self.paint.strokes);
+        if key == self.paint.info_for {
+            return;
+        }
+        self.paint.info_for = key;
+        let found = (self.play.is_none() && self.inspected.len() == 1)
+            .then(|| self.inspected.first())
+            .flatten()
+            .filter(|entity| !entity.part)
+            .and_then(|entity| {
+                let tilemap = entity.components.get("Tilemap")?;
+                let map = tilemap["map"].as_str().filter(|map| !map.is_empty())?;
+                let cell = [
+                    tilemap["cell_size"][0].as_f64().unwrap_or(1.0) as f32,
+                    tilemap["cell_size"][1].as_f64().unwrap_or(1.0) as f32,
+                ];
+                Some((entity.id.clone(), map.to_owned(), cell))
+            });
+        let Some((entity, map, cell)) = found else {
+            self.paint.info = None;
+            self.paint.tool = None;
+            self.paint.stroke = None;
+            return;
+        };
+        let got = self.call("tilemap_edit", &json!({ "tilemap": map, "action": "get" }));
+        if got["ok"] != true {
+            self.paint.info = None;
+            self.paint.tool = None;
+            return;
+        }
+        let layers: Vec<String> = got["layers"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|layer| layer["name"].as_str().map(str::to_owned))
+            .collect();
+        let tileset = got["tileset"].as_str().unwrap_or_default().to_owned();
+        let report = self.call("asset_info", &json!({ "path": tileset }));
+        let tiles: Vec<[u32; 4]> = report["tileset"]["tiles"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|tile| {
+                let part = |i: usize| tile[i].as_u64().and_then(|v| u32::try_from(v).ok());
+                Some([part(0)?, part(1)?, part(2)?, part(3)?])
+            })
+            .collect();
+        let properties = report["tileset"]["properties"].as_object();
+        let names = properties
+            .into_iter()
+            .flatten()
+            .filter_map(|(number, props)| {
+                Some((number.parse().ok()?, props["name"].as_str()?.to_owned()))
+            })
+            .collect();
+        let solid = properties
+            .into_iter()
+            .flatten()
+            .filter(|(_, props)| props["solid"] == true)
+            .filter_map(|(number, _)| number.parse().ok())
+            .collect();
+        let placed = self.call(
+            "entity_get",
+            &json!({ "scene": self.scene.clone(), "ids": [entity.clone()],
+                     "components": ["GlobalTransform"] }),
+        );
+        let matrix: Vec<f32> = placed["entities"][0]["components"]["GlobalTransform"]["matrix"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|v| v.as_f64().unwrap_or(0.0) as f32)
+            .collect();
+        let world = <[f32; 16]>::try_from(matrix.as_slice())
+            .map(|columns| glam::Mat4::from_cols_array(&columns))
+            .unwrap_or(glam::Mat4::IDENTITY);
+        if !layers.contains(&self.paint.layer) {
+            self.paint.layer = layers.last().cloned().unwrap_or_default();
+        }
+        self.paint.info = Some(crate::tile_palette::Info {
+            map,
+            layers,
+            tiles,
+            image: report["tileset"]["image"].as_str().map(str::to_owned),
+            names,
+            solid,
+            tileset,
+            world,
+            cell: cell.map(|side| {
+                if side.is_finite() && side > 0.0 {
+                    side
+                } else {
+                    1.0
+                }
+            }),
+        });
+    }
+
+    /// Makes tile `tile` of the tileset `tileset` solid or not: the file is
+    /// made again with everything it writes (read again first, so what an
+    /// agent changed meanwhile is kept) and this one property, one call by
+    /// the person.
+    fn set_tile_solid(&mut self, tileset: &str, tile: u32, solid: bool) {
+        let now = self.call("asset_info", &json!({ "path": tileset }));
+        let Some(mut written) = now["written"].as_object().cloned() else {
+            self.status = t("it did not work").to_owned();
+            return;
+        };
+        let mut tiles = written
+            .get("tiles")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        let key = tile.to_string();
+        let mut props = tiles
+            .get(&key)
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        if solid {
+            props.insert("solid".to_owned(), json!(true));
+        } else {
+            // A shape belongs to a solid tile only.
+            props.remove("solid");
+            props.remove("shape");
+        }
+        if props.is_empty() {
+            tiles.remove(&key);
+        } else {
+            tiles.insert(key, Value::Object(props));
+        }
+        if tiles.is_empty() {
+            written.remove("tiles");
+        } else {
+            written.insert("tiles".to_owned(), Value::Object(tiles));
+        }
+        let made = self.call(
+            "asset_create",
+            &json!({ "path": tileset, "tileset": written, "overwrite": true }),
+        );
+        self.status = if made["ok"] == true {
+            tf(
+                "set {field} in {path}",
+                &[("field", &format!("tiles/{tile}")), ("path", &tileset)],
+            )
+        } else {
+            made["error"]["message"]
+                .as_str()
+                .unwrap_or(t("it did not work"))
+                .to_owned()
+        };
+        self.paint.strokes += 1;
+    }
+
+    /// A press, a move or a release on the view while a painting tool is in
+    /// hand: whether painting took it. A stroke is one `tilemap_edit` call
+    /// when the button is let go.
+    fn paint_input(&mut self, event: &ShellEvent, over_view: bool) -> bool {
+        use crate::tile_palette::{Stroke, Tool, cell_at, stroke_op};
+        let (Some(tool), Some(info), Some(eye)) =
+            (self.paint.tool, self.paint.info.clone(), self.eye_now())
+        else {
+            return false;
+        };
+        let cell = self
+            .pointer
+            .and_then(|(x, y)| cell_at(&info, &eye, pos2(x, y)));
+        match event {
+            ShellEvent::Pointer { .. } => {
+                if cell != self.paint.hover {
+                    self.paint.hover = cell;
+                }
+                if let (Some(stroke), Some(cell)) = (self.paint.stroke.as_mut(), cell) {
+                    stroke.reach(cell);
+                }
+                false
+            }
+            ShellEvent::Button {
+                button: Button::Primary,
+                pressed: true,
+                modifiers,
+            } if over_view && !modifiers.alt && !self.modifiers.alt => {
+                let over_popup = self
+                    .editor
+                    .as_ref()
+                    .is_some_and(|editor| egui::Popup::is_any_open(editor.context()));
+                if over_popup {
+                    return false;
+                }
+                if let Some(cell) = cell {
+                    self.paint.stroke = Some(Stroke::begin(tool, cell));
+                }
+                true
+            }
+            ShellEvent::Button {
+                button: Button::Primary,
+                pressed: false,
+                ..
+            } => {
+                let Some(stroke) = self.paint.stroke.take() else {
+                    return false;
+                };
+                if stroke.tool == Tool::Picker {
+                    let (x, y) = stroke.now;
+                    let got = self.call(
+                        "tilemap_edit",
+                        &json!({ "tilemap": info.map, "action": "get", "from": [x, y], "to": [x, y] }),
+                    );
+                    let tile = got["rows"][&self.paint.layer][0][0].as_i64().unwrap_or(-1);
+                    if tile >= 0 {
+                        self.paint.tile = tile as i32;
+                        self.paint.tool = Some(Tool::Brush);
+                    }
+                    self.status = tf("picked tile {tile}", &[("tile", &tile)]);
+                    return true;
+                }
+                let Some(op) = stroke_op(&stroke, &self.paint.layer, self.paint.tile) else {
+                    return true;
+                };
+                let done = self.call("tilemap_edit", &json!({ "tilemap": info.map, "ops": [op] }));
+                self.status = if done["ok"] == true {
+                    tf(
+                        "painted {count} cell(s) of {map}",
+                        &[("count", &done["cells_changed"]), ("map", &info.map)],
+                    )
+                } else {
+                    done["error"]["message"]
+                        .as_str()
+                        .unwrap_or(t("it did not work"))
+                        .to_owned()
+                };
+                self.paint.strokes += 1;
+                self.picture_stale = true;
+                true
+            }
+            ShellEvent::Key {
+                name,
+                pressed: true,
+                ..
+            } if name == "Escape" && self.paint.stroke.take().is_some() => {
+                self.status = t("cancelled").to_owned();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Outlines, on the view, the cell under the pointer or the cells the
+    /// stroke being made would paint.
+    fn paint_outline(&self, ui: &mut egui::Ui, area: Rect) {
+        use crate::tile_palette::{Tool, outline};
+        let (Some(tool), Some(info), Some(eye)) =
+            (self.paint.tool, self.paint.info.as_ref(), self.eye_now())
+        else {
+            return;
+        };
+        let color = crate::style::pal().select;
+        let mut cells: Vec<((i32, i32), (i32, i32))> = match &self.paint.stroke {
+            Some(stroke) if stroke.tool == Tool::Rect => vec![(stroke.anchor, stroke.now)],
+            Some(stroke) => stroke.cells.iter().map(|cell| (*cell, *cell)).collect(),
+            None => Vec::new(),
+        };
+        if self.paint.stroke.is_none()
+            && let Some(cell) = self.paint.hover
+        {
+            cells.push((cell, cell));
+        }
+        let painter = ui.painter().with_clip_rect(area);
+        for (low, high) in cells.into_iter().take(4096) {
+            if let Some(corners) = outline(info, &eye, low, high) {
+                let mut points = corners.to_vec();
+                points.push(corners[0]);
+                painter.add(egui::Shape::line(
+                    points,
+                    egui::Stroke::new(if tool == Tool::Erase { 1.0 } else { 2.0 }, color),
+                ));
+            }
+        }
+    }
+
     fn eye_now(&self) -> Option<Eye> {
         let camera = (*self.last_camera.borrow())?;
         (self.viewport.width() >= MIN_VIEWPORT && self.viewport.height() >= MIN_VIEWPORT)
@@ -1133,7 +1421,35 @@ impl EditorApp {
 
     /// The inspector's changes, as one `edit_apply` on every selected entity
     /// (a part of a prefab instance gets an override).
-    fn inspector_act(&mut self, asked: InspectorActions) {
+    fn inspector_act(&mut self, mut asked: InspectorActions) {
+        let paint = std::mem::take(&mut asked.paint);
+        if paint.any() {
+            if let Some(tool) = paint.tool {
+                self.paint.tool = tool;
+                self.paint.stroke = None;
+                self.picture_stale = true;
+            }
+            if let Some(layer) = paint.layer {
+                self.paint.layer = layer;
+            }
+            if let (Some(solid), Some(info)) = (paint.solid, self.paint.info.clone())
+                && let Ok(tile) = u32::try_from(self.paint.tile)
+            {
+                self.set_tile_solid(&info.tileset, tile, solid);
+            }
+            if let Some(tile) = paint.tile {
+                self.paint.tile = tile;
+                // Choosing a tile with no tool in hand takes up the brush.
+                if self.paint.tool.is_none()
+                    || self.paint.tool == Some(crate::tile_palette::Tool::Picker)
+                {
+                    self.paint.tool = Some(crate::tile_palette::Tool::Brush);
+                }
+            }
+            if !asked.any() {
+                return;
+            }
+        }
         if self.inspecting_resources {
             self.resource_act(asked);
             self.inspected_for = (Vec::new(), u64::MAX);
@@ -4235,10 +4551,16 @@ impl EditorApp {
             (actions.redo, "redo", t("redo: done")),
         ] {
             if wanted {
+                // While painting, undo and redo are the map's strokes.
+                let history = match (&self.paint.tool, &self.paint.info) {
+                    (Some(_), Some(info)) => info.map.clone(),
+                    _ => self.scene.clone(),
+                };
                 let done = self.call(
                     "edit_history",
-                    &json!({ "scene": self.scene.clone(), "action": action }),
+                    &json!({ "scene": history, "action": action }),
                 );
+                self.paint.strokes += 1;
                 self.status = if done["ok"] == true {
                     done_text.to_owned()
                 } else {
@@ -4370,6 +4692,11 @@ impl EditorApp {
                     self.orbiting = false;
                     continue;
                 }
+            }
+            // Painting a tilemap: a press paints, it does not pick.
+            if self.paint_input(event, over_view(self)) {
+                self.press = None;
+                continue;
             }
             // The handles first: a press on one is not a click on the view.
             let took = self.gizmo_input(event);
@@ -5702,6 +6029,7 @@ impl EditorApp {
                                 assets: &self.assets,
                                 copied: None,
                                 state: &self.inspector_state,
+                                paint: None,
                             };
                             let view = BrowserView {
                                 assets: &self.files,
@@ -5761,6 +6089,8 @@ impl EditorApp {
                         assets: &self.assets,
                         copied: self.clipboard.as_ref().map(|(name, _)| name.as_str()),
                         state: &self.inspector_state,
+                        paint: (self.play.is_none() && !self.inspecting_resources)
+                            .then(|| (&self.paint, self.workspace.root())),
                     };
                     inspector::panel(ui, &view, &mut actions.inspector);
                 });
@@ -5866,6 +6196,8 @@ impl EditorApp {
                     overlays.push(self.view_shows(ui, area, &mut actions));
                 }
                 *self.view_overlays.borrow_mut() = overlays;
+                // The cells a stroke would paint, outlined on the view.
+                self.paint_outline(ui, area);
                 // A file dragged from the browser is dropped on the view.
                 let target = ui.allocate_rect(area, Sense::hover());
                 if let Some(dropped) = target.dnd_release_payload::<AssetDrag>() {
@@ -6046,6 +6378,7 @@ impl EditorApp {
         self.view_input(&events);
         self.tick_play(seconds);
         self.refresh_inspected();
+        self.refresh_palette();
         if changed || self.picture_stale || self.pending_pick.is_some() {
             let egui_events = convert(&events, self.pointer);
             if self.canvas.width != size.0 || self.canvas.height != size.1 {
@@ -6084,6 +6417,8 @@ impl EditorApp {
                 self.game_viewport = game_area;
                 let acted = actions.any();
                 self.act(actions);
+                self.refresh_inspected();
+                self.refresh_palette();
                 let render_started = std::time::Instant::now();
                 let picked = self.render_viewport(seconds);
                 self.render_game();

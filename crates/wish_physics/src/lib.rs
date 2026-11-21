@@ -24,9 +24,11 @@ use std::sync::Mutex;
 
 mod plane;
 mod query;
+mod tiles;
 
 pub use plane::PhysicsProfile;
 pub use query::{OverlapShape, RayHit, query_state};
+pub use tiles::{MapShapes, TileShapes, install_tile_shapes};
 
 use rapier3d::control::{CharacterAutostep, CharacterLength, KinematicCharacterController};
 use rapier3d::prelude as rp;
@@ -145,6 +147,8 @@ pub struct PhysicsState {
     soft: rp::SoftBodySet,
     ccd: rp::CCDSolver,
     links: BTreeMap<Entity, Link>,
+    /// The fixed bodies of tilemaps, by entity (`tiles`).
+    tiles: BTreeMap<Entity, tiles::TileLink>,
     /// Collision events found while the state was prepared (before the
     /// first step): sent with the first step's own, so that contacts that
     /// exist at the start are reported like any other.
@@ -169,6 +173,7 @@ impl Clone for PhysicsState {
             soft: self.soft.clone(),
             ccd: self.ccd.clone(),
             links: self.links.clone(),
+            tiles: self.tiles.clone(),
             pending: self.pending.clone(),
         }
     }
@@ -189,6 +194,7 @@ impl Default for PhysicsState {
             soft: rp::SoftBodySet::new(),
             ccd: rp::CCDSolver::new(),
             links: BTreeMap::new(),
+            tiles: BTreeMap::new(),
             pending: Vec::new(),
         }
     }
@@ -208,14 +214,14 @@ impl PhysicsState {
         self.profile
     }
 
-    /// How many entities physics knows about.
+    /// How many entities physics knows about (tilemaps included).
     pub fn len(&self) -> usize {
-        self.links.len()
+        self.links.len() + self.tiles.len()
     }
 
     /// Whether physics knows about no entity.
     pub fn is_empty(&self) -> bool {
-        self.links.is_empty()
+        self.links.is_empty() && self.tiles.is_empty()
     }
 
     /// Whether the entity's body is asleep (at rest, costing nothing).
@@ -557,10 +563,11 @@ fn run(world: &mut World, state: &mut PhysicsState, since: ChangeTick) -> Result
         }
     }
 
-    // 2. Bring Rapier up to date.
+    // 2. Bring Rapier up to date: colliders, then tilemaps' walls.
     for &entity in &present {
         sync_entity(world, state, entity)?;
     }
+    tiles::sync(world, state, &mut removed)?;
 
     // 3. Kicks sent since the last run.
     for impulse in world.events_since::<BodyImpulse>(since)? {

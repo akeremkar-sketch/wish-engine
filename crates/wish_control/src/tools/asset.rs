@@ -8,17 +8,19 @@ use crate::param::{Args, Kind, Param};
 use crate::tool::Tool;
 use crate::workspace::Workspace;
 
-const KINDS: &[&str] = &["all", "model", "image", "material", "sheet", "other"];
+const KINDS: &[&str] = &[
+    "all", "model", "image", "material", "sheet", "tileset", "tilemap", "other",
+];
 
 pub(crate) const ASSET_LIST: Tool = Tool {
     name: "asset_list",
     title: "List asset files",
-    description: "Lists the project's asset files (models, images, material files, sprite sheets, anything that is not a scene, prefab or meta file) with their kind and size. Filter by kind or by words in the path.",
+    description: "Lists the project's asset files (models, images, material files, sprite sheets, tilesets, tilemaps, anything that is not a scene, prefab or meta file) with their kind and size. Filter by kind or by words in the path.",
     params: &[
         Param::optional(
             "kind",
             Kind::Choice(KINDS),
-            "Only this kind: model (glTF), image (PNG, JPEG), material (*.mat.json), sheet (*.sheet.json), other.",
+            "Only this kind: model (glTF), image (PNG, JPEG), material (*.mat.json), sheet (*.sheet.json), tileset (*.tileset.json), tilemap (*.tilemap.json), other.",
         )
         .or("\"all\""),
         Param::optional(
@@ -40,7 +42,7 @@ pub(crate) const ASSET_LIST: Tool = Tool {
 pub(crate) const ASSET_INFO: Tool = Tool {
     name: "asset_info",
     title: "Asset report",
-    description: "Reports on one asset file. For a glTF/GLB model: triangle and vertex counts, size in meters, materials, textures, how many entities-worth of parts it has, and anything that was not imported (with hints). For a material file (*.mat.json): the look it holds (material: every field with its value, written: the fields the file itself writes), its textures and whether each exists. For a sprite sheet (*.sheet.json): its picture and whether it exists, how many frames it is cut into (each frame's rectangle) and its clips (frames, fps, loop). Also its import settings (meta file) and the scenes, prefabs and material files that use it.",
+    description: "Reports on one asset file. For a glTF/GLB model: triangle and vertex counts, size in meters, materials, textures, how many entities-worth of parts it has, and anything that was not imported (with hints). For a material file (*.mat.json): the look it holds (material: every field with its value, written: the fields the file itself writes), its textures and whether each exists. For a sprite sheet (*.sheet.json): its picture and whether it exists, how many frames it is cut into (each frame's rectangle) and its clips (frames, fps, loop). For a tileset (*.tileset.json): its picture or sheet, how many tiles, each tile's rectangle, and the properties of the tiles that have some (solid, shape, name). For a tilemap (*.tilemap.json): its tileset, its layers (name, collide, how many tiles, the box they cover in cells) and the box of the whole map. Also its import settings (meta file) and the scenes, prefabs and material files that use it.",
     params: &[Param::required(
         "path",
         Kind::String,
@@ -53,7 +55,7 @@ pub(crate) const ASSET_INFO: Tool = Tool {
 pub(crate) const ASSET_MOVE: Tool = Tool {
     name: "asset_move",
     title: "Move an asset",
-    description: "Moves or renames an asset file or folder and rewrites every reference to it in scenes, prefabs, material files and sprite sheets, all or nothing. dry_run lists what would change.",
+    description: "Moves or renames an asset file or folder and rewrites every reference to it in scenes, prefabs, material files, sprite sheets, tilesets and tilemaps, all or nothing. dry_run lists what would change.",
     params: &[
         Param::required(
             "from",
@@ -73,13 +75,13 @@ pub(crate) const ASSET_MOVE: Tool = Tool {
 
 pub(crate) const ASSET_CREATE: Tool = Tool {
     name: "asset_create",
-    title: "Make a sound, a picture, a material file or a sprite sheet",
-    description: "Makes an asset file from a few values (nothing is downloaded): a placeholder sound or picture, so a game can have them before real ones exist, or a material file. A .mat.json path makes a material file from material {...}: the fields of the MaterialFile type (schema_get MaterialFile), for example {base_color_texture: \"assets/textures/brick.png\", roughness: 0.9, uv_scale: [4, 4]}; a shape gets the look (and so the texture) when its Material.file names the file, and every entity that names it changes when the file does. To change a material file, make it again with every field and overwrite: true (asset_info gives what it holds). A .sheet.json path makes a sprite sheet from sheet {image: a PNG, grid: {frame: [w, h], columns, rows, margin: [x, y], spacing: [x, y]} or frames: [[x, y, w, h], ...] (pixels from the top left; frames are numbered from 0, left to right then down), clips: {name: {frames: [0, 1, 2, 3], fps: 8, loop: true}}}; an entity with a Sprite shows it through a SpriteAnimator {sheet, clip}, and game code switches clips with animator.play(text(\"walk\")). A .wav path makes a sound: sound {wave: sine|square|triangle|saw|noise, frequency (Hz), end_frequency (a slide: higher for a jump, lower for a fall), seconds, volume 0-1, attack and release (fade seconds), seed}. A .png path makes a picture: picture {width, height (pixels, at most 1024), shape: fill|circle|ring|diamond|triangle, color [r,g,b,a] and background [r,g,b,a] (sRGB, 0-1)}. Examples: a jump {wave: square, frequency: 300, end_frequency: 700, seconds: 0.15, release: 0.1}; a coin {wave: sine, frequency: 900, end_frequency: 1400, seconds: 0.12}; a thud {wave: noise, seconds: 0.25, release: 0.2}. An existing file is not replaced unless overwrite is true.",
+    title: "Make a sound, a picture, a material file, a sprite sheet, a tileset or a tilemap",
+    description: "Makes an asset file from a few values (nothing is downloaded): a placeholder sound or picture, so a game can have them before real ones exist, or a material file. A .mat.json path makes a material file from material {...}: the fields of the MaterialFile type (schema_get MaterialFile), for example {base_color_texture: \"assets/textures/brick.png\", roughness: 0.9, uv_scale: [4, 4]}; a shape gets the look (and so the texture) when its Material.file names the file, and every entity that names it changes when the file does. To change a material file, make it again with every field and overwrite: true (asset_info gives what it holds). A .sheet.json path makes a sprite sheet from sheet {image: a PNG, grid: {frame: [w, h], columns, rows, margin: [x, y], spacing: [x, y]} or frames: [[x, y, w, h], ...] (pixels from the top left; frames are numbered from 0, left to right then down), clips: {name: {frames: [0, 1, 2, 3], fps: 8, loop: true}}}; an entity with a Sprite shows it through a SpriteAnimator {sheet, clip}, and game code switches clips with animator.play(text(\"walk\")). A .tileset.json path makes a tileset from tileset {image: a PNG, grid: {frame: [w, h], columns, rows, margin, spacing} (tiles numbered from 0, left to right then down), or sheet: a sprite sheet whose frames are the tiles; tiles: {\"8\": {solid: true, name: \"wall\"}, \"9\": {solid: true, shape: [[0, 0], [1, 0], [1, 1]]}} (shape: a convex outline in tile units from the bottom left)}. A .tilemap.json path makes a tilemap from tilemap {tileset: a .tileset.json, layers: [\"floor\", {name: \"walls\", collide: true}]} (empty; paint it with tilemap_edit); an entity shows it with a Tilemap {map, cell_size}. A .wav path makes a sound: sound {wave: sine|square|triangle|saw|noise, frequency (Hz), end_frequency (a slide: higher for a jump, lower for a fall), seconds, volume 0-1, attack and release (fade seconds), seed}. A .png path makes a picture: picture {width, height (pixels, at most 1024), shape: fill|circle|ring|diamond|triangle, color [r,g,b,a] and background [r,g,b,a] (sRGB, 0-1)}. Examples: a jump {wave: square, frequency: 300, end_frequency: 700, seconds: 0.15, release: 0.1}; a coin {wave: sine, frequency: 900, end_frequency: 1400, seconds: 0.12}; a thud {wave: noise, seconds: 0.25, release: 0.2}. An existing file is not replaced unless overwrite is true.",
     params: &[
         Param::required(
             "path",
             Kind::String,
-            "The project-relative file to write: .wav for a sound, .png for a picture, .mat.json for a material file, .sheet.json for a sprite sheet.",
+            "The project-relative file to write: .wav for a sound, .png for a picture, .mat.json for a material file, .sheet.json for a sprite sheet, .tileset.json for a tileset, .tilemap.json for a tilemap.",
         ),
         Param::optional(
             "sound",
@@ -100,6 +102,16 @@ pub(crate) const ASSET_CREATE: Tool = Tool {
             "sheet",
             Kind::Object,
             "For a .sheet.json: image (a PNG), grid {frame: [w, h], columns, rows, margin, spacing} or frames [[x, y, w, h], ...], clips {name: {frames: [...], fps, loop}}.",
+        ),
+        Param::optional(
+            "tileset",
+            Kind::Object,
+            "For a .tileset.json: image (a PNG) and grid {frame: [w, h], columns, rows, margin, spacing}, or sheet (a .sheet.json); tiles {\"<number>\": {solid, shape, name}}.",
+        ),
+        Param::optional(
+            "tilemap",
+            Kind::Object,
+            "For a .tilemap.json: tileset (a .tileset.json), layers [names, or {name, collide, chunks}].",
         ),
         Param::optional(
             "overwrite",
@@ -273,7 +285,14 @@ fn draw_picture(
 fn asset_create(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<String, Value>> {
     let path = crate::documents::normalize_asset_output(
         args.str("path").unwrap_or_default(),
-        &["png", "wav", "mat.json", "sheet.json"],
+        &[
+            "png",
+            "wav",
+            "mat.json",
+            "sheet.json",
+            "tileset.json",
+            "tilemap.json",
+        ],
     )
     .map_err(|problem| problem.at_path("/path"))?;
     let lower = path.to_ascii_lowercase();
@@ -293,16 +312,22 @@ fn asset_create(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map
         "material"
     } else if wish_asset::is_sheet(&lower) {
         "sheet"
+    } else if wish_asset::is_tileset(&lower) {
+        "tileset"
+    } else if wish_asset::is_tilemap(&lower) {
+        "tilemap"
     } else {
         "picture"
     };
-    for other in ["sound", "picture", "material", "sheet"] {
+    for other in [
+        "sound", "picture", "material", "sheet", "tileset", "tilemap",
+    ] {
         if other != wanted && args.value(other).is_some_and(|v| !v.is_null()) {
             return Err(spec_error(
                 &format!("/{other}"),
                 format!("'{other}' does not go with '{path}'."),
                 &format!(
-                    "A .wav file is made from \"sound\", a .png file from \"picture\", a .mat.json file from \"material\" and a .sheet.json file from \"sheet\"; give \"{wanted}\" for this path."
+                    "A .wav file is made from \"sound\", a .png file from \"picture\", a .mat.json file from \"material\", a .sheet.json file from \"sheet\", a .tileset.json file from \"tileset\" and a .tilemap.json file from \"tilemap\"; give \"{wanted}\" for this path."
                 ),
             ));
         }
@@ -321,6 +346,9 @@ fn asset_create(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map
     }
     if wanted == "sheet" {
         return create_sheet(workspace, args, &path, out);
+    }
+    if wanted == "tileset" || wanted == "tilemap" {
+        return create_tiles(workspace, args, &path, wanted, out);
     }
     let bytes = if lower.ends_with(".wav") {
         let spec = spec_object(args, "sound")?;
@@ -547,6 +575,189 @@ fn create_sheet(
     Ok(out)
 }
 
+/// A tileset or a tilemap from the `tileset` or `tilemap` argument: checked
+/// like a file, written in canonical form, all or nothing. What it names
+/// that is not there (yet) is a warning: the file is still made.
+fn create_tiles(
+    workspace: &mut Workspace,
+    args: &Args,
+    path: &str,
+    kind: &str,
+    mut out: Map<String, Value>,
+) -> Result<Map<String, Value>> {
+    let suffix = if kind == "tileset" {
+        wish_asset::TILESET_SUFFIX
+    } else {
+        wish_asset::TILEMAP_SUFFIX
+    };
+    if !path.ends_with(suffix) {
+        return Err(Diagnostic::error(
+            "invalid_output_path",
+            format!("'{path}' must end in lower case: {suffix}."),
+            "Tilesets and tilemaps are found by that ending; write it exactly so.",
+        )
+        .at_path("/path"));
+    }
+    let spec = spec_object(args, kind)?;
+    let root = workspace.root().to_path_buf();
+    let index = wish_asset::AssetIndex::scan(&root)?;
+    let mut diagnostics: Vec<Diagnostic> = Vec::new();
+    let mut missing = |reference: &str, pointer: String| {
+        if let Err(problem) = index.check(reference) {
+            diagnostics.push(
+                Diagnostic::warning(
+                    problem.code.clone(),
+                    problem.message.clone(),
+                    problem.hint.clone(),
+                )
+                .at_path(pointer),
+            );
+        }
+    };
+    let text = if kind == "tileset" {
+        let file = wish_asset::TilesetDocument::from_spec(spec)?;
+        let tileset = file.decode()?;
+        if let Some(used) = file.source() {
+            missing(&used.reference, format!("/tileset{}", used.pointer));
+        }
+        let tiles = match &tileset.source {
+            wish_asset::TileSource::Picture { frames, .. } => json!(frames.len()),
+            wish_asset::TileSource::Sheet(sheet) => match tileset.frames(&root) {
+                Ok((_, frames)) => json!(frames.len()),
+                Err(_) => json!(format!("the frames of {sheet}")),
+            },
+        };
+        out.insert("tiles".to_owned(), tiles);
+        out.insert("tileset".to_owned(), Value::Object(file.tileset.clone()));
+        file.to_canonical()?
+    } else {
+        let map = wish_asset::Tilemap::from_spec(spec)?;
+        missing(&map.tileset, "/tilemap/tileset".to_owned());
+        out.insert("tileset".to_owned(), json!(map.tileset));
+        out.insert("layers".to_owned(), json!(map.layer_names()));
+        map.to_canonical()?
+    };
+    out.insert("kind".to_owned(), json!(kind));
+    out.insert("path".to_owned(), json!(path));
+    out.insert("bytes".to_owned(), json!(text.len()));
+    if !diagnostics.is_empty() {
+        out.insert("diagnostics".to_owned(), json!(diagnostics));
+    }
+    if args.flag("dry_run") {
+        out.insert("dry_run".to_owned(), json!(true));
+        return Ok(out);
+    }
+    crate::documents::prepare_output(&root, path)?;
+    crate::documents::write_project_file(&root, path, &text)
+        .map_err(|problem| problem.at_path("/path"))?;
+    Ok(out)
+}
+
+/// What a tileset holds, for `asset_info`.
+fn tileset_info(
+    root: &std::path::Path,
+    path: &str,
+    index: &wish_asset::AssetIndex,
+    out: &mut Map<String, Value>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let source = match wish_asset::read_tileset_file(&root.join(path), path) {
+        Ok(source) => source,
+        Err(problem) => {
+            diagnostics.push(problem);
+            return;
+        }
+    };
+    let (file, problems) = wish_asset::check_tileset(&source, path, index, Some(root));
+    diagnostics.extend(problems);
+    let Some(file) = file.or_else(|| wish_asset::parse_tileset(&source, path).ok()) else {
+        return;
+    };
+    let Ok(tileset) = file.decode() else {
+        return;
+    };
+    let mut info = json!({});
+    match &tileset.source {
+        wish_asset::TileSource::Picture { image, .. } => {
+            info["image"] = json!(image);
+            info["image_exists"] = json!(index.contains(image));
+        }
+        wish_asset::TileSource::Sheet(sheet) => {
+            info["sheet"] = json!(sheet);
+            info["sheet_exists"] = json!(index.contains(sheet));
+        }
+    }
+    if let Ok((image, frames)) = tileset.frames(root) {
+        info["image"] = json!(image);
+        info["tile_count"] = json!(frames.len());
+        info["tiles"] = json!(frames.iter().take(256).collect::<Vec<_>>());
+    }
+    let props: Map<String, Value> = tileset
+        .tiles
+        .iter()
+        .map(|(number, props)| {
+            let mut entry = json!({ "solid": props.solid });
+            if let Some(shape) = &props.shape {
+                entry["shape"] = json!(shape);
+            }
+            if let Some(name) = &props.name {
+                entry["name"] = json!(name);
+            }
+            (number.to_string(), entry)
+        })
+        .collect();
+    info["properties"] = Value::Object(props);
+    out.insert("tileset".to_owned(), info);
+    out.insert("written".to_owned(), Value::Object(file.tileset.clone()));
+}
+
+/// What a tilemap holds, for `asset_info`.
+fn tilemap_info(
+    root: &std::path::Path,
+    path: &str,
+    index: &wish_asset::AssetIndex,
+    out: &mut Map<String, Value>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let source = match wish_asset::read_tilemap_file(&root.join(path), path) {
+        Ok(source) => source,
+        Err(problem) => {
+            diagnostics.push(problem);
+            return;
+        }
+    };
+    let (map, problems) = wish_asset::check_tilemap(&source, path, index, Some(root));
+    diagnostics.extend(problems);
+    let Some(map) = map.or_else(|| wish_asset::parse_tilemap(&source, path).ok()) else {
+        return;
+    };
+    let layers: Vec<Value> = map
+        .layers
+        .iter()
+        .map(|layer| {
+            let mut entry = json!({
+                "name": layer.name,
+                "collide": layer.collide,
+                "tiles": layer.tile_count(),
+            });
+            if let Some(bounds) = layer.bounds() {
+                entry["box"] = json!(bounds);
+            }
+            entry
+        })
+        .collect();
+    let mut info = json!({
+        "tileset": map.tileset,
+        "tileset_exists": index.contains(&map.tileset),
+        "layers": layers,
+        "chunks": map.chunk_count(),
+    });
+    if let Some(bounds) = map.bounds() {
+        info["box"] = json!(bounds);
+    }
+    out.insert("tilemap".to_owned(), info);
+}
+
 fn kind_of(path: &str) -> &'static str {
     let lower = path.to_lowercase();
     if lower.ends_with(".glb") || lower.ends_with(".gltf") {
@@ -555,6 +766,10 @@ fn kind_of(path: &str) -> &'static str {
         "material"
     } else if wish_asset::is_sheet(&lower) {
         "sheet"
+    } else if wish_asset::is_tileset(&lower) {
+        "tileset"
+    } else if wish_asset::is_tilemap(&lower) {
+        "tilemap"
     } else if lower.ends_with(".png") || lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
         "image"
     } else {
@@ -779,6 +994,12 @@ fn asset_info(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<S
     if kind_of(&path) == "sheet" {
         sheet_info(&root, &path, &index, &mut out, &mut diagnostics);
     }
+    if kind_of(&path) == "tileset" {
+        tileset_info(&root, &path, &index, &mut out, &mut diagnostics);
+    }
+    if kind_of(&path) == "tilemap" {
+        tilemap_info(&root, &path, &index, &mut out, &mut diagnostics);
+    }
 
     match wish_asset::read_meta(&root, &path) {
         Ok(Some(meta)) => {
@@ -819,6 +1040,7 @@ fn asset_move(workspace: &mut Workspace, args: &Args, actor: &Actor) -> Result<M
             notes.extend(workspace.open_document(path, false)?);
         }
         wish_asset::apply_move(&root, &plan)?;
+        workspace.tilemaps_moved(&plan.from, &plan.to, actor);
         // Documents (open ones, the default scene) that the move took along.
         let mut known = open;
         if let Some(config) = workspace.config() {

@@ -110,6 +110,9 @@ fn physics_query(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
         Some(id) => Some(workspace.session_id(Some(id))?),
         None => None,
     };
+    // A scene with tilemaps is asked in a world of its own that knows their
+    // walls as they are on disk now.
+    let with_tiles;
     let (world, ids) = match &session {
         Some(id) => {
             let session = workspace.session(id)?;
@@ -122,8 +125,17 @@ fn physics_query(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
             let path = workspace.scene_path(args.str("scene"))?;
             workspace.open_document(&path, false)?;
             out.insert("scene".to_owned(), json!(path));
-            let view = workspace.view(&path)?;
-            (&view.world, view.ids.clone())
+            let shapes = workspace.tile_shapes();
+            if shapes.is_empty() {
+                let view = workspace.view(&path)?;
+                (&view.world, view.ids.clone())
+            } else {
+                let doc = workspace.document(&path)?.doc.clone();
+                let mut view = workspace.build_view(&doc)?;
+                wish_physics::install_tile_shapes(&mut view.world, shapes);
+                with_tiles = view;
+                (&with_tiles.world, with_tiles.ids.clone())
+            }
         }
     };
     let names: BTreeMap<Entity, String> = ids.iter().map(|(n, e)| (*e, n.clone())).collect();

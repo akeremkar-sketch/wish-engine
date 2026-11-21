@@ -19,6 +19,7 @@ mod script;
 mod settings;
 mod sim;
 mod testing;
+mod tilemap;
 mod view;
 
 pub use design::{
@@ -72,4 +73,5 @@ pub(crate) const CATALOG: &[Tool] = &[
     design::GAME_DESIGN,
     packages::PACKAGES,
     engines::ENGINES,
+    tilemap::TILEMAP_EDIT,
 ];

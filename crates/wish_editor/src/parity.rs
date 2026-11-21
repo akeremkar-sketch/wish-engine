@@ -154,8 +154,13 @@ pub const PARITY: &[Capability] = &[
     ),
     op(
         "asset_create",
-        "Browser: New... (a placeholder sound or picture, a material file, a sprite sheet of the selected picture); a material file's and a sprite sheet's fields and clips are changed where the browser shows the file (parity_ops::a_material_file_is_made_and_changed_by_hand, parity_ops::a_sprite_sheet_is_made_and_changed_by_hand)",
+        "Browser: New... (a placeholder sound or picture, a material file, a sprite sheet or a tileset of the selected picture, a tilemap of the first tileset); a material file's and a sprite sheet's fields and clips are changed where the browser shows the file, a tile made solid in the tile palette (parity_ops::a_material_file_is_made_and_changed_by_hand, parity_ops::a_sprite_sheet_is_made_and_changed_by_hand, parity_ops::a_tilemap_is_painted_by_hand)",
         "parity_ops::a_placeholder_sound_and_picture_are_made",
+    ),
+    op(
+        "tilemap_edit",
+        "Inspector, on an entity with a Tilemap: the tile palette (the layer, Brush, Rectangle, Fill, Erase, Picker, a tile, Solid tile), then press and drag in the view: each stroke is one call; Ctrl+Z while painting takes the last stroke back",
+        "parity_ops::a_tilemap_is_painted_by_hand",
     ),
     op(
         "project_settings",

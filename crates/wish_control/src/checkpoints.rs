@@ -90,6 +90,8 @@ fn keepable(path: &str) -> bool {
         "prefab.json",
         "mat.json",
         "sheet.json",
+        "tileset.json",
+        "tilemap.json",
         "meta.json",
     ];
     crate::documents::normalize_asset_output(path, KINDS).is_ok_and(|normal| normal == path)

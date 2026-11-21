@@ -14,6 +14,9 @@
 //!   checked, canonical document, and an asset other files refer to.
 //! - [`sheet`]: sprite sheets (`*.sheet.json`), documents and assets like
 //!   material files: a picture cut into frames, and named clips.
+//! - [`tiles`]: tilesets (`*.tileset.json`) and tilemaps
+//!   (`*.tilemap.json`), documents and assets: tiles cut from a picture
+//!   with properties, and layers of tiles in chunks.
 //! - [`refs`]: finding asset references in scene and prefab files, and
 //!   checking that their files exist, with positions.
 //! - [`moves`]: moving an asset (or a folder) and updating every reference
@@ -32,6 +35,7 @@ pub mod moves;
 pub mod project;
 pub mod refs;
 pub mod sheet;
+pub mod tiles;
 
 pub use hot::{HotScene, Reload, Watcher};
 pub use project::{FileKind, Project, ProjectFile, load_project};
@@ -47,4 +51,10 @@ pub use refs::{RefUse, check_source, refs_in_material, refs_in_sheet, refs_in_va
 pub use sheet::{
     MAX_SHEET_BYTES, SHEET_FORMAT, SHEET_SUFFIX, Sheet, SheetClip, SheetDocument, check_sheet,
     is_sheet, parse_sheet, read_sheet_file, sheet_too_large,
+};
+pub use tiles::{
+    MAX_TILEMAP_BYTES, MAX_TILESET_BYTES, TILEMAP_FORMAT, TILEMAP_SUFFIX, TILESET_FORMAT,
+    TILESET_SUFFIX, TileLayer, TileProps, TileShapes, TileSource, Tilemap, Tileset,
+    TilesetDocument, check_tilemap, check_tileset, collision_shapes, is_tilemap, is_tileset,
+    parse_tilemap, parse_tileset, read_tilemap, read_tilemap_file, read_tileset, read_tileset_file,
 };

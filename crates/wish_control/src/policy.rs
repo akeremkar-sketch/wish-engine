@@ -109,6 +109,7 @@ pub(crate) fn changes_project(tool: &str, args: &Value) -> bool {
         "edit_apply" => args["session"].is_null(),
         "edit_history" => matches!(action, "undo" | "redo" | "revert"),
         "asset_move" | "asset_create" => true,
+        "tilemap_edit" => action != "get",
         "project_settings" => action == "set",
         "checkpoint" => matches!(action, "restore" | "delete"),
         "replay" => action == "save",
