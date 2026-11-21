@@ -139,6 +139,22 @@ release, the scorecard as a gate, two lanes at most, closing reviews), plus:
   4.5.
 - Pixel-art discipline: integer scaling, no sub-pixel jitter, a palette
   check.
+- **A sprite and pixel-art editor inside the editor** (user request,
+  22 November 2026: 2D at 10): layers, a palette, brushes, onion skin and
+  frame-by-frame animation that writes sheet files; what GameMaker is loved
+  for, with every stroke one control-plane call (invariant 9).
+- **A 2D animation editor:** a frame timeline for sheets, and 2D skeletal
+  animation with mesh deformation (bones, weights, an importer for an open
+  format), all in the world's time.
+- **2D effects:** outline, dissolve, palette swap, flash and distortion as
+  ready nodes of the shader graph (4.1), each with an off and a cost.
+- **What the others do not have, kept as the edge:** deterministic 2D
+  physics and replays, online 2D with hidden information, multiplayer tested
+  by bots without people, and 2D games made and proven by agents.
+- **The claim is measured:** a 2D comparison harness (like `tools/compare/`
+  with Unity) runs the same 2D tasks in Wish, Godot and GameMaker, by hand
+  where a person must and with agents where an engine allows it; "2D at 10"
+  is written only when that measurement and the closing review say so.
 
 ### 4.5 Physics, navigation and sound
 
@@ -220,7 +236,7 @@ release, the scorecard as a gate, two lanes at most, closing reviews), plus:
 | 2.1 | Editor 2: docking, windows, layouts, the panel manners | 14 | the editor on two screens |
 | 2.2 | UI 2: interface files, styles, binding, text shaping, the designer | 15 | a menu built by hand and by an agent |
 | 2.3 | Stability: corpus, ABI shims, `wen upgrade`, fuzzing, LTS process | 12 | an old project upgraded in one step |
-| 2.4 | 2D 3: lights, importers, rule tiles, 2D navigation, cameras | 14 | a lit 2D level from Aseprite and LDtk |
+| 2.4 | 2D 3: lights, importers, rule tiles, 2D navigation, cameras, the sprite and pixel-art editor, the 2D animation editor, 2D effects, the 2D comparison | 20 | a lit 2D level drawn, animated and played inside the editor |
 | 2.5 | Physics, navigation and sound | 15 | a crowd finding its way; a ragdoll |
 | 2.6 | Animation 2 and the graph editors | 14 | a character with a state machine and IK |
 | 2.7 | Graphics 2: render graph, GI probes, TAA, SSR, volumetrics, terrain, water | 18 | the showcase under the new light |
@@ -228,7 +244,7 @@ release, the scorecard as a gate, two lanes at most, closing reviews), plus:
 | 2.9 | Online 3: dedicated servers, matchmaking, lag compensation | 12 | a hundred bots on a dedicated server |
 | 3.0 | LTS: freeze audit, the third look lock, the determinism promise, a six-week beta | 10 | the comparison table, measured |
 
-About **140 packages**. At the pace of release 1.1 (two lanes) the code is
+About **146 packages**. At the pace of release 1.1 (two lanes) the code is
 roughly two to four months of work; the calendar is longer, because each
 release has a beta and the LTS has a six-week one.
 
