@@ -95,6 +95,12 @@
     "Model": {
       "asset": ""
     },
+    "NetOwner": {
+      "player": 0
+    },
+    "NetViewer": {
+      "player": 0
+    },
     "ParticleEmitter": {
       "burst": 0,
       "color_end": [1.0, 1.0, 1.0, 0.0],
@@ -123,6 +129,13 @@
     },
     "Primitive": {
       "shape": "Cube"
+    },
+    "Replicated": {
+      "groups": 0,
+      "players": 0,
+      "priority": 1.0,
+      "radius": 10.0,
+      "visibility": "Everyone"
     },
     "RigidBody": {
       "angular_damping": 0.05,
@@ -523,6 +536,9 @@
       "max_opacity": 0.9,
       "start": 0.0,
       "tint": [1.0, 1.0, 1.0, 1.0]
+    },
+    "NetGroups": {
+      "players": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     },
     "PhysicsSettings": {
       "gravity": [0.0, -9.81, 0.0],

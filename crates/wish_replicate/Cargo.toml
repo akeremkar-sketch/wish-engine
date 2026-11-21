@@ -1,0 +1,21 @@
+[package]
+name = "wish_replicate"
+description = "Online play's replication for Wish Engine: the host sends each player a schema-encoded delta of what that player may see, clients mirror it into their worlds and send their inputs back (ADR-029)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+wish_core.workspace = true
+wish_ecs.workspace = true
+wish_net.workspace = true
+wish_schema.workspace = true
+wish_types.workspace = true
+
+[dev-dependencies]
+wish_input.workspace = true
+
+[lints]
+workspace = true

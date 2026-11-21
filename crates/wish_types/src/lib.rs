@@ -15,6 +15,7 @@
 pub mod anim;
 pub mod audio;
 pub mod input;
+pub mod net;
 pub mod particles;
 pub mod physics;
 pub mod render;
@@ -32,6 +33,7 @@ pub use input::{
     ActionSlot, ActionState, MAX_ACTIONS, MAX_PLAYERS, PlayerActionSlots, PlayerActionState,
     PlayerId, Players, action_id,
 };
+pub use net::{NetGroups, NetOwner, NetViewer, NetVisibility, Replicated};
 pub use particles::{ParticleEmitter, ParticleState};
 pub use physics::{
     BodyForce, BodyImpulse, BodyKind, BodyVelocity, CharacterController, CharacterMotion,
