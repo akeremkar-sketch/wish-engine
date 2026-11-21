@@ -539,6 +539,7 @@
   "negative": "мінус",
   "new action": "нова дія",
   "new scene failed: {message} {hint}": "не вдалося створити сцену: {message} {hint}",
+  "new scene {path}": "нова сцена {path}",
   "not exported: {message} {hint}": "не експортовано: {message} {hint}",
   "not locked": "не закріплений",
   "note taken": "нотатку зроблено",

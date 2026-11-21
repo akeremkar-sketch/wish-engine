@@ -30,7 +30,8 @@ Bu kılavuzun İngilizcesi: [../../release/beta.md](../../release/beta.md).
    `SHA256SUMS` içindeki satırla karşılaştırın. Linux'ta:
    `sha256sum -c SHA256SUMS --ignore-missing`.
 3. Arşivi kendinize ait bir klasöre açın (örneğin `Belgeler\Wish Engine`).
-   Sisteme hiçbir şey kurulmaz.
+   İçinde tek bir klasör vardır, `wish-engine-<sürüm>-<sistem>`: programlar
+   onun içindedir. Sisteme hiçbir şey kurulmaz.
 4. Başlatın:
    - Windows: `wish-engine.exe` dosyasına çift tıklayın. Program henüz
      imzalı değil; Windows "Bilgisayarınız korundu" diyebilir: *Ek bilgi*,

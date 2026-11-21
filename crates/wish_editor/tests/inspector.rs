@@ -273,6 +273,13 @@ fn a_rotation_is_edited_in_degrees() {
         .collect();
     angles.sort_by(|a, b| a.min.x.total_cmp(&b.min.x));
     let yaw = angles[1];
+    // A turn of nothing reads 0.0, never -0.0 (the beta's finding).
+    assert!(
+        !app.widgets()
+            .iter()
+            .any(|w| w.value.as_deref() == Some("-0.0 deg")),
+        "no minus zero"
+    );
     type_into(&mut app, yaw, "90");
     let rotation = component(&mut app, "ground", "Transform")["rotation"].clone();
     // 90 degrees about Y: [0, sin 45, 0, cos 45].

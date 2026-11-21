@@ -283,3 +283,51 @@ fn keys_and_the_pointer_over_the_view_go_to_the_game() {
     );
     assert!(!held(&mut app).0, "and let go");
 }
+
+/// The beta's first finding: with the game view beside the scene view (a
+/// wide window), keys pressed with the pointer over the game view went
+/// nowhere. The game view is where a person plays.
+#[test]
+fn keys_over_the_game_view_go_to_the_game() {
+    let (mut app, _dir) = app("keys-game-view");
+    let wide = |app: &mut EditorApp, steps: Value| {
+        run_script(app, &json!({ "size": [1800, 900], "steps": steps })).unwrap();
+    };
+    wide(&mut app, json!([{ "idle": 3 }]));
+    let start = app
+        .widgets()
+        .iter()
+        .find(|w| w.label.as_deref() == Some("Play"))
+        .map(|w| w.rect.center())
+        .unwrap();
+    wide(
+        &mut app,
+        json!([{ "events": [{ "click": [start.x, start.y] }] }, { "idle": 3 }]),
+    );
+    let game = app
+        .game_view_area()
+        .expect("a wide window shows the game view");
+    assert!(!app.viewport().contains(game.center()));
+    wide(
+        &mut app,
+        json!([
+            { "events": [{ "pointer": [game.center().x, game.center().y] }] },
+            { "events": [{ "key": "Space" }] },
+            { "idle": 6 }
+        ]),
+    );
+    let (session, ..) = app.play_state().unwrap();
+    let session = session.to_owned();
+    let got = app.call(
+        "entity_get",
+        &json!({ "session": session, "resources": ["ActionState"] }),
+    );
+    assert!(
+        got["resources"]["ActionState"]["slots"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|slot| slot["held"] == true),
+        "the game sees the key held over the game view: {got}"
+    );
+}

@@ -539,6 +539,7 @@
   "negative": "negatief",
   "new action": "nieuwe actie",
   "new scene failed: {message} {hint}": "nieuwe scène mislukt: {message} {hint}",
+  "new scene {path}": "nieuwe scène {path}",
   "not exported: {message} {hint}": "niet geëxporteerd: {message} {hint}",
   "not locked": "niet vergrendeld",
   "note taken": "notitie gemaakt",

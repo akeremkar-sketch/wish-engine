@@ -452,16 +452,6 @@
         "WinText": {}
       },
       "parent": "win_box"
-    },
-    "wind": {
-      "components": {
-        "AudioSource": {
-          "clip": "assets/sounds/wind.wav",
-          "looping": true,
-          "playing": true,
-          "volume": 0.5
-        }
-      }
     }
   },
   "format": 2,

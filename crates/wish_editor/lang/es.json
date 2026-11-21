@@ -539,6 +539,7 @@
   "negative": "negativo",
   "new action": "nueva acción",
   "new scene failed: {message} {hint}": "no se pudo crear la escena: {message} {hint}",
+  "new scene {path}": "nueva escena {path}",
   "not exported: {message} {hint}": "no exportado: {message} {hint}",
   "not locked": "sin bloquear",
   "note taken": "nota tomada",

@@ -539,6 +539,7 @@
   "negative": "минус",
   "new action": "новое действие",
   "new scene failed: {message} {hint}": "не удалось создать сцену: {message} {hint}",
+  "new scene {path}": "новая сцена {path}",
   "not exported: {message} {hint}": "не экспортировано: {message} {hint}",
   "not locked": "не закреплён",
   "note taken": "заметка сделана",

@@ -642,7 +642,8 @@ fn quaternion(ui: &mut Ui, view: &InspectorView<'_>, key: &str, value: &Value) -
     let mut degrees = [x, y, z].map(|r| f64::from(r.to_degrees()));
     // Round away float noise so a 45 shows as 45.
     for d in &mut degrees {
-        *d = (*d * 1000.0).round() / 1000.0;
+        // Adding zero turns -0.0 into 0.0, so no "-0.0 deg" is shown.
+        *d = (*d * 1000.0).round() / 1000.0 + 0.0;
     }
     let mut changed = false;
     ui.horizontal(|ui| {

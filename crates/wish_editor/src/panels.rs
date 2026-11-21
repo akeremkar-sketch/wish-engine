@@ -157,6 +157,16 @@ pub(crate) fn problems(ui: &mut Ui, found: &[Value], actions: &mut PanelActions)
                     let severity = problem["severity"].as_str().unwrap_or("error");
                     let file = problem["location"]["file"].as_str().unwrap_or_default();
                     let path = problem["location"]["path"].as_str().unwrap_or_default();
+                    // A place in a text file (game code) by line and column,
+                    // as the hint ("fix the line named") expects.
+                    let line = match (
+                        problem["location"]["line"].as_u64(),
+                        problem["location"]["column"].as_u64(),
+                    ) {
+                        (Some(line), Some(column)) => format!(":{line}:{column}"),
+                        (Some(line), None) => format!(":{line}"),
+                        _ => String::new(),
+                    };
                     let text = format!(
                         "{}: {} {}",
                         problem["code"].as_str().unwrap_or_default(),
@@ -164,7 +174,7 @@ pub(crate) fn problems(ui: &mut Ui, found: &[Value], actions: &mut PanelActions)
                         if file.is_empty() {
                             String::new()
                         } else {
-                            format!("({file}{path})")
+                            format!("({file}{line}{path})")
                         }
                     );
                     let response = ui

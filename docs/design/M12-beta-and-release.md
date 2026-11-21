@@ -1,8 +1,10 @@
 # M12 package 13: the beta, the release candidates and 1.0.0
 
 **Status:** prepared (21 November 2026): the tester's guide, its Turkish
-copy, the issue forms and the first beta's release notes are written; the
-user is finding the testers. Nothing is tagged yet.
+copy, the issue forms and the first beta's release notes are written.
+**User decision, 21 November 2026: there are no outside testers; the agent
+tests the beta itself.** It does so as a tester would (section 5), and the
+findings are fixed before any tag. Nothing is tagged yet.
 
 ## 1. Problem
 
@@ -53,3 +55,24 @@ the 1.0.0 tag.
 The release workflow's own checks on every tag (both archives built twice
 to the same bytes, then used end to end from the extracted copy); the full
 gate before each tag; the link test for the guides.
+
+## 5. The agent's own beta (no outside testers)
+
+The user has no testers for now (21 November 2026) and asked the agent to
+test. The agent cannot be an outside person: it knows the code, so it
+misses what a stranger trips on, and it is not a second machine. What it
+can do, and does:
+
+1. Package the Windows archive exactly as the release workflow does (the
+   `dist` profile, the static C runtime, `wen package`), unpack it into an
+   empty folder and use only that copy, with the developer's Rust taken
+   off `PATH`.
+2. Run the tester's guide by hand in the real window (the desktop, seen
+   and clicked through), step by step, writing down every hesitation,
+   wrong word, ugly corner and failure, with pictures.
+3. Write the findings into a report beside this note and fix each with a
+   test, or give the reason it waits.
+
+The formal tests with outside people stay where the train puts them
+(release 1.4); the README must not say that the beta had outside testers.
+

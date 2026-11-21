@@ -250,6 +250,60 @@ fn a_part_of_the_showcase_is_built_played_and_readied_by_hand_only() {
     play(&mut app, json!([{ "seconds": 2.5 }, { "idle": 3 }]));
     assert!(ids(app.rows()).contains("player"), "{}", app.status());
 
+    // 1b. A mistake in the game code (the beta's findings): the Problems
+    //     tab names its line and column, the status bar counts it, and a
+    //     clean build takes it away again.
+    let code = dir.join("scripts/src/lib.rs");
+    let good = std::fs::read_to_string(&code).unwrap();
+    std::fs::write(
+        &code,
+        format!("{good}\nfn broken() -> u32 {{ \"not a number\" }}\n"),
+    )
+    .unwrap();
+    play(
+        &mut app,
+        json!([{ "events": [{ "key": "B", "ctrl": true }] }, { "idle": 3 }]),
+    );
+    assert!(
+        app.status().starts_with("game code not built"),
+        "{}",
+        app.status()
+    );
+    let line = good.lines().count() + 2;
+    assert!(
+        app.widgets().iter().any(|w| w
+            .value
+            .as_deref()
+            .is_some_and(|v| v.contains(&format!("scripts/src/lib.rs:{line}:")))),
+        "the problem names its line {line}"
+    );
+    assert!(
+        app.widgets()
+            .iter()
+            .any(|w| w.value.as_deref() == Some("1 error(s), 0 warning(s)")),
+        "the status bar counts it"
+    );
+    std::fs::write(&code, &good).unwrap();
+    play(
+        &mut app,
+        json!([{ "events": [{ "key": "B", "ctrl": true }] }, { "idle": 3 }]),
+    );
+    assert!(
+        app.status().starts_with("game code built"),
+        "{}",
+        app.status()
+    );
+    assert!(
+        !app.problems()
+            .iter()
+            .any(|p| p["code"] == "script_compile_error"),
+        "a clean build takes the old error away: {:?}",
+        app.problems()
+    );
+    // Back to the assets, where the rest of the walk goes on.
+    let assets = named(&app, "Assets");
+    click(&mut app, assets);
+
     // 2. A new island, far off the course: add, rename, components, place.
     let add = named(&app, "+");
     click(&mut app, add);

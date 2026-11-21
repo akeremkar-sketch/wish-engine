@@ -539,6 +539,7 @@
   "negative": "eksi",
   "new action": "yeni eylem",
   "new scene failed: {message} {hint}": "yeni sahne yapılamadı: {message} {hint}",
+  "new scene {path}": "yeni sahne {path}",
   "not exported: {message} {hint}": "dışa aktarılmadı: {message} {hint}",
   "not locked": "kilitli değil",
   "note taken": "not alındı",

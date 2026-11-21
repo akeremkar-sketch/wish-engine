@@ -74,6 +74,11 @@ fn the_create_menu_makes_ready_entities_by_hand() {
     assert_eq!(app.selection(), ["cube_1"]);
     assert_eq!(app.status(), "added cube_1");
     assert_eq!(components(&mut app, "cube_1")["Primitive"]["shape"], "Cube");
+    // It stands on the ground (a metre across, half a metre up).
+    assert_eq!(
+        components(&mut app, "cube_1")["Transform"]["translation"],
+        json!([0.0, 0.5, 0.0])
+    );
     menu(&mut app, "Create", "Point light");
     assert!(
         components(&mut app, "point_light_1")
@@ -142,6 +147,7 @@ fn new_scene_makes_a_scene_with_a_camera_and_opens_it() {
     menu(&mut app, "File", "New scene");
     play(&mut app, json!([{ "seconds": 0.5 }, { "idle": 2 }]));
     assert_eq!(app.scene(), "scenes/scene_1.scene.json", "{}", app.status());
+    assert_eq!(app.status(), "new scene scenes/scene_1.scene.json");
     assert!(dir.join("scenes/scene_1.scene.json").exists());
     let names = ids(app.rows());
     assert!(

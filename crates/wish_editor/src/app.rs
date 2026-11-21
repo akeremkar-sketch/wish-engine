@@ -3556,6 +3556,7 @@ impl EditorApp {
         if actions.new_scene
             && let Some(path) = self.new_scene()
         {
+            self.status = tf("new scene {path}", &[("path", &path)]);
             actions.scene = Some(path);
         }
         if actions.quit {
@@ -3934,6 +3935,13 @@ impl EditorApp {
             if built["passed"] != true {
                 self.found = problems;
                 self.tab = Tab::Problems;
+            } else if problems.is_empty() {
+                // A clean build takes the last build's errors away: the
+                // problems are the project's own again.
+                self.run_check();
+            } else {
+                // Built, with warnings: those are what is worth reading now.
+                self.found = problems;
             }
             self.refresh_project();
         }
@@ -4179,9 +4187,12 @@ impl EditorApp {
             }
             // While the game plays, the view's keys and buttons are the game's.
             if self.play.is_some() {
-                let over = self
-                    .pointer
-                    .is_some_and(|(x, y)| self.viewport.contains(pos2(x, y)));
+                // On the scene view or on the game view: a person plays where
+                // the game is shown (the beta's first finding: keys over the
+                // game view went nowhere).
+                let over = self.pointer.is_some_and(|(x, y)| {
+                    self.viewport.contains(pos2(x, y)) || self.game_viewport.contains(pos2(x, y))
+                });
                 let typing = self
                     .editor
                     .as_ref()
@@ -5403,7 +5414,19 @@ impl EditorApp {
         });
         egui::Panel::bottom("status").show(ui, |ui| {
             ui.horizontal(|ui| {
-                let (errors, warnings) = self.problems;
+                // The counts of what the Problems tab lists (a failed build
+                // lists its errors there; the project's check otherwise).
+                let count = |severity: &str| {
+                    self.found
+                        .iter()
+                        .filter(|p| p["severity"] == severity)
+                        .count() as u64
+                };
+                let (errors, warnings) = if self.found.is_empty() {
+                    self.problems
+                } else {
+                    (count("error"), count("warning"))
+                };
                 // Problems in their colour; none in a quiet one.
                 let color = if errors > 0 {
                     crate::style::pal().red
@@ -5891,12 +5914,13 @@ const CREATE_KINDS: &[CreateKind] = &[
     (
         "cube",
         || t("Cube"),
-        || json!({ "Transform": {}, "Primitive": { "shape": "Cube" } }),
+        // A metre across: half a metre up, it stands on the ground.
+        || json!({ "Transform": { "translation": [0, 0.5, 0] }, "Primitive": { "shape": "Cube" } }),
     ),
     (
         "sphere",
         || t("Sphere"),
-        || json!({ "Transform": {}, "Primitive": { "shape": "Sphere" } }),
+        || json!({ "Transform": { "translation": [0, 0.5, 0] }, "Primitive": { "shape": "Sphere" } }),
     ),
     (
         "plane",

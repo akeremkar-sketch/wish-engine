@@ -30,7 +30,9 @@ A Turkish copy of this guide: [../user/tr/beta.md](../user/tr/beta.md).
    the hash with the line in `SHA256SUMS`. On Linux:
    `sha256sum -c SHA256SUMS --ignore-missing`.
 3. Unpack the archive into a folder of your own (for example
-   `Documents\Wish Engine`). Nothing is installed into the system.
+   `Documents\Wish Engine`). It holds one folder,
+   `wish-engine-<version>-<system>`: the programs are inside it. Nothing is
+   installed into the system.
 4. Start it:
    - Windows: double-click `wish-engine.exe`. The program is not signed
      yet, so Windows may show "Windows protected your PC": choose *More info*

@@ -19,6 +19,10 @@ use crate::camera::{FlyCamera, Movement};
 
 /// How often the files are checked for changes.
 const POLL: Duration = Duration::from_millis(400);
+/// The shortest time between two drawn frames (about 60 a second): a game
+/// that is always changing is drawn at this pace, not as fast as the loop
+/// can spin.
+const FRAME: Duration = Duration::from_millis(16);
 /// The smallest picture drawn (a minimised window reports 0).
 const MIN_SIZE: u32 = 16;
 
@@ -274,6 +278,7 @@ pub fn run(options: ViewerOptions, content: &mut dyn Content) -> Result<Report> 
         redraws: 0,
         last_frame: Instant::now(),
         last_poll: Instant::now(),
+        next_frame: Instant::now(),
         content_stamp,
         shader_stamp,
         picked: None,
@@ -334,6 +339,8 @@ struct App<'a> {
     redraws: u64,
     last_frame: Instant,
     last_poll: Instant,
+    /// When the next frame may be drawn (see [`FRAME`]).
+    next_frame: Instant,
     content_stamp: u64,
     shader_stamp: u64,
     picked: Option<String>,
@@ -357,6 +364,16 @@ impl App<'_> {
     }
 
     fn title(&self) -> String {
+        // A game being played (`wen play`, an exported game) is titled by
+        // its name alone: the view and the picked entity are the viewer's
+        // tools, not the player's.
+        if self.content.live() {
+            return if self.status.is_empty() {
+                self.options.title.clone()
+            } else {
+                format!("{} - {}", self.options.title, self.status)
+            };
+        }
         let mut title = format!("{} - {}", self.options.title, self.view_name());
         if let Some(picked) = &self.picked {
             title.push_str(&format!(" - picked: {picked}"));
@@ -680,13 +697,20 @@ impl ApplicationHandler for App<'_> {
         }
         if let Some(window) = &self.window {
             if self.dirty {
-                window.request_redraw();
+                // Draw at most every FRAME, and sleep in between: asking for
+                // a redraw on every wake-up would wake the loop again at
+                // once and keep a core busy.
+                if now >= self.next_frame {
+                    window.request_redraw();
+                    self.next_frame = now + FRAME;
+                }
+                event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame));
             } else {
                 // Nothing to draw: sleep until the next poll instead of
                 // spinning.
                 event_loop.set_control_flow(ControlFlow::WaitUntil(now + POLL));
-                return;
             }
+            return;
         }
         event_loop.set_control_flow(ControlFlow::Poll);
     }

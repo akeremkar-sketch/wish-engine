@@ -176,6 +176,7 @@ pub fn run_shell(options: ShellOptions, shell: &mut dyn Shell) -> Result<ShellRe
         events: Vec::new(),
         modifiers: Modifiers::default(),
         last: Instant::now(),
+        next_frame: Instant::now(),
         report: ShellReport::default(),
         error: None,
         clipboard: None,
@@ -205,6 +206,10 @@ struct ShellApp<'a> {
     events: Vec<ShellEvent>,
     modifiers: Modifiers,
     last: Instant,
+    /// When the next frame is asked for: the loop sleeps until then. (A
+    /// redraw asked for on every wake-up wakes the loop at once again, so
+    /// it never slept and kept a core busy: the beta's finding.)
+    next_frame: Instant,
     report: ShellReport,
     error: Option<Diagnostic>,
     /// The system clipboard, opened when first needed (a desktop without
@@ -442,10 +447,14 @@ impl ApplicationHandler for ShellApp<'_> {
             event_loop.exit();
             return;
         }
-        if let Some(window) = &self.window {
-            window.request_redraw();
+        let now = Instant::now();
+        if now >= self.next_frame {
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            }
+            self.next_frame = now + TICK;
         }
-        event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + TICK));
+        event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame));
     }
 }
 
