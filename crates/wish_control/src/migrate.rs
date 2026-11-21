@@ -78,9 +78,10 @@ pub fn migrate_project(
     // asks its prefab file as it was.
     let mut read: BTreeMap<String, Value> = BTreeMap::new();
     for (name, path) in &documents {
-        let source = if wish_asset::is_material(name) {
-            // With its size cap, like everywhere a material file is read.
-            wish_asset::read_material_file(path, name)
+        let source = if wish_asset::is_document_asset(name) {
+            // With its size cap, like everywhere a material or sheet file is
+            // read.
+            wish_asset::read_document_asset(path, name)
         } else {
             fs::read_to_string(path).map_err(|error| {
                 Diagnostic::error(
@@ -131,7 +132,7 @@ pub fn migrate_project(
             continue;
         }
         let Some(kind) = kind_of(name) else {
-            // Meta and material files: format 1 is their only format.
+            // Meta, material and sheet files: format 1 is their only format.
             match document.get("format").and_then(Value::as_u64) {
                 Some(1) => report.up_to_date += 1,
                 Some(format) if format > 1 => report.diagnostics.push(

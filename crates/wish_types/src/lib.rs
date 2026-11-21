@@ -43,7 +43,7 @@ pub use render::{
     EMISSIVE_NITS, Exposure, Fog, Material, MaterialFile, Model, PointLight, Primitive, Projection,
     RenderSettings, Shape, Sky, SpotLight,
 };
-pub use sprite::Sprite;
+pub use sprite::{Sprite, SpriteAnimator};
 pub use time::Time;
 pub use transform::{GLOBAL_TRANSFORM, GlobalTransform, Transform, world_position};
 pub use ui::{

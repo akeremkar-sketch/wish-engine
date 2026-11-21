@@ -354,16 +354,21 @@ pub(super) fn fxaa(
 }
 
 /// The overlay pass: sprites and particles over the finished picture, hidden
-/// by what is in front of them in `depth`. Its atlas and buffers come from
-/// the pool. Call inside `Gpu::checked`.
+/// by what is in front of them in `depth`. Its buffers come from the pool,
+/// its pictures from the renderer's kept sprite textures. Call inside
+/// `Gpu::checked`.
 pub(super) fn overlay(
     (gpu, pool): (&Gpu, &mut Pool),
     encoder: &mut wgpu::CommandEncoder,
     pipeline: &crate::sprites::OverlayPipeline,
     (picture, depth): (&wgpu::TextureView, &wgpu::TextureView),
     overlay: &crate::sprites::Overlay,
+    pictures: (
+        &crate::sprites::SpriteTextures,
+        &std::collections::BTreeMap<String, crate::ui::UiPicture>,
+    ),
 ) {
-    pipeline.draw(gpu, pool, encoder, (picture, depth), overlay);
+    pipeline.draw(gpu, pool, encoder, (picture, depth), overlay, pictures);
 }
 
 /// The interface pass: the in-game interface over everything. Its atlas and

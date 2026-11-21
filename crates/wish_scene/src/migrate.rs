@@ -613,10 +613,18 @@ mod tests {
         assert_eq!(now.resources["Fog"]["density"], 0.0015);
         assert_eq!(recorded.resources["Ambient"]["source"], "Color");
         assert_eq!(now.resources["Ambient"]["source"], "Sky");
-        assert_eq!(
-            recorded.components, now.components,
-            "no component default changed"
-        );
+        // No component default changed: every field format 1 recorded has
+        // its value still (types and fields added since are additions, such
+        // as the sprite sheet package's `Sprite.size` and `SpriteAnimator`).
+        for (name, fields) in &recorded.components {
+            let added = &now.components[name];
+            for (field, value) in fields.as_object().into_iter().flatten() {
+                assert_eq!(
+                    &added[field], value,
+                    "no component default changed: {name}.{field}"
+                );
+            }
+        }
         // A type of the same name with other defaults is not the engine's:
         // it is left out, so nothing of the old record is written into it.
         let mut other = now.clone();

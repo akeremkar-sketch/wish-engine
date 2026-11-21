@@ -513,7 +513,14 @@ const SEARCH_WORDS: &[(&str, &str)] = &[
         "color colour grade grading contrast saturation vivid white balance temperature warm cool tint vignette post processing filter look mood tone",
     ),
     ("Camera", "view viewpoint eye lens fov"),
-    ("Sprite", "2d image picture texture"),
+    (
+        "Sprite",
+        "2d image picture texture tint colour color nine slice nine-slice 9-slice ninepatch panel frame",
+    ),
+    (
+        "SpriteAnimator",
+        "2d animation animated sprite sheet spritesheet frames frame clip clips walk cycle flipbook flip book",
+    ),
     ("AudioSource", "sound music sfx"),
     ("ParticleEmitter", "particles fire smoke sparks effect vfx"),
 ];

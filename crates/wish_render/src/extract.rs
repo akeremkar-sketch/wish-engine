@@ -323,6 +323,21 @@ pub struct SpriteView {
     pub sprite: wish_types::sprite::Sprite,
     /// Its picture's project path, if it has one.
     pub image: Option<String>,
+    /// What its `SpriteAnimator` shows, if it has one that names a sheet.
+    pub animation: Option<SpriteAnimation>,
+}
+
+/// The sheet frame a sprite's `SpriteAnimator` shows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SpriteAnimation {
+    /// The sheet's project path (`*.sheet.json`).
+    pub sheet: String,
+    /// The clip's name; empty: no clip, `frame` is the sheet's own frame
+    /// number.
+    pub clip: String,
+    /// The frame: its place in the clip's frames, or (no clip) the sheet's
+    /// frame number.
+    pub frame: u32,
 }
 
 /// A particle emitter where it stands.
@@ -575,11 +590,23 @@ pub fn extract(world: &World) -> Result<RenderScene> {
                     .text(sprite.image.text())
                     .filter(|path| !path.is_empty())
                     .map(str::to_owned);
+                let animation = world
+                    .get::<wish_types::sprite::SpriteAnimator>(entity)
+                    .and_then(|animator| {
+                        let sheet = world.text(animator.sheet.text())?;
+                        let sheet = sheet.split('#').next().unwrap_or(sheet);
+                        (!sheet.is_empty()).then(|| SpriteAnimation {
+                            sheet: sheet.to_owned(),
+                            clip: world.text(animator.clip).unwrap_or_default().to_owned(),
+                            frame: animator.frame,
+                        })
+                    });
                 scene.sprites.push(SpriteView {
                     entity,
                     world: placement,
                     sprite,
                     image,
+                    animation,
                 });
             }
             if let Some(emitter) = world

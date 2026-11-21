@@ -8,17 +8,17 @@ use crate::param::{Args, Kind, Param};
 use crate::tool::Tool;
 use crate::workspace::Workspace;
 
-const KINDS: &[&str] = &["all", "model", "image", "material", "other"];
+const KINDS: &[&str] = &["all", "model", "image", "material", "sheet", "other"];
 
 pub(crate) const ASSET_LIST: Tool = Tool {
     name: "asset_list",
     title: "List asset files",
-    description: "Lists the project's asset files (models, images, material files, anything that is not a scene, prefab or meta file) with their kind and size. Filter by kind or by words in the path.",
+    description: "Lists the project's asset files (models, images, material files, sprite sheets, anything that is not a scene, prefab or meta file) with their kind and size. Filter by kind or by words in the path.",
     params: &[
         Param::optional(
             "kind",
             Kind::Choice(KINDS),
-            "Only this kind: model (glTF), image (PNG, JPEG), material (*.mat.json), other.",
+            "Only this kind: model (glTF), image (PNG, JPEG), material (*.mat.json), sheet (*.sheet.json), other.",
         )
         .or("\"all\""),
         Param::optional(
@@ -40,7 +40,7 @@ pub(crate) const ASSET_LIST: Tool = Tool {
 pub(crate) const ASSET_INFO: Tool = Tool {
     name: "asset_info",
     title: "Asset report",
-    description: "Reports on one asset file. For a glTF/GLB model: triangle and vertex counts, size in meters, materials, textures, how many entities-worth of parts it has, and anything that was not imported (with hints). For a material file (*.mat.json): the look it holds (material: every field with its value, written: the fields the file itself writes), its textures and whether each exists. Also its import settings (meta file) and the scenes, prefabs and material files that use it.",
+    description: "Reports on one asset file. For a glTF/GLB model: triangle and vertex counts, size in meters, materials, textures, how many entities-worth of parts it has, and anything that was not imported (with hints). For a material file (*.mat.json): the look it holds (material: every field with its value, written: the fields the file itself writes), its textures and whether each exists. For a sprite sheet (*.sheet.json): its picture and whether it exists, how many frames it is cut into (each frame's rectangle) and its clips (frames, fps, loop). Also its import settings (meta file) and the scenes, prefabs and material files that use it.",
     params: &[Param::required(
         "path",
         Kind::String,
@@ -53,7 +53,7 @@ pub(crate) const ASSET_INFO: Tool = Tool {
 pub(crate) const ASSET_MOVE: Tool = Tool {
     name: "asset_move",
     title: "Move an asset",
-    description: "Moves or renames an asset file or folder and rewrites every reference to it in scenes, prefabs and material files, all or nothing. dry_run lists what would change.",
+    description: "Moves or renames an asset file or folder and rewrites every reference to it in scenes, prefabs, material files and sprite sheets, all or nothing. dry_run lists what would change.",
     params: &[
         Param::required(
             "from",
@@ -73,13 +73,13 @@ pub(crate) const ASSET_MOVE: Tool = Tool {
 
 pub(crate) const ASSET_CREATE: Tool = Tool {
     name: "asset_create",
-    title: "Make a sound, a picture or a material file",
-    description: "Makes an asset file from a few values (nothing is downloaded): a placeholder sound or picture, so a game can have them before real ones exist, or a material file. A .mat.json path makes a material file from material {...}: the fields of the MaterialFile type (schema_get MaterialFile), for example {base_color_texture: \"assets/textures/brick.png\", roughness: 0.9, uv_scale: [4, 4]}; a shape gets the look (and so the texture) when its Material.file names the file, and every entity that names it changes when the file does. To change a material file, make it again with every field and overwrite: true (asset_info gives what it holds). A .wav path makes a sound: sound {wave: sine|square|triangle|saw|noise, frequency (Hz), end_frequency (a slide: higher for a jump, lower for a fall), seconds, volume 0-1, attack and release (fade seconds), seed}. A .png path makes a picture: picture {width, height (pixels, at most 1024), shape: fill|circle|ring|diamond|triangle, color [r,g,b,a] and background [r,g,b,a] (sRGB, 0-1)}. Examples: a jump {wave: square, frequency: 300, end_frequency: 700, seconds: 0.15, release: 0.1}; a coin {wave: sine, frequency: 900, end_frequency: 1400, seconds: 0.12}; a thud {wave: noise, seconds: 0.25, release: 0.2}. An existing file is not replaced unless overwrite is true.",
+    title: "Make a sound, a picture, a material file or a sprite sheet",
+    description: "Makes an asset file from a few values (nothing is downloaded): a placeholder sound or picture, so a game can have them before real ones exist, or a material file. A .mat.json path makes a material file from material {...}: the fields of the MaterialFile type (schema_get MaterialFile), for example {base_color_texture: \"assets/textures/brick.png\", roughness: 0.9, uv_scale: [4, 4]}; a shape gets the look (and so the texture) when its Material.file names the file, and every entity that names it changes when the file does. To change a material file, make it again with every field and overwrite: true (asset_info gives what it holds). A .sheet.json path makes a sprite sheet from sheet {image: a PNG, grid: {frame: [w, h], columns, rows, margin: [x, y], spacing: [x, y]} or frames: [[x, y, w, h], ...] (pixels from the top left; frames are numbered from 0, left to right then down), clips: {name: {frames: [0, 1, 2, 3], fps: 8, loop: true}}}; an entity with a Sprite shows it through a SpriteAnimator {sheet, clip}, and game code switches clips with animator.play(text(\"walk\")). A .wav path makes a sound: sound {wave: sine|square|triangle|saw|noise, frequency (Hz), end_frequency (a slide: higher for a jump, lower for a fall), seconds, volume 0-1, attack and release (fade seconds), seed}. A .png path makes a picture: picture {width, height (pixels, at most 1024), shape: fill|circle|ring|diamond|triangle, color [r,g,b,a] and background [r,g,b,a] (sRGB, 0-1)}. Examples: a jump {wave: square, frequency: 300, end_frequency: 700, seconds: 0.15, release: 0.1}; a coin {wave: sine, frequency: 900, end_frequency: 1400, seconds: 0.12}; a thud {wave: noise, seconds: 0.25, release: 0.2}. An existing file is not replaced unless overwrite is true.",
     params: &[
         Param::required(
             "path",
             Kind::String,
-            "The project-relative file to write: .wav for a sound, .png for a picture, .mat.json for a material file.",
+            "The project-relative file to write: .wav for a sound, .png for a picture, .mat.json for a material file, .sheet.json for a sprite sheet.",
         ),
         Param::optional(
             "sound",
@@ -95,6 +95,11 @@ pub(crate) const ASSET_CREATE: Tool = Tool {
             "material",
             Kind::Object,
             "For a .mat.json: the fields of a MaterialFile (base_color, metallic, roughness, emissive, base_color_texture, metallic_roughness_texture, normal_texture, normal_scale, occlusion_texture, occlusion_strength, emissive_texture, uv_scale, uv_offset, alpha_mode, alpha_cutoff, double_sided); fields left out keep their default.",
+        ),
+        Param::optional(
+            "sheet",
+            Kind::Object,
+            "For a .sheet.json: image (a PNG), grid {frame: [w, h], columns, rows, margin, spacing} or frames [[x, y, w, h], ...], clips {name: {frames: [...], fps, loop}}.",
         ),
         Param::optional(
             "overwrite",
@@ -268,7 +273,7 @@ fn draw_picture(
 fn asset_create(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<String, Value>> {
     let path = crate::documents::normalize_asset_output(
         args.str("path").unwrap_or_default(),
-        &["png", "wav", "mat.json"],
+        &["png", "wav", "mat.json", "sheet.json"],
     )
     .map_err(|problem| problem.at_path("/path"))?;
     let lower = path.to_ascii_lowercase();
@@ -286,16 +291,18 @@ fn asset_create(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map
         "sound"
     } else if wish_asset::is_material(&lower) {
         "material"
+    } else if wish_asset::is_sheet(&lower) {
+        "sheet"
     } else {
         "picture"
     };
-    for other in ["sound", "picture", "material"] {
+    for other in ["sound", "picture", "material", "sheet"] {
         if other != wanted && args.value(other).is_some_and(|v| !v.is_null()) {
             return Err(spec_error(
                 &format!("/{other}"),
                 format!("'{other}' does not go with '{path}'."),
                 &format!(
-                    "A .wav file is made from \"sound\", a .png file from \"picture\" and a .mat.json file from \"material\"; give \"{wanted}\" for this path."
+                    "A .wav file is made from \"sound\", a .png file from \"picture\", a .mat.json file from \"material\" and a .sheet.json file from \"sheet\"; give \"{wanted}\" for this path."
                 ),
             ));
         }
@@ -311,6 +318,9 @@ fn asset_create(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map
     let mut out = Map::new();
     if wanted == "material" {
         return create_material(workspace, args, &path, out);
+    }
+    if wanted == "sheet" {
+        return create_sheet(workspace, args, &path, out);
     }
     let bytes = if lower.ends_with(".wav") {
         let spec = spec_object(args, "sound")?;
@@ -469,12 +479,82 @@ fn create_material(
     Ok(out)
 }
 
+/// A sprite sheet from the `sheet` argument: checked like a sheet file,
+/// written in canonical form, all or nothing. A picture it names that is not
+/// there (yet) is a warning: the file is still made.
+fn create_sheet(
+    workspace: &mut Workspace,
+    args: &Args,
+    path: &str,
+    mut out: Map<String, Value>,
+) -> Result<Map<String, Value>> {
+    if !path.ends_with(wish_asset::SHEET_SUFFIX) {
+        return Err(Diagnostic::error(
+            "invalid_output_path",
+            format!(
+                "'{path}' must end in lower case: {}.",
+                wish_asset::SHEET_SUFFIX
+            ),
+            "Sprite sheets are found by that ending; write it exactly so.",
+        )
+        .at_path("/path"));
+    }
+    let spec = spec_object(args, "sheet")?;
+    let file = wish_asset::SheetDocument::from_spec(spec)?;
+    let sheet = file.decode()?;
+    let text = file.to_canonical()?;
+    let root = workspace.root().to_path_buf();
+    let index = wish_asset::AssetIndex::scan(&root)?;
+    let mut diagnostics: Vec<Diagnostic> = Vec::new();
+    if let Some(used) = file.image() {
+        let problem = index.check(&used.reference).err().or_else(|| {
+            (!used.reference.to_ascii_lowercase().ends_with(".png")).then(|| {
+                Diagnostic::warning(
+                    "texture_not_png",
+                    format!("'{}' is not a PNG file: the sprites will not be drawn.", used.reference),
+                    "Sprite sheets are cut from PNG files only. Convert the picture to PNG (8-bit) and name that file.",
+                )
+            })
+        });
+        if let Some(problem) = problem {
+            // The file is made all the same: the picture may come later.
+            diagnostics.push(
+                Diagnostic::warning(
+                    problem.code.clone(),
+                    problem.message.clone(),
+                    problem.hint.clone(),
+                )
+                .at_path(format!("/sheet{}", used.pointer)),
+            );
+        }
+    }
+    out.insert("kind".to_owned(), json!("sheet"));
+    out.insert("path".to_owned(), json!(path));
+    out.insert("bytes".to_owned(), json!(text.len()));
+    out.insert("sheet".to_owned(), Value::Object(file.sheet.clone()));
+    out.insert("frames".to_owned(), json!(sheet.frames.len()));
+    out.insert("clips".to_owned(), json!(sheet.clip_names()));
+    if !diagnostics.is_empty() {
+        out.insert("diagnostics".to_owned(), json!(diagnostics));
+    }
+    if args.flag("dry_run") {
+        out.insert("dry_run".to_owned(), json!(true));
+        return Ok(out);
+    }
+    crate::documents::prepare_output(&root, path)?;
+    crate::documents::write_project_file(&root, path, &text)
+        .map_err(|problem| problem.at_path("/path"))?;
+    Ok(out)
+}
+
 fn kind_of(path: &str) -> &'static str {
     let lower = path.to_lowercase();
     if lower.ends_with(".glb") || lower.ends_with(".gltf") {
         "model"
     } else if wish_asset::is_material(&lower) {
         "material"
+    } else if wish_asset::is_sheet(&lower) {
+        "sheet"
     } else if lower.ends_with(".png") || lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
         "image"
     } else {
@@ -570,6 +650,53 @@ fn material_info(
     out.insert("textures".to_owned(), json!(textures));
 }
 
+/// What a sprite sheet holds, for `asset_info`.
+fn sheet_info(
+    root: &std::path::Path,
+    path: &str,
+    index: &wish_asset::AssetIndex,
+    out: &mut Map<String, Value>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let source = match wish_asset::read_sheet_file(&root.join(path), path) {
+        Ok(source) => source,
+        Err(problem) => {
+            diagnostics.push(problem);
+            return;
+        }
+    };
+    let (file, problems) = wish_asset::check_sheet(&source, path, index, Some(root));
+    diagnostics.extend(problems);
+    // A sheet whose picture is missing is still worth reporting.
+    let Some(file) = file.or_else(|| wish_asset::parse_sheet(&source, path).ok()) else {
+        return;
+    };
+    let Ok(sheet) = file.decode() else {
+        return;
+    };
+    let clips: Map<String, Value> = sheet
+        .clips
+        .iter()
+        .map(|clip| {
+            (
+                clip.name.clone(),
+                json!({ "frames": clip.frames, "fps": clip.fps, "loop": clip.looping }),
+            )
+        })
+        .collect();
+    out.insert(
+        "sheet".to_owned(),
+        json!({
+            "image": sheet.image,
+            "image_exists": index.contains(&sheet.image),
+            "frame_count": sheet.frames.len(),
+            "frames": sheet.frames.iter().take(256).collect::<Vec<_>>(),
+            "clips": clips,
+        }),
+    );
+    out.insert("written".to_owned(), Value::Object(file.sheet.clone()));
+}
+
 fn asset_info(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<String, Value>> {
     let root = workspace.root().to_path_buf();
     let index = wish_asset::AssetIndex::scan(&root)?;
@@ -648,6 +775,9 @@ fn asset_info(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<S
 
     if kind_of(&path) == "material" {
         material_info(&root, &path, &index, &mut out, &mut diagnostics);
+    }
+    if kind_of(&path) == "sheet" {
+        sheet_info(&root, &path, &index, &mut out, &mut diagnostics);
     }
 
     match wish_asset::read_meta(&root, &path) {

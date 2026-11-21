@@ -51,9 +51,13 @@ pub fn explain(name: &str) -> Option<&'static str> {
         | "menu" => {
             "Interface: an entity with a UiNode is a box (width, height, padding, direction Column or Row, position Absolute with offset, background); child entities with a UiNode are laid out inside it like flexbox. Add UiText (text, size, color), UiImage (a PNG) or UiButton to a box; clicks come as ButtonClicked events. Positions are pixels of a 1280x720 virtual screen (UiSettings); game code writes text with text(\"...\")."
         }
-        "sprite" | "spriterenderer" | "sprite2d" | "animatedsprite" | "animatedsprite2d"
-        | "camera2d" | "orthographic" | "ortho" | "tilemap" | "2d" => {
-            "2D: use a Camera with projection Orthographic (ortho_height in meters) and entities with a Sprite (image: a PNG, rect: the frame in pixels, pixels_per_unit, layer, flip_x, smooth false for pixel art) and a Transform. For 2D physics set the PhysicsSettings resource's profile to SideView2D (a platformer) or TopDown2D (seen from above, no gravity)."
+        "sprite" | "spriterenderer" | "sprite2d" | "camera2d" | "orthographic" | "ortho"
+        | "tilemap" | "2d" | "ninepatch" | "nineslice" | "9slice" | "tint" => {
+            "2D: use a Camera with projection Orthographic (ortho_height in meters) and entities with a Sprite (image: a PNG, rect: the frame in pixels, pixels_per_unit, layer, flip_x, smooth false for pixel art, color: the tint, size and slice: a nine-slice panel drawn at any size with fixed corners) and a Transform. Walk cycles come from a sprite sheet and a SpriteAnimator (see wish://docs/recipes, \"A walking character from a sprite sheet\"). For 2D physics set the PhysicsSettings resource's profile to SideView2D (a platformer) or TopDown2D (seen from above, no gravity)."
+        }
+        "animatedsprite" | "animatedsprite2d" | "spritesheet" | "spriteframes" | "flipbook"
+        | "spriteanimation" | "animator2d" | "walkcycle" => {
+            "Sprite animation: make a sprite sheet with asset_create (a .sheet.json path, sheet {image: a PNG, grid: {frame: [w, h], columns, rows} or frames: [[x, y, w, h]], clips: {walk: {frames: [0, 1, 2, 3], fps: 8}}}), then give the entity with a Sprite a SpriteAnimator {sheet, clip}. The engine moves it every tick and writes the frame shown into SpriteAnimator.frame; game code switches clips with animator.play(text(\"walk\")). wish://docs/recipes has \"A walking character from a sprite sheet\"."
         }
         "rigidbody2d" | "collider2d" | "boxcollider2d" | "circlecollider2d"
         | "capsulecollider2d" | "characterbody2d" | "physics2d" | "topdown" | "top-down" => {

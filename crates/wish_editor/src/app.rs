@@ -691,6 +691,88 @@ impl EditorApp {
         }
     }
 
+    /// Changes a sprite sheet by hand: `changes` (top-level keys and their
+    /// new values, `Null` to remove one) are applied to what the file
+    /// writes now, read again first so that a change an agent made
+    /// meanwhile is kept, and the file is made again with one
+    /// `asset_create` by the person. Whole numbers typed into number boxes
+    /// are written as whole numbers.
+    fn change_sheet(&mut self, path: &str, changes: Vec<(String, Value)>) {
+        let now = self.call("asset_info", &json!({ "path": path }));
+        // A sheet that does not read now (someone is half-way through
+        // editing it) has no `written`: it is not made again from this
+        // change, which would wipe everything else it says.
+        let problem = now["diagnostics"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|d| d["severity"] == "error" && d["code"] != "asset_not_found")
+            .map(|d| d["message"].as_str().unwrap_or_default().to_owned());
+        let field = changes
+            .first()
+            .map(|(field, _)| field.clone())
+            .unwrap_or_default();
+        let made = match now["written"].as_object() {
+            Some(written) if now["ok"] == true && problem.is_none() => {
+                let mut written = written.clone();
+                for (key, value) in changes {
+                    match key.split_once('/') {
+                        // One clip: added, changed or removed on its own.
+                        Some((top, name)) => {
+                            let mut inner = written
+                                .get(top)
+                                .and_then(Value::as_object)
+                                .cloned()
+                                .unwrap_or_default();
+                            if value.is_null() {
+                                inner.remove(name);
+                            } else {
+                                inner.insert(name.to_owned(), whole_numbers(value));
+                            }
+                            if inner.is_empty() {
+                                written.remove(top);
+                            } else {
+                                written.insert(top.to_owned(), Value::Object(inner));
+                            }
+                        }
+                        None if value.is_null() => {
+                            written.remove(&key);
+                        }
+                        None => {
+                            written.insert(key, whole_numbers(value));
+                        }
+                    }
+                }
+                self.call(
+                    "asset_create",
+                    &json!({ "path": path, "sheet": written, "overwrite": true }),
+                )
+            }
+            _ => {
+                let message = problem
+                    .or_else(|| now["error"]["message"].as_str().map(str::to_owned))
+                    .unwrap_or_else(|| t("it did not work").to_owned());
+                json!({ "ok": false, "error": { "message": message } })
+            }
+        };
+        self.status = if made["ok"] == true {
+            tf(
+                "set {field} in {path}",
+                &[("field", &field), ("path", &path)],
+            )
+        } else {
+            let message = made["error"]["message"]
+                .as_str()
+                .unwrap_or(t("it did not work"));
+            tf(
+                "could not make {path}: {message}",
+                &[("path", &path), ("message", &message)],
+            )
+        };
+        self.select_asset(path);
+        self.picture_stale = true;
+    }
+
     /// Selects a file in the browser and reads what is known about it.
     fn select_asset(&mut self, path: &str) {
         self.asset_selected = Some(path.to_owned());
@@ -3787,6 +3869,9 @@ impl EditorApp {
             self.select_asset(&path);
             self.picture_stale = true;
         }
+        if let Some((path, changes)) = actions.browser.sheet.take() {
+            self.change_sheet(&path, changes);
+        }
         if let Some(code) = actions.language {
             self.set_language(code);
             self.save_preferences();
@@ -4327,10 +4412,28 @@ impl EditorApp {
                     pressed,
                     modifiers,
                 } => {
+                    // A press on a menu or a popup over the view (an item
+                    // of the asset browser's New... menu reaches over it)
+                    // is the menu's, not a pick of what is behind it.
+                    let over_popup = self.editor.as_ref().is_some_and(|editor| {
+                        let context = editor.context();
+                        egui::Popup::is_any_open(context)
+                            || self
+                                .pointer
+                                .and_then(|(x, y)| context.layer_id_at(pos2(x, y)))
+                                .is_some_and(|layer| {
+                                    matches!(
+                                        layer.order,
+                                        egui::Order::Foreground
+                                            | egui::Order::Tooltip
+                                            | egui::Order::Debug
+                                    )
+                                })
+                    });
                     if took {
                         self.press = None;
                     } else if *pressed {
-                        self.press = self.pointer.filter(|_| over_view(self));
+                        self.press = self.pointer.filter(|_| over_view(self) && !over_popup);
                     } else if let (Some(start), Some(end)) = (self.press.take(), self.pointer)
                         && (start.0 - end.0).abs() < CLICK_SLOP
                         && (start.1 - end.1).abs() < CLICK_SLOP
@@ -5610,6 +5713,7 @@ impl EditorApp {
                                     .material_schema
                                     .as_ref()
                                     .map(|schema| (schema, &widgets)),
+                                widgets: &widgets,
                             };
                             crate::browser::panel(ui, &view, &mut actions.browser);
                         }
@@ -6446,6 +6550,31 @@ fn view_label(name: &str) -> &'static str {
         "lights" => t("Lights"),
         "shadow_cascades" => t("Shadow cascades"),
         _ => t("Other view"),
+    }
+}
+
+/// `value` with every number that is whole written as a whole number (a
+/// number box gives `32.0`; a sprite sheet's frames are counted in whole
+/// pixels and frames).
+fn whole_numbers(value: Value) -> Value {
+    match value {
+        Value::Number(number) => match number.as_f64() {
+            Some(n) if n.fract() == 0.0 && n.abs() < 9.0e15 && number.as_i64().is_none() => {
+                if n < 0.0 {
+                    json!(n as i64)
+                } else {
+                    json!(n as u64)
+                }
+            }
+            _ => Value::Number(number),
+        },
+        Value::Array(items) => Value::Array(items.into_iter().map(whole_numbers).collect()),
+        Value::Object(map) => Value::Object(
+            map.into_iter()
+                .map(|(key, value)| (key, whole_numbers(value)))
+                .collect(),
+        ),
+        other => other,
     }
 }
 

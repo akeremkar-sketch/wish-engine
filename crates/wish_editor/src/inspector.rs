@@ -421,6 +421,20 @@ pub(crate) fn material_fields(
     fields(ui, view, &format!("material:{path}"), schema, value)
 }
 
+/// The fields of a sprite sheet (`path`), edited with the widgets a
+/// component's fields have: `schema` describes what the sheet writes (the
+/// browser makes it) and `value` is what it writes. Returns the top-level
+/// key that changed and its whole new value.
+pub(crate) fn sheet_fields(
+    ui: &mut Ui,
+    view: &InspectorView<'_>,
+    path: &str,
+    schema: &Value,
+    value: &Value,
+) -> Option<(String, Value)> {
+    fields(ui, view, &format!("sheet:{path}"), schema, value)
+}
+
 /// Sends `new` when the change is finished; keeps a drag's value shown
 /// meanwhile.
 fn finish(

@@ -127,6 +127,21 @@ fn behaviour(title: &str) -> Option<(Value, Value)> {
                 { "expect": "Transform.translation.z == 0", "entity": "ball", "message": "it bounced and stays in the plane" }
             ]),
         )
+    } else if title.starts_with("A walking character from a sprite sheet") {
+        (
+            json!([]),
+            json!([
+                { "frames": 10 },
+                { "expect": "SpriteAnimator.clip == \"idle\" && SpriteAnimator.playing == true", "entity": "hero", "message": "standing, it plays idle" },
+                { "input": { "move": [1, 0] }, "frames": 10 },
+                { "expect": "SpriteAnimator.clip == \"walk\" && SpriteAnimator.frame == 1", "entity": "hero", "message": "walking plays the walk cycle from its start: 10 ticks at 10 frames a second is its second frame" },
+                { "expect": "Transform.translation.x > 0.49 && Sprite.flip_x == false", "entity": "hero", "message": "it walks right, facing right" },
+                { "input": { "move": [-1, 0] }, "frames": 12 },
+                { "expect": "SpriteAnimator.clip == \"walk\" && SpriteAnimator.frame == 3 && Sprite.flip_x == true", "entity": "hero", "message": "the same clip runs on when it turns, mirrored" },
+                { "frames": 5 },
+                { "expect": "SpriteAnimator.clip == \"idle\" && SpriteAnimator.frame == 0", "entity": "hero", "message": "it stops, and idle starts at its first frame" }
+            ]),
+        )
     } else if title.starts_with("A top-down character") {
         (
             json!([]),
@@ -349,7 +364,7 @@ fn every_recipe_builds_and_applies() {
         }
     }
     assert!(
-        built >= 6 && applied >= 9 && tests >= 1 && played >= 7 && called >= 2 && drawn == 2,
+        built >= 7 && applied >= 10 && tests >= 1 && played >= 8 && called >= 3 && drawn == 2,
         "{built} {applied} {tests} {played} {called} {drawn}"
     );
 }

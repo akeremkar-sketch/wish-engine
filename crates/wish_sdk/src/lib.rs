@@ -75,9 +75,9 @@ pub use wish_types::{
     ColliderShape, CollisionEnded, CollisionStarted, DirectionalLight, Exposure, GlobalTransform,
     Material, Model, ParticleEmitter, ParticleState, PhysicsSettings, PlaySound, PointLight,
     Pointer, Primitive, Projection, RenderSettings, RigidBody, Shape, Sky, SoundEnded,
-    SoundStarted, SpotLight, Sprite, Time, Transform, UiAlign, UiButton, UiDirection, UiImage,
-    UiInteraction, UiJustify, UiLayout, UiLength, UiNode, UiPosition, UiSettings, UiText,
-    UiTextAlign, UiUnit, world_position,
+    SoundStarted, SpotLight, Sprite, SpriteAnimator, Time, Transform, UiAlign, UiButton,
+    UiDirection, UiImage, UiInteraction, UiJustify, UiLayout, UiLength, UiNode, UiPosition,
+    UiSettings, UiText, UiTextAlign, UiUnit, world_position,
 };
 pub use wish_types::{AmbientSource, Antialiasing, Bloom, ColorGrading, Fog};
 pub use wish_types::{MAX_PLAYERS, PlayerActionSlots, PlayerActionState, PlayerId, Players};
@@ -107,7 +107,7 @@ pub mod prelude {
         ButtonClicked, Pointer, UiAlign, UiButton, UiDirection, UiImage, UiInteraction, UiJustify,
         UiLayout, UiLength, UiNode, UiPosition, UiSettings, UiText, UiTextAlign, UiUnit,
     };
-    pub use crate::{ParticleEmitter, ParticleState, Projection, Sprite};
+    pub use crate::{ParticleEmitter, ParticleState, Projection, Sprite, SpriteAnimator};
     pub use crate::{PlayerActions, PlayerId, Players};
 }
 

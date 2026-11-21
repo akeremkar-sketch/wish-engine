@@ -333,7 +333,13 @@ impl Renderer {
         } = self.collect(gpu, scene, None, posed);
         // Sprites and particles, then the interface, are prepared on the CPU
         // and drawn over the finished picture.
-        let overlay = crate::sprites::build(scene, view, aspect, &self.ui_pictures);
+        let overlay = crate::sprites::build(
+            scene,
+            view,
+            aspect,
+            (&self.ui_pictures, &self.sprite_sheets),
+            &mut warnings,
+        );
         let interface = (!scene.ui.is_empty())
             .then(|| crate::ui::build(scene, width, height, &self.ui_pictures));
         if let Some(batch) = &interface {

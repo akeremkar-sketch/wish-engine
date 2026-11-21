@@ -138,7 +138,8 @@ Dil, karşılama ekranının sağ üstünden, sonra da *Görünüm* menüsünden
 - **Varlıklar** (alt sekme; projenin dosyaları):
   - Projenin modelleri, resimleri ve sesleri, türe göre süzülür.
   - Görünüme sürükleyince sahneye yerleşir.
-  - *Yeni...* yer tutucu bir ses ya da resim, ya da bir *Malzeme dosyası* yapar.
+  - *Yeni...* yer tutucu bir ses ya da resim, bir *Malzeme dosyası* ya da seçili resmin
+    *Sprite sayfası*nı yapar.
   - *Yeniden adlandır / taşı...* dosyayı taşır ve ona yapılan bütün başvuruları günceller.
   - *Dışarıda aç* sisteminizin kullandığı programla açar.
 - **Görünüşler (malzemeler ve dokular):**
@@ -162,6 +163,18 @@ Dil, karşılama ekranının sağ üstünden, sonra da *Görünüm* menüsünden
     yoktur: büyük bir değişiklikten önce bir denetim noktası kaydedin.
   - Dokular, kenarı en çok 4096 piksel olan PNG dosyalarıdır. Eksik ya da bozuk bir doku
     bildirilir ve yüzey onsuz çizilir.
+- **Sprite'lar ve sprite sayfaları (2B):**
+  - Bir `Sprite` sahnede düz bir resim gösterir. `color` onu boyar (tek beyaz karakter, birçok
+    renk); `size` onu başka bir boyutta çizer, `slice` kenarlarıyla da dokuz parçalı olur: köşeler
+    boyutunu korur, gerisi uzar (paneller ve çerçeveler).
+  - Yürüme döngüsü bir *Sprite sayfası*ndan gelir: bir resim seçin, sonra *Varlıklar*, *Yeni...*,
+    *Sprite sayfası*. Tarayıcının sayfayı gösterdiği yerde resmin nasıl kesileceğini ayarlayın
+    (`grid`: bir karenin `frame` boyutu, `columns`, `rows`; ya da *Dikdörtgenlere geç*), bir ad
+    yazıp *Klip ekle*'ye basın ve her klibe `frames` (`[0, 1, 2, 3]`, soldan sağa, sonra aşağı
+    numaralanır), `fps` ve `loop` verin.
+  - Sonra `Sprite` olan nesneye bir `SpriteAnimator` ekleyin; `sheet` alanına sayfayı, `clip`
+    alanına bir klibi yazın. Oyun çalışırken klip oynar; oyun kodu klibi
+    `animator.play(text("walk"))` ile değiştirir.
 - **Prefab'lar:**
   - *Prefab yap* seçimi yeniden kullanılabilir bir parçaya çevirir.
   - Örnekler *{prefab} örneği* diye görünür; değiştirilmiş alanları işaretlidir.
@@ -399,7 +412,7 @@ dilinizdedir.
 wish.json             proje: ad, tür (2B ya da 3B), varsayılan sahne
 scenes/               sahneler (*.scene.json) ve prefab'lar (*.prefab.json)
 assets/               modeller (.glb/.gltf), resimler (.png), sesler (.wav/.ogg),
-                      malzeme dosyaları (*.mat.json)
+                      malzeme dosyaları (*.mat.json), sprite sayfaları (*.sheet.json)
 scripts/src/lib.rs    oyun kodu
 input.json            eylemler ve tuşları
 tests/                senaryo testleri (*.test.json) ve altın resimler

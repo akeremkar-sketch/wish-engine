@@ -73,7 +73,7 @@ fn checked_name(name: &str) -> Result<()> {
 
 /// Whether a kept document is a scene or a prefab: one brought back by
 /// operations in its history. Every other document (material and meta
-/// files) is brought back as text.
+/// files, sprite sheets) is brought back as text.
 fn is_scene_document(path: &str) -> bool {
     path.ends_with(".scene.json") || path.ends_with(".prefab.json")
 }
@@ -81,11 +81,17 @@ fn is_scene_document(path: &str) -> bool {
 /// Whether `path` can be a document a checkpoint keeps: written exactly
 /// as `wish_asset::index::documents` gives it (project-relative, `/`
 /// between folders, no `.` or `..` parts, no hidden folders, drives or
-/// device names), a scene, prefab, material or meta file, outside
+/// device names), a scene, prefab, material, sheet or meta file, outside
 /// `exports/`. Anything else in a checkpoint's description was not
 /// written by the engine, and is never read or written.
 fn keepable(path: &str) -> bool {
-    const KINDS: &[&str] = &["scene.json", "prefab.json", "mat.json", "meta.json"];
+    const KINDS: &[&str] = &[
+        "scene.json",
+        "prefab.json",
+        "mat.json",
+        "sheet.json",
+        "meta.json",
+    ];
     crate::documents::normalize_asset_output(path, KINDS).is_ok_and(|normal| normal == path)
         && wish_asset::is_document(path)
         && !path.starts_with(wish_asset::index::EXPORTS_FOLDER)
@@ -235,11 +241,11 @@ impl Workspace {
         for (path, file) in wish_asset::index::documents(self.root())? {
             let text = match self.document(&path) {
                 Ok(open) => open.doc.to_canonical()?,
-                Err(_) if wish_asset::is_material(&path) => {
-                    match wish_asset::read_material_file(&file, &path) {
+                Err(_) if wish_asset::is_document_asset(&path) => {
+                    match wish_asset::read_document_asset(&file, &path) {
                         Ok(text) => text,
                         Err(problem) => {
-                            if problem.code == "material_file_too_large" {
+                            if wish_asset::is_too_large(&problem) {
                                 warnings.push(
                                     Diagnostic::warning(
                                         problem.code.clone(),
@@ -311,8 +317,8 @@ impl Workspace {
                 &format!("its copy of '{path}' leads outside it"),
             ));
         }
-        let text = if wish_asset::is_material(path) {
-            wish_asset::read_material_file(&file, path)?
+        let text = if wish_asset::is_document_asset(path) {
+            wish_asset::read_document_asset(&file, path)?
         } else {
             std::fs::read_to_string(&file).map_err(|error| unreadable(&file, &error))?
         };
@@ -521,12 +527,12 @@ impl Workspace {
         for (path, text, target) in plan {
             let exists = self.root().join(path).is_file();
             let Some(target) = target else {
-                // A material or meta file has no operations and no history
+                // A material, sheet or meta file has no operations and no history
                 // of its own: it comes back as the text it was, and the
                 // text it replaces is kept.
                 let file = self.root().join(path);
-                let current = if wish_asset::is_material(path) {
-                    wish_asset::read_material_file(&file, path).ok()
+                let current = if wish_asset::is_document_asset(path) {
+                    wish_asset::read_document_asset(&file, path).ok()
                 } else {
                     std::fs::read_to_string(&file).ok()
                 };

@@ -511,6 +511,8 @@ fn a_material_file_is_made_and_changed_by_hand() {
             .any(|w| w.role == "Label" && w.value.as_deref() == Some("file")),
         "no 'file' among a material file's fields"
     );
+    // Clicking the menu's item made the file and picked nothing behind it.
+    assert!(app.selection().is_empty(), "{:?}", app.selection());
     // An entity takes the look by naming the file in its Material: the
     // inspector's field, as any other.
     let ground = named(&app, "ground");
@@ -530,6 +532,230 @@ fn a_material_file_is_made_and_changed_by_hand() {
     assert_eq!(
         scene_file(&dir)["entities"]["ground"]["components"]["Material"]["file"],
         path
+    );
+}
+
+/// Something in the asset panel that `find` finds, scrolled into view
+/// first (the panel shows a few rows at a time; see [`browser_widget`]).
+fn browser_scrolled(app: &mut EditorApp, what: &str, find: impl Fn(&EditorApp) -> Rect) -> Rect {
+    let panel = app
+        .widgets()
+        .iter()
+        .find(|w| w.role == "ScrollBar" && w.rect.min.y > 500.0)
+        .map(|w| w.rect)
+        .expect("the asset panel's scroll bar");
+    for _ in 0..40 {
+        let found = find(app);
+        let y = found.center().y;
+        if y > panel.min.y + 12.0 && y < panel.max.y - 12.0 {
+            return found;
+        }
+        let step = if y >= panel.max.y - 12.0 { -10.0 } else { 10.0 };
+        play(
+            app,
+            json!([{ "events": [{ "pointer": [found.min.x + 4.0, panel.center().y] }, { "scroll": [0, step] }] },
+                   { "seconds": 0.2 }, { "idle": 2 }]),
+        );
+    }
+    panic!("{what} does not come into view")
+}
+
+/// A button of the asset panel, scrolled into view.
+fn browser_button(app: &mut EditorApp, name: &str) -> Rect {
+    browser_scrolled(app, name, |app| named(app, name))
+}
+
+/// Types `text` into the box at `field` and presses Enter.
+fn type_into(app: &mut EditorApp, field: Rect, text: &str) {
+    play(
+        app,
+        json!([
+            { "events": [{ "click": [field.center().x, field.center().y] }] },
+            { "idle": 1 },
+            { "events": [{ "key": "A", "ctrl": true }] },
+            { "events": [{ "text": text }] },
+            { "events": [{ "key": "Enter" }] },
+            { "idle": 2 }
+        ]),
+    );
+}
+
+fn written(dir: &Path, path: &str) -> Value {
+    serde_json::from_str(&std::fs::read_to_string(dir.join(path)).unwrap()).unwrap()
+}
+
+#[test]
+fn a_sprite_sheet_is_made_and_changed_by_hand() {
+    let dir = project("sheet");
+    // A picture of two 32 x 32 frames side by side.
+    std::fs::create_dir_all(dir.join("assets/sprites")).unwrap();
+    let picture = wish_render::RgbaImage {
+        width: 64,
+        height: 32,
+        pixels: vec![200; 64 * 32 * 4],
+    };
+    std::fs::write(
+        dir.join("assets/sprites/hero.png"),
+        picture.to_png().unwrap(),
+    )
+    .unwrap();
+    let mut app = open(&dir);
+    // New... > Sprite sheet, with the picture selected: one frame the
+    // size of the picture.
+    let row = named(&app, "assets/sprites/hero.png");
+    click(&mut app, row);
+    let new = named(&app, "New...");
+    click(&mut app, new);
+    let sheet = named(&app, "Sprite sheet");
+    click(&mut app, sheet);
+    let path = "assets/sprites/hero.sheet.json";
+    assert_eq!(app.status(), format!("made {path}"));
+    assert_eq!(
+        written(&dir, path),
+        json!({ "format": 1, "image": "assets/sprites/hero.png",
+                "grid": { "frame": [64, 32], "columns": 1, "rows": 1 } })
+    );
+    // Cut in two: the frame's width typed, the columns typed. Each is one
+    // call by a human; numbers stay whole numbers.
+    let width = browser_box(&mut app, "frame", Pick::First);
+    type_into(&mut app, width, "32");
+    assert_eq!(app.status(), format!("set grid in {path}"));
+    let columns = browser_box(&mut app, "columns", Pick::First);
+    type_into(&mut app, columns, "2");
+    assert_eq!(
+        written(&dir, path)["grid"],
+        json!({ "frame": [32, 32], "columns": 2, "rows": 1 })
+    );
+    // A clip: its name typed beside "Add clip".
+    let add = browser_button(&mut app, "Add clip");
+    let name_box = app
+        .widgets()
+        .iter()
+        .filter(|w| w.role == "TextInput")
+        .filter(|w| (w.rect.center().y - add.center().y).abs() < 8.0 && w.rect.max.x < add.min.x)
+        .map(|w| w.rect)
+        .next()
+        .expect("the new clip's name box");
+    play(
+        &mut app,
+        json!([
+            { "events": [{ "click": [name_box.center().x, name_box.center().y] }] },
+            { "idle": 1 },
+            { "events": [{ "text": "walk" }] },
+            { "idle": 2 }
+        ]),
+    );
+    let add = browser_button(&mut app, "Add clip");
+    click(&mut app, add);
+    assert_eq!(app.status(), format!("set clips/walk in {path}"));
+    assert_eq!(
+        written(&dir, path)["clips"],
+        json!({ "walk": { "frames": [0] } })
+    );
+    // Its frames and speed, where the file is shown.
+    let frames = browser_widget(&mut app, "frames", "TextInput", Pick::First);
+    type_into(&mut app, frames, "[0, 1]");
+    let fps = browser_box(&mut app, "fps", Pick::First);
+    type_into(&mut app, fps, "8");
+    assert_eq!(
+        written(&dir, path)["clips"]["walk"],
+        json!({ "frames": [0, 1], "fps": 8 })
+    );
+    // Meanwhile someone else adds a clip: the next change by hand keeps it.
+    let mut theirs = written(&dir, path);
+    theirs["clips"]["idle"] = json!({ "frames": [1] });
+    std::fs::write(
+        dir.join(path),
+        serde_json::to_string_pretty(&theirs).unwrap() + "\n",
+    )
+    .unwrap();
+    let looping = browser_widget(&mut app, "loop", "CheckBox", Pick::First);
+    click(&mut app, looping);
+    let clips = written(&dir, path)["clips"].clone();
+    assert_eq!(clips["idle"], json!({ "frames": [1] }), "{clips}");
+    assert_eq!(clips["walk"]["loop"], false, "{clips}");
+    // Cut by rectangles instead, and back to a grid.
+    let switch = browser_button(&mut app, "Switch to rectangles");
+    click(&mut app, switch);
+    let now = written(&dir, path);
+    assert_eq!(
+        now["frames"],
+        json!([[0, 0, 32, 32], [32, 0, 32, 32]]),
+        "{now}"
+    );
+    assert!(now.get("grid").is_none());
+    let switch = browser_button(&mut app, "Switch to a grid");
+    click(&mut app, switch);
+    let now = written(&dir, path);
+    assert_eq!(
+        now["grid"],
+        json!({ "frame": [32, 32], "columns": 2, "rows": 1 }),
+        "{now}"
+    );
+    // A clip removed: the Remove on its row, under the clips' fields.
+    let remove_idle = |app: &EditorApp| {
+        let widgets = app.widgets();
+        let row = widgets
+            .iter()
+            .filter(|w| w.value.as_deref() == Some("idle") || w.label.as_deref() == Some("idle"))
+            .map(|w| w.rect)
+            .max_by(|a, b| a.min.y.total_cmp(&b.min.y))
+            .expect("the idle clip's row");
+        widgets
+            .iter()
+            .filter(|w| w.role == "Button" && w.label.as_deref() == Some("Remove"))
+            .filter(|w| (w.rect.center().y - row.center().y).abs() < 8.0)
+            .map(|w| w.rect)
+            .next()
+            .expect("the idle clip's Remove")
+    };
+    let remove = browser_scrolled(&mut app, "the idle clip's Remove", remove_idle);
+    click(&mut app, remove);
+    assert!(written(&dir, path)["clips"].get("idle").is_none());
+    // Every change is the person's, in the activity feed.
+    let activity = app.call("activity_get", &json!({}));
+    let made: Vec<&Value> = activity["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|entry| entry["tool"] == "asset_create")
+        .collect();
+    assert!(made.len() >= 9, "{activity}");
+    assert!(made.iter().all(|entry| entry["actor"] == "human"));
+    // An entity plays the sheet: a SpriteAnimator added in the inspector,
+    // its sheet and clip typed in (on an entity with nothing else, so that
+    // its fields are at the top of the inspector).
+    let made = app.call(
+        "edit_apply",
+        &json!({ "ops": [{ "op": "spawn", "id": "hero", "components": {} }] }),
+    );
+    assert_eq!(made["ok"], true, "{made}");
+    play(&mut app, json!([{ "seconds": 0.5 }, { "idle": 2 }]));
+    app.select(&["hero"]);
+    play(&mut app, json!([{ "idle": 2 }]));
+    let add = named(&app, "Add component...");
+    click(&mut app, add);
+    play(
+        &mut app,
+        json!([{ "events": [{ "text": "SpriteAnimator" }] }, { "idle": 2 }]),
+    );
+    let choice = app
+        .widgets()
+        .iter()
+        .filter(|w| w.role == "Button" && w.label.as_deref() == Some("SpriteAnimator"))
+        .map(|w| w.rect)
+        .next()
+        .expect("SpriteAnimator is offered");
+    click(&mut app, choice);
+    let sheet_field = field_of(&app, "sheet", "TextInput");
+    type_into(&mut app, sheet_field, path);
+    let clip_field = field_of(&app, "clip", "TextInput");
+    type_into(&mut app, clip_field, "walk");
+    let animator = scene_file(&dir)["entities"]["hero"]["components"]["SpriteAnimator"].clone();
+    assert_eq!(
+        animator,
+        json!({ "sheet": path, "clip": "walk" }),
+        "{animator}"
     );
 }
 

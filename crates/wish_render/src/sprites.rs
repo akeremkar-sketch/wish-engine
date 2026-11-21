@@ -1,69 +1,160 @@
-//! Sprites and particles (design note M6 §8–§9), drawn after the 3D scene
-//! and before the interface.
+//! Sprites and particles (design notes M6 §8–§9 and
+//! `docs/design/1.1-sprites.md`), drawn after the 3D scene and before the
+//! interface.
 //!
 //! Both are flat, unlit rectangles in the world: a sprite stands in its
 //! entity's XY plane, a particle faces the camera. They are tested against
 //! the scene's depth (a wall in front hides them) but do not write it, and
 //! are drawn back to front: by `layer` (particles are on layer 0), then
-//! farthest first. Pictures share one atlas built on the CPU, like the
-//! interface's.
+//! farthest first.
+//!
+//! **Batches.** Each rectangle is one instance of a unit quad: its four
+//! corners (worked out on the CPU, so a sprite lands on the same pixels it
+//! always did), the part of its picture it shows, its tint. Pictures are
+//! uploaded to the GPU once, each as a texture of its own, and kept until
+//! the picture changes; consecutive rectangles (in drawing order) with the
+//! same picture and the same sampling are one draw call. A thousand sprites
+//! of one sheet are one draw.
+//!
+//! **Sheets.** A sprite whose `SpriteAnimator` names a sprite sheet shows
+//! the sheet's picture, cut to the frame the animator says
+//! ([`SpriteSheet`], given by whoever reads the project's files, as
+//! pictures are).
+//!
+//! **Nine slices.** A sprite with `slice` borders drawn at a `size` other
+//! than its picture's is nine rectangles: the corners keep their size, the
+//! edges and the middle stretch.
 
 use std::collections::BTreeMap;
+use std::sync::Mutex;
 
-use wish_core::Entity;
 use wish_core::math::{Mat4, Vec3, Vec4};
+use wish_core::{Diagnostic, Entity};
 
 use crate::extract::{CameraView, RenderScene, SpriteView};
 use crate::gpu::Gpu;
-use crate::renderer::{Pool, TextureKey};
-use crate::ui::{ATLAS_FORMAT, ATLAS_WIDTH, Atlas, Region, UiPicture, uv_of};
+use crate::renderer::Pool;
+use crate::ui::UiPicture;
 
-/// Bytes per vertex: position (3 floats), texture coordinate (2), colour
-/// (4), disc flag (1).
-const VERTEX_BYTES: u64 = 40;
+/// Bytes per instance: four corners (12 floats), the picture's part (4),
+/// the colour (4), the disc flag (1).
+const INSTANCE_BYTES: u64 = 84;
 /// The size of the overlay uniform: one matrix.
 const UNIFORM_BYTES: u64 = 64;
 /// The most particles drawn in one picture.
 pub const MAX_PARTICLES: usize = 100_000;
+/// The most rectangles one picture draws (sprites' slices and particles
+/// together).
+const MAX_INSTANCES: usize = 1_000_000;
+/// The texel format of sprite pictures: sRGB colours, like the interface's.
+const PICTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 
-/// A sprite's rectangle: its four corners in world space (bottom left,
-/// bottom right, top right, top left) and the atlas region it shows (flips
-/// applied), or `None` for plain colour.
-fn sprite_quad(view: &SpriteView, pictures: &BTreeMap<String, UiPicture>) -> Option<[Vec3; 4]> {
-    let sprite = &view.sprite;
-    let picture = view.image.as_ref().and_then(|path| pictures.get(path));
-    if view.image.is_some() && picture.is_none() {
-        return None;
-    }
-    let [_, _, rw, rh] = sprite
-        .rect
-        .map(|v| if v.is_finite() { v.max(0.0) } else { 0.0 });
-    let (width, height) = match picture {
-        // The part of the picture shown (a rect reaching past the picture
-        // is cut to it, and so is the sprite: no stretched edge pixels).
-        Some(picture) => {
-            let (_, _, w, h) = source_rect(sprite.rect, picture);
-            (w as f32, h as f32)
+/// A sprite sheet, as the renderer needs it: its picture, its frames and
+/// its clips (`wish_asset::Sheet`, given by whoever reads the project's
+/// files: the renderer never touches the disk).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SpriteSheet {
+    /// The picture's project path (kept like any sprite picture,
+    /// `Renderer::set_ui_picture`).
+    pub image: String,
+    /// Each frame: left, top, width, height in the picture's pixels.
+    pub frames: Vec<[u32; 4]>,
+    /// Each clip's frames (sheet frame numbers, in order), by the clip's
+    /// name.
+    pub clips: BTreeMap<String, Vec<u32>>,
+}
+
+/// What a sprite shows once its animator is taken into account.
+struct Shown<'a> {
+    /// The picture's path, if any.
+    image: Option<&'a str>,
+    /// The part of it, as `Sprite.rect` says it.
+    rect: [f32; 4],
+    /// For a sprite with a sheet: the clip's name, the frame in the clip
+    /// (or the still frame), and the sheet's frame number.
+    frame: Option<(&'a str, u32, u32)>,
+}
+
+/// What a sprite shows: its own picture and rect, or (with a sheet that is
+/// known) the sheet's picture and frame. A clip or a frame the sheet does
+/// not have shows the nearest the sheet has, with a warning in `warnings`.
+fn shown<'a>(
+    view: &'a SpriteView,
+    sheets: &'a BTreeMap<String, SpriteSheet>,
+    names: &dyn Fn(Entity) -> String,
+    warnings: Option<&mut Vec<Diagnostic>>,
+) -> Shown<'a> {
+    let own = Shown {
+        image: view.image.as_deref(),
+        rect: view.sprite.rect,
+        frame: None,
+    };
+    let Some(animation) = &view.animation else {
+        return own;
+    };
+    let Some(sheet) = sheets.get(&animation.sheet) else {
+        // The loader said why (`sheet_not_loaded`).
+        return own;
+    };
+    let last = sheet.frames.len().saturating_sub(1) as u32;
+    let mut problem = None;
+    let (in_clip, number) = if animation.clip.is_empty() {
+        if animation.frame > last {
+            problem = Some(Diagnostic::warning(
+                "sprite_frame_not_found",
+                format!(
+                    "Entity {} shows frame {} of the sheet '{}', which has {} frames; its last frame is shown.",
+                    names(view.entity),
+                    animation.frame,
+                    animation.sheet,
+                    sheet.frames.len()
+                ),
+                "Without a clip, SpriteAnimator.frame is the sheet's own frame number, from 0 (left to right, then down, in a grid). asset_info on the sheet lists its frames.",
+            ));
         }
-        None if rw > 0.0 && rh > 0.0 => (rw, rh),
-        None => (100.0, 100.0),
-    };
-    let ppu = if sprite.pixels_per_unit.is_finite() && sprite.pixels_per_unit > 0.0 {
-        sprite.pixels_per_unit
+        (animation.frame, animation.frame.min(last))
     } else {
-        100.0
+        match sheet.clips.get(&animation.clip) {
+            Some(frames) => {
+                let at = (animation.frame as usize).min(frames.len().saturating_sub(1));
+                (
+                    animation.frame,
+                    frames.get(at).copied().unwrap_or(0).min(last),
+                )
+            }
+            None => {
+                let names_of: Vec<&str> = sheet.clips.keys().map(String::as_str).collect();
+                problem = Some(Diagnostic::warning(
+                    "sprite_clip_not_found",
+                    format!(
+                        "Entity {} plays the clip '{}', which the sheet '{}' does not have; its first frame is shown.",
+                        names(view.entity),
+                        animation.clip,
+                        animation.sheet
+                    ),
+                    format!(
+                        "{} The sheet's clips are: {}.",
+                        wish_core::suggest::unknown_name_hint(&animation.clip, &names_of),
+                        if names_of.is_empty() {
+                            "(none)".to_owned()
+                        } else {
+                            names_of.join(", ")
+                        }
+                    ),
+                ));
+                (0, 0)
+            }
+        }
     };
-    let (w, h) = (width / ppu, height / ppu);
-    let [ax, ay] = sprite.anchor.map(|v| if v.is_finite() { v } else { 0.5 });
-    let (left, bottom) = (-ax * w, -ay * h);
-    let corners = [
-        Vec3::new(left, bottom, 0.0),
-        Vec3::new(left + w, bottom, 0.0),
-        Vec3::new(left + w, bottom + h, 0.0),
-        Vec3::new(left, bottom + h, 0.0),
-    ]
-    .map(|corner| view.world.transform_point3(corner));
-    corners.iter().all(|c| c.is_finite()).then_some(corners)
+    if let (Some(problem), Some(warnings)) = (problem, warnings) {
+        warnings.push(problem.at_file(animation.sheet.clone()));
+    }
+    let [x, y, w, h] = sheet.frames.get(number as usize).copied().unwrap_or([0; 4]);
+    Shown {
+        image: Some(sheet.image.as_str()),
+        rect: [x as f32, y as f32, w as f32, h as f32],
+        frame: Some((animation.clip.as_str(), in_clip, number)),
+    }
 }
 
 /// The part of `picture` a sprite shows, in its pixels (left, top, width,
@@ -83,12 +174,148 @@ fn source_rect(rect: [f32; 4], picture: &UiPicture) -> (u32, u32, u32, u32) {
     )
 }
 
+/// A number written in a sprite that may be anything game code wrote: a
+/// finite number at least 0, or 0.
+fn clean(value: f32) -> f32 {
+    if value.is_finite() {
+        value.max(0.0)
+    } else {
+        0.0
+    }
+}
+
+/// One rectangle of a sprite: its corners in world space (bottom left,
+/// bottom right, top right, top left) and the part of the picture it shows
+/// in the picture's pixels (left, top, right, bottom), flips applied (a
+/// flipped piece has its left greater than its right).
+type Piece = ([Vec3; 4], [f32; 4]);
+
+/// A sprite's rectangles (one, or up to nine when it is sliced), and the
+/// four corners of the whole sprite; `None` when it cannot be drawn (its
+/// picture is not loaded, or its placement is not finite).
+fn sprite_pieces(
+    view: &SpriteView,
+    shown: &Shown<'_>,
+    pictures: &BTreeMap<String, UiPicture>,
+) -> Option<(Vec<Piece>, [Vec3; 4])> {
+    let sprite = &view.sprite;
+    let picture = shown.image.and_then(|path| pictures.get(path));
+    if shown.image.is_some() && picture.is_none() {
+        return None;
+    }
+    let [_, _, rw, rh] = shown.rect.map(clean);
+    let source = picture.map(|picture| source_rect(shown.rect, picture));
+    let (mut width, mut height) = match source {
+        // The part of the picture shown (a rect reaching past the picture
+        // is cut to it, and so is the sprite: no stretched edge pixels).
+        Some((_, _, w, h)) => (w as f32, h as f32),
+        None if rw > 0.0 && rh > 0.0 => (rw, rh),
+        None => (100.0, 100.0),
+    };
+    let [sw, sh] = sprite.size.map(clean);
+    if sw > 0.0 && sh > 0.0 {
+        (width, height) = (sw, sh);
+    }
+    let ppu = if sprite.pixels_per_unit.is_finite() && sprite.pixels_per_unit > 0.0 {
+        sprite.pixels_per_unit
+    } else {
+        100.0
+    };
+    let (w, h) = (width / ppu, height / ppu);
+    let [ax, ay] = sprite.anchor.map(|v| if v.is_finite() { v } else { 0.5 });
+    let (left, bottom) = (-ax * w, -ay * h);
+    let outline = [
+        Vec3::new(left, bottom, 0.0),
+        Vec3::new(left + w, bottom, 0.0),
+        Vec3::new(left + w, bottom + h, 0.0),
+        Vec3::new(left, bottom + h, 0.0),
+    ]
+    .map(|corner| view.world.transform_point3(corner));
+    if !outline.iter().all(|c| c.is_finite()) {
+        return None;
+    }
+    let Some((sx, sy, spw, sph)) = source else {
+        // A plain rectangle: one piece, no picture.
+        return Some((vec![(outline, [0.0; 4])], outline));
+    };
+    let (sx, sy, spw, sph) = (sx as f32, sy as f32, spw as f32, sph as f32);
+    let flip = |[l, t, r, b]: [f32; 4]| {
+        let (l, r) = if sprite.flip_x { (r, l) } else { (l, r) };
+        let (t, b) = if sprite.flip_y { (b, t) } else { (t, b) };
+        [l, t, r, b]
+    };
+    if !sprite.is_sliced() {
+        return Some((vec![(outline, flip([sx, sy, sx + spw, sy + sph]))], outline));
+    }
+    // Nine slices. Borders keep to the picture's part and to the size
+    // drawn (both shrink in proportion when they do not fit).
+    let [mut bl, mut bt, mut br, mut bb] = sprite.slice.map(clean);
+    for (low, high, room) in [(&mut bl, &mut br, spw), (&mut bt, &mut bb, sph)] {
+        if *low + *high > room {
+            let scale = room / (*low + *high);
+            (*low, *high) = (*low * scale, *high * scale);
+        }
+    }
+    let fit = |low: f32, high: f32, room: f32| {
+        if low + high > room && low + high > 0.0 {
+            let scale = room / (low + high);
+            (low * scale, high * scale)
+        } else {
+            (low, high)
+        }
+    };
+    let (ol, or) = fit(bl, br, width);
+    let (ot, ob) = fit(bt, bb, height);
+    // Edges across, in drawn pixels from the left and in picture pixels;
+    // down, from the top.
+    let across = [0.0, ol, width - or, width];
+    let from = [sx, sx + bl, sx + spw - br, sx + spw];
+    let down = [0.0, ot, height - ob, height];
+    let from_top = [sy, sy + bt, sy + sph - bb, sy + sph];
+    let mut pieces = Vec::with_capacity(9);
+    for row in 0..3 {
+        for column in 0..3 {
+            let (x0, x1) = (across[column], across[column + 1]);
+            let (top, low) = (down[row], down[row + 1]);
+            let (u0, u1) = (from[column], from[column + 1]);
+            let (v0, v1) = (from_top[row], from_top[row + 1]);
+            // Nothing to show, or nowhere to show it.
+            if x1 - x0 <= 0.0 || low - top <= 0.0 || u1 - u0 <= 0.0 || v1 - v0 <= 0.0 {
+                continue;
+            }
+            // Mirroring flips where a piece goes as well as its picture.
+            let (x0, x1) = if sprite.flip_x {
+                (width - x1, width - x0)
+            } else {
+                (x0, x1)
+            };
+            let (top, low) = if sprite.flip_y {
+                (height - low, height - top)
+            } else {
+                (top, low)
+            };
+            // Drawn pixels from the bottom left, in meters.
+            let (y0, y1) = (height - low, height - top);
+            let at = |x: f32, y: f32| {
+                view.world
+                    .transform_point3(Vec3::new(left + x / ppu, bottom + y / ppu, 0.0))
+            };
+            let corners = [at(x0, y0), at(x1, y0), at(x1, y1), at(x0, y1)];
+            if corners.iter().all(|c| c.is_finite()) {
+                pieces.push((corners, flip([u0, v0, u1, v1])));
+            }
+        }
+    }
+    Some((pieces, outline))
+}
+
 /// One rectangle to draw.
 struct Item {
     corners: [Vec3; 4],
-    /// Texture coordinates of the four corners, or `None` for the white
-    /// block (plain colour, particles).
-    region: Option<(Region, bool, bool)>,
+    /// Texture coordinates: left, top, right, bottom (0 to 1).
+    uv: [f32; 4],
+    /// The picture, or `None` for plain colour (a white texel).
+    texture: Option<String>,
     colour: [f32; 4],
     disc: bool,
     smooth: bool,
@@ -96,14 +323,20 @@ struct Item {
     distance: f32,
 }
 
+/// Consecutive instances drawn with one picture and one sampler.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Batch {
+    /// The picture, or `None` for the white texel.
+    texture: Option<String>,
+    smooth: bool,
+    first: u32,
+    count: u32,
+}
+
 /// The overlay of one picture, ready for the GPU.
 pub(crate) struct Overlay {
-    vertices: Vec<u8>,
-    atlas: Vec<u8>,
-    atlas_height: u32,
-    /// Consecutive vertices drawn with the same sampler: smooth?, first,
-    /// count.
-    runs: Vec<(bool, u32, u32)>,
+    instances: Vec<u8>,
+    batches: Vec<Batch>,
     view_proj: Mat4,
 }
 
@@ -111,81 +344,60 @@ impl Overlay {
     /// How many draw calls and how many triangles drawing it takes.
     pub(crate) fn counts(&self) -> (u32, u64) {
         (
-            u32::try_from(self.runs.len()).unwrap_or(u32::MAX),
-            self.vertices.len() as u64 / VERTEX_BYTES / 3,
+            u32::try_from(self.batches.len()).unwrap_or(u32::MAX),
+            self.instances.len() as u64 / INSTANCE_BYTES * 2,
         )
     }
 }
 
 /// Prepares the sprites and particles of `scene` seen through `camera` in
-/// a picture of `aspect`; `None` when there are none.
+/// a picture of `aspect`; `None` when there are none. What could not be
+/// shown as written is added to `warnings`.
 pub(crate) fn build(
     scene: &RenderScene,
     camera: &CameraView,
     aspect: f32,
-    pictures: &BTreeMap<String, UiPicture>,
+    (pictures, sheets): (&BTreeMap<String, UiPicture>, &BTreeMap<String, SpriteSheet>),
+    warnings: &mut Vec<Diagnostic>,
 ) -> Option<Overlay> {
     if scene.sprites.is_empty() && scene.emitters.is_empty() {
         return None;
     }
-    let mut atlas = Atlas::new();
-    let mut placed: BTreeMap<String, Option<Region>> = BTreeMap::new();
     let mut items: Vec<Item> = Vec::new();
     let distance = |point: Vec3| -camera.view.transform_point3(point).z;
+    let names = |entity: Entity| scene.name_of(entity);
     for view in &scene.sprites {
-        let Some(corners) = sprite_quad(view, pictures) else {
+        let shown = shown(view, sheets, &names, Some(warnings));
+        let Some((pieces, outline)) = sprite_pieces(view, &shown, pictures) else {
             continue;
-        };
-        let centre = (corners[0] + corners[2]) * 0.5;
-        let region = match &view.image {
-            Some(path) => {
-                let region = match placed.get(path) {
-                    Some(region) => *region,
-                    None => {
-                        let region = pictures.get(path).and_then(|picture| {
-                            let (ax, ay) = atlas.place(picture.width, picture.height)?;
-                            for row in 0..picture.height {
-                                for column in 0..picture.width {
-                                    let i = ((row * picture.width + column) * 4) as usize;
-                                    let mut texel = [0u8; 4];
-                                    texel.copy_from_slice(picture.rgba.get(i..i + 4)?);
-                                    atlas.set(ax + column, ay + row, texel);
-                                }
-                            }
-                            Some((ax, ay, picture.width, picture.height))
-                        });
-                        placed.insert(path.clone(), region);
-                        region
-                    }
-                };
-                let Some((ax, ay, _, _)) = region else {
-                    continue;
-                };
-                let Some(picture) = pictures.get(path) else {
-                    continue;
-                };
-                let (sx, sy, sw, sh) = source_rect(view.sprite.rect, picture);
-                Some((
-                    (ax + sx, ay + sy, sw, sh),
-                    view.sprite.flip_x,
-                    view.sprite.flip_y,
-                ))
-            }
-            None => None,
         };
         let colour = view.sprite.color.to_array();
         if !colour.iter().all(|c| c.is_finite()) {
             continue;
         }
-        items.push(Item {
-            corners,
-            region,
-            colour,
-            disc: false,
-            smooth: view.sprite.smooth,
-            layer: view.sprite.layer,
-            distance: distance(centre),
-        });
+        let picture = shown
+            .image
+            .and_then(|path| pictures.get(path).map(|p| (path, p)));
+        let centre = (outline[0] + outline[2]) * 0.5;
+        for (corners, [l, t, r, b]) in pieces {
+            let (texture, uv) = match picture {
+                Some((path, picture)) => {
+                    let (pw, ph) = (picture.width.max(1) as f32, picture.height.max(1) as f32);
+                    (Some(path.to_owned()), [l / pw, t / ph, r / pw, b / ph])
+                }
+                None => (None, [0.5; 4]),
+            };
+            items.push(Item {
+                corners,
+                uv,
+                texture,
+                colour,
+                disc: false,
+                smooth: view.sprite.smooth,
+                layer: view.sprite.layer,
+                distance: distance(centre),
+            });
+        }
     }
     // Particles face the camera.
     let to_world = camera.view.inverse();
@@ -206,7 +418,8 @@ pub(crate) fn build(
             let p = particle.position;
             items.push(Item {
                 corners: [p - r - u, p + r - u, p + r + u, p - r + u],
-                region: None,
+                uv: [0.0, 0.0, 1.0, 1.0],
+                texture: None,
                 colour: particle.color,
                 disc: true,
                 smooth: true,
@@ -218,56 +431,54 @@ pub(crate) fn build(
     if items.is_empty() {
         return None;
     }
-    // Back to front: lower layers first, then farther first.
+    if items.len() > MAX_INSTANCES {
+        warnings.push(Diagnostic::warning(
+            "sprites_cut_short",
+            format!(
+                "The picture has {} sprite rectangles and particles; the first {MAX_INSTANCES} (in entity order) are drawn.",
+                items.len()
+            ),
+            "Fewer sprites or particles on screen at once: a nine-slice sprite is up to nine rectangles.",
+        ));
+        items.truncate(MAX_INSTANCES);
+    }
+    // Back to front: lower layers first, then farther first. Stable, so a
+    // sliced sprite's pieces stay together and in order.
     items.sort_by(|a, b| {
         a.layer
             .cmp(&b.layer)
             .then(b.distance.total_cmp(&a.distance))
     });
-    let atlas_height = atlas.height.max(1);
-    let mut vertices = Vec::with_capacity(items.len() * 6 * VERTEX_BYTES as usize);
-    let mut runs: Vec<(bool, u32, u32)> = Vec::new();
-    for (index, item) in items.iter().enumerate() {
-        let uv: [[f32; 2]; 4] = match item.region {
-            _ if item.disc => [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]],
-            None => {
-                let [u, v, _, _] = uv_of((2, 2, 0, 0), atlas_height);
-                [[u, v]; 4]
-            }
-            Some((region, flip_x, flip_y)) => {
-                let [mut u0, mut v0, mut u1, mut v1] = uv_of(region, atlas_height);
-                if flip_x {
-                    std::mem::swap(&mut u0, &mut u1);
-                }
-                if flip_y {
-                    std::mem::swap(&mut v0, &mut v1);
-                }
-                // The picture's top is the sprite's top (+Y).
-                [[u0, v1], [u1, v1], [u1, v0], [u0, v0]]
-            }
-        };
+    let mut instances = Vec::with_capacity(items.len() * INSTANCE_BYTES as usize);
+    let mut batches: Vec<Batch> = Vec::new();
+    for (index, item) in items.into_iter().enumerate() {
         let disc = if item.disc { 1.0f32 } else { 0.0 };
-        for corner in [0usize, 1, 2, 0, 2, 3] {
-            let p = item.corners[corner];
-            for value in [p.x, p.y, p.z, uv[corner][0], uv[corner][1]]
-                .into_iter()
-                .chain(item.colour)
-                .chain([disc])
-            {
-                vertices.extend_from_slice(&value.to_le_bytes());
-            }
+        for value in item
+            .corners
+            .iter()
+            .flat_map(|c| c.to_array())
+            .chain(item.uv)
+            .chain(item.colour)
+            .chain([disc])
+        {
+            instances.extend_from_slice(&value.to_le_bytes());
         }
-        let first = u32::try_from(index * 6).unwrap_or(u32::MAX);
-        match runs.last_mut() {
-            Some((smooth, _, count)) if *smooth == item.smooth => *count += 6,
-            _ => runs.push((item.smooth, first, 6)),
+        let first = u32::try_from(index).unwrap_or(u32::MAX);
+        match batches.last_mut() {
+            Some(batch) if batch.smooth == item.smooth && batch.texture == item.texture => {
+                batch.count += 1;
+            }
+            _ => batches.push(Batch {
+                texture: item.texture,
+                smooth: item.smooth,
+                first,
+                count: 1,
+            }),
         }
     }
     Some(Overlay {
-        vertices,
-        atlas: atlas.pixels,
-        atlas_height,
-        runs,
+        instances,
+        batches,
         view_proj: camera.projection(aspect) * camera.view,
     })
 }
@@ -284,6 +495,10 @@ pub struct OverlayElement {
     pub particles: Option<u32>,
     /// For a sprite, its layer.
     pub layer: Option<i32>,
+    /// For a sprite showing a sheet: the clip (empty: none), the frame its
+    /// animator says (its place in the clip, or without a clip the sheet's
+    /// frame), and the sheet's frame number it shows.
+    pub animation: Option<(String, u32, u32)>,
 }
 
 /// The box `points` cover in a `width` × `height` picture through
@@ -324,20 +539,25 @@ fn picture_box(points: &[Vec3], view_proj: &Mat4, width: u32, height: u32) -> Op
 pub(crate) fn elements(
     scene: &RenderScene,
     camera: &CameraView,
-    width: u32,
-    height: u32,
+    (width, height): (u32, u32),
     pictures: &BTreeMap<String, UiPicture>,
+    sheets: &BTreeMap<String, SpriteSheet>,
 ) -> Vec<OverlayElement> {
     let view_proj = camera.projection(width as f32 / height.max(1) as f32) * camera.view;
+    let names = |entity: Entity| scene.name_of(entity);
     let mut found = Vec::new();
     for view in &scene.sprites {
-        let bounding_box = sprite_quad(view, pictures)
-            .and_then(|corners| picture_box(&corners, &view_proj, width, height));
+        let shown = shown(view, sheets, &names, None);
+        let bounding_box = sprite_pieces(view, &shown, pictures)
+            .and_then(|(_, outline)| picture_box(&outline, &view_proj, width, height));
         found.push(OverlayElement {
             entity: view.entity,
             bounding_box,
             particles: None,
             layer: Some(view.sprite.layer),
+            animation: shown
+                .frame
+                .map(|(clip, frame, number)| (clip.to_owned(), frame, number)),
         });
     }
     for view in &scene.emitters {
@@ -356,17 +576,95 @@ pub(crate) fn elements(
             bounding_box: picture_box(&points, &view_proj, width, height),
             particles: Some(alive),
             layer: None,
+            animation: None,
         });
     }
     found
 }
 
+/// Sprite pictures on the GPU: one texture for each picture drawn so far,
+/// kept until the picture changes (`Renderer::set_ui_picture`). Locked
+/// only while the GPU lock is held (after the pool's, like everything in a
+/// frame), or through `&mut`.
+#[derive(Default)]
+pub(crate) struct SpriteTextures {
+    views: Mutex<BTreeMap<String, wgpu::TextureView>>,
+}
+
+impl SpriteTextures {
+    /// Forgets the texture of `path` (its picture changed).
+    pub(crate) fn forget(&mut self, path: &str) {
+        let views = match self.views.get_mut() {
+            Ok(views) => views,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        views.remove(path);
+        self.views.clear_poison();
+    }
+
+    /// How many pictures are on the GPU.
+    pub(crate) fn len(&self) -> usize {
+        self.views.lock().map_or(0, |views| views.len())
+    }
+}
+
+/// Uploads `picture` as a texture of one level (sprites are drawn near
+/// their pixel size; sampling is as the atlas's always was). Call inside
+/// `Gpu::checked`.
+fn upload(gpu: &Gpu, picture: &UiPicture, path: &str) -> Option<wgpu::TextureView> {
+    let limit = gpu.device.limits().max_texture_dimension_2d;
+    let expected = u64::from(picture.width) * u64::from(picture.height) * 4;
+    if picture.width == 0
+        || picture.height == 0
+        || picture.width.max(picture.height) > limit
+        || picture.rgba.len() as u64 != expected
+    {
+        return None;
+    }
+    let size = wgpu::Extent3d {
+        width: picture.width,
+        height: picture.height,
+        depth_or_array_layers: 1,
+    };
+    let texture = gpu.create_texture(&wgpu::TextureDescriptor {
+        label: Some(path),
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: PICTURE_FORMAT,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    gpu.queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &picture.rgba,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(picture.width * 4),
+            rows_per_image: Some(picture.height),
+        },
+        size,
+    );
+    Some(texture.create_view(&wgpu::TextureViewDescriptor::default()))
+}
+
 /// The sprite and particle pipeline.
 pub(crate) struct OverlayPipeline {
     pipeline: wgpu::RenderPipeline,
-    layout: wgpu::BindGroupLayout,
+    /// Group 0: the matrix.
+    frame_layout: wgpu::BindGroupLayout,
+    /// Group 1: a picture and a sampler.
+    picture_layout: wgpu::BindGroupLayout,
     smooth: wgpu::Sampler,
     sharp: wgpu::Sampler,
+    /// A white texel, for plain colour and particles.
+    white: wgpu::TextureView,
 }
 
 impl OverlayPipeline {
@@ -380,40 +678,44 @@ impl OverlayPipeline {
     ) -> wish_core::Result<Self> {
         gpu.checked("create the sprite pipeline", |gpu| {
             let device = &gpu.device;
-            let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("sprites"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: wgpu::BufferSize::new(UNIFORM_BYTES),
-                        },
-                        count: None,
+            let frame_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("sprites frame"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(UNIFORM_BYTES),
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
+                    count: None,
+                }],
             });
+            let picture_layout =
+                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("sprites picture"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                            count: None,
+                        },
+                    ],
+                });
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("sprites"),
-                bind_group_layouts: &[Some(&layout)],
+                bind_group_layouts: &[Some(&frame_layout), Some(&picture_layout)],
                 immediate_size: 0,
             });
             let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -430,16 +732,19 @@ impl OverlayPipeline {
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &shader,
-                    entry_point: Some("vs_main"),
+                    entry_point: Some("vs_instance"),
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                     buffers: &[Some(wgpu::VertexBufferLayout {
-                        array_stride: VERTEX_BYTES,
-                        step_mode: wgpu::VertexStepMode::Vertex,
+                        array_stride: INSTANCE_BYTES,
+                        step_mode: wgpu::VertexStepMode::Instance,
                         attributes: &[
                             attribute(0, 0, wgpu::VertexFormat::Float32x3),
-                            attribute(1, 12, wgpu::VertexFormat::Float32x2),
-                            attribute(2, 20, wgpu::VertexFormat::Float32x4),
-                            attribute(3, 36, wgpu::VertexFormat::Float32),
+                            attribute(1, 12, wgpu::VertexFormat::Float32x3),
+                            attribute(2, 24, wgpu::VertexFormat::Float32x3),
+                            attribute(3, 36, wgpu::VertexFormat::Float32x3),
+                            attribute(4, 48, wgpu::VertexFormat::Float32x4),
+                            attribute(5, 64, wgpu::VertexFormat::Float32x4),
+                            attribute(6, 80, wgpu::VertexFormat::Float32),
                         ],
                     })],
                 },
@@ -475,18 +780,21 @@ impl OverlayPipeline {
             };
             Self {
                 pipeline,
-                layout,
+                frame_layout,
+                picture_layout,
                 smooth: sampler("sprites smooth", wgpu::FilterMode::Linear),
                 sharp: sampler("sprites sharp", wgpu::FilterMode::Nearest),
+                white: crate::texture::solid(gpu, [255; 4], true, "sprites white"),
             }
         })
     }
 
-    /// Records drawing `overlay` over `target`, tested against `depth`.
-    /// The atlas texture, the uniform buffer and the vertex buffer come from
-    /// `pool` and are filled here, whole, every frame; the two bind groups
-    /// are this frame's (both over the one uniform buffer). Call inside
-    /// `Gpu::checked`.
+    /// Records drawing `overlay` over `target`, tested against `depth`. The
+    /// uniform buffer and the instance buffer come from `pool` and are
+    /// filled here every frame; pictures come from `textures` (uploaded
+    /// from `pictures` the first time they are drawn). The frame's bind
+    /// groups are its own: one over the uniform buffer, one for each
+    /// picture and sampler. Call inside `Gpu::checked`.
     pub(crate) fn draw(
         &self,
         gpu: &Gpu,
@@ -494,38 +802,9 @@ impl OverlayPipeline {
         encoder: &mut wgpu::CommandEncoder,
         (target, depth): (&wgpu::TextureView, &wgpu::TextureView),
         overlay: &Overlay,
+        (textures, pictures): (&SpriteTextures, &BTreeMap<String, UiPicture>),
     ) {
         let device = &gpu.device;
-        let size = wgpu::Extent3d {
-            width: ATLAS_WIDTH,
-            height: overlay.atlas_height,
-            depth_or_array_layers: 1,
-        };
-        let view = pool.texture(
-            gpu,
-            TextureKey {
-                name: "sprite atlas",
-                width: ATLAS_WIDTH,
-                height: overlay.atlas_height,
-                format: ATLAS_FORMAT,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            },
-        );
-        gpu.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: view.texture(),
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &overlay.atlas,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(ATLAS_WIDTH * 4),
-                rows_per_image: Some(overlay.atlas_height),
-            },
-            size,
-        );
         let matrix: Vec<u8> = overlay
             .view_proj
             .to_cols_array()
@@ -533,38 +812,72 @@ impl OverlayPipeline {
             .flat_map(|v| v.to_le_bytes())
             .collect();
         let uniform = pool.buffer(gpu, "sprites", wgpu::BufferUsages::UNIFORM, &matrix);
-        let group = |sampler: &wgpu::Sampler| {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("sprites"),
-                layout: &self.layout,
+        let frame_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("sprites frame"),
+            layout: &self.frame_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                // At the matrix's size, whatever the pooled buffer's
+                // capacity.
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &uniform,
+                    offset: 0,
+                    size: wgpu::BufferSize::new(UNIFORM_BYTES),
+                }),
+            }],
+        });
+        // The pictures of this frame, uploaded when first drawn.
+        let mut kept = textures
+            .views
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut groups: BTreeMap<(Option<&str>, bool), wgpu::BindGroup> = BTreeMap::new();
+        for batch in &overlay.batches {
+            let key = (batch.texture.as_deref(), batch.smooth);
+            if groups.contains_key(&key) {
+                continue;
+            }
+            let view = match &batch.texture {
+                None => Some(self.white.clone()),
+                Some(path) => match kept.get(path) {
+                    Some(view) => Some(view.clone()),
+                    None => pictures
+                        .get(path)
+                        .and_then(|picture| upload(gpu, picture, path))
+                        .inspect(|view| {
+                            kept.insert(path.clone(), view.clone());
+                        }),
+                },
+            };
+            // A picture the GPU cannot take is drawn as nothing.
+            let Some(view) = view else { continue };
+            let sampler = if batch.smooth {
+                &self.smooth
+            } else {
+                &self.sharp
+            };
+            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("sprites picture"),
+                layout: &self.picture_layout,
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
-                        // At the matrix's size, whatever the pooled
-                        // buffer's capacity.
-                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: &uniform,
-                            offset: 0,
-                            size: wgpu::BufferSize::new(UNIFORM_BYTES),
-                        }),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
                         resource: wgpu::BindingResource::TextureView(&view),
                     },
                     wgpu::BindGroupEntry {
-                        binding: 2,
+                        binding: 1,
                         resource: wgpu::BindingResource::Sampler(sampler),
                     },
                 ],
-            })
-        };
-        let (smooth, sharp) = (group(&self.smooth), group(&self.sharp));
-        let vertices = pool.buffer(
+            });
+            groups.insert(key, group);
+        }
+        drop(kept);
+        let instances = pool.buffer(
             gpu,
-            "sprite vertices",
+            "sprite instances",
             wgpu::BufferUsages::VERTEX,
-            &overlay.vertices,
+            &overlay.instances,
         );
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("sprites"),
@@ -590,12 +903,153 @@ impl OverlayPipeline {
             multiview_mask: None,
         });
         pass.set_pipeline(&self.pipeline);
-        // The runs name only this frame's vertices: the pooled buffer may be
-        // larger and hold an earlier frame's beyond them.
-        pass.set_vertex_buffer(0, vertices.slice(..));
-        for (is_smooth, first, count) in &overlay.runs {
-            pass.set_bind_group(0, if *is_smooth { &smooth } else { &sharp }, &[]);
-            pass.draw(*first..first + count, 0..1);
+        pass.set_bind_group(0, &frame_group, &[]);
+        for batch in &overlay.batches {
+            let Some(group) = groups.get(&(batch.texture.as_deref(), batch.smooth)) else {
+                continue;
+            };
+            pass.set_bind_group(1, group, &[]);
+            // The batch's instances only: the pooled buffer may be larger
+            // and hold an earlier frame's beyond them.
+            let start = u64::from(batch.first) * INSTANCE_BYTES;
+            let end = start + u64::from(batch.count) * INSTANCE_BYTES;
+            pass.set_vertex_buffer(0, instances.slice(start..end));
+            pass.draw(0..6, 0..batch.count);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::extract::SpriteAnimation;
+    use wish_types::sprite::Sprite;
+
+    fn view(sprite: Sprite, animation: Option<SpriteAnimation>) -> SpriteView {
+        SpriteView {
+            entity: Entity::default(),
+            world: Mat4::IDENTITY,
+            sprite,
+            image: Some("p.png".to_owned()),
+            animation,
+        }
+    }
+
+    fn picture(width: u32, height: u32) -> BTreeMap<String, UiPicture> {
+        BTreeMap::from([(
+            "p.png".to_owned(),
+            UiPicture {
+                width,
+                height,
+                rgba: vec![255; (width * height * 4) as usize],
+            },
+        )])
+    }
+
+    #[test]
+    fn a_sliced_sprite_keeps_its_corners_and_stretches_the_rest() {
+        // A 30 x 30 picture with 10 px borders drawn 90 x 60 at 10 px a
+        // meter: corners 1 m, the middle 7 x 4 m.
+        let sprite = Sprite {
+            pixels_per_unit: 10.0,
+            anchor: [0.0, 0.0],
+            size: [90.0, 60.0],
+            slice: [10.0; 4],
+            ..Sprite::default()
+        };
+        let pictures = picture(30, 30);
+        let sheets = BTreeMap::new();
+        let v = view(sprite, None);
+        let names = |_: Entity| String::new();
+        let shown = shown(&v, &sheets, &names, None);
+        let (pieces, outline) = sprite_pieces(&v, &shown, &pictures).unwrap();
+        assert_eq!(pieces.len(), 9);
+        assert_eq!(outline[2], Vec3::new(9.0, 6.0, 0.0));
+        // The top left piece: 0..1 m across, 5..6 m up, the picture's top
+        // left 10 x 10 pixels.
+        let (corners, source) = pieces[0];
+        assert_eq!(
+            (corners[0], corners[2]),
+            (Vec3::new(0.0, 5.0, 0.0), Vec3::new(1.0, 6.0, 0.0))
+        );
+        assert_eq!(source, [0.0, 0.0, 10.0, 10.0]);
+        // The middle.
+        let (corners, source) = pieces[4];
+        assert_eq!(
+            (corners[0], corners[2]),
+            (Vec3::new(1.0, 1.0, 0.0), Vec3::new(8.0, 5.0, 0.0))
+        );
+        assert_eq!(source, [10.0, 10.0, 20.0, 20.0]);
+        // Drawn smaller than its borders: the borders shrink, nothing turns
+        // inside out.
+        let small = view(
+            Sprite {
+                size: [10.0, 10.0],
+                ..sprite
+            },
+            None,
+        );
+        let shown = super::shown(&small, &sheets, &names, None);
+        let (pieces, _) = sprite_pieces(&small, &shown, &pictures).unwrap();
+        assert_eq!(pieces.len(), 4, "the corners only");
+        for (corners, _) in pieces {
+            assert!(corners[2].x > corners[0].x && corners[2].y > corners[0].y);
+        }
+    }
+
+    #[test]
+    fn an_animator_picks_the_sheet_s_frame() {
+        let sheets = BTreeMap::from([(
+            "a.sheet.json".to_owned(),
+            SpriteSheet {
+                image: "p.png".to_owned(),
+                frames: vec![[0, 0, 8, 8], [8, 0, 8, 8], [16, 0, 8, 8]],
+                clips: BTreeMap::from([("walk".to_owned(), vec![2, 1])]),
+            },
+        )]);
+        let names = |_: Entity| "'hero'".to_owned();
+        let animated = |clip: &str, frame: u32| {
+            view(
+                Sprite::default(),
+                Some(SpriteAnimation {
+                    sheet: "a.sheet.json".to_owned(),
+                    clip: clip.to_owned(),
+                    frame,
+                }),
+            )
+        };
+        let mut warnings = Vec::new();
+        let walk = animated("walk", 1);
+        let shown_walk = shown(&walk, &sheets, &names, Some(&mut warnings));
+        assert_eq!(shown_walk.rect, [8.0, 0.0, 8.0, 8.0]);
+        assert_eq!(shown_walk.frame, Some(("walk", 1, 1)));
+        let still = animated("", 2);
+        assert_eq!(
+            shown(&still, &sheets, &names, Some(&mut warnings)).rect[0],
+            16.0
+        );
+        assert!(warnings.is_empty());
+        let lost = animated("swim", 0);
+        assert_eq!(
+            shown(&lost, &sheets, &names, Some(&mut warnings)).rect[0],
+            0.0
+        );
+        let beyond = animated("", 9);
+        assert_eq!(
+            shown(&beyond, &sheets, &names, Some(&mut warnings)).rect[0],
+            16.0
+        );
+        let codes: Vec<&str> = warnings.iter().map(|w| &*w.code).collect();
+        assert_eq!(codes, ["sprite_clip_not_found", "sprite_frame_not_found"]);
+        // Not a sheet the renderer was given: the sprite's own picture.
+        let other = view(
+            Sprite::default(),
+            Some(SpriteAnimation {
+                sheet: "b.sheet.json".to_owned(),
+                clip: String::new(),
+                frame: 0,
+            }),
+        );
+        assert!(shown(&other, &sheets, &names, None).frame.is_none());
     }
 }

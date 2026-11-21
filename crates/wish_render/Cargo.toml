@@ -23,6 +23,7 @@ wish_transform.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
+wish_anim.workspace = true
 wish_scene.workspace = true
 wish_import.workspace = true
 wish_ui.workspace = true

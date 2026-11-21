@@ -24,7 +24,7 @@ pub(crate) struct AssetDrag(pub String);
 pub(crate) struct Asset {
     /// Project-relative path.
     pub path: String,
-    /// `image`, `model`, `sound`, `prefab`, `material` or `other`.
+    /// `image`, `model`, `sound`, `prefab`, `material`, `sheet` or `other`.
     pub kind: &'static str,
     /// Size in bytes (0 for a prefab).
     pub bytes: u64,
@@ -38,6 +38,8 @@ impl Asset {
             "prefab"
         } else if lower.ends_with(".mat.json") {
             "material"
+        } else if lower.ends_with(".sheet.json") {
+            "sheet"
         } else if lower.ends_with(".glb") || lower.ends_with(".gltf") {
             "model"
         } else if lower.ends_with(".png") || lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
@@ -64,6 +66,8 @@ pub(crate) struct BrowserState {
     thumbs: BTreeMap<String, Option<TextureHandle>>,
     /// The file being renamed, and the new path typed so far.
     rename: Option<(String, String)>,
+    /// The name of a sprite sheet's new clip, typed so far.
+    new_clip: String,
 }
 
 /// What the panel needs to know.
@@ -77,6 +81,8 @@ pub(crate) struct BrowserView<'a> {
     /// What the fields of a selected material file are edited with: the
     /// `MaterialFile` schema and the inspector's widgets.
     pub material: Option<(&'a Value, &'a crate::inspector::InspectorView<'a>)>,
+    /// The inspector's widgets, for the fields of a selected sprite sheet.
+    pub widgets: &'a crate::inspector::InspectorView<'a>,
 }
 
 /// What the panel asked for.
@@ -94,6 +100,10 @@ pub(crate) struct BrowserActions {
     /// Change one field of a material file: the file, the field, its new
     /// value (`asset_create` over the file, with every field it writes).
     pub material: Option<(String, String, Value)>,
+    /// Change a sprite sheet: the file, and its top-level keys (or one clip,
+    /// `clips/<name>`) with their new values (`Null`: it goes), applied to
+    /// what the file writes now (`asset_create` over the file).
+    pub sheet: Option<(String, Vec<(String, Value)>)>,
 }
 
 impl BrowserActions {
@@ -104,6 +114,7 @@ impl BrowserActions {
             || self.open.is_some()
             || self.create.is_some()
             || self.material.is_some()
+            || self.sheet.is_some()
     }
 }
 
@@ -251,7 +262,211 @@ fn create_menu(ui: &mut Ui, view: &BrowserView<'_>, actions: &mut BrowserActions
             actions.create = Some((path, json!({ "material": {} })));
             ui.close();
         }
+        // A sheet of the selected picture (or the project's first): one
+        // frame the size of the picture, cut finer and given clips where the
+        // file is shown.
+        let picture = view
+            .selected
+            .filter(|path| path.to_ascii_lowercase().ends_with(".png"))
+            .or_else(|| {
+                view.assets
+                    .iter()
+                    .map(|asset| asset.path.as_str())
+                    .find(|path| path.to_ascii_lowercase().ends_with(".png"))
+            });
+        if ui
+            .add_enabled(picture.is_some(), egui::Button::new(t("Sprite sheet")))
+            .clicked()
+            && let Some(picture) = picture
+        {
+            let (width, height) = png_size(&view.root.join(picture)).unwrap_or((32, 32));
+            let stem = picture
+                .rsplit('/')
+                .next()
+                .unwrap_or(picture)
+                .trim_end_matches(".png")
+                .trim_end_matches(".PNG");
+            let folder = picture.rsplit_once('/').map_or("assets", |(folder, _)| folder);
+            let path = free_name(view, folder, stem, "sheet.json");
+            actions.create = Some((
+                path,
+                json!({ "sheet": {
+                    "image": picture,
+                    "grid": { "frame": [width.clamp(1, 4096), height.clamp(1, 4096)], "columns": 1, "rows": 1 }
+                } }),
+            ));
+            ui.close();
+        }
     });
+}
+
+/// The size a PNG file says it has, from its header.
+fn png_size(file: &Path) -> Option<(u32, u32)> {
+    use std::io::Read;
+    let mut header = [0u8; 24];
+    std::fs::File::open(file)
+        .ok()?
+        .read_exact(&mut header)
+        .ok()?;
+    if &header[1..4] != b"PNG" || &header[12..16] != b"IHDR" {
+        return None;
+    }
+    let word = |at: usize| {
+        u32::from_be_bytes([header[at], header[at + 1], header[at + 2], header[at + 3]])
+    };
+    Some((word(16), word(20)))
+}
+
+/// The JSON schema the inspector's widgets edit a sprite sheet with: its
+/// picture, how it is cut (a grid, or rectangles as JSON) and each clip
+/// (frames as JSON, fps, loop). Field names are the file's own.
+fn sheet_schema(written: &Value) -> Value {
+    let pair = |doc: &str| json!({ "type": "array", "items": { "type": "number" }, "maxItems": 2, "description": doc });
+    let mut properties = serde_json::Map::new();
+    properties.insert(
+        "image".to_owned(),
+        json!({ "type": "string", "x-asset": true, "description": "The picture (a PNG) the frames are cut from." }),
+    );
+    if written.get("frames").is_some() {
+        properties.insert(
+            "frames".to_owned(),
+            json!({ "description": "The frames: [[x, y, width, height], ...] in the picture's pixels from its top left corner." }),
+        );
+    } else {
+        properties.insert(
+            "grid".to_owned(),
+            json!({ "type": "object", "description": "Frames of one size, numbered from 0 left to right, then down.", "properties": {
+                "frame": pair("A frame's width and height in pixels."),
+                "columns": { "type": "integer", "minimum": 1, "maximum": 4096, "default": 1, "description": "Frames across." },
+                "rows": { "type": "integer", "minimum": 1, "maximum": 4096, "default": 1, "description": "Frames down." },
+                "margin": pair("Pixels before the first frame: left, top."),
+                "spacing": pair("Pixels between frames: across, down."),
+            } }),
+        );
+    }
+    let mut clips = serde_json::Map::new();
+    for name in written["clips"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(name, _)| name)
+    {
+        clips.insert(
+            name.clone(),
+            json!({ "type": "object", "properties": {
+                "frames": { "description": "The sheet's frames it shows, by number, in order: [0, 1, 2, 3]." },
+                "fps": { "type": "number", "minimum": 0.1, "maximum": 240, "default": 10, "description": "Frames a second." },
+                "loop": { "type": "boolean", "default": true, "description": "Starts over at the end; false stops on the last frame." },
+            } }),
+        );
+    }
+    if !clips.is_empty() {
+        properties.insert(
+            "clips".to_owned(),
+            json!({ "type": "object", "properties": clips, "description": "Named runs of frames." }),
+        );
+    }
+    json!({ "properties": properties })
+}
+
+/// A sprite sheet's fields where the browser shows the file: the
+/// inspector's widgets over [`sheet_schema`], a clip added or removed, the
+/// picture cut by a grid or by rectangles. Every change is one
+/// `asset_create` over the file, by the person.
+fn sheet_panel(
+    ui: &mut Ui,
+    view: &BrowserView<'_>,
+    path: &str,
+    info: &Value,
+    actions: &mut BrowserActions,
+) {
+    let written = &info["written"];
+    ui.weak(t(
+        "A change here is written to the file: everything that uses it changes.",
+    ));
+    let schema = sheet_schema(written);
+    if let Some((field, new)) =
+        crate::inspector::sheet_fields(ui, view.widgets, path, &schema, written)
+    {
+        // A clip is changed on its own, so that a clip someone else changed
+        // meanwhile is kept.
+        let changes = if field == "clips" {
+            new.as_object()
+                .into_iter()
+                .flatten()
+                .filter(|(name, clip)| written["clips"].get(name.as_str()) != Some(*clip))
+                .map(|(name, clip)| (format!("clips/{name}"), clip.clone()))
+                .collect()
+        } else {
+            vec![(field, new)]
+        };
+        actions.sheet = Some((path.to_owned(), changes));
+    }
+    let clips = written["clips"].as_object().cloned().unwrap_or_default();
+    for name in clips.keys() {
+        ui.horizontal(|ui| {
+            ui.weak(name);
+            if ui.small_button(t("Remove")).clicked() {
+                actions.sheet = Some((
+                    path.to_owned(),
+                    vec![(format!("clips/{name}"), Value::Null)],
+                ));
+            }
+        });
+    }
+    ui.horizontal(|ui| {
+        let mut state = view.state.borrow_mut();
+        ui.add(
+            egui::TextEdit::singleline(&mut state.new_clip)
+                .hint_text(t("new clip name"))
+                .desired_width(140.0),
+        );
+        let name = state.new_clip.trim().to_owned();
+        if ui
+            .add_enabled(
+                !name.is_empty() && !clips.contains_key(&name),
+                egui::Button::new(t("Add clip")),
+            )
+            .clicked()
+        {
+            actions.sheet = Some((
+                path.to_owned(),
+                vec![(format!("clips/{name}"), json!({ "frames": [0] }))],
+            ));
+            state.new_clip.clear();
+        }
+    });
+    // The other way of cutting the picture, with the frames it has now.
+    let frames: Vec<Value> = info["sheet"]["frames"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if written.get("grid").is_some() {
+        if ui.button(t("Switch to rectangles")).clicked() {
+            actions.sheet = Some((
+                path.to_owned(),
+                vec![
+                    ("grid".to_owned(), Value::Null),
+                    ("frames".to_owned(), Value::Array(frames)),
+                ],
+            ));
+        }
+    } else {
+        ui.weak(t(
+            "Rectangles: [x, y, width, height] each, in pixels from the top left",
+        ));
+        if ui.button(t("Switch to a grid")).clicked() {
+            let first = frames.first().cloned().unwrap_or(json!([0, 0, 32, 32]));
+            let grid = json!({ "frame": [first[2].clone(), first[3].clone()], "columns": frames.len().max(1), "rows": 1 });
+            actions.sheet = Some((
+                path.to_owned(),
+                vec![
+                    ("frames".to_owned(), Value::Null),
+                    ("grid".to_owned(), grid),
+                ],
+            ));
+        }
+    }
 }
 
 /// The browser panel's contents.
@@ -409,6 +624,11 @@ fn detail(ui: &mut Ui, view: &BrowserView<'_>, actions: &mut BrowserActions) {
     let Some(info) = view.detail else {
         return;
     };
+    let sheet = info["sheet"].is_object() && info["written"].is_object();
+    if sheet {
+        sheet_panel(ui, view, path, info, actions);
+        ui.separator();
+    }
     let look = info["material"]
         .is_object()
         .then_some(view.material)
@@ -430,6 +650,9 @@ fn detail(ui: &mut Ui, view: &BrowserView<'_>, actions: &mut BrowserActions) {
         }
         // Shown as fields above.
         if look.is_some() && matches!(key.as_str(), "material" | "written") {
+            continue;
+        }
+        if sheet && key == "written" {
             continue;
         }
         let text = match value {
