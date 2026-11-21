@@ -1,6 +1,8 @@
 # The road from 1.0 to 2.0
 
-**Status:** plan, 18 November 2026, not started. It begins when 1.0 (the short
+**Status:** plan, 18 November 2026, not started; release 1.1 replaced on 21
+November 2026 by 2D, online play and project kinds (user decision; the old
+1.1 moved into 1.2, the 2D kit up from 1.7). It begins when 1.0 (the short
 path, [M12-road-to-1-0.md](M12-road-to-1-0.md) section 0) is out. Every number
 here is an estimate, not a measurement, and the plan is counted again in
 tokens once 1.0 has been measured (section 2).
@@ -79,7 +81,39 @@ About 130 packages in eleven releases, plus the maintenance reserve. That is
 ten times the 1.0 short path. A release is 1 to 3 weeks of building and a
 one-week release candidate that overlaps the next release.
 
-### 1.1: the loop and the proof (about 14 packages)
+### 1.1: 2D, online play and project kinds (about 30 packages, a double release)
+
+User decision, 21 November 2026 (after comparing engines; plan and package
+list: [1.1-2d-and-online.md](1.1-2d-and-online.md), architecture: ADR-029).
+1.0 ships as it is; 1.1 is given wholly to what the user wants to make next,
+a hidden-role online party game:
+
+- Project kinds: `2d` or `3d` in `wish.json` (by addition), a kind-first New
+  project with templates for each, defaults that follow the kind.
+- The 2D kit, moved up from 1.7: sprite sheets and animation, nine-slice,
+  batched sprites, a 2D physics profile, tilemaps with painting, a
+  pixel-perfect camera with the pointer in the world, 2D lights and
+  line-of-sight vision, the editor's 2D mode.
+- Online play, moved up from after 2.0: players and player-indexed actions
+  with replay format 2 carrying the engine version (by addition, moved from
+  1.2), `wish_net` (our UDP protocol, encrypted, local discovery, a
+  deterministic network simulator), host-authoritative replication with
+  per-player visibility, prediction and reconciliation, messages, a lobby,
+  `wen relay`, a `net` tool, Play with N players in the editor.
+- The yardstick: an original hidden-role party game (`examples/station`)
+  made only with the engine's tools, played by bots over a simulated lossy
+  network in CI and by people on two machines.
+- Closing review and scorecard.
+
+The thing to see: the 2D project kind with its tilemap editor, then a match
+of the yardstick game.
+
+### 1.2: the loop, the proof and the format window (about 28 packages, a double release)
+
+The old 1.1 (the loop and the proof) comes first, then the format window
+below. The editor's first hour of the old 1.1 was done before 1.0 (the
+editor redesign of M12).
+
 
 - Code freshness: a fingerprint of the game's sources; simulation, tests,
   replays and export never run stale code; unchanged sources skip the
@@ -111,14 +145,14 @@ package and every agent session correct and cheaper; and it answers the rules qu
 before the format window opens. The 2D kit left the draft's 1.1: it stands on
 the gamepad, the presenter, editor picking and asset import, which come later.
 
-### 1.2: the format window and the screen (about 14)
+#### The format window and the screen
 
 - The migration step and a compatibility corpus first: projects written by 1.0
   and 1.1 open, migrate and keep their meaning in CI. A file migrated by
   editing (written in the newer format on its next save) raises the `engine`
   key of `wish.json` the way `wen migrate` does, so that an older launcher
   never picks an engine that refuses it (1.0 closing review, D9).
-- Player-indexed actions and replay format 2, as one hash-and-format change.
+- (Player-indexed actions and replay format 2 moved to 1.1, by addition.)
 - Gamepad, with focus navigation for the in-game interface (2 packages).
 - Save games (2 packages) and scene switching at run time as recorded,
   deterministic steps; animation cross-fade.
@@ -206,13 +240,16 @@ their gain.
   to see.
 - Closing review and scorecard.
 
-### 1.7: the 2D kit (about 12). Second stopping point.
+### 1.7: second halves (about 10). Second stopping point.
 
-- Sprites kept on the GPU, sheets and sprite animation, nine-slice.
-- A 2D physics profile, tilemaps with painting (2 packages), a fixed viewport
-  with a pixel-perfect camera and the pointer in the world.
-- A 2D mode in the editor (2 packages); 2D templates, recipes, a tutorial and
-  tasks; deterministic grid paths over tilemaps.
+The 2D kit itself moved to 1.1 (user decision, 21 November 2026). What stays
+here is the second half of 2D and of online play:
+
+- Online: peer-to-peer rollback for action and fighting games (from the same
+  snapshot, restore and per-tick inputs as 1.1), host migration, Steam
+  networking beside the relay if the user wants it (2 packages each).
+- 2D: 2D skeletal animation, isometric tiles, autotiling; deterministic grid
+  paths over tilemaps; a 2D tutorial and more 2D tasks.
 - Closing review and scorecard.
 
 After 1.7 (about 91 packages) everything in the old full scope of M12 is done
@@ -329,8 +366,8 @@ Scheduled after 2.0, not dropped:
   screen-space reflections, volumetric fog: see section 4.
 - Custom shaders from projects: after device-loss recovery has releases behind
   it.
-- 2D lights and shadows, 2D skeletal animation, a 2D physics backend.
-- Rollback netcode and multiplayer; parallel system execution.
+- 2D shadows beyond line-of-sight vision.
+- Parallel system execution. (Multiplayer moved to 1.1 and 1.7.)
 - Several agents at once with merging forks, and the engine's own text
   language: experiments, and only if the rules experiment says yes.
 - Editor and tool plugins (`wish_ext`); Steamworks and kernel anti-cheat as

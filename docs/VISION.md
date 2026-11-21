@@ -90,7 +90,7 @@ Each principle is written so that it can be tested. If a feature breaks one of t
 
 **1.0 is the short path** (user decisions of 18 November 2026: the scope was first grown to the full plan of M12 and cut the same day to the part the user asked for most, graphics and platforms; [design/M12-road-to-1-0.md](design/M12-road-to-1-0.md) §0; the milestone: M12 in [ROADMAP.md](ROADMAP.md)). Nothing is dropped: what moved out of 1.0 is named below with the release it now belongs to, on the train of [design/road-to-2-0.md](design/road-to-2-0.md).
 
-- 3D first; 2D as a subset, with an orthographic camera and sprites. *(The first-class 2D kit, with sprite sheets, tilemaps and a 2D physics profile, is release 1.7.)*
+- 3D first; 2D as a subset, with an orthographic camera and sprites. *(The first-class 2D kit, with sprite sheets, tilemaps, a 2D physics profile, 2D lights and vision, is release 1.1, with 2D/3D project kinds; user decision, 21 November 2026.)*
 - **Desktop, on two systems.** People work on Windows and on Linux: both are packaged from a tag and tested end to end in CI, and each exports games for itself. *(Export to the other system from one machine, Steam Deck and macOS as a labelled preview are release 1.3.)*
 - PBR rendering with cascaded shadows, sky-lit ambient lighting with a sun disc, fog, colour grading, FXAA and HDR bloom; material files, an alpha-blended pass; a default look locked once and signed off by eye; glTF import, skeletal animation *(the 1.0 part of ADR-012; environment maps are release 1.1, quality tiers 1.3, ambient occlusion 1.4)*
 - Physics, audio, input, in-game UI
@@ -108,7 +108,7 @@ Each principle is written so that it can be tested. If a feature breaks one of t
 ## Out of scope (deliberately, for 1.0)
 
 - Unreal-level AAA rendering (virtual geometry, ray-traced global illumination) → a research line after 1.0. The architecture leaves the door open for it, but does not promise it.
-- Multiplayer/networking → after 1.0. The determinism and snapshot infrastructure prepares the ground for it.
+- Multiplayer/networking → release 1.1 (host-authoritative online play over the local network or a self-hosted relay, ADR-029); rollback in 1.7. The determinism and snapshot infrastructure is its ground.
 - Web → a preview in release 1.9 (its constraints are respected from the start: ADR-019). macOS → an unsigned preview in release 1.3; a signed, first-class target after 2.0.
 - Console and mobile platforms.
 - Visual (node-based) scripting.

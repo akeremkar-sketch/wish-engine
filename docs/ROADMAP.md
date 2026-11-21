@@ -306,13 +306,13 @@ Exit criteria 2–5 are tested. Remaining: criterion 1 (with 3 users, with a rea
 
 | Release | Theme | Packages (about) | What the user sees |
 |---|---|---|---|
-| 1.1 | The loop and the proof | 14 | Environment maps (off by default); an orbit camera, a Create menu and duplicate in the editor; an instant first Play and build on save; the verification gate |
-| 1.2 | The format window and the screen | 14 | The picture drawn straight to the screen (vsync, fullscreen, HiDPI); gamepad; save games and scene switching; the showcase games re-dressed |
+| 1.1 | 2D, online play and project kinds (user decision, 21 November 2026; [plan](design/1.1-2d-and-online.md), ADR-029) | 30 | 2D or 3D at New project; tilemaps painted in the editor, sprite animation, 2D physics, 2D lights and vision; online matches over the local network or a self-hosted relay, Play with N players, bots over a simulated network in tests; an original hidden-role party game |
+| 1.2 | The loop, the proof and the format window | 28 | Environment maps (off by default); an instant first Play and build on save; the verification gate; the picture drawn straight to the screen (vsync, fullscreen, HiDPI); gamepad; save games and scene switching; the showcase games re-dressed |
 | 1.3 | Every desktop, small | 14 | Quality tiers with a render scale; export to the other system, Steam Deck checked in CI, a macOS preview; a small base download; a reference site |
 | 1.4 | By hand. **First stopping point** | 13 | Ambient occlusion; picking, gizmos, asset import, a console and a profiler in the editor; the first formal three-person test |
 | 1.5 | Prove | 12 | Shadows for spot and point lights; the quality mode; verified runs |
 | 1.6 | Share and teach | 12 | Starter packs and genre templates, a feature gallery, tutorials; the first agent-made game released in public |
-| 1.7 | The 2D kit. **Second stopping point** | 12 | Sprite sheets and animation, tilemaps with painting, a pixel-perfect camera, a 2D mode in the editor |
+| 1.7 | Second halves. **Second stopping point** | 10 | Rollback for action games, host migration, Steam networking if wanted; 2D skeletal animation, isometric tiles, autotiling |
 | 1.8 | Smaller and faster | 10 | GPU skinning; a material editor with a preview; a smaller player |
 | 1.9 | The browser, as a preview | 11 | A game exported to the web and opened from a link (**preview**); touch input; textured and soft particles; MSAA only if the measurement of 1.3 passed |
 | 1.10 | Depth | 11 | Reflection probes and baked light probes; the web leaves preview only if the determinism matrix passes |
@@ -335,7 +335,7 @@ About 130 packages, plus a maintenance reserve of 15 to 20 percent of each relea
 - macOS: an unsigned arm64 preview in release 1.3; a signed, first-class target after 2.0. Android and iOS: after 2.0. *(Linux packages moved into 1.0: Linux is a packaged and tested host. Export to the other system and Steam Deck are release 1.3.)*
 - A second scripting language that needs no toolchain: after 2.0 *(the rules experiment of release 1.1 asks first whether game logic written as data should enter)*
 - Parallel system execution: after 2.0
-- Multiplayer (rollback netcode — the determinism infrastructure is ready): after 2.0
+- Multiplayer: moved up to release 1.1 (host-authoritative, ADR-029) and 1.7 (rollback), user decision of 21 November 2026
 - Code in packages (kits): an experiment in release 1.10 (M10d). Editor plugins (`wish_ext`, M10c): after 2.0
 - How native SDKs attach (Steamworks, a kernel anti-cheat): as engine-built player variants, after 2.0
 - Docking and specialist editors, 2D lights: after 2.0. Autotile rules: release 1.10
