@@ -17,7 +17,7 @@ use crate::workspace::Workspace;
 pub(crate) const PHYSICS_QUERY: Tool = Tool {
     name: "physics_query",
     title: "Ask the physics world",
-    description: "Asks the physics world one question, in a play session (the world as of its last step) or in a scene file (colliders where the scene puts them). Give exactly one of: ray {from: [x,y,z], dir: [x,y,z], max (m, default 100), ignore: id} → the first collider hit, with point, normal and distance (sensors are not hit); overlap {sphere: radius | box: [half x, half y, half z], at: [x,y,z]} → every entity whose collider overlaps (sensors too); touching: id → the entities in contact with it or overlapping it. mask limits hits to colliders whose layer has one of its bits. Use it to check what is under a character, whether a path is clear, or why something does not fall. A character controller's collider is found where it stood before its last move (physics places characters after its step). When PhysicsSettings.profile is 2D (TopDown2D or SideView2D) every question is asked in the X-Y plane: positions and directions may be [x, y], z is not used, {circle: radius} is the same as sphere, and the answer names the profile.",
+    description: "Asks the physics world one question, in a play session (the world as of its last step) or in a scene file (colliders where the scene puts them). Give exactly one of: ray {from: [x,y,z], dir: [x,y,z], max (m, default 100), ignore: id} → the first collider hit, with point, normal and distance (sensors are not hit); overlap {sphere: radius | box: [half x, half y, half z], at: [x,y,z]} → every entity whose collider overlaps (sensors too); touching: id → the entities in contact with it or overlapping it. mask limits hits to colliders whose layer has one of its bits. Use it to check what is under a character, whether a path is clear, or why something does not fall. A character controller's collider is found where it stood before its last move (physics places characters after its step). When PhysicsSettings.profile is 2D (TopDown2D or SideView2D) every question is asked in the X-Y plane: positions and directions may be [x, y], z is not used, {circle: radius} is the same as sphere, and the answer names the profile. Line of sight in the X-Y plane, against walls (solid tiles of tilemaps' colliding layers and entities with an Occluder and a Collider): sight {from: [x, y], to: [x, y], ignore?: id} → visible, and blocked_by (the first wall's entity) when not; sight {from: [x, y], radius: r} → points, the outline of what is visible from there (a circle cut by walls, counter-clockwise). These are the answers game code's can_see/visible_area, online play's NetVisibility::Sight and the shadows of Light2D use.",
     params: &[
         Param::optional(
             "scene",
@@ -43,6 +43,11 @@ pub(crate) const PHYSICS_QUERY: Tool = Tool {
             "touching",
             Kind::String,
             "An entity id: what touches or overlaps it.",
+        ),
+        Param::optional(
+            "sight",
+            Kind::Object,
+            "Line of sight in the X-Y plane: {\"from\": [x, y], \"to\": [x, y], \"ignore\": \"entity id\"} (can it be seen?) or {\"from\": [x, y], \"radius\": meters} (what is visible from there?).",
         ),
         Param::optional(
             "mask",
@@ -84,7 +89,7 @@ fn vec3(value: Option<&Value>, path: &str, flat: bool) -> Result<Vec3> {
 }
 
 fn physics_query(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<String, Value>> {
-    let asked: Vec<&str> = ["ray", "overlap", "touching"]
+    let asked: Vec<&str> = ["ray", "overlap", "touching", "sight"]
         .into_iter()
         .filter(|name| args.value(name).is_some())
         .collect();
@@ -99,7 +104,7 @@ fn physics_query(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
                     asked.join(", ")
                 }
             ),
-            "Give exactly one of ray, overlap or touching.",
+            "Give exactly one of ray, overlap, touching or sight.",
         ));
     }
     let mask = args
@@ -158,6 +163,10 @@ fn physics_query(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
             .at_path(path)
         })
     };
+    if let Some(sight) = args.value("sight") {
+        sight_question(world, sight, &find, &name, &mut out)?;
+        return Ok(out);
+    }
     let state = query_state(world)?;
     let flat = state.profile() != PhysicsProfile::Full3D;
     if flat {
@@ -235,6 +244,95 @@ fn physics_query(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
         );
     }
     Ok(out)
+}
+
+/// Two numbers `[x, y]` (a third, z, is allowed and not used).
+fn point(value: Option<&Value>, path: &str) -> Result<[f32; 2]> {
+    let numbers: Option<Vec<f32>> = value
+        .and_then(Value::as_array)
+        .and_then(|items| items.iter().map(|n| n.as_f64().map(|n| n as f32)).collect());
+    match numbers.as_deref() {
+        Some([x, y]) | Some([x, y, _]) => Ok([*x, *y]),
+        _ => Err(bad(
+            path,
+            format!("'{path}' must be two numbers [x, y]."),
+            "Line of sight is asked in the X-Y plane: write points as [x, y] in meters (Y is up).",
+        )),
+    }
+}
+
+/// A number rounded to millimetres, for an answer.
+fn mm(value: f32) -> f64 {
+    (f64::from(value) * 1000.0).round() / 1000.0
+}
+
+/// `physics_query sight`: can a point be seen from another, or what is
+/// visible from a point (design note 1.1-lights-2d §7).
+fn sight_question(
+    world: &wish_ecs::World,
+    sight: &Value,
+    find: &dyn Fn(&str, &str) -> Result<Entity>,
+    name: &dyn Fn(&Entity) -> String,
+    out: &mut Map<String, Value>,
+) -> Result<()> {
+    let from = point(sight.get("from"), "/sight/from")?;
+    let walls = wish_sight::current(world);
+    if walls.left_out() > 0 {
+        out.insert(
+            "diagnostics".to_owned(),
+            json!([Diagnostic::warning(
+                "sight_occluders_cut_short",
+                format!(
+                    "The world has more than {} wall segments; {} were left out, so some walls do not block sight.",
+                    wish_sight::MAX_SEGMENTS,
+                    walls.left_out()
+                ),
+                "Fewer occluders, or simpler tilemap walls: solid cells merge into boxes, so long straight walls cost little.",
+            )]),
+        );
+    }
+    match (sight.get("to"), sight.get("radius")) {
+        (Some(to), None) => {
+            let to = point(Some(to), "/sight/to")?;
+            let ignore = match sight.get("ignore").and_then(Value::as_str) {
+                Some(id) => Some(find(id, "/sight/ignore")?),
+                None => None,
+            };
+            let seen = walls.can_see(from, to, [ignore, None]);
+            out.insert("visible".to_owned(), json!(seen.visible));
+            if let Some(blocker) = seen.blocked_by {
+                out.insert("blocked_by".to_owned(), json!(name(&blocker)));
+            }
+        }
+        (None, Some(radius)) => {
+            let radius = radius.as_f64().filter(|r| *r > 0.0).ok_or_else(|| {
+                bad(
+                    "/sight/radius",
+                    "'radius' must be a distance in meters above 0.".to_owned(),
+                    "Write it like {\"from\": [2, 3], \"radius\": 6}.",
+                )
+            })? as f32;
+            let area = walls.visible_polygon(from, radius);
+            out.insert(
+                "points".to_owned(),
+                json!(
+                    area.points
+                        .iter()
+                        .map(|[x, y]| [mm(*x), mm(*y)])
+                        .collect::<Vec<_>>()
+                ),
+            );
+            out.insert("walls".to_owned(), json!(walls.segments().len()));
+        }
+        _ => {
+            return Err(bad(
+                "/sight",
+                "A sight question needs exactly one of 'to' or 'radius'.".to_owned(),
+                "Ask {\"from\": [x, y], \"to\": [x, y]} (can it be seen?) or {\"from\": [x, y], \"radius\": meters} (what is visible from there?).",
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// A profile's name as scene files write it.

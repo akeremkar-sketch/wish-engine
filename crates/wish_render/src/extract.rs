@@ -469,6 +469,9 @@ pub struct RenderScene {
     pub tilemaps: Vec<TilemapView>,
     /// The particle emitters, in entity order.
     pub emitters: Vec<EmitterView>,
+    /// 2D lighting (`Lighting2D`), the 2D lights and the visions, with the
+    /// areas they reach (design note 1.1-lights-2d §8).
+    pub lighting_2d: crate::lights2d::Lighting2DView,
     /// The simulation time shown (`Time.elapsed`), for particles.
     pub time: f64,
     /// What entities are called where the scene came from (their ids in the
@@ -585,6 +588,7 @@ pub fn extract(world: &World) -> Result<RenderScene> {
         sprites: Vec::new(),
         tilemaps: Vec::new(),
         emitters: Vec::new(),
+        lighting_2d: crate::lights2d::extract(world),
         time: wish_particles::now(world),
         names: BTreeMap::new(),
     };

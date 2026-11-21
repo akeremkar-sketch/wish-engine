@@ -32,5 +32,9 @@ pub fn register(world: &mut World) -> Result<()> {
     // Release 1.1: tilemaps (registered last, so earlier types keep their
     // places).
     world.register_component::<wish_types::tilemap::Tilemap>()?;
+    // Release 1.1, package 7: 2D lights and vision.
+    world.register_component::<wish_types::lights2d::Light2D>()?;
+    world.register_component::<wish_types::lights2d::Vision2D>()?;
+    world.register_resource::<wish_types::lights2d::Lighting2D>()?;
     Ok(())
 }

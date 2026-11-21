@@ -1,5 +1,8 @@
 //! Walls from tilemaps (design note `docs/design/1.1-tilemaps.md` §7).
 //!
+//! The shapes themselves ([`MapShapes`], [`TileShapes`]) live in
+//! `wish_sight`, which reads them too (walls block sight and 2D light).
+//!
 //! What a tilemap's solid tiles are is read from its file by whoever reads
 //! the project (the control plane), merged into boxes there, and handed to
 //! the world as the extension [`TileShapes`] when a session starts. Physics
@@ -9,59 +12,17 @@
 //! collider per map keeps contacts and their events one per pair of
 //! entities, as for any other collider.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use rapier3d::prelude as rp;
 use wish_core::math::{Quat, Vec3};
 use wish_core::{Entity, Result};
 use wish_ecs::World;
+use wish_sight::{MapShapes, TileShapes};
 use wish_types::tilemap::Tilemap;
 
 use crate::plane::{self, HALF_DEPTH};
 use crate::{Collider, PhysicsState, groups, pose, rv, world_placement};
-
-/// The collision of one tilemap file, in cells.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct MapShapes {
-    /// Boxes of whole solid cells: lowest x and y, then one past the highest
-    /// x and y.
-    pub boxes: Vec<[i32; 4]>,
-    /// Cells with an outlined solid tile: the cell, and the outline in tile
-    /// units from the cell's bottom left corner.
-    pub outlines: Vec<([i32; 2], Vec<[f32; 2]>)>,
-}
-
-impl MapShapes {
-    /// Whether there is nothing solid.
-    pub fn is_empty(&self) -> bool {
-        self.boxes.is_empty() && self.outlines.is_empty()
-    }
-}
-
-/// The collision of the project's tilemaps by file path: a world extension
-/// (ADR-026), filled when a session starts ([`install_tile_shapes`]).
-#[derive(Clone, Debug, Default)]
-pub struct TileShapes {
-    maps: BTreeMap<String, Arc<MapShapes>>,
-}
-
-impl TileShapes {
-    /// The shapes of the tilemap file `path`, if known.
-    pub fn get(&self, path: &str) -> Option<&Arc<MapShapes>> {
-        self.maps.get(path)
-    }
-}
-
-/// Tells the world what the solid parts of its tilemaps are (replacing what
-/// it knew of the same files).
-pub fn install_tile_shapes(world: &mut World, maps: impl IntoIterator<Item = (String, MapShapes)>) {
-    let mut known = world.take_extension::<TileShapes>().unwrap_or_default();
-    for (path, shapes) in maps {
-        known.maps.insert(path, Arc::new(shapes));
-    }
-    world.insert_extension(known);
-}
 
 /// What physics remembers about one tilemap entity.
 #[derive(Clone, Debug)]
@@ -81,7 +42,7 @@ pub(crate) fn present(world: &World) -> Result<Vec<(Entity, Arc<MapShapes>)>> {
         return Ok(Vec::new());
     };
     // A world with no walls of tilemaps (most of them) costs nothing here.
-    if known.maps.is_empty() || world.registry().component_id_of::<Tilemap>().is_none() {
+    if known.is_empty() || world.registry().component_id_of::<Tilemap>().is_none() {
         return Ok(Vec::new());
     }
     let mut found: Vec<(Entity, Arc<MapShapes>)> = world

@@ -726,6 +726,44 @@ fn describe_view(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
     if !maps.is_empty() {
         out.insert("tilemaps".to_owned(), json!(maps));
     }
+    // 2D lights and visions (design note 1.1-lights-2d §7): where each is
+    // and how much of its circle the walls leave it.
+    let lighting = &prepared.scene.lighting_2d;
+    let lights: Vec<Value> = lighting
+        .lights
+        .iter()
+        .take(limit)
+        .map(|light| {
+            let p = light.position;
+            json!({
+                "entity": name(light.entity),
+                "position": [round(p.x), round(p.y)],
+                "radius": round(light.radius),
+                "area_points": light.area.len(),
+                "lit": lighting.ambient.is_some() && light.area.len() >= 3,
+            })
+        })
+        .collect();
+    if !lights.is_empty() {
+        out.insert("lights_2d".to_owned(), json!(lights));
+    }
+    let visions: Vec<Value> = lighting
+        .visions
+        .iter()
+        .take(limit)
+        .map(|vision| {
+            let p = vision.position;
+            json!({
+                "entity": name(vision.entity),
+                "position": [round(p.x), round(p.y)],
+                "radius": round(vision.radius),
+                "area_points": vision.area.len(),
+            })
+        })
+        .collect();
+    if !visions.is_empty() {
+        out.insert("vision".to_owned(), json!(visions));
+    }
     if !interface.is_empty() {
         out.insert("interface".to_owned(), json!(interface));
     }

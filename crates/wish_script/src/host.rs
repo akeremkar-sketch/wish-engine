@@ -29,7 +29,20 @@ pub trait HostServices: Send + Sync {
     /// `world` as it was when the call began; `None` if it is not a valid
     /// request.
     fn physics_query(&self, world: &World, request: &[u8]) -> Option<Vec<u8>>;
+
+    /// [`HostServices::physics_query`], with the work the answer took in
+    /// units the engine charges [`WORK_FUEL`] fuel each for (segment tests
+    /// of a line-of-sight question; deterministic: the same world and
+    /// question take the same work). By default no work beyond the query's
+    /// fixed price.
+    fn physics_query_with_work(&self, world: &World, request: &[u8]) -> Option<(Vec<u8>, u64)> {
+        self.physics_query(world, request).map(|answer| (answer, 0))
+    }
 }
+
+/// The fuel one unit of a query's work costs (one wall segment tested by a
+/// line-of-sight question).
+pub const WORK_FUEL: u64 = 4;
 
 /// The world a call may ask about (and add texts to), by address.
 pub(crate) struct WorldRef(*mut World);
@@ -250,11 +263,13 @@ pub(crate) fn link(linker: &mut wasmtime::Linker<HostState>) -> wasmtime::Result
                 let Some(services) = context.services.as_ref() else {
                     return -1;
                 };
-                services.physics_query(world, &bytes)
+                services.physics_query_with_work(world, &bytes)
             };
-            let Some(answer) = answer else {
+            let Some((answer, work)) = answer else {
                 return -1;
             };
+            let fuel = caller.get_fuel().unwrap_or(0);
+            let _ = caller.set_fuel(fuel.saturating_sub(work.saturating_mul(WORK_FUEL)));
             let (Ok(at), Ok(capacity)) = (usize::try_from(out), usize::try_from(capacity)) else {
                 return -1;
             };

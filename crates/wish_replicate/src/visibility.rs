@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use wish_core::Entity;
 use wish_core::math::Vec3;
 use wish_ecs::World;
+use wish_sight::Occluders;
 use wish_types::{
     GlobalTransform, MAX_PLAYERS, NetGroups, NetOwner, NetViewer, NetVisibility, PlayerId,
     Replicated, Transform, world_position,
@@ -29,10 +30,14 @@ pub struct Candidate {
 pub struct Scene {
     /// Every replicated entity, in entity order.
     pub candidates: Vec<Candidate>,
-    /// Every player's viewpoints.
-    pub viewers: BTreeMap<PlayerId, Vec<Vec3>>,
+    /// Every player's viewpoints, with the entity each one is.
+    pub viewers: BTreeMap<PlayerId, Vec<(Vec3, Entity)>>,
     /// Every player's group bits.
     pub groups: [u32; MAX_PLAYERS],
+    /// The walls that block the rule `Sight` (design note 1.1-lights-2d
+    /// §6): the world's, read only when an entity has that rule. Empty:
+    /// `Sight` is `Near`.
+    pub walls: Occluders,
 }
 
 /// Where an entity is: its world position, else its local translation.
@@ -75,13 +80,27 @@ impl Scene {
                     && let Some(at) = position_of(world, entity)
                     && at.is_finite()
                 {
-                    scene.viewers.entry(view.player).or_default().push(at);
+                    scene
+                        .viewers
+                        .entry(view.player)
+                        .or_default()
+                        .push((at, entity));
                 }
             }
         }
         // Archetype order moves when components are added; entity order
         // does not.
         scene.candidates.sort_by_key(|c| c.entity);
+        for points in scene.viewers.values_mut() {
+            points.sort_by_key(|(_, entity)| *entity);
+        }
+        if scene
+            .candidates
+            .iter()
+            .any(|c| c.rule.visibility == NetVisibility::Sight)
+        {
+            scene.walls = wish_sight::current(world);
+        }
         scene
     }
 
@@ -99,17 +118,29 @@ impl Scene {
                 mine & rule.groups != 0
             }
             NetVisibility::Players => player < 32 && rule.players & (1 << player) != 0,
-            // Line of sight narrows `Sight` in a later package (design note
-            // §3.1); until then it is `Near`.
+            // `Sight` is `Near` and a line of sight in the X-Y plane from
+            // one of the player's viewpoints, the outlines of the viewer and
+            // of the entity ignored (design note 1.1-lights-2d §6). Without
+            // walls it is `Near`: it can only ever remove players.
             NetVisibility::Near | NetVisibility::Sight => {
                 let radius = clean_radius(rule.radius);
                 let Some(at) = candidate.position.filter(|p| p.is_finite()) else {
                     return false;
                 };
+                let sight = rule.visibility == NetVisibility::Sight && !self.walls.is_empty();
                 self.viewers.get(&player).is_some_and(|points| {
-                    points
-                        .iter()
-                        .any(|p| p.distance_squared(at) <= radius * radius)
+                    points.iter().any(|(p, viewer)| {
+                        p.distance_squared(at) <= radius * radius
+                            && (!sight
+                                || self
+                                    .walls
+                                    .can_see(
+                                        [p.x, p.y],
+                                        [at.x, at.y],
+                                        [Some(*viewer), Some(candidate.entity)],
+                                    )
+                                    .visible)
+                    })
                 })
             }
         }

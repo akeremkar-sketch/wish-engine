@@ -148,7 +148,14 @@ fn script_build(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map
 /// so, instead of letting the author hunt for a typo (M6 closing review).
 fn explain_stale_sdk(workspace: &Workspace, diagnostics: &mut [Diagnostic]) {
     let registry = workspace.registry();
-    let engine_names = ["text", "text_of", "raycast"];
+    let engine_names = [
+        "text",
+        "text_of",
+        "raycast",
+        "can_see",
+        "can_see_ignoring",
+        "visible_area",
+    ];
     for diagnostic in diagnostics.iter_mut() {
         if diagnostic.code != "script_compile_error" {
             continue;

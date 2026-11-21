@@ -90,12 +90,16 @@ pub struct Effects {
     pub color_grading: bool,
     /// Edges were smoothed with FXAA (`RenderSettings.antialiasing`).
     pub fxaa: bool,
+    /// Sprites and tilemaps were lit by 2D lights (`Lighting2D.enabled`).
+    pub lights_2d: bool,
+    /// A character's vision covered the rest with darkness (`Vision2D`).
+    pub vision: bool,
 }
 
 impl Effects {
     /// The names of the effects that were on, in the order of the frame's
     /// passes: `sky_light`, `sun_disc`, `fog`, `bloom`, `color_grading`,
-    /// `fxaa`.
+    /// `fxaa`, `lights_2d`, `vision`.
     pub fn names(&self) -> Vec<&'static str> {
         [
             (self.sky_light, "sky_light"),
@@ -104,6 +108,8 @@ impl Effects {
             (self.bloom, "bloom"),
             (self.color_grading, "color_grading"),
             (self.fxaa, "fxaa"),
+            (self.lights_2d, "lights_2d"),
+            (self.vision, "vision"),
         ]
         .into_iter()
         .filter_map(|(on, name)| on.then_some(name))
@@ -392,6 +398,9 @@ impl Look {
             bloom: self.bloom.is_some(),
             color_grading: self.grade.is_some(),
             fxaa: self.fxaa,
+            // Decided by the overlay (`frame.rs`), not by the look.
+            lights_2d: false,
+            vision: false,
         }
     }
 

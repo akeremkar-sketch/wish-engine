@@ -42,7 +42,8 @@ use wish_core::{Diagnostic, Entity};
 
 use crate::extract::{CameraView, RenderScene, SpriteView, TilemapView};
 use crate::gpu::Gpu;
-use crate::renderer::Pool;
+use crate::lights2d::{FAN_VERTEX_BYTES, LightingPlan};
+use crate::renderer::{Pool, TextureKey};
 use crate::ui::UiPicture;
 
 /// Bytes per instance: four corners (12 floats), the picture's part (4),
@@ -57,6 +58,13 @@ pub const MAX_PARTICLES: usize = 100_000;
 const MAX_INSTANCES: usize = 1_000_000;
 /// The texel format of sprite pictures: sRGB colours, like the interface's.
 const PICTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+/// The light texture of 2D lighting: lights add up beyond 1 before they
+/// multiply the sprites.
+const LIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// The vision mask: 1 where a vision sees, 0 where it does not.
+const MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
+/// The darkness uniform: one colour with its strength.
+const DARKNESS_BYTES: u64 = 16;
 
 /// A sprite sheet, as the renderer needs it: its picture, its frames and
 /// its clips (`wish_asset::Sheet`, given by whoever reads the project's
@@ -482,15 +490,32 @@ pub(crate) struct Overlay {
     instances: Vec<u8>,
     batches: Vec<Batch>,
     view_proj: Mat4,
+    /// 2D lighting and vision, when the picture has either (design note
+    /// 1.1-lights-2d §8).
+    lighting: Option<LightingPlan>,
 }
 
 impl Overlay {
     /// How many draw calls and how many triangles drawing it takes.
     pub(crate) fn counts(&self) -> (u32, u64) {
+        let (light_draws, light_triangles) =
+            self.lighting.as_ref().map_or((0, 0), LightingPlan::counts);
         (
-            u32::try_from(self.batches.len()).unwrap_or(u32::MAX),
-            self.instances.len() as u64 / INSTANCE_BYTES * 2,
+            u32::try_from(self.batches.len())
+                .unwrap_or(u32::MAX)
+                .saturating_add(light_draws),
+            self.instances.len() as u64 / INSTANCE_BYTES * 2 + light_triangles,
         )
+    }
+
+    /// Whether sprites and tilemaps are lit by 2D lights.
+    pub(crate) fn lit(&self) -> bool {
+        self.lighting.as_ref().is_some_and(|l| l.ambient.is_some())
+    }
+
+    /// Whether a vision's darkness is drawn.
+    pub(crate) fn dark(&self) -> bool {
+        self.lighting.as_ref().is_some_and(|l| l.darkness.is_some())
     }
 }
 
@@ -508,16 +533,22 @@ pub(crate) type Kept<'a> = (
 pub(crate) fn build(
     scene: &RenderScene,
     camera: &CameraView,
-    aspect: f32,
+    (width, height): (u32, u32),
     (pictures, sheets, grids): Kept<'_>,
     warnings: &mut Vec<Diagnostic>,
 ) -> Option<Overlay> {
-    if scene.sprites.is_empty() && scene.emitters.is_empty() && scene.tilemaps.is_empty() {
+    let names = |entity: Entity| scene.name_of(entity);
+    let lighting = crate::lights2d::plan(&scene.lighting_2d, (width, height), &names, warnings);
+    if scene.sprites.is_empty()
+        && scene.emitters.is_empty()
+        && scene.tilemaps.is_empty()
+        && lighting.is_none()
+    {
         return None;
     }
+    let aspect = width as f32 / height as f32;
     let mut items: Vec<Item> = Vec::new();
     let distance = |point: Vec3| -camera.view.transform_point3(point).z;
-    let names = |entity: Entity| scene.name_of(entity);
     let view_proj = camera.projection(aspect) * camera.view;
     // The layers whose sprites sort by height.
     let by_height: BTreeSet<i32> = scene
@@ -633,7 +664,7 @@ pub(crate) fn build(
             });
         }
     }
-    if items.is_empty() {
+    if items.is_empty() && lighting.is_none() {
         return None;
     }
     if items.len() > MAX_INSTANCES {
@@ -690,6 +721,7 @@ pub(crate) fn build(
         instances,
         batches,
         view_proj,
+        lighting,
     })
 }
 
@@ -1003,9 +1035,22 @@ fn upload(gpu: &Gpu, picture: &UiPicture, path: &str) -> Option<wgpu::TextureVie
     Some(texture.create_view(&wgpu::TextureViewDescriptor::default()))
 }
 
-/// The sprite and particle pipeline.
+/// The sprite and particle pipeline, and the passes of 2D lighting and
+/// vision (design note 1.1-lights-2d §8).
 pub(crate) struct OverlayPipeline {
     pipeline: wgpu::RenderPipeline,
+    /// With 2D lighting: sprites lit by the light texture (`fs_lit`).
+    lit: wgpu::RenderPipeline,
+    /// Group 2 of `lit`: the light texture.
+    light_layout: wgpu::BindGroupLayout,
+    /// The light texture: each light's area added up (`fs_light`).
+    light_fans: wgpu::RenderPipeline,
+    /// The vision mask: each vision's area, the largest kept (`fs_vision`).
+    vision_fans: wgpu::RenderPipeline,
+    /// The darkness over what no vision sees (`fs_darkness`).
+    darkness: wgpu::RenderPipeline,
+    /// Group 2 of `darkness`: the mask and the darkness colour.
+    darkness_layout: wgpu::BindGroupLayout,
     /// Group 0: the matrix.
     frame_layout: wgpu::BindGroupLayout,
     /// Group 1: a picture and a sampler.
@@ -1076,39 +1121,188 @@ impl OverlayPipeline {
                 offset,
                 shader_location: location,
             };
-            let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("sprites"),
-                layout: Some(&pipeline_layout),
+            let instance_attributes = [
+                attribute(0, 0, wgpu::VertexFormat::Float32x3),
+                attribute(1, 12, wgpu::VertexFormat::Float32x3),
+                attribute(2, 24, wgpu::VertexFormat::Float32x3),
+                attribute(3, 36, wgpu::VertexFormat::Float32x3),
+                attribute(4, 48, wgpu::VertexFormat::Float32x4),
+                attribute(5, 64, wgpu::VertexFormat::Float32x4),
+                attribute(6, 80, wgpu::VertexFormat::Float32),
+            ];
+            // The sprites, unlit (`fs_main`, as always) or lit (`fs_lit`).
+            let sprites = |label, layout: &wgpu::PipelineLayout, fragment| {
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some(label),
+                    layout: Some(layout),
+                    vertex: wgpu::VertexState {
+                        module: &shader,
+                        entry_point: Some("vs_instance"),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        buffers: &[Some(wgpu::VertexBufferLayout {
+                            array_stride: INSTANCE_BYTES,
+                            step_mode: wgpu::VertexStepMode::Instance,
+                            attributes: &instance_attributes,
+                        })],
+                    },
+                    primitive: wgpu::PrimitiveState::default(),
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: depth,
+                        depth_write_enabled: Some(false),
+                        depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                        stencil: wgpu::StencilState::default(),
+                        bias: wgpu::DepthBiasState::default(),
+                    }),
+                    multisample: wgpu::MultisampleState::default(),
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shader,
+                        entry_point: Some(fragment),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format,
+                            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    multiview_mask: None,
+                    cache: None,
+                })
+            };
+            let pipeline = sprites("sprites", &pipeline_layout, "fs_main");
+            let texture_entry = |binding| wgpu::BindGroupLayoutEntry {
+                binding,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            };
+            let light_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("sprites light"),
+                entries: &[texture_entry(0)],
+            });
+            let lit_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("sprites lit"),
+                bind_group_layouts: &[
+                    Some(&frame_layout),
+                    Some(&picture_layout),
+                    Some(&light_layout),
+                ],
+                immediate_size: 0,
+            });
+            let lit = sprites("sprites lit", &lit_layout, "fs_lit");
+            // The areas of lights and visions: fans of triangles in the
+            // world, drawn into the light texture or the mask.
+            let fan_attributes = [
+                attribute(0, 0, wgpu::VertexFormat::Float32x3),
+                attribute(1, 12, wgpu::VertexFormat::Float32x2),
+                attribute(2, 20, wgpu::VertexFormat::Float32x2),
+                attribute(3, 28, wgpu::VertexFormat::Float32x4),
+            ];
+            let fan_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("2d light fans"),
+                bind_group_layouts: &[Some(&frame_layout)],
+                immediate_size: 0,
+            });
+            let fans = |label, fragment, target, blend| {
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some(label),
+                    layout: Some(&fan_layout),
+                    vertex: wgpu::VertexState {
+                        module: &shader,
+                        entry_point: Some("vs_fan"),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        buffers: &[Some(wgpu::VertexBufferLayout {
+                            array_stride: FAN_VERTEX_BYTES,
+                            step_mode: wgpu::VertexStepMode::Vertex,
+                            attributes: &fan_attributes,
+                        })],
+                    },
+                    primitive: wgpu::PrimitiveState::default(),
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shader,
+                        entry_point: Some(fragment),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: target,
+                            blend: Some(blend),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    multiview_mask: None,
+                    cache: None,
+                })
+            };
+            let add = wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::One,
+                operation: wgpu::BlendOperation::Add,
+            };
+            let max = wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::One,
+                operation: wgpu::BlendOperation::Max,
+            };
+            let light_fans = fans(
+                "2d lights",
+                "fs_light",
+                LIGHT_FORMAT,
+                wgpu::BlendState {
+                    color: add,
+                    alpha: add,
+                },
+            );
+            let vision_fans = fans(
+                "2d vision",
+                "fs_vision",
+                MASK_FORMAT,
+                wgpu::BlendState {
+                    color: max,
+                    alpha: max,
+                },
+            );
+            let darkness_layout =
+                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("2d darkness"),
+                    entries: &[
+                        texture_entry(1),
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 2,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: wgpu::BufferSize::new(DARKNESS_BYTES),
+                            },
+                            count: None,
+                        },
+                    ],
+                });
+            let darkness_pipeline_layout =
+                device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("2d darkness"),
+                    bind_group_layouts: &[None, None, Some(&darkness_layout)],
+                    immediate_size: 0,
+                });
+            let darkness = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("2d darkness"),
+                layout: Some(&darkness_pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &shader,
-                    entry_point: Some("vs_instance"),
+                    entry_point: Some("vs_screen"),
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    buffers: &[Some(wgpu::VertexBufferLayout {
-                        array_stride: INSTANCE_BYTES,
-                        step_mode: wgpu::VertexStepMode::Instance,
-                        attributes: &[
-                            attribute(0, 0, wgpu::VertexFormat::Float32x3),
-                            attribute(1, 12, wgpu::VertexFormat::Float32x3),
-                            attribute(2, 24, wgpu::VertexFormat::Float32x3),
-                            attribute(3, 36, wgpu::VertexFormat::Float32x3),
-                            attribute(4, 48, wgpu::VertexFormat::Float32x4),
-                            attribute(5, 64, wgpu::VertexFormat::Float32x4),
-                            attribute(6, 80, wgpu::VertexFormat::Float32),
-                        ],
-                    })],
+                    buffers: &[],
                 },
                 primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: depth,
-                    depth_write_enabled: Some(false),
-                    depth_compare: Some(wgpu::CompareFunction::LessEqual),
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
+                depth_stencil: None,
                 multisample: wgpu::MultisampleState::default(),
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
-                    entry_point: Some("fs_main"),
+                    entry_point: Some("fs_darkness"),
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                     targets: &[Some(wgpu::ColorTargetState {
                         format,
@@ -1129,6 +1323,12 @@ impl OverlayPipeline {
             };
             Self {
                 pipeline,
+                lit,
+                light_layout,
+                light_fans,
+                vision_fans,
+                darkness,
+                darkness_layout,
                 frame_layout,
                 picture_layout,
                 smooth: sampler("sprites smooth", wgpu::FilterMode::Linear),
@@ -1222,11 +1422,73 @@ impl OverlayPipeline {
             groups.insert(key, group);
         }
         drop(kept);
+        let lighting = overlay.lighting.as_ref();
+        // The light texture: the ambient, plus every light's area.
+        let light_group = lighting.and_then(|plan| {
+            let ambient = plan.ambient?;
+            let view = self.fans(
+                gpu,
+                pool,
+                encoder,
+                (plan, &plan.light_fans),
+                (
+                    "2d lights",
+                    LIGHT_FORMAT,
+                    [ambient[0], ambient[1], ambient[2], 1.0],
+                ),
+                (&self.light_fans, &frame_group),
+            );
+            Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("sprites light"),
+                layout: &self.light_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                }],
+            }))
+        });
+        // The vision mask, with the darkness it lets through.
+        let darkness_group = lighting.and_then(|plan| {
+            let colour = plan.darkness?;
+            let view = self.fans(
+                gpu,
+                pool,
+                encoder,
+                (plan, &plan.vision_fans),
+                ("2d vision", MASK_FORMAT, [0.0; 4]),
+                (&self.vision_fans, &frame_group),
+            );
+            let bytes: Vec<u8> = colour.iter().flat_map(|v| v.to_le_bytes()).collect();
+            let uniform = pool.buffer(gpu, "2d darkness", wgpu::BufferUsages::UNIFORM, &bytes);
+            Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("2d darkness"),
+                layout: &self.darkness_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &uniform,
+                            offset: 0,
+                            size: wgpu::BufferSize::new(DARKNESS_BYTES),
+                        }),
+                    },
+                ],
+            }))
+        });
         let instances = pool.buffer(
             gpu,
             "sprite instances",
             wgpu::BufferUsages::VERTEX,
-            &overlay.instances,
+            if overlay.instances.is_empty() {
+                // A frame of darkness alone still binds a buffer.
+                &[0u8; INSTANCE_BYTES as usize]
+            } else {
+                &overlay.instances
+            },
         );
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("sprites"),
@@ -1251,7 +1513,13 @@ impl OverlayPipeline {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        pass.set_pipeline(&self.pipeline);
+        match &light_group {
+            Some(group) => {
+                pass.set_pipeline(&self.lit);
+                pass.set_bind_group(2, group, &[]);
+            }
+            None => pass.set_pipeline(&self.pipeline),
+        }
         pass.set_bind_group(0, &frame_group, &[]);
         for batch in &overlay.batches {
             let Some(group) = groups.get(&(batch.texture.as_deref(), batch.smooth)) else {
@@ -1265,6 +1533,90 @@ impl OverlayPipeline {
             pass.set_vertex_buffer(0, instances.slice(start..end));
             pass.draw(0..6, 0..batch.count);
         }
+        drop(pass);
+        // What no vision sees goes dark, sprites and particles included;
+        // the interface comes after.
+        if let Some(group) = darkness_group {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("2d darkness"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.darkness);
+            pass.set_bind_group(2, &group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+    }
+
+    /// Draws the fans `bytes` of `plan` with `pipeline` into a pooled
+    /// target named `name` of `format`, cleared to `clear`, and returns the
+    /// target. Call inside `Gpu::checked`.
+    #[allow(clippy::too_many_arguments)]
+    fn fans(
+        &self,
+        gpu: &Gpu,
+        pool: &mut Pool,
+        encoder: &mut wgpu::CommandEncoder,
+        (plan, bytes): (&LightingPlan, &[u8]),
+        (name, format, clear): (&'static str, wgpu::TextureFormat, [f32; 4]),
+        (pipeline, frame_group): (&wgpu::RenderPipeline, &wgpu::BindGroup),
+    ) -> wgpu::TextureView {
+        let (width, height) = plan.size;
+        let view = pool.texture(
+            gpu,
+            TextureKey {
+                name,
+                width: width.max(1),
+                height: height.max(1),
+                format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+            },
+        );
+        let vertices = LightingPlan::vertices(bytes);
+        let buffer =
+            (vertices > 0).then(|| pool.buffer(gpu, name, wgpu::BufferUsages::VERTEX, bytes));
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some(name),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: f64::from(clear[0]),
+                        g: f64::from(clear[1]),
+                        b: f64::from(clear[2]),
+                        a: f64::from(clear[3]),
+                    }),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        if let Some(buffer) = &buffer {
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, frame_group, &[]);
+            // The vertices only: the pooled buffer may be larger.
+            pass.set_vertex_buffer(0, buffer.slice(0..u64::from(vertices) * FAN_VERTEX_BYTES));
+            pass.draw(0..vertices, 0..1);
+        }
+        drop(pass);
+        view
     }
 }
 

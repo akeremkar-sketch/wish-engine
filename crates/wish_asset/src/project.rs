@@ -373,6 +373,60 @@ fn physics_notes(source: &str, file: &str) -> Vec<Diagnostic> {
         .collect()
 }
 
+/// The warnings of 2D lights and line of sight (design note
+/// 1.1-lights-2d): `occluder_without_collider` for an entity with an
+/// `Occluder` and no `Collider` (its outline is its collider's), and
+/// `light_2d_without_lighting` for the first `Light2D` of a scene whose
+/// `Lighting2D` is not enabled. Located at the component. Entities are
+/// looked at as they are written (what a prefab instance inherits is not
+/// followed), as for physics.
+fn sight_notes(source: &str, file: &str) -> Vec<Diagnostic> {
+    let Ok(root) = wish_scene::json::parse(source, file) else {
+        return Vec::new();
+    };
+    let document = root.to_value();
+    let Some(entities) = document.get("entities").and_then(|e| e.as_object()) else {
+        return Vec::new();
+    };
+    let lighting = document
+        .pointer("/resources/Lighting2D/enabled")
+        .and_then(serde_json::Value::as_bool)
+        == Some(true);
+    let mut found: Vec<(String, &str, String, &str)> = Vec::new();
+    let mut light_noted = false;
+    for (id, entity) in entities {
+        let has = |name: &str| entity.pointer(&format!("/components/{name}")).is_some();
+        if has("Occluder") && !has("Collider") {
+            found.push((
+                format!("/entities/{id}/components/Occluder"),
+                "occluder_without_collider",
+                format!("Entity '{id}' has an Occluder and no Collider, so it blocks neither sight nor 2D light: an occluder's outline is its collider's."),
+                "Add a Collider (a Box of the door's size, say), or remove the Occluder.",
+            ));
+        }
+        if has("Light2D") && !lighting && !light_noted {
+            light_noted = true;
+            found.push((
+                format!("/entities/{id}/components/Light2D"),
+                "light_2d_without_lighting",
+                format!("Entity '{id}' has a Light2D and the scene's 2D lighting is off, so it lights nothing."),
+                "Add the resource Lighting2D with enabled: true (its ambient says how dark the scene is without lights).",
+            ));
+        }
+    }
+    found
+        .into_iter()
+        .map(|(pointer, code, message, hint)| {
+            let mut note = Diagnostic::warning(code, message, hint);
+            if let Some(located) = root.locate(&pointer) {
+                let span = located.key.unwrap_or(located.value);
+                note = note.at_line(span.line, Some(span.column));
+            }
+            note.at_path(pointer).at_file(file)
+        })
+        .collect()
+}
+
 /// Whether two JSON values are the same value: numbers by their value
 /// (`20000` is `20000.0`), arrays element by element.
 fn same(a: &serde_json::Value, b: &serde_json::Value) -> bool {
@@ -581,6 +635,7 @@ pub fn load_project(root: &Path, registry: &Registry) -> Result<Project> {
         }
         // Something only 3D physics uses, in a scene whose physics is 2D.
         diagnostics.extend(physics_notes(&file.source, &file.path));
+        diagnostics.extend(sight_notes(&file.source, &file.path));
     }
 
     files.sort_by(|a, b| a.path.cmp(&b.path));

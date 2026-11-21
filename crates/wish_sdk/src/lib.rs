@@ -58,6 +58,7 @@ pub mod manifest;
 mod param;
 pub mod physics;
 mod query;
+pub mod sight;
 
 pub use param::{
     Actions, Commands, EntityCommands, EventReader, EventWriter, NewEntity, PlayerActions, Res,
@@ -81,10 +82,12 @@ pub use wish_types::{
     UiSettings, UiText, UiTextAlign, UiUnit, world_position,
 };
 pub use wish_types::{AmbientSource, Antialiasing, Bloom, ColorGrading, Fog};
+pub use wish_types::{Light2D, Lighting2D, Occluder, Vision2D};
 pub use wish_types::{MAX_PLAYERS, PlayerActionSlots, PlayerActionState, PlayerId, Players};
 pub use wish_types::{NetGroups, NetOwner, NetViewer, NetVisibility, Replicated};
 
 pub use physics::{Ray, RayHit, raycast};
+pub use sight::{can_see, can_see_ignoring, visible_area};
 
 /// The ABI version this SDK speaks.
 pub const ABI_VERSION: i32 = 1;
@@ -108,6 +111,9 @@ pub mod prelude {
     pub use crate::{
         ButtonClicked, Pointer, UiAlign, UiButton, UiDirection, UiImage, UiInteraction, UiJustify,
         UiLayout, UiLength, UiNode, UiPosition, UiSettings, UiText, UiTextAlign, UiUnit,
+    };
+    pub use crate::{
+        Light2D, Lighting2D, Occluder, Vision2D, can_see, can_see_ignoring, visible_area,
     };
     pub use crate::{NetGroups, NetOwner, NetViewer, NetVisibility, Replicated};
     pub use crate::{ParticleEmitter, ParticleState, Projection, Sprite, SpriteAnimator, Tilemap};

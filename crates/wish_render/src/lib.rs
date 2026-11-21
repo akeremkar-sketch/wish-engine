@@ -25,6 +25,7 @@ pub mod extract;
 mod gizmo;
 pub mod gpu;
 pub mod image;
+pub mod lights2d;
 pub mod mesh;
 pub mod renderer;
 pub mod shader;

@@ -85,6 +85,12 @@
       "parent": "null",
       "prev_sibling": "null"
     },
+    "Light2D": {
+      "color": [1.0, 1.0, 1.0, 1.0],
+      "intensity": 1.0,
+      "radius": 5.0,
+      "shadows": true
+    },
     "Material": {
       "base_color": [1.0, 1.0, 1.0, 1.0],
       "emissive": [0.0, 0.0, 0.0],
@@ -100,6 +106,9 @@
     },
     "NetViewer": {
       "player": 0
+    },
+    "Occluder": {
+      "enabled": true
     },
     "ParticleEmitter": {
       "burst": 0,
@@ -247,6 +256,12 @@
       "size": 24.0,
       "text": "",
       "wrap": true
+    },
+    "Vision2D": {
+      "darkness": [0.02, 0.02, 0.04, 0.9],
+      "enabled": true,
+      "radius": 6.0,
+      "softness": 1.5
     }
   },
   "format": 2,
@@ -544,6 +559,10 @@
       "max_opacity": 0.9,
       "start": 0.0,
       "tint": [1.0, 1.0, 1.0, 1.0]
+    },
+    "Lighting2D": {
+      "ambient": [0.2, 0.2, 0.2, 1.0],
+      "enabled": false
     },
     "NetGroups": {
       "players": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]

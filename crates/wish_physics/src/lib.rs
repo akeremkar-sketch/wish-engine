@@ -28,7 +28,7 @@ mod tiles;
 
 pub use plane::PhysicsProfile;
 pub use query::{OverlapShape, RayHit, query_state};
-pub use tiles::{MapShapes, TileShapes, install_tile_shapes};
+pub use wish_sight::{MapShapes, TileShapes, install_tile_shapes};
 
 use rapier3d::control::{CharacterAutostep, CharacterLength, KinematicCharacterController};
 use rapier3d::prelude as rp;
