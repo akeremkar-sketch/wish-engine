@@ -516,6 +516,7 @@
     },
     "PhysicsSettings": {
       "gravity": [0.0, -9.81, 0.0],
+      "profile": "Full3D",
       "substeps": 1
     },
     "Pointer": {

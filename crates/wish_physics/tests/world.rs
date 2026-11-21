@@ -381,7 +381,7 @@ fn the_recorded_world_hash_holds() {
     assert_eq!(hash, RECORDED_PILE);
 }
 
-const RECORDED_PILE: &str = "ffb4e84321e450fe594a7d4cbde3a7d7";
+const RECORDED_PILE: &str = "b31d9ba9af745e9a2af1046a6baa2075";
 
 #[test]
 fn rays_overlaps_and_contacts_answer_questions() {

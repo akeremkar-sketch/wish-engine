@@ -421,18 +421,21 @@ wish_sdk::export! {
 
 ## A 2D game
 
-An orthographic camera looks at sprites standing in the XY plane. For 2D physics lock movement along Z and rotation
-about X and Y. (A new project's 3D `ground` plane is removed first.)
+An orthographic camera looks at sprites standing in the XY plane. `PhysicsSettings.profile` `SideView2D` makes physics
+2D, seen from the side: everything stays in the plane and turns only about Z, gravity pulls along -Y, a `Sphere`
+collider is a circle and a `Box` a rectangle (`size.z` is not used), and colliders meet whatever their z, so sprites
+on different layers still collide. (A new project's 3D `ground` plane is removed first.)
 
 ```json ops
 [
   { "op": "despawn", "id": "ground" },
+  { "op": "set_resource", "name": "PhysicsSettings", "value": { "profile": "SideView2D" } },
   { "op": "set", "id": "camera", "component": "Camera", "value": { "projection": "Orthographic", "ortho_height": 10 } },
   { "op": "replace", "id": "camera", "component": "Transform", "value": { "translation": [0, 0, 10] } },
   { "op": "spawn", "id": "ball", "components": {
     "Transform": { "translation": [0, 3, 0] },
     "Sprite": { "rect": [0, 0, 50, 50], "color": [1, 0.4, 0.2, 1] },
-    "RigidBody": { "kind": "Dynamic", "lock_translation": [false, false, true], "lock_rotation": [true, true, false] },
+    "RigidBody": { "kind": "Dynamic" },
     "Collider": { "shape": "Sphere", "size": [0.5, 0.5, 0.5], "restitution": 0.8 } } },
   { "op": "spawn", "id": "floor", "components": {
     "Transform": { "translation": [0, -4, 0] },
@@ -443,6 +446,63 @@ about X and Y. (A new project's 3D `ground` plane is removed first.)
 
 A sprite with an `image` (a PNG; `asset_create` makes placeholders) shows it at `pixels_per_unit` pixels per meter;
 `rect` picks a frame of a sprite sheet. `describe_view` lists the sprites with their boxes.
+
+## A top-down character
+
+A map seen from above, in the XY plane: `PhysicsSettings.profile` `TopDown2D` has no gravity and no ground, and a
+`CharacterController` slides along every wall it meets (`CharacterState.blocked` says it met one; `grounded` stays
+false). `move` is [x, y] on the map. The player is drawn in front of the walls (z 0.1) and still collides with them.
+
+```rust
+use wish_sdk::prelude::*;
+
+/// The player.
+#[component]
+pub struct Walker {
+    /// How fast the player walks.
+    #[schema(unit = "m/s", default = 4.0)]
+    pub speed: f32,
+}
+
+/// `move` is [x, y]: right (+X) and up the map (+Y).
+#[system]
+fn walk(actions: Actions, mut walkers: Query<(&Walker, &mut CharacterMotion)>) {
+    let go = actions.axis2("move");
+    for (walker, motion) in walkers.iter_mut() {
+        motion.velocity = Vec3::new(go.x * walker.speed, go.y * walker.speed, 0.0);
+    }
+}
+
+wish_sdk::export! {
+    components: [Walker],
+    systems: [walk],
+}
+```
+
+```json ops
+[
+  { "op": "despawn", "id": "ground" },
+  { "op": "set_resource", "name": "PhysicsSettings", "value": { "profile": "TopDown2D" } },
+  { "op": "set", "id": "camera", "component": "Camera", "value": { "projection": "Orthographic", "ortho_height": 12 } },
+  { "op": "replace", "id": "camera", "component": "Transform", "value": { "translation": [0, 0, 10] } },
+  { "op": "spawn", "id": "wall_east", "components": {
+    "Transform": { "translation": [5.5, 0, 0] },
+    "Sprite": { "rect": [0, 0, 100, 800], "color": [0.35, 0.35, 0.4, 1] },
+    "Collider": { "size": [1, 8, 1] } } },
+  { "op": "spawn", "id": "wall_north", "components": {
+    "Transform": { "translation": [0, 4.5, 0] },
+    "Sprite": { "rect": [0, 0, 1200, 100], "color": [0.35, 0.35, 0.4, 1] },
+    "Collider": { "size": [12, 1, 1] } } },
+  { "op": "spawn", "id": "player", "components": {
+    "Transform": { "translation": [0, 0, 0.1] },
+    "Sprite": { "rect": [0, 0, 60, 60], "color": [0.9, 0.3, 0.3, 1] },
+    "RigidBody": { "kind": "Kinematic" },
+    "Collider": { "shape": "Sphere", "size": [0.6, 0.6, 0.6] },
+    "CharacterController": {}, "CharacterMotion": {}, "CharacterState": {}, "Walker": {} } }
+]
+```
+
+`physics_query` asks in the plane too: `{"ray": {"from": [0, 0], "dir": [1, 0], "ignore": "player"}}` finds the wall.
 
 ## A texture on a box
 

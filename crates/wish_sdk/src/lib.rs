@@ -66,6 +66,7 @@ pub use query::{ColumnAccess, Query, QueryData, QueryFilter, With, Without};
 pub use wish_core::{AssetRef, Color, Entity, Text, math};
 pub use wish_schema::{component, event, resource, schema};
 pub use wish_sdk_macros::system;
+pub use wish_types::PhysicsProfile;
 pub use wish_types::{
     ActionSlot, ActionState, Ambient, AnimationFinished, AnimationPlayer, AudioBus, AudioListener,
     AudioPlayback, AudioSettings, AudioSource, BodyForce, BodyImpulse, BodyKind, BodyVelocity,
@@ -86,6 +87,7 @@ pub const ABI_VERSION: i32 = 1;
 
 /// Everything a game module usually needs.
 pub mod prelude {
+    pub use crate::PhysicsProfile;
     pub use crate::math::{Mat4, Quat, Vec2, Vec3, Vec4};
     pub use crate::{
         Actions, Ambient, AnimationFinished, AnimationPlayer, AssetRef, AudioBus, AudioListener,

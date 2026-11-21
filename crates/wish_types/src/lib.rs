@@ -32,8 +32,8 @@ pub use input::{ActionSlot, ActionState, MAX_ACTIONS, action_id};
 pub use particles::{ParticleEmitter, ParticleState};
 pub use physics::{
     BodyForce, BodyImpulse, BodyKind, BodyVelocity, CharacterController, CharacterMotion,
-    CharacterState, Collider, ColliderShape, CollisionEnded, CollisionStarted, PhysicsSettings,
-    RigidBody,
+    CharacterState, Collider, ColliderShape, CollisionEnded, CollisionStarted, PhysicsProfile,
+    PhysicsSettings, RigidBody,
 };
 pub use render::{
     AlphaMode, Ambient, AmbientSource, Antialiasing, Bloom, Camera, ColorGrading, DirectionalLight,

@@ -15,12 +15,17 @@
 //! Rapier's own state (broad phase, contact caches, warm starting) is a
 //! world extension (ADR-026): snapshots carry it, the world hash does not
 //! need it because everything gameplay sees is written back to components.
+//!
+//! `PhysicsSettings.profile` makes the same backend 2D: everything is held
+//! to the X–Y plane (`plane`, design note 1.1-physics-2d).
 
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
+mod plane;
 mod query;
 
+pub use plane::PhysicsProfile;
 pub use query::{OverlapShape, RayHit, query_state};
 
 use rapier3d::control::{CharacterAutostep, CharacterLength, KinematicCharacterController};
@@ -144,11 +149,15 @@ pub struct PhysicsState {
     /// first step): sent with the first step's own, so that contacts that
     /// exist at the start are reported like any other.
     pending: Vec<rp::CollisionEvent>,
+    /// The profile everything here was built for; a change of
+    /// `PhysicsSettings.profile` builds the state again.
+    profile: PhysicsProfile,
 }
 
 impl Clone for PhysicsState {
     fn clone(&self) -> Self {
         Self {
+            profile: self.profile,
             pipeline: rp::PhysicsPipeline::new(),
             islands: self.islands.clone(),
             broad: self.broad.clone(),
@@ -168,6 +177,7 @@ impl Clone for PhysicsState {
 impl Default for PhysicsState {
     fn default() -> Self {
         Self {
+            profile: PhysicsProfile::Full3D,
             pipeline: rp::PhysicsPipeline::new(),
             islands: rp::IslandManager::new(),
             broad: rp::BroadPhaseBvh::new(),
@@ -185,6 +195,19 @@ impl Default for PhysicsState {
 }
 
 impl PhysicsState {
+    /// An empty state for `profile`.
+    fn for_profile(profile: PhysicsProfile) -> Self {
+        Self {
+            profile,
+            ..Self::default()
+        }
+    }
+
+    /// The profile this state was built for: 3D, or 2D in the X–Y plane.
+    pub fn profile(&self) -> PhysicsProfile {
+        self.profile
+    }
+
     /// How many entities physics knows about.
     pub fn len(&self) -> usize {
         self.links.len()
@@ -320,7 +343,10 @@ fn dim(value: f32) -> f32 {
     }
 }
 
-fn shape_of(desc: &Collider, scale: Vec3) -> rp::SharedShape {
+fn shape_of(desc: &Collider, scale: Vec3, profile: PhysicsProfile) -> rp::SharedShape {
+    if plane::is_2d(profile) {
+        return plane::shape(desc, scale);
+    }
     let size = desc.size * scale.abs();
     match desc.shape {
         ColliderShape::Box => {
@@ -349,16 +375,31 @@ fn groups(desc: &Collider) -> rp::InteractionGroups {
     )
 }
 
-fn apply_collider(collider: &mut rp::Collider, desc: &Collider, scale: Vec3) {
-    collider.set_shape(shape_of(desc, scale));
-    collider.set_translation_wrt_parent(rv(desc.offset * scale));
+fn apply_collider(
+    collider: &mut rp::Collider,
+    desc: &Collider,
+    scale: Vec3,
+    profile: PhysicsProfile,
+) {
+    collider.set_shape(shape_of(desc, scale, profile));
+    let offset = desc.offset * scale;
+    let offset = if plane::is_2d(profile) {
+        offset.with_z(0.0)
+    } else {
+        offset
+    };
+    collider.set_translation_wrt_parent(rv(offset));
     collider.set_friction(desc.friction.clamp(0.0, 10.0));
     collider.set_restitution(desc.restitution.clamp(0.0, 1.0));
     // The bouncier of two decides, as `Collider.restitution` says: a ball
     // of 1 bounces back to its height off a floor of 0 (Rapier's default
     // averages them, which would halve it).
     collider.set_restitution_combine_rule(rp::CoefficientCombineRule::Max);
-    collider.set_density(desc.density.clamp(0.001, 100_000.0));
+    if plane::is_2d(profile) {
+        collider.set_mass_properties(plane::mass(desc, scale));
+    } else {
+        collider.set_density(desc.density.clamp(0.001, 100_000.0));
+    }
     collider.set_sensor(desc.sensor);
     collider.set_collision_groups(groups(desc));
     collider.set_active_events(rp::ActiveEvents::COLLISION_EVENTS);
@@ -489,6 +530,11 @@ fn run(world: &mut World, state: &mut PhysicsState, since: ChangeTick) -> Result
         .copied()
         .unwrap_or_default();
     let delta = world.resource::<Time>().map_or(1.0 / 60.0, |t| t.delta);
+    if state.profile != settings.profile {
+        // Every shape, lock and place depends on the profile: start again
+        // (contacts are found again, and reported again).
+        *state = PhysicsState::for_profile(settings.profile);
+    }
 
     // 1. Who takes part, in entity order.
     let mut present: Vec<Entity> = world
@@ -561,9 +607,9 @@ fn run(world: &mut World, state: &mut PhysicsState, since: ChangeTick) -> Result
         ..rp::IntegrationParameters::default()
     };
     let gravity = if settings.gravity.is_finite() {
-        rv(settings.gravity)
+        rv(plane::gravity(state.profile, settings.gravity))
     } else {
-        rp::Vector::new(0.0, -9.81, 0.0)
+        rv(plane::gravity(state.profile, Vec3::new(0.0, -9.81, 0.0)))
     };
     let collected = Collected::default();
     for _ in 0..substeps {
@@ -640,7 +686,11 @@ fn sync_entity(world: &World, state: &mut PhysicsState, entity: Entity) -> Resul
         return Ok(());
     };
     let body_desc = world.get::<RigidBody>(entity).copied();
+    let profile = state.profile;
+    // What Rapier is given: in 2D, the body locked to the plane.
+    let effective = plane::effective(profile, body_desc);
     let (scale, rotation, translation) = world_placement(world, entity);
+    let (translation, rotation) = plane::flatten(profile, translation, rotation);
     let link = match state.links.get(&entity) {
         Some(link) => link.clone(),
         None => {
@@ -648,17 +698,17 @@ fn sync_entity(world: &World, state: &mut PhysicsState, entity: Entity) -> Resul
                 .pose(pose(translation, rotation))
                 .user_data(u128::from(entity.to_bits()))
                 .build();
-            apply_body(&mut body, body_desc.as_ref());
+            apply_body(&mut body, effective.as_ref());
             if let (Some(BodyKind::Dynamic), Some(velocity)) =
                 (body_desc.map(|d| d.kind), world.get::<BodyVelocity>(entity))
             {
-                set_velocity(&mut body, *velocity, body_desc.as_ref());
+                set_velocity(&mut body, *velocity, effective.as_ref());
             }
             let handle = state.bodies.insert(body);
-            let mut collider = rp::ColliderBuilder::new(shape_of(&collider_desc, scale))
+            let mut collider = rp::ColliderBuilder::new(shape_of(&collider_desc, scale, profile))
                 .user_data(u128::from(entity.to_bits()))
                 .build();
-            apply_collider(&mut collider, &collider_desc, scale);
+            apply_collider(&mut collider, &collider_desc, scale, profile);
             collider.set_contact_skin(contact_skin(world, entity));
             let collider = state
                 .colliders
@@ -682,7 +732,7 @@ fn sync_entity(world: &World, state: &mut PhysicsState, entity: Entity) -> Resul
         .get_mut(link.body)
         .ok_or_else(|| internal("a body is missing"))?;
     if link.body_desc != body_desc {
-        apply_body(body, body_desc.as_ref());
+        apply_body(body, effective.as_ref());
     }
     let kind = body_desc.map_or(BodyKind::Fixed, |d| d.kind);
     let moved_by_others = match &link.written {
@@ -699,7 +749,7 @@ fn sync_entity(world: &World, state: &mut PhysicsState, entity: Entity) -> Resul
             if let Some(velocity) = velocity
                 && Some(velocity) != written
             {
-                set_velocity(body, velocity, body_desc.as_ref());
+                set_velocity(body, velocity, effective.as_ref());
             }
             body.reset_forces(false);
             body.reset_torques(false);
@@ -729,7 +779,7 @@ fn sync_entity(world: &World, state: &mut PhysicsState, entity: Entity) -> Resul
         let collider = colliders
             .get_mut(link.collider)
             .ok_or_else(|| internal("a collider is missing"))?;
-        apply_collider(collider, &collider_desc, scale);
+        apply_collider(collider, &collider_desc, scale, profile);
         // A sleeping body would not notice its new shape.
         if let Some(body) = bodies.get_mut(link.body) {
             body.wake_up(true);
@@ -860,6 +910,7 @@ fn move_each_character(
     platforms: &[(rp::RigidBodyHandle, Mat4)],
     standing: &[Standing],
 ) -> Result<()> {
+    let profile = state.profile;
     let characters: Vec<(Entity, CharacterController, Vec3)> = state
         .links
         .iter()
@@ -880,6 +931,11 @@ fn move_each_character(
             velocity * delta
         } else {
             Vec3::ZERO
+        };
+        let desired = if plane::is_2d(profile) {
+            desired.with_z(0.0)
+        } else {
+            desired
         };
         let (shape, position) = {
             let collider = state
@@ -958,6 +1014,32 @@ fn move_each_character(
         // The character rides along rigidly (as if it were part of the
         // platform), then makes its own move from there.
         let position = rp::Pose::from_parts(position.translation + rv(carry), position.rotation);
+        if profile == PhysicsProfile::TopDown2D {
+            // Seen from above there is no ground: one move in the plane,
+            // sliding along whatever it meets. "Up" is out of the plane, so
+            // every wall is too steep to climb. Rapier may slide a round
+            // shape a little out of the plane; what it moves along Z is
+            // dropped, so the character stays at z = 0 (measured in the
+            // design note: without that, characters drift around walls).
+            let flat = KinematicCharacterController {
+                up: rp::Vector::Z,
+                autostep: None,
+                snap_to_ground: None,
+                ..kcc
+            };
+            let mut blocked = false;
+            let step = flat.move_shape(
+                delta,
+                &queries,
+                shape.as_ref(),
+                &position,
+                rv(desired.with_z(0.0)),
+                |_| blocked = true,
+            );
+            let total = (rv(carry) + step.translation).with_z(0.0);
+            place_character(world, state, entity, link.body, total, false, blocked)?;
+            continue;
+        }
         // Two moves: along the ground first (sliding, stepping up), then
         // up or down. One combined move with gravity in it presses the shape
         // into the floor and Rapier then refuses the sideways part.
@@ -999,23 +1081,42 @@ fn move_each_character(
             |_| {},
         );
         let total = rv(carry) + across.translation + along.translation;
-        let moved = wv(total);
-        if let Some(body) = state.bodies.get_mut(link.body) {
-            let current = *body.position();
-            let next = rp::Pose::from_parts(current.translation + total, current.rotation);
-            body.set_position(next, true);
-        }
+        // Seen from the side, the character stays in the plane as well.
+        let total = if plane::is_2d(profile) {
+            total.with_z(0.0)
+        } else {
+            total
+        };
         // Going up (a jump) is never standing on the ground, however close the
         // ground still is.
         let grounded = down <= 0.0 && (along.grounded || (down == 0.0 && across.grounded));
-        let outcome = CharacterState {
-            grounded,
-            blocked,
-            moved,
-        };
-        if world.get::<CharacterState>(entity) != Some(&outcome) {
-            world.insert(entity, outcome)?;
-        }
+        place_character(world, state, entity, link.body, total, grounded, blocked)?;
+    }
+    Ok(())
+}
+
+/// Moves a character's body by `total` and writes what its move did.
+fn place_character(
+    world: &mut World,
+    state: &mut PhysicsState,
+    entity: Entity,
+    handle: rp::RigidBodyHandle,
+    total: rp::Vector,
+    grounded: bool,
+    blocked: bool,
+) -> Result<()> {
+    if let Some(body) = state.bodies.get_mut(handle) {
+        let current = *body.position();
+        let next = rp::Pose::from_parts(current.translation + total, current.rotation);
+        body.set_position(next, true);
+    }
+    let outcome = CharacterState {
+        grounded,
+        blocked,
+        moved: wv(total),
+    };
+    if world.get::<CharacterState>(entity) != Some(&outcome) {
+        world.insert(entity, outcome)?;
     }
     Ok(())
 }
@@ -1033,12 +1134,18 @@ fn write_back(world: &mut World, state: &mut PhysicsState, entity: Entity) -> Re
         .get(link.body)
         .ok_or_else(|| internal("a body is missing"))?;
     let position = body.position();
-    let transform = local_for(
-        world,
-        entity,
-        wv(position.translation),
-        wq(position.rotation),
-    );
+    let (translation, rotation) = if plane::is_2d(state.profile) {
+        let (_, was_rotation, was_translation) = world_placement(world, entity);
+        plane::unflatten(
+            state.profile,
+            wv(position.translation),
+            wq(position.rotation),
+            (was_translation, was_rotation),
+        )
+    } else {
+        (wv(position.translation), wq(position.rotation))
+    };
+    let transform = local_for(world, entity, translation, rotation);
     let velocity = BodyVelocity {
         linear: wv(body.linvel()),
         angular: wv(body.angvel()),

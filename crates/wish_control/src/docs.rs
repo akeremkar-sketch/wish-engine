@@ -774,6 +774,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "Only a person can do that (change the permission mode, accept or reject a proposal). Ask the person working with you.",
     ),
     (
+        "physics_3d_in_2d",
+        "A scene whose PhysicsSettings.profile is 2D (TopDown2D or SideView2D) writes something only 3D physics uses: a Cylinder collider (in 2D it acts as the rectangle seen from its side: use Box), gravity in a top-down scene (seen from above nothing falls, so gravity is not used), or a gravity with a z part (2D physics lies in the X-Y plane). Given by check, at the field in the scene file.",
+    ),
+    (
         "player_missing",
         "The player program (wish_player) was not found next to the engine. Build it or set WISH_PLAYER.",
     ),
@@ -1805,6 +1809,10 @@ sent.send(BodyImpulse { entity: crate_, linear: Vec3::new(0.0, 5000.0, 0.0), ang
   gravity included) and read `CharacterState { grounded, blocked, moved }`:
   `vy = if state.grounded { if actions.pressed("jump") { 5.0 } else { -1.0 } } else { vy - 9.81 * time.delta }`.
 - `BodyForce` pushes every tick while present; `PhysicsSettings` holds gravity and substeps.
+- 2D: set `PhysicsSettings.profile` to `TopDown2D` (seen from above: no gravity, no ground, characters slide
+  along every wall, `grounded` stays false) or `SideView2D` (a platformer: gravity along -Y, characters stand and
+  jump). Everything stays in the X-Y plane and turns only about Z, colliders meet whatever their z (an entity's own
+  z is kept), `Sphere` is a circle and `Box` a rectangle (`size.z` unused), and rays and overlaps are in the plane.
 - Ray casts: `raycast(from, dir, max) -> Option<RayHit { entity, point, normal, distance }>`, or
   `wish_sdk::physics::cast(Ray { from, dir, max, mask, ignore: Some(me) })`. They see the physics world as it was at
   the start of the tick (the same for every system); each costs a fixed amount of fuel.
@@ -1850,8 +1858,8 @@ and then a step without `click`; `describe_view` lists the interface with its te
 A 2D game looks through a `Camera` with `projection: Orthographic` (`ortho_height`: meters shown from top to
 bottom) and is made of `Sprite { image, rect, color, pixels_per_unit, anchor, flip_x, flip_y, layer, smooth }`
 entities standing in their XY plane (a sprite sheet frame is `rect`, in pixels; game code animates by writing
-it). Sprites are not lit; higher `layer` is drawn over lower. For 2D physics lock the Z translation and the X and
-Y rotations of `RigidBody`.
+it). Sprites are not lit; higher `layer` is drawn over lower. For 2D physics set `PhysicsSettings.profile` to
+`SideView2D` or `TopDown2D` (see Physics): no per-body locks are needed.
 
 A `ParticleEmitter { rate, burst, lifetime, speed, spread_deg, gravity, size_start/end, color_start/end, seed,
 start_time, duration, max, playing }` gives off soft round particles in a cone around its entity's +Y axis.

@@ -127,6 +127,19 @@ fn behaviour(title: &str) -> Option<(Value, Value)> {
                 { "expect": "Transform.translation.z == 0", "entity": "ball", "message": "it bounced and stays in the plane" }
             ]),
         )
+    } else if title.starts_with("A top-down character") {
+        (
+            json!([]),
+            json!([
+                { "input": { "move": [1, 0] }, "frames": 120 },
+                { "expect": "Transform.translation.x > 4.6 && Transform.translation.x < 4.71", "entity": "player", "message": "the east wall stops it" },
+                { "expect": "CharacterState.blocked == true && CharacterState.grounded == false", "entity": "player", "message": "it met a wall, and there is no ground seen from above" },
+                { "expect": "Transform.translation.y > -0.001 && Transform.translation.y < 0.001", "entity": "player", "message": "nothing falls seen from above" },
+                { "input": { "move": [0, 1] }, "frames": 120 },
+                { "expect": "Transform.translation.y > 3.6 && Transform.translation.y < 3.71 && Transform.translation.x > 4.6", "entity": "player", "message": "it walks up along the wall into the corner" },
+                { "expect": "Transform.translation.z > 0.09", "entity": "player", "message": "it keeps its own depth" }
+            ]),
+        )
     } else {
         return None;
     };

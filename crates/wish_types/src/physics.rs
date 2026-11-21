@@ -48,25 +48,30 @@ pub struct RigidBody {
     /// Continuous collision detection, for fast small things (bullets) that
     /// would otherwise pass through thin walls between two ticks.
     pub ccd: bool,
-    /// Stops movement along world X, Y, Z. For a 2D game, lock Z.
+    /// Stops movement along world X, Y, Z. A 2D physics profile
+    /// (`PhysicsSettings.profile`) locks Z itself.
     pub lock_translation: [bool; 3],
-    /// Stops rotation about world X, Y, Z. For a 2D game, lock X and Y; for
-    /// an upright character, lock all three.
+    /// Stops rotation about world X, Y, Z. A 2D physics profile locks X and
+    /// Y itself; for an upright character, lock all three.
     pub lock_rotation: [bool; 3],
 }
 
-/// The shape of a collider.
+/// The shape of a collider. In a 2D physics profile each shape is its
+/// outline in the X–Y plane, and `size.z` is not used.
 #[schema]
 pub enum ColliderShape {
-    /// A box; `size` is its full width, height and depth.
+    /// A box; `size` is its full width, height and depth. In 2D, a rectangle
+    /// of `size.x` by `size.y`.
     Box,
-    /// A ball; `size.x` is its diameter.
+    /// A ball; `size.x` is its diameter. In 2D, a circle.
     Sphere,
     /// A pill standing along Y; `size.x` is its diameter, `size.y` its full
-    /// height including the round ends.
+    /// height including the round ends. In 2D, the same outline (a rounded
+    /// rectangle); turn the entity about Z to lay it down.
     Capsule,
     /// A cylinder standing along Y; `size.x` is its diameter, `size.y` its
-    /// height.
+    /// height. 3D only: in 2D it acts as the rectangle seen from its side
+    /// (`check` warns; use `Box`).
     Cylinder,
 }
 
@@ -142,6 +147,23 @@ pub struct BodyImpulse {
     pub angular: Vec3,
 }
 
+/// Whether physics is 3D or 2D, and which kind of 2D (design note
+/// 1.1-physics-2d). A 2D world lies in the X–Y plane (+Y up); the camera
+/// looks at it along −Z.
+#[schema]
+pub enum PhysicsProfile {
+    /// Full 3D physics.
+    Full3D,
+    /// 2D seen from above (a map of rooms and corridors): no gravity
+    /// (`gravity` is not used) and no ground; characters slide along every
+    /// wall, and `CharacterState.grounded` stays false.
+    TopDown2D,
+    /// 2D seen from the side (a platformer): gravity pulls along −Y
+    /// (`gravity`'s z is not used); characters stand on the ground, climb
+    /// steps and jump as in 3D.
+    SideView2D,
+}
+
 /// World-wide physics settings.
 #[resource]
 pub struct PhysicsSettings {
@@ -152,6 +174,14 @@ pub struct PhysicsSettings {
     /// and costs more.
     #[schema(range = 1..=8, default = 1)]
     pub substeps: u32,
+    /// 3D, or 2D in the X–Y plane. In a 2D profile everything that moves
+    /// stays in the plane and turns only about Z (the locks of `RigidBody`
+    /// are set for it), every collider is placed at z = 0 whatever the
+    /// entity's z (so things at different depths still collide; their own z
+    /// is kept), shapes are their outline in the plane (`size.z` is not
+    /// used; a collider weighs `density` × its area × 1 m), and ray and
+    /// overlap questions are asked in the plane.
+    pub profile: PhysicsProfile,
 }
 
 /// Two colliders started touching (or a collider entered a sensor). `a`
@@ -181,7 +211,9 @@ pub struct CollisionEnded {
 /// climbs slopes and steps, and stays on the ground. Put it with a
 /// [`Collider`] (a capsule is usual) and a kinematic [`RigidBody`]; write
 /// the wanted motion into [`CharacterMotion`] and read the outcome from
-/// [`CharacterState`].
+/// [`CharacterState`]. In a 2D side-view profile it walks as in 3D, in the
+/// plane; in a top-down profile there is no ground: slopes, steps and
+/// `snap_to_ground` are not used, and it slides along every wall.
 #[component]
 pub struct CharacterController {
     /// The steepest slope the character can walk up.
@@ -203,7 +235,9 @@ pub struct CharacterController {
 #[component]
 pub struct CharacterMotion {
     /// The wanted speed along world X, Y, Z, gravity included (game code
-    /// adds gravity to `y` itself, so jumping is just setting `y`).
+    /// adds gravity to `y` itself, so jumping is just setting `y`). In a 2D
+    /// profile `z` is not used; seen from above, `y` is a direction on the
+    /// map like `x`.
     #[schema(unit = "m/s")]
     pub velocity: Vec3,
 }
@@ -211,9 +245,11 @@ pub struct CharacterMotion {
 /// What a character's last move did, written by the engine.
 #[component]
 pub struct CharacterState {
-    /// Whether the character stands on something.
+    /// Whether the character stands on something (always false in a 2D
+    /// top-down profile, which has no ground).
     pub grounded: bool,
-    /// Whether the move was stopped by a wall or ceiling.
+    /// Whether the move was stopped by a wall or ceiling (seen from above:
+    /// by anything).
     pub blocked: bool,
     /// How far the character actually moved.
     #[schema(unit = "m")]
