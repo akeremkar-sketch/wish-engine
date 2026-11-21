@@ -288,7 +288,11 @@ pub fn bot(player: PlayerId, tick: u64) -> Vec<(u32, [f32; 2])> {
         1 if tick < 150 => vec![(id, [1.0, 0.0])],
         1 if tick < 300 => vec![(id, [-1.0, 0.0])],
         2 if tick < 300 => {
-            let y = if (tick / 40).is_multiple_of(2) { 1.0 } else { -1.0 };
+            let y = if (tick / 40).is_multiple_of(2) {
+                1.0
+            } else {
+                -1.0
+            };
             vec![(id, [0.0, y])]
         }
         4 if tick < 300 => vec![(id, [0.5, 0.5])],

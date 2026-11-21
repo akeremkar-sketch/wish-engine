@@ -491,7 +491,9 @@ fn widget(
         }
         Some("array") if wish_type == "Quat" => quaternion(ui, view, key, value),
         Some("array")
-            if schema["items"]["type"] == "number" || schema["items"]["type"] == "boolean" =>
+            if schema["items"]["type"] == "number"
+                || schema["items"]["type"] == "integer"
+                || schema["items"]["type"] == "boolean" =>
         {
             let length = schema["maxItems"].as_u64().unwrap_or(0) as usize;
             numbers(ui, view, key, schema, value, length, wish_type == "Color")
@@ -616,6 +618,19 @@ fn numbers(
                     .changed()
                 {
                     *item = json!(on);
+                    changed = true;
+                }
+            } else if item_schema["type"] == "integer" {
+                // Whole numbers (ids, counts, bit sets): written as integers,
+                // within the item's own range.
+                let mut number = item.as_i64().unwrap_or(0);
+                let low = item_schema["minimum"].as_i64().unwrap_or(i64::MIN);
+                let high = item_schema["maximum"].as_i64().unwrap_or(i64::MAX);
+                if ui
+                    .add(DragValue::new(&mut number).speed(0.1).range(low..=high))
+                    .changed()
+                {
+                    *item = json!(number);
                     changed = true;
                 }
             } else {
@@ -846,6 +861,7 @@ pub fn has_widget(schema: &Value) -> bool {
         Some("array") => {
             schema["x-wish-type"] == "Quat"
                 || schema["items"]["type"] == "number"
+                || schema["items"]["type"] == "integer"
                 || schema["items"]["type"] == "boolean"
                 || (schema["items"]["properties"].is_object()
                     && schema["items"]["properties"]
