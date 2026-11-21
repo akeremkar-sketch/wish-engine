@@ -592,7 +592,15 @@ pub fn load_ui_pictures(
     root: &Path,
     known: &mut BTreeMap<String, Stamp>,
 ) -> Vec<Diagnostic> {
-    let mut warnings = Vec::new();
+    // Sprite sheets first: their pictures are loaded with the others.
+    let mut warnings = load_sprite_sheets(renderer, scene, root, known);
+    let sheet_pictures: Vec<String> = scene
+        .sprites
+        .iter()
+        .filter_map(|view| view.animation.as_ref())
+        .filter_map(|animation| renderer.sprite_sheet(&animation.sheet))
+        .map(|sheet| sheet.image.clone())
+        .collect();
     let mut paths: Vec<&str> = scene
         .ui
         .iter()
@@ -603,6 +611,7 @@ pub fn load_ui_pictures(
                 .iter()
                 .filter_map(|view| view.image.as_deref()),
         )
+        .chain(sheet_pictures.iter().map(String::as_str))
         .collect();
     paths.sort_unstable();
     paths.dedup();
@@ -666,6 +675,85 @@ pub fn load_ui_pictures(
                 problem.message.to_string(),
                 problem.hint.to_string(),
             )),
+        }
+    }
+    warnings
+}
+
+/// Loads the sprite sheets the animators of `scene` name
+/// (`SpriteAnimator.sheet`) into the renderer, again if their files changed
+/// since `known` says they were read. A sheet that cannot be used is a
+/// warning (`sheet_not_loaded`) and is forgotten: its sprites show their
+/// own picture. Sheets are read with their size cap and checked whole
+/// before they are used.
+pub fn load_sprite_sheets(
+    renderer: &mut Renderer,
+    scene: &RenderScene,
+    root: &Path,
+    known: &mut BTreeMap<String, Stamp>,
+) -> Vec<Diagnostic> {
+    let mut paths: Vec<&str> = scene
+        .sprites
+        .iter()
+        .filter_map(|view| view.animation.as_ref())
+        .map(|animation| animation.sheet.as_str())
+        .collect();
+    paths.sort_unstable();
+    paths.dedup();
+    let mut warnings = Vec::new();
+    for path in paths {
+        let not_loaded = |why: &str, hint: &str| {
+            Diagnostic::warning(
+                "sheet_not_loaded",
+                format!("The sprite sheet '{path}' was not used: {why}"),
+                hint.to_owned(),
+            )
+            .at_file(path)
+        };
+        if wish_core::asset::validate_asset_ref(path).is_err() {
+            warnings.push(not_loaded(
+                "it is not a path inside the project.",
+                "Sheets are project-relative paths such as \"assets/sprites/hero.sheet.json\".",
+            ));
+            continue;
+        }
+        if !wish_asset::is_sheet(path) {
+            warnings.push(not_loaded(
+                "it is not a sprite sheet (*.sheet.json).",
+                "SpriteAnimator.sheet names a sheet file; the picture goes into the sheet's \"image\" (asset_create makes a sheet).",
+            ));
+            renderer.remove_sprite_sheet(path);
+            continue;
+        }
+        let file = root.join(path);
+        let stamp = stamp_of(&file);
+        if known.get(path) == Some(&stamp) && renderer.sprite_sheet(path).is_some() {
+            continue;
+        }
+        let loaded = wish_asset::read_sheet_file(&file, path)
+            .and_then(|text| wish_asset::parse_sheet(&text, path))
+            .and_then(|document| document.decode());
+        match loaded {
+            Ok(sheet) => {
+                renderer.set_sprite_sheet(
+                    path,
+                    wish_render::SpriteSheet {
+                        image: sheet.image,
+                        frames: sheet.frames,
+                        clips: sheet
+                            .clips
+                            .into_iter()
+                            .map(|clip| (clip.name, clip.frames))
+                            .collect(),
+                    },
+                );
+                known.insert(path.to_owned(), stamp);
+            }
+            Err(problem) => {
+                renderer.remove_sprite_sheet(path);
+                known.remove(path);
+                warnings.push(not_loaded(&problem.message, &problem.hint));
+            }
         }
     }
     warnings

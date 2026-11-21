@@ -161,7 +161,17 @@
       "layer": 0,
       "pixels_per_unit": 100.0,
       "rect": [0.0, 0.0, 0.0, 0.0],
+      "size": [0.0, 0.0],
+      "slice": [0.0, 0.0, 0.0, 0.0],
       "smooth": true
+    },
+    "SpriteAnimator": {
+      "clip": "",
+      "frame": 0,
+      "playing": true,
+      "sheet": "",
+      "speed": 1.0,
+      "time": 0.0
     },
     "Transform": {
       "rotation": [0.0, 0.0, 0.0, 1.0],

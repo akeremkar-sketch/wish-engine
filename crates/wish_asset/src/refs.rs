@@ -1,4 +1,4 @@
-//! Finding asset references in scene, prefab and material files.
+//! Finding asset references in scene, prefab, material and sheet files.
 //!
 //! The component schemas say which fields are [`wish_core::AssetRef`]s, so a
 //! file is searched field by field, not by looking for strings that happen to
@@ -127,6 +127,30 @@ pub(crate) fn visit_material(document: &mut Value, visit: &mut Visitor<'_>) {
     }
 }
 
+/// Calls `visit` with the JSON pointer and a mutable string for the asset
+/// reference in a sprite sheet file's JSON: its `image`.
+pub(crate) fn visit_sheet(document: &mut Value, visit: &mut Visitor<'_>) {
+    if let Some(Value::String(image)) = document.get_mut("image") {
+        visit("/image", image);
+    }
+}
+
+/// Every non-empty asset reference in a sprite sheet file's JSON (its
+/// picture).
+pub fn refs_in_sheet(document: &Value) -> Vec<RefUse> {
+    let mut copy = document.clone();
+    let mut found = Vec::new();
+    visit_sheet(&mut copy, &mut |pointer, reference| {
+        if !reference.is_empty() {
+            found.push(RefUse {
+                pointer: pointer.to_owned(),
+                reference: reference.clone(),
+            });
+        }
+    });
+    found
+}
+
 /// Every non-empty asset reference in a material file's JSON, in field
 /// order.
 pub fn refs_in_material(document: &Value) -> Vec<RefUse> {
@@ -164,7 +188,8 @@ pub fn refs_in_value(registry: &Registry, document: &Value) -> Vec<RefUse> {
 /// file, line and column of the string; a syntax error is returned as the
 /// single diagnostic. A reference of a `Material` to a file of the wrong
 /// kind (`Material.file` to something that is not a material file, a
-/// texture field to something that is not a PNG) is reported too.
+/// texture field to something that is not a PNG, `SpriteAnimator.sheet` to
+/// something that is not a sprite sheet) is reported too.
 pub fn check_source(
     source: &str,
     file: &str,
@@ -182,7 +207,8 @@ pub fn check_source(
         let problem = index
             .check(&used.reference)
             .err()
-            .or_else(|| crate::material::kind_problem(&used.pointer, &used.reference));
+            .or_else(|| crate::material::kind_problem(&used.pointer, &used.reference))
+            .or_else(|| crate::sheet::kind_problem(&used.pointer, &used.reference));
         let Some(problem) = problem else {
             continue;
         };

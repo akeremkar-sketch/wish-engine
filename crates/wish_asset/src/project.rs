@@ -1,5 +1,5 @@
-//! Loading a whole project folder: every prefab, scene, meta and material
-//! file, checked together.
+//! Loading a whole project folder: every prefab, scene, meta, material and
+//! sprite sheet file, checked together.
 //!
 //! This is what `wen check` and `wen fmt` use, and what hot reloading
 //! re-runs when a file changes.
@@ -9,6 +9,7 @@ use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 
+use wish_core::suggest::unknown_name_hint;
 use wish_core::{Diagnostic, Result};
 use wish_ecs::Registry;
 use wish_scene::{PrefabLibrary, SceneDocument, load_prefab, load_with_prefabs};
@@ -28,6 +29,8 @@ pub enum FileKind {
     Meta,
     /// `*.mat.json`.
     Material,
+    /// `*.sheet.json`.
+    Sheet,
 }
 
 /// One document of the project.
@@ -181,6 +184,69 @@ fn material_notes(source: &str, file: &str) -> Vec<Diagnostic> {
     notes
 }
 
+/// Warnings about `SpriteAnimator` components of a scene or prefab file
+/// whose sheet (one of `sheets`, the project's sheets that load) has no
+/// clip of the name they play (`sprite_clip_not_found`). An animator whose
+/// sheet is missing is reported by the reference check already.
+///
+/// Entities are looked at as they are written. What a prefab instance
+/// inherits or overrides is not followed.
+fn animator_notes(
+    source: &str,
+    file: &str,
+    sheets: &BTreeMap<String, crate::sheet::Sheet>,
+) -> Vec<Diagnostic> {
+    if !source.contains("SpriteAnimator") {
+        return Vec::new();
+    }
+    let Ok(root) = wish_scene::json::parse(source, file) else {
+        return Vec::new();
+    };
+    let document = root.to_value();
+    let Some(entities) = document.get("entities").and_then(|e| e.as_object()) else {
+        return Vec::new();
+    };
+    let mut notes = Vec::new();
+    for (id, entity) in entities {
+        let Some(animator) = entity
+            .pointer("/components/SpriteAnimator")
+            .and_then(|m| m.as_object())
+        else {
+            continue;
+        };
+        let text = |key: &str| animator.get(key).and_then(|v| v.as_str()).unwrap_or("");
+        let (sheet_path, clip) = (text("sheet"), text("clip"));
+        let Some(sheet) = sheets.get(crate::refs::path_and_suffix(sheet_path).0) else {
+            continue;
+        };
+        if clip.is_empty() || sheet.clip(clip).is_some() {
+            continue;
+        }
+        let pointer = format!("/entities/{id}/components/SpriteAnimator/clip");
+        let names = sheet.clip_names();
+        let mut note = Diagnostic::warning(
+            "sprite_clip_not_found",
+            format!(
+                "Entity '{id}' plays the clip '{clip}', which the sheet '{sheet_path}' does not have."
+            ),
+            if names.is_empty() {
+                "The sheet has no clips: add one to it, or leave clip empty to show one of its frames still (SpriteAnimator.frame).".to_owned()
+            } else {
+                format!(
+                    "{} The sheet's clips are: {}.",
+                    unknown_name_hint(clip, &names),
+                    names.join(", ")
+                )
+            },
+        );
+        if let Some(located) = root.locate(&pointer) {
+            note = note.at_line(located.value.line, Some(located.value.column));
+        }
+        notes.push(note.at_path(pointer).at_file(file));
+    }
+    notes
+}
+
 /// The warning `ambient_color_unused` for a scene whose `Ambient` sets a
 /// `color` or an `intensity` other than the default while its light comes
 /// from the sky (`source: Sky`, the default since scene format 2), which
@@ -326,6 +392,7 @@ pub fn load_project(root: &Path, registry: &Registry) -> Result<Project> {
     let mut files = Vec::new();
     let mut diagnostics = Vec::new();
     let mut library = PrefabLibrary::new();
+    let mut sheets: BTreeMap<String, crate::sheet::Sheet> = BTreeMap::new();
 
     for (name, path) in listing.iter().filter(|(n, _)| n.ends_with(".prefab.json")) {
         let Some(source) = read(path, name, &mut diagnostics) else {
@@ -423,12 +490,40 @@ pub fn load_project(root: &Path, registry: &Registry) -> Result<Project> {
         });
     }
 
+    for (name, path) in listing.iter().filter(|(n, _)| crate::sheet::is_sheet(n)) {
+        // A file far larger than a sheet can be is not read.
+        let source = match crate::sheet::read_sheet_file(path, name) {
+            Ok(source) => source,
+            Err(problem) => {
+                diagnostics.push(problem);
+                continue;
+            }
+        };
+        let (sheet, problems) = crate::sheet::check_sheet(&source, name, &index, Some(root));
+        diagnostics.extend(problems);
+        if let Some(decoded) = sheet.as_ref().and_then(|sheet| sheet.decode().ok()) {
+            sheets.insert(name.clone(), decoded);
+        }
+        files.push(ProjectFile {
+            path: name.clone(),
+            kind: FileKind::Sheet,
+            source,
+            canonical: sheet
+                .as_ref()
+                .map(crate::sheet::SheetDocument::to_canonical)
+                .transpose()?,
+            older_format: None,
+        });
+    }
+
     // What a `Material` on an entity cannot mean, said where it is written.
     for file in files
         .iter()
         .filter(|file| matches!(file.kind, FileKind::Scene | FileKind::Prefab))
     {
         diagnostics.extend(material_notes(&file.source, &file.path));
+        // A clip an animator names that its sheet does not have.
+        diagnostics.extend(animator_notes(&file.source, &file.path, &sheets));
     }
     // An ambient colour or intensity the sky light does not use.
     for file in files.iter().filter(|file| file.kind == FileKind::Scene) {

@@ -28,25 +28,53 @@ pub const NON_ASSET_FOLDERS: &[&str] = &[
 /// project's own documents or assets.
 pub const EXPORTS_FOLDER: &str = "exports/";
 
-/// Whether a file name is an engine document: a scene, a prefab, a meta file
-/// or a material file. Documents are strict, canonical JSON with a format
-/// number, which `wen check`, `wen fmt` and `wen migrate` work on.
+/// Whether a file name is an engine document: a scene, a prefab, a meta
+/// file, a material file or a sprite sheet. Documents are strict, canonical
+/// JSON with a format number, which `wen check`, `wen fmt` and `wen migrate`
+/// work on.
 ///
-/// Scenes, prefabs and meta files are not assets. A material file is both a
-/// document and an asset ([`AssetIndex`] lists it), because scenes refer to
-/// it the way they refer to a model.
+/// Scenes, prefabs and meta files are not assets. Material files and sprite
+/// sheets are both documents and assets ([`AssetIndex`] lists them),
+/// because scenes refer to them the way they refer to a model.
 pub fn is_document(name: &str) -> bool {
     [".scene.json", ".prefab.json", ".meta.json"]
         .iter()
         .any(|suffix| name.ends_with(suffix))
-        || crate::material::is_material(name)
+        || is_document_asset(name)
+}
+
+/// Whether a file name is a document that is also an asset: a material
+/// file or a sprite sheet.
+pub fn is_document_asset(name: &str) -> bool {
+    crate::material::is_material(name) || crate::sheet::is_sheet(name)
+}
+
+/// Reads a document that is also an asset (a material file or a sprite
+/// sheet, [`is_document_asset`]) with its kind's size cap
+/// (`material_file_too_large`, `sheet_file_too_large`): every place that
+/// reads such a file whole goes through this or its kind's own reader.
+/// Any other file is read as a material file is, with the same cap.
+pub fn read_document_asset(file: &Path, name: &str) -> Result<String> {
+    if crate::sheet::is_sheet(name) {
+        crate::sheet::read_sheet_file(file, name)
+    } else {
+        crate::material::read_material_file(file, name)
+    }
+}
+
+/// Whether a diagnostic says a document asset was too large to be read.
+pub fn is_too_large(problem: &Diagnostic) -> bool {
+    matches!(
+        &*problem.code,
+        "material_file_too_large" | "sheet_file_too_large"
+    )
 }
 
 /// Whether a project file is an asset: anything that is not a scene, a
-/// prefab or a meta file (a material file is one), outside the folders that
-/// hold no assets.
+/// prefab or a meta file (material files and sprite sheets are), outside
+/// the folders that hold no assets.
 fn is_asset(path: &str) -> bool {
-    (!is_document(path) || crate::material::is_material(path))
+    (!is_document(path) || is_document_asset(path))
         && !NON_ASSET_FOLDERS
             .iter()
             .any(|folder| path.starts_with(folder))
@@ -117,7 +145,7 @@ pub(crate) fn walk_files(root: &Path) -> Result<Vec<(String, PathBuf)>> {
     Ok(found)
 }
 
-/// Every engine document (scene, prefab, meta or material file) below
+/// Every engine document (scene, prefab, meta, material or sheet file) below
 /// `root`, as project-relative paths with their real paths, in path order.
 pub fn documents(root: &Path) -> Result<Vec<(String, PathBuf)>> {
     Ok(walk_files(root)?
@@ -127,7 +155,7 @@ pub fn documents(root: &Path) -> Result<Vec<(String, PathBuf)>> {
 }
 
 /// The asset files of a project: everything except hidden folders, scenes,
-/// prefabs and meta files. Material files are assets.
+/// prefabs and meta files. Material files and sprite sheets are assets.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AssetIndex {
     files: BTreeSet<String>,

@@ -136,7 +136,8 @@ The language is chosen at the top right of the welcome screen, and later in the 
 - **Assets** (bottom tab):
   - Models, images and sounds of the project, filtered by kind.
   - Drag one into the view to place it.
-  - *New...* makes a placeholder sound or picture, or a *Material file*.
+  - *New...* makes a placeholder sound or picture, a *Material file*, or a *Sprite sheet* of the
+    selected picture.
   - *Rename / move...* moves a file and updates every reference to it.
   - *Open outside* opens it in the program your system uses.
 - **Looks (materials and textures):**
@@ -161,6 +162,18 @@ The language is chosen at the top right of the welcome screen, and later in the 
     a checkpoint before a large change.
   - Textures are PNG files of at most 4096 pixels a side. A missing or broken one is reported and
     the surface is drawn without it.
+- **Sprites and sprite sheets (2D):**
+  - A `Sprite` shows a picture flat in the scene. Its `color` tints it (a white character in many
+    colours); `size` draws it at another size, and with `slice` borders it is a nine-slice: the
+    corners keep their size and the rest stretches (panels and frames).
+  - A walk cycle comes from a *Sprite sheet*: select a picture, then *Assets*, *New...*, *Sprite
+    sheet*. Where the browser shows the sheet, set how the picture is cut (`grid`: a frame's
+    `frame` size, `columns`, `rows`; or *Switch to rectangles*), type a name and *Add clip*, and
+    give each clip its `frames` (`[0, 1, 2, 3]`, numbered left to right, then down), `fps` and
+    `loop`.
+  - Then add a `SpriteAnimator` to the entity with the `Sprite`, and type the sheet in `sheet`
+    and a clip in `clip`. While the game runs the clip plays; game code switches clips with
+    `animator.play(text("walk"))`.
 - **Prefabs:**
   - *Make prefab* turns the selection into a reusable piece.
   - Instances show *Instance of {prefab}*; their changed fields are marked.
@@ -394,7 +407,7 @@ recorded before the files were rewritten no longer match and have to be recorded
 wish.json             the project: name, kind (2D or 3D), default scene
 scenes/               scenes (*.scene.json) and prefabs (*.prefab.json)
 assets/               models (.glb/.gltf), images (.png), sounds (.wav/.ogg),
-                      material files (*.mat.json)
+                      material files (*.mat.json), sprite sheets (*.sheet.json)
 scripts/src/lib.rs    game code
 input.json            actions and their keys
 tests/                scenario tests (*.test.json) and golden pictures

@@ -284,7 +284,10 @@ const ENTRY_POINTS: &[(&str, &[(naga::ShaderStage, &str)])] = {
         ),
         ("gizmo_pass", &[(Vertex, "vs_main"), (Fragment, "fs_main")]),
         ("ui_pass", &[(Vertex, "vs_main"), (Fragment, "fs_main")]),
-        ("sprite_pass", &[(Vertex, "vs_main"), (Fragment, "fs_main")]),
+        (
+            "sprite_pass",
+            &[(Vertex, "vs_instance"), (Fragment, "fs_main")],
+        ),
     ]
 };
 
@@ -493,6 +496,11 @@ pub struct Renderer {
     overlay: crate::sprites::OverlayPipeline,
     /// Pictures of the interface and of sprites, by project path.
     ui_pictures: BTreeMap<String, crate::ui::UiPicture>,
+    /// Sprite pictures on the GPU, uploaded the first time a frame draws
+    /// them and kept until the picture changes.
+    sprite_textures: crate::sprites::SpriteTextures,
+    /// Sprite sheets, by project path.
+    sprite_sheets: BTreeMap<String, crate::sprites::SpriteSheet>,
     /// Targets and buffers kept from frame to frame. Locked for
     /// the whole of a call, readback included: two threads sharing a
     /// renderer take turns (as the GPU lock makes them do anyway). Always
@@ -598,6 +606,8 @@ impl Renderer {
             ui,
             overlay,
             ui_pictures: BTreeMap::new(),
+            sprite_textures: crate::sprites::SpriteTextures::default(),
+            sprite_sheets: BTreeMap::new(),
             pool: Mutex::new(Pool::default()),
         })
     }
@@ -613,6 +623,8 @@ impl Renderer {
         fresh.models = std::mem::take(&mut self.models);
         fresh.materials = std::mem::take(&mut self.materials);
         fresh.ui_pictures = std::mem::take(&mut self.ui_pictures);
+        fresh.sprite_textures = std::mem::take(&mut self.sprite_textures);
+        fresh.sprite_sheets = std::mem::take(&mut self.sprite_sheets);
         std::mem::swap(&mut fresh.pool, &mut self.pool);
         let old = std::mem::replace(self, fresh);
         // The old pipelines and what else was made for them are let go of
@@ -628,6 +640,34 @@ impl Renderer {
     /// same path.
     pub fn set_ui_picture(&mut self, path: &str, picture: crate::ui::UiPicture) {
         self.ui_pictures.insert(path.to_owned(), picture);
+        // Its copy on the GPU, if any, is of the old picture.
+        self.sprite_textures.forget(path);
+    }
+
+    /// Keeps a sprite sheet under its project path (`SpriteAnimator.sheet`),
+    /// replacing one of the same path: sprites whose animator names it show
+    /// its picture (kept with [`Renderer::set_ui_picture`] under the sheet's
+    /// `image`), cut to the frame the animator says.
+    pub fn set_sprite_sheet(&mut self, path: &str, sheet: crate::sprites::SpriteSheet) {
+        self.sprite_sheets.insert(path.to_owned(), sheet);
+    }
+
+    /// Forgets the sprite sheet `path` (it could not be read any more):
+    /// sprites that name it show their own picture.
+    pub fn remove_sprite_sheet(&mut self, path: &str) {
+        self.sprite_sheets.remove(path);
+    }
+
+    /// The sprite sheet kept under `path`.
+    pub fn sprite_sheet(&self, path: &str) -> Option<&crate::sprites::SpriteSheet> {
+        self.sprite_sheets.get(path)
+    }
+
+    /// How many sprite pictures are on the GPU (each uploaded once and
+    /// kept): for tests that prove pictures are not uploaded every frame.
+    #[doc(hidden)]
+    pub fn sprite_texture_count(&self) -> usize {
+        self.sprite_textures.len()
     }
 
     /// Whether a picture is kept under `path`.
@@ -649,9 +689,9 @@ impl Renderer {
         Ok(crate::sprites::elements(
             scene,
             view,
-            width,
-            height,
+            (width, height),
             &self.ui_pictures,
+            &self.sprite_sheets,
         ))
     }
 
@@ -833,6 +873,7 @@ impl Renderer {
                     &self.overlay,
                     (&picture.view, &resources.depth),
                     overlay,
+                    (&self.sprite_textures, &self.ui_pictures),
                 );
             }
             if let Some(batch) = &plan.interface {

@@ -1,6 +1,6 @@
 [package]
 name = "wish_anim"
-description = "Skeletal animation for Wish Engine: the clip players' time, advanced deterministically every tick."
+description = "Animation for Wish Engine: the time of skeletal clip players and sprite sheet animators, advanced deterministically every tick."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -117,6 +117,8 @@ pub(crate) struct Sessions {
     pub clips: crate::audio::Clips,
     /// The animation clips of the project's models, kept until a file changes.
     pub models: crate::audio::Models,
+    /// The clips of the project's sprite sheets, kept until a file changes.
+    pub sheets: crate::audio::Sheets,
     /// The project's fonts, kept until a file changes.
     pub fonts: crate::ui::FontCache,
     pub open: BTreeMap<String, Session>,
@@ -253,10 +255,24 @@ fn build_app(
         print.write_str(clip);
         print.write_u32(seconds.to_bits());
     }
+    // Sprite sheets' clips decide which frame an animator is on (written in
+    // the world), so they are part of what the simulation reads.
+    let sprite_clips = workspace.sprite_clips();
+    if !sprite_clips.is_empty() {
+        print.write_str("sprite sheets");
+        for ((sheet, name), clip) in &sprite_clips {
+            print.write_str(sheet);
+            print.write_str(name);
+            print.write_u32(clip.frames);
+            print.write_u32(clip.fps.to_bits());
+            print.write_u32(u32::from(clip.looping));
+        }
+    }
     print.write_u64(font_print);
     let assets = format!("{:016x}", (print.finish().as_u128() >> 64) as u64);
     wish_audio::install(app.world_mut(), clips);
     wish_anim::install(app.world_mut(), animations);
+    wish_anim::install_sprite_clips(app.world_mut(), sprite_clips);
     crate::ui::prepare(app.world_mut(), fonts)?;
     Ok((app, runtime, assets))
 }

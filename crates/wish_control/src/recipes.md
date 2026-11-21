@@ -504,6 +504,78 @@ wish_sdk::export! {
 
 `physics_query` asks in the plane too: `{"ray": {"from": [0, 0], "dir": [1, 0], "ignore": "player"}}` finds the wall.
 
+## A walking character from a sprite sheet
+
+A sprite sheet (`*.sheet.json`) cuts one picture into frames and names clips of them. A `SpriteAnimator { sheet, clip }`
+beside an entity's `Sprite` plays a clip: the engine moves it on every tick and writes the frame it shows into
+`SpriteAnimator.frame`, so snapshots and replays hold it exactly. Game code switches clips with `animator.play(...)`,
+which starts a new clip at its first frame and lets the clip already playing run on. (The picture here is a
+placeholder made by `asset_create`; a real one has the frames side by side, idle on the top row, walking below.)
+
+```json calls
+[
+  { "tool": "asset_create", "args": { "path": "assets/sprites/hero.png",
+    "picture": { "width": 128, "height": 64, "shape": "fill", "color": [0.9, 0.55, 0.3, 1] } } },
+  { "tool": "asset_create", "args": { "path": "assets/sprites/hero.sheet.json",
+    "sheet": { "image": "assets/sprites/hero.png", "grid": { "frame": [32, 32], "columns": 4, "rows": 2 },
+      "clips": { "idle": { "frames": [0, 1], "fps": 2 }, "walk": { "frames": [4, 5, 6, 7], "fps": 10 } } } } }
+]
+```
+
+```rust
+use wish_sdk::prelude::*;
+
+/// A character that walks with `move` and shows it.
+#[component]
+pub struct Hero {
+    /// How fast it walks.
+    #[schema(unit = "m/s", default = 3.0)]
+    pub speed: f32,
+}
+
+#[system]
+fn walk(
+    actions: Actions,
+    time: Res<Time>,
+    mut heroes: Query<(&Hero, &mut Transform, &mut Sprite, &mut SpriteAnimator)>,
+) {
+    let go = actions.axis2("move");
+    for (hero, transform, sprite, animator) in heroes.iter_mut() {
+        transform.translation += Vec3::new(go.x, go.y, 0.0) * hero.speed * time.delta;
+        if go.x != 0.0 {
+            sprite.flip_x = go.x < 0.0;
+        }
+        let moving = go.x != 0.0 || go.y != 0.0;
+        animator.play(text(if moving { "walk" } else { "idle" }));
+    }
+}
+
+wish_sdk::export! {
+    components: [Hero],
+    systems: [walk],
+}
+```
+
+```json ops
+[
+  { "op": "despawn", "id": "ground" },
+  { "op": "set", "id": "camera", "component": "Camera", "value": { "projection": "Orthographic", "ortho_height": 6 } },
+  { "op": "replace", "id": "camera", "component": "Transform", "value": { "translation": [0, 0, 10] } },
+  { "op": "spawn", "id": "hero", "components": {
+    "Transform": {},
+    "Sprite": { "pixels_per_unit": 32, "smooth": false },
+    "SpriteAnimator": { "sheet": "assets/sprites/hero.sheet.json", "clip": "idle" },
+    "Hero": {} } }
+]
+```
+
+- A clip lists frames by number: in a grid, from 0, left to right then down. `fps` is frames a second (10 when left
+  out); `"loop": false` stops on the last frame, sets `playing` to false and sends `AnimationFinished`.
+- `Sprite.color` tints the frames: one sheet in white or grey gives every player their own colour.
+- Without a clip, `SpriteAnimator.frame` picks one of the sheet's frames, still: a sheet as a set of pictures.
+- `describe_view` lists each sprite's `clip`, `frame` (its place in the clip) and `sheet_frame`; `asset_info` on the
+  sheet lists its frames and clips; `check` warns about a clip the sheet does not have (`sprite_clip_not_found`).
+
 ## A texture on a box
 
 A shape's `Material` is four numbers for a plain look. A picture on its surface comes from a material file

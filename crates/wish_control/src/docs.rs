@@ -649,6 +649,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "Material.file names a file that is not a material file (*.mat.json). To put a picture on a surface, make a material file whose base_color_texture names the picture (asset_create with a .mat.json path) and name that file here.",
     ),
     (
+        "not_a_sheet_file",
+        "SpriteAnimator.sheet names a file that is not a sprite sheet (*.sheet.json). Make a sheet that names the picture in its \"image\" (asset_create with a .sheet.json path and sheet {image, grid or frames, clips}) and name that file here.",
+    ),
+    (
         "not_an_instance",
         "The operation works on prefab instances only, and the entity is not one.",
     ),
@@ -1097,6 +1101,22 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "RenderSettings.shadow_cascades is 2 or more, so shadows are drawn only up to shadow_distance in front of the camera (depth along the direction it looks), and nothing that is drawn can cast a shadow into that part of the scene: the picture has no shadows and no shadow map is drawn. Raise shadow_distance, or set shadow_cascades to 1 (one map covers the whole scene). To see where shadows end in any picture, use capture_frame with view shadow_cascades: gray has no shadow.",
     ),
     (
+        "sheet_file_too_large",
+        "A *.sheet.json file is larger than 256 KiB and was not read. A sheet holds its picture's path, how it is cut (a grid, or rectangles) and its clips; use a grid instead of listing many frames, or split the clips over several sheets of the same picture.",
+    ),
+    (
+        "sheet_frames_outside_picture",
+        "Check warning: some frames of a sprite sheet reach past the edge of its picture (the message says how many and which is first); the part outside shows nothing. Check the grid's frame size, columns and rows (or the rectangles) against the picture: frames are cut from its top left corner, left to right then down.",
+    ),
+    (
+        "sheet_invalid",
+        "A sprite sheet does not say something it must, or says it twice: no \"image\", no way to cut the picture (\"grid\" {frame, columns, rows} or \"frames\" [[x, y, w, h], ...]), both at once, a clip without frames, too many frames or clips, or a clip name that cannot be one. The message names which and where.",
+    ),
+    (
+        "sheet_not_loaded",
+        "Render warning: a SpriteAnimator names a sprite sheet that could not be used (it does not exist, is not a *.sheet.json, or has a mistake: the message says which). The sprite shows its own Sprite.image and rect until the sheet is fixed; check lists everything wrong with the project's sheets.",
+    ),
+    (
         "snapshot_exists",
         "A snapshot with that label already exists; snapshots are not overwritten.",
     ),
@@ -1107,6 +1127,18 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "spawn_target_missing",
         "A deferred command refers to an entity that no longer exists.",
+    ),
+    (
+        "sprite_clip_not_found",
+        "A SpriteAnimator plays a clip its sheet does not have: check says so where the scene writes it, a picture shows the sheet's first frame, and in a session the animator does not move. The hint lists the sheet's clips; asset_info on the sheet shows them with their frames.",
+    ),
+    (
+        "sprite_frame_not_found",
+        "Render warning: a SpriteAnimator without a clip shows the sheet's own frame number SpriteAnimator.frame, and the sheet has fewer frames; its last frame is shown. Frames are numbered from 0, left to right then down in a grid.",
+    ),
+    (
+        "sprites_cut_short",
+        "Render warning: a picture had more than a million sprite rectangles and particles (a nine-slice sprite is up to nine); the first million, in entity order, were drawn. Show fewer at once.",
     ),
     (
         "stale_revision",
@@ -1856,9 +1888,15 @@ and then a step without `click`; `describe_view` lists the interface with its te
 ## 2D and particles
 
 A 2D game looks through a `Camera` with `projection: Orthographic` (`ortho_height`: meters shown from top to
-bottom) and is made of `Sprite { image, rect, color, pixels_per_unit, anchor, flip_x, flip_y, layer, smooth }`
-entities standing in their XY plane (a sprite sheet frame is `rect`, in pixels; game code animates by writing
-it). Sprites are not lit; higher `layer` is drawn over lower. For 2D physics set `PhysicsSettings.profile` to
+bottom) and is made of `Sprite { image, rect, color, pixels_per_unit, anchor, flip_x, flip_y, layer, smooth, size,
+slice }` entities standing in their XY plane. `color` is the tint (it multiplies the picture: one white character in many
+colours); `size` (picture pixels) draws the sprite at another size, and with `slice` borders [left, top, right, bottom]
+it is a nine-slice: the corners keep their size and the rest stretches (panels, frames). A walk cycle comes from a
+sprite sheet (`*.sheet.json`: a PNG cut into frames by a `grid` or `frames` rectangles, and named `clips` with their
+`frames`, `fps`, `loop`; `asset_create` makes one) and a `SpriteAnimator { sheet, clip, playing, speed, time, frame }`
+beside the `Sprite`: the engine moves it every tick and writes the frame shown; game code switches clips with
+`animator.play(text(\"walk\"))`, and `describe_view` says each sprite's clip and frame. Sprites are not lit; higher
+`layer` is drawn over lower. For 2D physics set `PhysicsSettings.profile` to
 `SideView2D` or `TopDown2D` (see Physics): no per-body locks are needed.
 
 A `ParticleEmitter { rate, burst, lifetime, speed, spread_deg, gravity, size_start/end, color_start/end, seed,

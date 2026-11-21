@@ -273,3 +273,126 @@ fn a_second_frame_with_sprites_creates_nothing_and_draws_only_its_own() {
     let back = renderer.render(&gpu, &scene, None, 320, 180).unwrap();
     assert_eq!(back.image, first.image);
 }
+
+/// A 256 x 256 sheet of 8 x 8 frames, 32 pixels square: each frame its own
+/// colour with a darker border, so that a wrong frame shows.
+fn sheet_picture() -> UiPicture {
+    let mut rgba = Vec::with_capacity(256 * 256 * 4);
+    for y in 0..256u32 {
+        for x in 0..256u32 {
+            let frame = (y / 32) * 8 + x / 32;
+            let border = x % 32 < 2 || y % 32 < 2 || x % 32 > 29 || y % 32 > 29;
+            let shade = if border { 2 } else { 1 };
+            rgba.extend_from_slice(&[
+                ((frame * 37 % 200) as u8 + 40) / shade,
+                ((frame * 91 % 200) as u8 + 40) / shade,
+                ((frame * 53 % 200) as u8 + 40) / shade,
+                255,
+            ]);
+        }
+    }
+    UiPicture {
+        width: 256,
+        height: 256,
+        rgba,
+    }
+}
+
+/// 5,000 sprites of one sheet in a 100 x 50 grid, through an orthographic
+/// camera that sees them all.
+fn many_sprites_scene() -> String {
+    let mut entities = String::from(
+        r#""camera": { "components": {
+      "Camera": { "projection": "Orthographic", "ortho_height": 21 },
+      "Transform": { "translation": [0, 0, 10] } } }"#,
+    );
+    for i in 0..5000 {
+        let (column, row) = (i % 100, i / 100);
+        let (x, y) = (-19.8 + column as f32 * 0.4, -9.8 + row as f32 * 0.4);
+        entities.push_str(&format!(
+            r#", "s{i}": {{ "components": {{
+      "Sprite": {{ "image": "sprites/sheet.png", "rect": [0, 0, 32, 32], "smooth": false }},
+      "Transform": {{ "translation": [{x}, {y}, 0] }} }} }}"#
+        ));
+    }
+    format!(
+        r#"{{ "format": 1, "resources": {{ "Ambient": {{ "intensity": 0 }}, "Sky": {{ "luminance": 0 }} }},
+  "entities": {{ {entities} }} }}"#
+    )
+}
+
+/// The measurement of the 1.1 sprites package (design note
+/// `docs/design/1.1-sprites.md`): 5,000 animated sprites at 1280 x 720 on
+/// the software adapter, every frame showing each sprite's next frame of
+/// the sheet. Run by hand, in release:
+/// `cargo test --release -p wish_render --test sprites measure -- --ignored --nocapture`.
+#[test]
+#[ignore = "a measurement, run by hand in release"]
+fn measure_5000_animated_sprites() {
+    let world = world_of(&many_sprites_scene());
+    let mut scene = extract(&world).unwrap();
+    assert_eq!(scene.sprites.len(), 5000);
+    // WISH_BENCH_HARDWARE=1 measures on the hardware adapter instead.
+    let software = std::env::var_os("WISH_BENCH_HARDWARE").is_none();
+    let gpu = Gpu::new(GpuOptions { software }).expect("an adapter");
+    let mut renderer = Renderer::new(&gpu).unwrap();
+    renderer.set_ui_picture("sprites/sheet.png", sheet_picture());
+    let mut times = Vec::new();
+    let mut stats = None;
+    for tick in 0..23u32 {
+        for (i, view) in scene.sprites.iter_mut().enumerate() {
+            let frame = (i as u32 + tick) % 64;
+            view.sprite.rect = [(frame % 8 * 32) as f32, (frame / 8 * 32) as f32, 32.0, 32.0];
+        }
+        let started = std::time::Instant::now();
+        let frame = renderer.render(&gpu, &scene, None, 1280, 720).unwrap();
+        let took = started.elapsed().as_secs_f64() * 1000.0;
+        // The first three frames warm the caches up.
+        if tick >= 3 {
+            times.push(took);
+        }
+        stats = Some(frame.stats);
+    }
+    times.sort_by(f64::total_cmp);
+    let mean = times.iter().sum::<f64>() / times.len() as f64;
+    // The same picture without the sprites: what the rest of a frame costs
+    // (sky, tone mapping, reading the picture back).
+    let mut empty = scene.clone();
+    empty.sprites.clear();
+    let mut bare = Vec::new();
+    for tick in 0..13 {
+        let started = std::time::Instant::now();
+        renderer.render(&gpu, &empty, None, 1280, 720).unwrap();
+        if tick >= 3 {
+            bare.push(started.elapsed().as_secs_f64() * 1000.0);
+        }
+    }
+    bare.sort_by(f64::total_cmp);
+    println!("without the sprites: median {:.1} ms", bare[bare.len() / 2]);
+    // The same sprites too small to cover a pixel: what they cost before
+    // any of them is filled in (preparing them, the vertices).
+    let mut tiny = scene.clone();
+    for view in &mut tiny.sprites {
+        view.sprite.pixels_per_unit = 100_000.0;
+    }
+    let mut small = Vec::new();
+    for tick in 0..13 {
+        let started = std::time::Instant::now();
+        renderer.render(&gpu, &tiny, None, 1280, 720).unwrap();
+        if tick >= 3 {
+            small.push(started.elapsed().as_secs_f64() * 1000.0);
+        }
+    }
+    small.sort_by(f64::total_cmp);
+    println!(
+        "the sprites too small to fill a pixel: median {:.1} ms",
+        small[small.len() / 2]
+    );
+    println!(
+        "5000 animated sprites, 1280x720, {}: mean {mean:.1} ms, median {:.1} ms, best {:.1} ms; {:?}",
+        gpu.adapter().name,
+        times[times.len() / 2],
+        times[0],
+        stats
+    );
+}

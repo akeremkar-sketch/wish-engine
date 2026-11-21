@@ -84,7 +84,7 @@ pub(crate) const CAPTURE_FRAME: Tool = Tool {
 pub(crate) const DESCRIBE_VIEW: Tool = Tool {
     name: "describe_view",
     title: "What the camera sees",
-    description: "Says what a camera sees without a picture: for each visible entity its pixel count, how much of it is not hidden by other things (visible_percent), its box on screen [left, top, right, bottom] and its distance in meters; and the entities that are drawn but not visible (hidden behind something, or outside the picture); the sprites (their box in the picture and layer) and particle emitters (the box their particles cover, how many are alive); and the in-game interface (interface: each box that shows something, its box in the picture, its text, whether it is a button and if the pointer is over it); and stats, what drawing the lit picture of this view takes (draw_calls, triangles, shadow_casters, shadow_cascades, point_lights, spot_lights: counts, the same on every machine; effects: which of sky_light, sun_disc, fog, bloom, color_grading and fxaa it uses). A see-through entity is marked blended: true, and what shows through it counts as visible too; stats.blended_surfaces counts them. Use it to check that what you built is on screen and not blocked, what the interface says, and what makes a scene heavy.",
+    description: "Says what a camera sees without a picture: for each visible entity its pixel count, how much of it is not hidden by other things (visible_percent), its box on screen [left, top, right, bottom] and its distance in meters; and the entities that are drawn but not visible (hidden behind something, or outside the picture); the sprites (their box in the picture and layer; a sprite that shows a sprite sheet also says its clip, frame (its place in the clip) and sheet_frame) and particle emitters (the box their particles cover, how many are alive); and the in-game interface (interface: each box that shows something, its box in the picture, its text, whether it is a button and if the pointer is over it); and stats, what drawing the lit picture of this view takes (draw_calls, triangles, shadow_casters, shadow_cascades, point_lights, spot_lights: counts, the same on every machine; effects: which of sky_light, sun_disc, fog, bloom, color_grading and fxaa it uses). A see-through entity is marked blended: true, and what shows through it counts as visible too; stats.blended_surfaces counts them. Use it to check that what you built is on screen and not blocked, what the interface says, and what makes a scene heavy.",
     params: &[
         SCENE,
         SESSION,
@@ -641,6 +641,12 @@ fn describe_view(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
         }
         if let Some(layer) = element.layer {
             entry["layer"] = json!(layer);
+            // A sprite that shows a sheet: which clip and which frame.
+            if let Some((clip, frame, sheet_frame)) = element.animation {
+                entry["clip"] = json!(clip);
+                entry["frame"] = json!(frame);
+                entry["sheet_frame"] = json!(sheet_frame);
+            }
             sprites.push(entry);
         } else {
             entry["alive"] = json!(element.particles.unwrap_or(0));

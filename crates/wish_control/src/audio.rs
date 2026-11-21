@@ -156,6 +156,90 @@ impl Workspace {
     }
 }
 
+/// What is known of a sprite sheet's clips, kept until the file changes.
+#[derive(Clone, Debug)]
+pub(crate) struct KnownSheet {
+    bytes: u64,
+    modified: Option<SystemTime>,
+    clips: Vec<(String, wish_anim::SpriteClip)>,
+}
+
+/// The most sprite sheets read for their clips when a session starts.
+const MAX_SHEETS: usize = 2000;
+
+impl Workspace {
+    /// The clips of the project's sprite sheets (`*.sheet.json`), keyed by
+    /// (sheet path, clip name): how many frames, how many a second, whether
+    /// they loop. A sheet that cannot be read or has a mistake has no clips
+    /// here (`check` says why; its animators do not move). Kept until a
+    /// file changes. Sheets are read with their size cap.
+    pub(crate) fn sprite_clips(&mut self) -> Vec<((String, String), wish_anim::SpriteClip)> {
+        let root = self.root().to_path_buf();
+        let Ok(index) = wish_asset::AssetIndex::scan(&root) else {
+            return Vec::new();
+        };
+        let paths: Vec<String> = index
+            .paths()
+            .filter(|path| wish_asset::is_sheet(path))
+            .take(MAX_SHEETS)
+            .map(str::to_owned)
+            .collect();
+        let mut found = Vec::new();
+        for path in paths {
+            let file = root.join(&path);
+            let Ok(meta) = std::fs::metadata(&file) else {
+                continue;
+            };
+            let (bytes, modified) = (meta.len(), meta.modified().ok());
+            let clips = match self.sessions.sheets.get(&path) {
+                Some(known) if known.bytes == bytes && known.modified == modified => {
+                    known.clips.clone()
+                }
+                _ => {
+                    let clips: Vec<(String, wish_anim::SpriteClip)> =
+                        wish_asset::read_sheet_file(&file, &path)
+                            .and_then(|text| wish_asset::parse_sheet(&text, &path))
+                            .and_then(|document| document.decode())
+                            .map(|sheet| {
+                                sheet
+                                    .clips
+                                    .into_iter()
+                                    .map(|clip| {
+                                        (
+                                            clip.name,
+                                            wish_anim::SpriteClip {
+                                                frames: u32::try_from(clip.frames.len())
+                                                    .unwrap_or(u32::MAX),
+                                                fps: clip.fps,
+                                                looping: clip.looping,
+                                            },
+                                        )
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                    self.sessions.sheets.insert(
+                        path.clone(),
+                        KnownSheet {
+                            bytes,
+                            modified,
+                            clips: clips.clone(),
+                        },
+                    );
+                    clips
+                }
+            };
+            for (name, clip) in clips {
+                found.push(((path.clone(), name), clip));
+            }
+        }
+        found
+    }
+}
+
+/// The cache of sprite sheets' clips (part of the sessions).
+pub(crate) type Sheets = BTreeMap<String, KnownSheet>;
+
 /// The cache of clip lengths of models (part of the sessions).
 pub(crate) type Models = BTreeMap<String, KnownModel>;
 

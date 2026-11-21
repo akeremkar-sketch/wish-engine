@@ -7,6 +7,14 @@
 //!
 //! Clip lengths come from the model files, which the control plane reads
 //! when a session starts ([`install`]); they are working state (ADR-026).
+//!
+//! The same system plays sprite sheets (release 1.1, design note
+//! `docs/design/1.1-sprites.md`): every [`SpriteAnimator`] with a clip moves
+//! on the same way and writes which of the clip's frames shows into its
+//! `frame`. What a sheet's clips are (how many frames, how many a second,
+//! whether they loop) comes from the sheet files, which the control plane
+//! reads when a session starts ([`install_sprite_clips`]); the renderer
+//! turns the frame into a rectangle of the sheet's picture.
 
 use std::collections::BTreeMap;
 
@@ -14,14 +22,16 @@ use wish_core::{Entity, Result};
 use wish_ecs::World;
 pub use wish_types::anim::{AnimationFinished, AnimationPlayer};
 use wish_types::render::Model;
+pub use wish_types::sprite::SpriteAnimator;
 use wish_types::time::Time;
 
 /// The name of the animation system in an app.
 pub const SYSTEM: &str = "animation";
 
-/// Registers the animation component and event.
+/// Registers the animation components and event.
 pub fn register(world: &mut World) -> Result<()> {
     world.register_component::<AnimationPlayer>()?;
+    world.register_component::<SpriteAnimator>()?;
     world.register_event::<AnimationFinished>()?;
     Ok(())
 }
@@ -57,8 +67,150 @@ pub fn install(world: &mut World, clips: impl IntoIterator<Item = ((String, Stri
     world.insert_extension(lengths);
 }
 
-/// One animation tick.
+/// What the simulation knows of one clip of a sprite sheet.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpriteClip {
+    /// How many frames the clip lists.
+    pub frames: u32,
+    /// How many it shows a second.
+    pub fps: f32,
+    /// Whether it starts over at its end.
+    pub looping: bool,
+}
+
+impl SpriteClip {
+    /// How long one round of the clip lasts, in seconds (0 for a clip that
+    /// cannot play: no frames, or no speed).
+    pub fn seconds(&self) -> f32 {
+        if self.frames == 0 || !(self.fps.is_finite() && self.fps > 0.0) {
+            0.0
+        } else {
+            self.frames as f32 / self.fps
+        }
+    }
+
+    /// Which of the clip's frames shows `time` seconds into it.
+    pub fn frame_at(&self, time: f32) -> u32 {
+        if self.frames == 0 || !(self.fps.is_finite() && self.fps > 0.0) || !time.is_finite() {
+            return 0;
+        }
+        // Whole frames gone by; a float far beyond any clip saturates.
+        let gone = (time * self.fps).floor() as i64;
+        let count = i64::from(self.frames);
+        let frame = if self.looping {
+            gone.rem_euclid(count)
+        } else {
+            gone.clamp(0, count - 1)
+        };
+        u32::try_from(frame).unwrap_or(0)
+    }
+}
+
+/// The clips of the project's sprite sheets: `(sheet path, clip name)` →
+/// what the simulation needs of it.
+#[derive(Clone, Debug, Default)]
+pub struct SpriteClips {
+    clips: BTreeMap<(String, String), SpriteClip>,
+}
+
+impl SpriteClips {
+    /// The clip `clip` of the sheet `sheet`, if known.
+    pub fn get(&self, sheet: &str, clip: &str) -> Option<SpriteClip> {
+        self.clips
+            .get(&(sheet.to_owned(), clip.to_owned()))
+            .copied()
+    }
+}
+
+/// Tells the world what the clips of its sprite sheets are.
+pub fn install_sprite_clips(
+    world: &mut World,
+    clips: impl IntoIterator<Item = ((String, String), SpriteClip)>,
+) {
+    let mut known = world.take_extension::<SpriteClips>().unwrap_or_default();
+    known.clips.extend(clips);
+    world.insert_extension(known);
+}
+
+/// One animation tick: models' clip players, then sprite animators.
 pub fn step(world: &mut World) -> Result<()> {
+    step_players(world)?;
+    step_sprites(world)
+}
+
+/// One tick of every sprite animator that plays a clip, in entity order.
+/// An animator without a clip, or whose sheet or clip is not known, is left
+/// as it is (the picture says why it shows what it shows).
+pub fn step_sprites(world: &mut World) -> Result<()> {
+    let Some(clips) = world.take_extension::<SpriteClips>() else {
+        return Ok(());
+    };
+    let result = step_sprites_with(world, &clips);
+    world.insert_extension(clips);
+    result
+}
+
+fn step_sprites_with(world: &mut World, clips: &SpriteClips) -> Result<()> {
+    let delta = world.resource::<Time>().map_or(1.0 / 60.0, |t| t.delta);
+    let mut animators: Vec<Entity> = world
+        .query::<(Entity, &SpriteAnimator)>()?
+        .map(|(entity, _)| entity)
+        .collect();
+    animators.sort_unstable();
+    for entity in animators {
+        let Some(animator) = world.get::<SpriteAnimator>(entity).copied() else {
+            continue;
+        };
+        if animator.clip.is_empty() {
+            continue;
+        }
+        let sheet = world.text(animator.sheet.text()).unwrap_or_default();
+        let sheet = sheet.split('#').next().unwrap_or(sheet);
+        let name = world.text(animator.clip).unwrap_or_default();
+        let Some(clip) = clips.get(sheet, name) else {
+            continue;
+        };
+        // Game code can write anything: what is not a number plays as the
+        // default, and the speed keeps to its range.
+        let speed = if animator.speed.is_finite() {
+            animator.speed.clamp(-10.0, 10.0)
+        } else {
+            1.0
+        };
+        let mut time = if animator.time.is_finite() {
+            animator.time
+        } else {
+            0.0
+        };
+        let mut next = animator;
+        let length = clip.seconds();
+        let mut finished = false;
+        if animator.playing {
+            time += delta * speed;
+            if length > 0.0 {
+                if clip.looping {
+                    time = time.rem_euclid(length);
+                } else if time >= length || time <= 0.0 && speed < 0.0 {
+                    time = time.clamp(0.0, length);
+                    next.playing = false;
+                    finished = true;
+                }
+            }
+        }
+        next.time = time;
+        next.frame = clip.frame_at(time);
+        if next != animator {
+            world.insert(entity, next)?;
+        }
+        if finished {
+            world.send(AnimationFinished { entity })?;
+        }
+    }
+    Ok(())
+}
+
+/// One tick of every model's clip player.
+pub fn step_players(world: &mut World) -> Result<()> {
     let delta = world.resource::<Time>().map_or(1.0 / 60.0, |t| t.delta);
     let lengths = world
         .extension::<ClipLengths>()
