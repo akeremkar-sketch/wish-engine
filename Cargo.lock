@@ -4493,7 +4493,7 @@ dependencies = [
 
 [[package]]
 name = "wish_agent"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "serde_json",
  "wish_control",
@@ -4502,7 +4502,7 @@ dependencies = [
 
 [[package]]
 name = "wish_anim"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "wish_app",
  "wish_core",
@@ -4512,7 +4512,7 @@ dependencies = [
 
 [[package]]
 name = "wish_app"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "proptest",
  "serde_json",
@@ -4524,7 +4524,7 @@ dependencies = [
 
 [[package]]
 name = "wish_asset"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "serde_json",
  "wish_core",
@@ -4537,7 +4537,7 @@ dependencies = [
 
 [[package]]
 name = "wish_audio"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "cpal",
  "hound",
@@ -4551,7 +4551,7 @@ dependencies = [
 
 [[package]]
 name = "wish_cli"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "serde_json",
  "wish_app",
@@ -4575,7 +4575,7 @@ dependencies = [
 
 [[package]]
 name = "wish_control"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "flate2",
  "serde_json",
@@ -4603,7 +4603,7 @@ dependencies = [
 
 [[package]]
 name = "wish_core"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "glam 0.34.3",
  "serde",
@@ -4613,7 +4613,7 @@ dependencies = [
 
 [[package]]
 name = "wish_ecs"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "proptest",
  "serde_json",
@@ -4623,7 +4623,7 @@ dependencies = [
 
 [[package]]
 name = "wish_editor"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "egui",
  "glam 0.34.3",
@@ -4642,7 +4642,7 @@ dependencies = [
 
 [[package]]
 name = "wish_evals"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "png",
  "serde_json",
@@ -4655,7 +4655,7 @@ dependencies = [
 
 [[package]]
 name = "wish_examples"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "serde_json",
  "wish_app",
@@ -4666,7 +4666,7 @@ dependencies = [
 
 [[package]]
 name = "wish_import"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "gltf",
  "png",
@@ -4676,7 +4676,7 @@ dependencies = [
 
 [[package]]
 name = "wish_input"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4687,7 +4687,7 @@ dependencies = [
 
 [[package]]
 name = "wish_mcp"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "serde_json",
  "wish_control",
@@ -4697,7 +4697,7 @@ dependencies = [
 
 [[package]]
 name = "wish_particles"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "wish_app",
  "wish_core",
@@ -4707,7 +4707,7 @@ dependencies = [
 
 [[package]]
 name = "wish_physics"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "rapier3d",
  "serde_json",
@@ -4720,7 +4720,7 @@ dependencies = [
 
 [[package]]
 name = "wish_player"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "serde_json",
  "wish_audio",
@@ -4734,7 +4734,7 @@ dependencies = [
 
 [[package]]
 name = "wish_render"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "naga",
  "png",
@@ -4755,7 +4755,7 @@ dependencies = [
 
 [[package]]
 name = "wish_scene"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "proptest",
  "serde_json",
@@ -4766,7 +4766,7 @@ dependencies = [
 
 [[package]]
 name = "wish_schema"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "proptest",
  "serde_json",
@@ -4777,7 +4777,7 @@ dependencies = [
 
 [[package]]
 name = "wish_schema_macros"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4786,7 +4786,7 @@ dependencies = [
 
 [[package]]
 name = "wish_script"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "serde_json",
  "wasmtime",
@@ -4802,7 +4802,7 @@ dependencies = [
 
 [[package]]
 name = "wish_sdk"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "serde_json",
  "wish_core",
@@ -4813,7 +4813,7 @@ dependencies = [
 
 [[package]]
 name = "wish_sdk_macros"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4822,7 +4822,7 @@ dependencies = [
 
 [[package]]
 name = "wish_text"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "ab_glyph",
  "wish_core",
@@ -4830,7 +4830,7 @@ dependencies = [
 
 [[package]]
 name = "wish_transform"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "serde_json",
  "wish_core",
@@ -4841,7 +4841,7 @@ dependencies = [
 
 [[package]]
 name = "wish_types"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "serde_json",
  "wish_core",
@@ -4850,7 +4850,7 @@ dependencies = [
 
 [[package]]
 name = "wish_ui"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "taffy",
  "wish_app",
@@ -4862,7 +4862,7 @@ dependencies = [
 
 [[package]]
 name = "wish_window"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "arboard",
  "softbuffer",

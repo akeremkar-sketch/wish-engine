@@ -6,8 +6,8 @@ The first public beta of Wish Engine 1.0: a free, open-source 3D game
 engine in Rust, usable fully by hand and fully through an AI agent (MCP),
 with both kinds of change in one history.
 
-**Testers:** please read the [tester's guide](beta.md) (Türkçe:
-[../user/tr/beta.md](../user/tr/beta.md)) and report through the
+**Testers:** please read the [tester's guide](https://github.com/akeremkar-sketch/wish-engine/blob/main/docs/release/beta.md) (Türkçe:
+[Türkçe kılavuz](https://github.com/akeremkar-sketch/wish-engine/blob/main/docs/user/tr/beta.md)) and report through the
 repository's Issues page (*Beta feedback* or *Bug report*).
 
 ## What is in it
@@ -27,10 +27,22 @@ repository's Issues page (*Beta feedback* or *Bug report*).
   without the engine.
 - **Platforms:** Windows 10/11 and Linux (glibc 2.35 or newer), x86-64.
 
+## How it was tested
+
+There were no outside testers before this beta. The Windows archive was
+used from its unpacked copy alone and the tester's guide was run by hand
+in the real window by the project's agent; the project's owner listened to
+the sound. Eleven findings were fixed before this tag (among them keys over
+the game view, an idle editor that kept a core busy, and a placeholder
+"wind" that sounded like broken audio):
+[the report](https://github.com/akeremkar-sketch/wish-engine/blob/main/docs/design/M12-beta-self-test.md). The Linux archive is checked
+end to end by the release workflow. **This beta is where outside people
+come in:** please report anything that confuses you.
+
 ## Known gaps
 
-See section 5 of the tester's guide: sound not yet checked by ear on every
-system, the Visual C++ runtime for game code on Windows, no macOS, no code
+See section 5 of the tester's guide: sound checked by ear on Windows only,
+the Visual C++ runtime for game code on Windows, no macOS, no code
 signature yet.
 
 ## Checksums

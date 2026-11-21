@@ -268,17 +268,19 @@ fn across_0_x_an_engine_opens_every_project_from_its_opens_from_on() {
 }
 
 #[test]
-fn a_0_2_project_opens_in_0_3_as_compatible_and_with_no_note() {
+fn a_0_x_project_opens_in_a_later_0_y_as_compatible_and_with_no_note() {
     let base = base("zero-x");
+    // Far above the running engine (0.9.0 at the beta), so that only the
+    // installed engine fits.
     let config = base.join("config");
-    project(&base.join("game"), "0.2.0");
-    // An installed 0.3.0 that opens projects from 0.1.0 on (as `wen package`
+    project(&base.join("game"), "0.50.0");
+    // An installed 0.51.0 that opens projects from 0.1.0 on (as `wen package`
     // writes it).
-    let folder = config.join("engines/0.3.0");
+    let folder = config.join("engines/0.51.0");
     std::fs::create_dir_all(&folder).unwrap();
     std::fs::write(
         folder.join(engines::ENGINE_FILE),
-        json!({ "format": 1, "opens_from": "0.1.0", "version": "0.3.0" }).to_string(),
+        json!({ "format": 1, "opens_from": "0.1.0", "version": "0.51.0" }).to_string(),
     )
     .unwrap();
     std::fs::write(folder.join(engines::WEN), "").unwrap();
@@ -286,25 +288,25 @@ fn a_0_2_project_opens_in_0_3_as_compatible_and_with_no_note() {
         wish_control::engines_act_in(Some(&config), "pick", Some(&base.join("game")), None, false)
             .unwrap();
     assert_eq!(answer["fit"], "compatible", "{answer:?}");
-    assert_eq!(answer["opens_with"]["version"], "0.3.0");
+    assert_eq!(answer["opens_with"]["version"], "0.51.0");
     assert_eq!(answer["opens_with"]["opens_from"], "0.1.0");
     let choice = engines::choose(&base.join("game"), Some(&config));
     assert!(choice.note().is_none(), "{:?}", choice.note());
     // The same engine without the key (packaged before it existed) is
-    // judged by the caret rule, as before: 0.3.0 is not ^0.2.0.
+    // judged by the caret rule, as before: 0.51.0 is not ^0.50.0.
     std::fs::write(
         folder.join(engines::ENGINE_FILE),
-        json!({ "format": 1, "version": "0.3.0" }).to_string(),
+        json!({ "format": 1, "version": "0.51.0" }).to_string(),
     )
     .unwrap();
     let choice = engines::choose(&base.join("game"), Some(&config));
     assert!(choice.picked.is_none());
     // A key that is not a version, or names a newer one than the engine's
     // own, makes the folder not an engine.
-    for bad in [json!("soon"), json!("0.4.0"), json!(3)] {
+    for bad in [json!("soon"), json!("0.52.0"), json!(3)] {
         std::fs::write(
             folder.join(engines::ENGINE_FILE),
-            json!({ "format": 1, "opens_from": bad, "version": "0.3.0" }).to_string(),
+            json!({ "format": 1, "opens_from": bad, "version": "0.51.0" }).to_string(),
         )
         .unwrap();
         let problem = engines::read_engine(&folder, Source::Installed).unwrap_err();
