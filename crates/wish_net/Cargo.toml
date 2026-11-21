@@ -1,0 +1,18 @@
+[package]
+name = "wish_net"
+description = "Online play's transport for Wish Engine: an encrypted UDP protocol with a reliable and an unreliable channel, local discovery and a deterministic network simulator (ADR-029)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+chacha20poly1305.workspace = true
+getrandom.workspace = true
+sha2.workspace = true
+wish_core.workspace = true
+x25519-dalek.workspace = true
+
+[lints]
+workspace = true
