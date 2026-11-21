@@ -3477,6 +3477,7 @@ impl EditorApp {
         // What a new project of this kind starts with (a 3D one: a camera,
         // the ground and the sun; a 2D one: an orthographic camera).
         let starting = wish_control::scaffold::starting_entities(self.project_kind);
+        let resources = wish_control::scaffold::starting_resources(self.project_kind);
         let ops: Vec<Value> = starting
             .as_object()
             .into_iter()
@@ -3484,6 +3485,13 @@ impl EditorApp {
             .map(|(id, entity)| {
                 json!({ "op": "spawn", "id": id, "components": entity["components"] })
             })
+            .chain(
+                resources
+                    .as_object()
+                    .into_iter()
+                    .flatten()
+                    .map(|(name, value)| json!({ "op": "set_resource", "name": name, "value": value })),
+            )
             .collect();
         let made = self.call(
             "edit_apply",

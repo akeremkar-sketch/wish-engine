@@ -67,12 +67,28 @@ pub fn starting_entities(kind: ProjectKind) -> serde_json::Value {
     }
 }
 
+/// The scene resources a new scene of `kind` starts with, by name: none
+/// for 3D (the scene stays as 1.0 wrote it); for 2D the side-view physics
+/// profile, so a body added to an empty 2D project falls down the screen
+/// and stays in the plane.
+pub fn starting_resources(kind: ProjectKind) -> serde_json::Value {
+    match kind {
+        ProjectKind::D3 => json!({}),
+        ProjectKind::D2 => json!({ "PhysicsSettings": { "profile": "SideView2D" } }),
+    }
+}
+
 /// The scene a new project starts with.
 fn starting_scene(kind: ProjectKind) -> Result<String> {
-    wish_scene::json::to_canonical(&json!({
+    let mut scene = json!({
         "format": wish_scene::FORMAT,
         "entities": starting_entities(kind)
-    }))
+    });
+    let resources = starting_resources(kind);
+    if resources.as_object().is_some_and(|r| !r.is_empty()) {
+        scene["resources"] = resources;
+    }
+    wish_scene::json::to_canonical(&scene)
 }
 
 /// The scenario test a new project starts with: the scene starts, and has a

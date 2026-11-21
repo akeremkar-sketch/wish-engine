@@ -13,3 +13,6 @@
 *.swp
 Thumbs.db
 .DS_Store
+
+# Worktrees of parallel code lanes (git worktree add under .claude/).
+/.claude/worktrees/

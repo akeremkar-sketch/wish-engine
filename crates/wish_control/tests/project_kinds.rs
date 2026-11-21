@@ -133,6 +133,17 @@ fn a_new_project_says_its_kind() {
         entities["camera"]["components"]["Camera"]["projection"],
         "Orthographic"
     );
+    // Physics stays in the plane: the side-view 2D profile.
+    assert_eq!(
+        scene["resources"]["PhysicsSettings"]["profile"], "SideView2D",
+        "{scene}"
+    );
+    // A 3D project's scene has no resources key (as 1.0 wrote it).
+    let scene3: Value = serde_json::from_str(
+        &std::fs::read_to_string(three.join("scenes/main.scene.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(scene3.get("resources").is_none(), "{scene3}");
     // The project is sound, and says what it is.
     let mut workspace = open(&two);
     let actor = parse_actor("human");
