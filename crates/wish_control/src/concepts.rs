@@ -53,7 +53,11 @@ pub fn explain(name: &str) -> Option<&'static str> {
         }
         "sprite" | "spriterenderer" | "sprite2d" | "animatedsprite" | "animatedsprite2d"
         | "camera2d" | "orthographic" | "ortho" | "tilemap" | "2d" => {
-            "2D: use a Camera with projection Orthographic (ortho_height in meters) and entities with a Sprite (image: a PNG, rect: the frame in pixels, pixels_per_unit, layer, flip_x, smooth false for pixel art) and a Transform. Lock RigidBody translation Z and rotations X and Y for 2D physics."
+            "2D: use a Camera with projection Orthographic (ortho_height in meters) and entities with a Sprite (image: a PNG, rect: the frame in pixels, pixels_per_unit, layer, flip_x, smooth false for pixel art) and a Transform. For 2D physics set the PhysicsSettings resource's profile to SideView2D (a platformer) or TopDown2D (seen from above, no gravity)."
+        }
+        "rigidbody2d" | "collider2d" | "boxcollider2d" | "circlecollider2d"
+        | "capsulecollider2d" | "characterbody2d" | "physics2d" | "topdown" | "top-down" => {
+            "2D physics: set the PhysicsSettings resource's profile to TopDown2D (seen from above: no gravity, characters slide along walls) or SideView2D (gravity along -Y). Then RigidBody and Collider work in the X-Y plane: a Sphere collider is a circle, a Box a rectangle (size.z unused), and a CharacterController moves a kinematic character with CharacterMotion.velocity."
         }
         "particles" | "particlesystem" | "particleemitter" | "emitter" | "cpuparticles"
         | "gpuparticles" | "particles2d" | "particles3d" | "vfx" => {

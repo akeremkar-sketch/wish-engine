@@ -48,9 +48,34 @@ fn record_path() -> PathBuf {
     ))
 }
 
-/// The defaults of format 1: the engine's before the look lock.
+/// The defaults a file of format 1 is read with: the engine's before the
+/// look lock, plus every type and field added since (at its default, from
+/// the record of the current format). An addition has no other meaning in
+/// an older file, and the record of format 1 is never edited (ADR-027): the
+/// first addition after the switch was `PhysicsSettings.profile`
+/// (release 1.1, design note 1.1-physics-2d).
 fn recorded() -> Defaults {
-    Defaults::parse(wish_scene::migrate::FORMAT_1_DEFAULTS).unwrap()
+    let mut old = Defaults::parse(wish_scene::migrate::FORMAT_1_DEFAULTS).unwrap();
+    let now = Defaults::parse(wish_scene::migrate::CURRENT_DEFAULTS).unwrap();
+    for (old_types, new_types) in [
+        (&mut old.components, &now.components),
+        (&mut old.resources, &now.resources),
+    ] {
+        for (name, value) in new_types {
+            let Some(was) = old_types.get_mut(name) else {
+                old_types.insert(name.clone(), value.clone());
+                continue;
+            };
+            if let (Some(was), Some(value)) = (was.as_object_mut(), value.as_object()) {
+                for (field, default) in value {
+                    if !was.contains_key(field) {
+                        was.insert(field.clone(), default.clone());
+                    }
+                }
+            }
+        }
+    }
+    old
 }
 
 const MAIN: &str = "scenes/main.scene.json";

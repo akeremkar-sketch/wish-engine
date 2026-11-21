@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use serde_json::{Map, Value, json};
 use wish_core::math::{Quat, Vec3};
 use wish_core::{Diagnostic, Entity, Result};
-use wish_physics::{OverlapShape, query_state};
+use wish_physics::{OverlapShape, PhysicsProfile, query_state};
 use wish_scene::Actor;
 
 use crate::param::{Args, Kind, Param};
@@ -17,7 +17,7 @@ use crate::workspace::Workspace;
 pub(crate) const PHYSICS_QUERY: Tool = Tool {
     name: "physics_query",
     title: "Ask the physics world",
-    description: "Asks the physics world one question, in a play session (the world as of its last step) or in a scene file (colliders where the scene puts them). Give exactly one of: ray {from: [x,y,z], dir: [x,y,z], max (m, default 100), ignore: id} → the first collider hit, with point, normal and distance (sensors are not hit); overlap {sphere: radius | box: [half x, half y, half z], at: [x,y,z]} → every entity whose collider overlaps (sensors too); touching: id → the entities in contact with it or overlapping it. mask limits hits to colliders whose layer has one of its bits. Use it to check what is under a character, whether a path is clear, or why something does not fall. A character controller's collider is found where it stood before its last move (physics places characters after its step).",
+    description: "Asks the physics world one question, in a play session (the world as of its last step) or in a scene file (colliders where the scene puts them). Give exactly one of: ray {from: [x,y,z], dir: [x,y,z], max (m, default 100), ignore: id} → the first collider hit, with point, normal and distance (sensors are not hit); overlap {sphere: radius | box: [half x, half y, half z], at: [x,y,z]} → every entity whose collider overlaps (sensors too); touching: id → the entities in contact with it or overlapping it. mask limits hits to colliders whose layer has one of its bits. Use it to check what is under a character, whether a path is clear, or why something does not fall. A character controller's collider is found where it stood before its last move (physics places characters after its step). When PhysicsSettings.profile is 2D (TopDown2D or SideView2D) every question is asked in the X-Y plane: positions and directions may be [x, y], z is not used, {circle: radius} is the same as sphere, and the answer names the profile.",
     params: &[
         Param::optional(
             "scene",
@@ -37,7 +37,7 @@ pub(crate) const PHYSICS_QUERY: Tool = Tool {
         Param::optional(
             "overlap",
             Kind::Object,
-            "A shape: {\"sphere\": radius} or {\"box\": [hx, hy, hz]}, with \"at\": [x, y, z].",
+            "A shape: {\"sphere\": radius} or {\"box\": [hx, hy, hz]}, with \"at\": [x, y, z] (in 2D also {\"circle\": radius}, [hx, hy] and [x, y]).",
         ),
         Param::optional(
             "touching",
@@ -61,12 +61,20 @@ fn bad(path: &str, message: String, hint: &str) -> Diagnostic {
     Diagnostic::error("invalid_parameter", message, hint).at_path(path)
 }
 
-fn vec3(value: Option<&Value>, path: &str) -> Result<Vec3> {
+/// Three numbers; in a 2D physics profile (`flat`) two are enough (z is not
+/// used there).
+fn vec3(value: Option<&Value>, path: &str, flat: bool) -> Result<Vec3> {
     let numbers: Option<Vec<f32>> = value
         .and_then(Value::as_array)
         .and_then(|items| items.iter().map(|n| n.as_f64().map(|n| n as f32)).collect());
     match numbers.as_deref() {
         Some([x, y, z]) => Ok(Vec3::new(*x, *y, *z)),
+        Some([x, y]) if flat => Ok(Vec3::new(*x, *y, 0.0)),
+        _ if flat => Err(bad(
+            path,
+            format!("'{path}' must be two numbers [x, y] (or three, [x, y, z])."),
+            "The physics profile is 2D: write positions and directions in the X-Y plane as [x, y] in meters (Y is up); a z is not used.",
+        )),
         _ => Err(bad(
             path,
             format!("'{path}' must be three numbers [x, y, z]."),
@@ -139,9 +147,14 @@ fn physics_query(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
         })
     };
     let state = query_state(world)?;
+    let flat = state.profile() != PhysicsProfile::Full3D;
+    if flat {
+        // The answer says how the question was read: in the plane.
+        out.insert("profile".to_owned(), json!(profile_name(state.profile())));
+    }
     if let Some(ray) = args.value("ray") {
-        let from = vec3(ray.get("from"), "/ray/from")?;
-        let dir = vec3(ray.get("dir"), "/ray/dir")?;
+        let from = vec3(ray.get("from"), "/ray/from", flat)?;
+        let dir = vec3(ray.get("dir"), "/ray/dir", flat)?;
         let max = ray.get("max").and_then(Value::as_f64).unwrap_or(100.0) as f32;
         let ignore = match ray.get("ignore").and_then(Value::as_str) {
             Some(id) => Some(find(id, "/ray/ignore")?),
@@ -162,21 +175,36 @@ fn physics_query(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
             }),
         );
     } else if let Some(overlap) = args.value("overlap") {
-        let at = vec3(overlap.get("at"), "/overlap/at")?;
-        let shape = match (overlap.get("sphere"), overlap.get("box")) {
-            (Some(radius), None) => OverlapShape::Sphere(radius.as_f64().ok_or_else(|| {
-                bad(
-                    "/overlap/sphere",
-                    "'sphere' must be a radius in meters.".to_owned(),
-                    "Write it like {\"sphere\": 0.5, \"at\": [0, 1, 0]}.",
-                )
-            })? as f32),
-            (None, Some(half)) => OverlapShape::Box(vec3(Some(half), "/overlap/box")?),
+        let at = vec3(overlap.get("at"), "/overlap/at", flat)?;
+        // A circle is the 2D word for the same question as a sphere.
+        let round = match (overlap.get("sphere"), overlap.get("circle")) {
+            (Some(radius), None) => Some(("sphere", radius)),
+            (None, Some(radius)) => Some(("circle", radius)),
+            (None, None) => None,
+            (Some(_), Some(_)) => {
+                return Err(bad(
+                    "/overlap",
+                    "An overlap needs exactly one of 'sphere', 'circle' or 'box'.".to_owned(),
+                    "'circle' and 'sphere' are the same question (a circle in 2D): give one.",
+                ));
+            }
+        };
+        let shape = match (round, overlap.get("box")) {
+            (Some((name, radius)), None) => {
+                OverlapShape::Sphere(radius.as_f64().ok_or_else(|| {
+                    bad(
+                        &format!("/overlap/{name}"),
+                        format!("'{name}' must be a radius in meters."),
+                        "Write it like {\"sphere\": 0.5, \"at\": [0, 1, 0]} (in 2D: {\"circle\": 0.5, \"at\": [0, 1]}).",
+                    )
+                })? as f32)
+            }
+            (None, Some(half)) => OverlapShape::Box(vec3(Some(half), "/overlap/box", flat)?),
             _ => {
                 return Err(bad(
                     "/overlap",
-                    "An overlap needs exactly one of 'sphere' or 'box'.".to_owned(),
-                    "Write {\"sphere\": radius, \"at\": [x, y, z]} or {\"box\": [hx, hy, hz], \"at\": [x, y, z]}.",
+                    "An overlap needs exactly one of 'sphere', 'circle' or 'box'.".to_owned(),
+                    "Write {\"sphere\": radius, \"at\": [x, y, z]} or {\"box\": [hx, hy, hz], \"at\": [x, y, z]} (in 2D: {\"circle\": radius, \"at\": [x, y]} or {\"box\": [hx, hy], \"at\": [x, y]}).",
                 ));
             }
         };
@@ -195,4 +223,13 @@ fn physics_query(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
         );
     }
     Ok(out)
+}
+
+/// A profile's name as scene files write it.
+fn profile_name(profile: PhysicsProfile) -> &'static str {
+    match profile {
+        PhysicsProfile::Full3D => "Full3D",
+        PhysicsProfile::TopDown2D => "TopDown2D",
+        PhysicsProfile::SideView2D => "SideView2D",
+    }
 }

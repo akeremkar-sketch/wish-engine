@@ -479,7 +479,14 @@ const SEARCH_WORDS: &[(&str, &str)] = &[
         "RigidBody",
         "physics gravity fall falling dynamic static fixed kinematic mass",
     ),
-    ("Collider", "collision hitbox physics shape trigger sensor"),
+    (
+        "Collider",
+        "collision hitbox physics shape trigger sensor circle rectangle",
+    ),
+    (
+        "PhysicsSettings",
+        "physics gravity 2d top-down topdown overhead platformer side-view sideview plane flat profile",
+    ),
     ("PointLight", "lamp bulb light omni"),
     ("SpotLight", "spotlight flashlight torch cone light"),
     ("DirectionalLight", "sun sunlight light"),

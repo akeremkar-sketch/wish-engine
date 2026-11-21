@@ -15,7 +15,8 @@ use wish_core::math::{Quat, Vec3};
 use wish_core::{Diagnostic, Entity, Result};
 use wish_ecs::World;
 
-use crate::{Collider, PhysicsState, entity_of, pose, rv, sync_entity, wv};
+use crate::plane::{self, HALF_DEPTH, PhysicsProfile};
+use crate::{Collider, PhysicsSettings, PhysicsState, entity_of, pose, rv, sync_entity, wv};
 
 /// What a ray hit.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -45,7 +46,10 @@ pub fn query_state(world: &World) -> Result<Cow<'_, PhysicsState>> {
     if let Some(state) = world.extension::<PhysicsState>() {
         return Ok(Cow::Borrowed(state));
     }
-    let mut state = PhysicsState::default();
+    let profile = world
+        .resource::<PhysicsSettings>()
+        .map_or(PhysicsProfile::Full3D, |settings| settings.profile);
+    let mut state = PhysicsState::for_profile(profile);
     let mut present: Vec<Entity> = world
         .entities()
         .filter(|entity| world.has::<Collider>(*entity))
@@ -111,7 +115,9 @@ impl PhysicsState {
 
     /// The first collider a ray from `from` along `direction` hits within
     /// `max` meters. Sensors are not hit; `exclude` (the asker) is skipped;
-    /// only colliders whose layer is in `mask` count.
+    /// only colliders whose layer is in `mask` count. In a 2D profile the
+    /// ray is laid in the plane (the z of `from` and `direction` is not
+    /// used) and the hit is at z = 0.
     pub fn raycast(
         &self,
         from: Vec3,
@@ -120,6 +126,18 @@ impl PhysicsState {
         mask: u32,
         exclude: Option<Entity>,
     ) -> Result<Option<RayHit>> {
+        let (from, direction) = if plane::is_2d(self.profile) {
+            if from.is_finite() && direction.is_finite() && direction.with_z(0.0).length() < 1e-9 {
+                return Err(Diagnostic::error(
+                    "invalid_parameter",
+                    "The physics query is not valid: in a 2D physics profile a ray goes along the X–Y plane, and this one points along Z.".to_owned(),
+                    "Give the ray a direction with an x or y part, such as [1, 0] or [0, -1]; to ask what is at a point, use an overlap with a small circle there.",
+                ));
+            }
+            (from.with_z(0.0), direction.with_z(0.0))
+        } else {
+            (from, direction)
+        };
         let length = direction.length();
         if !from.is_finite() || !direction.is_finite() || length < 1e-9 {
             return Err(invalid("the ray has no direction or is not finite"));
@@ -138,17 +156,24 @@ impl PhysicsState {
         Ok(queries
             .cast_ray_and_get_normal(&ray, max, true)
             .and_then(|(handle, hit)| {
+                let normal = wv(hit.normal);
                 Some(RayHit {
                     entity: entity_of(&self.colliders, handle)?,
                     point: from + direction * hit.time_of_impact,
-                    normal: wv(hit.normal),
+                    normal: if plane::is_2d(self.profile) {
+                        normal.with_z(0.0)
+                    } else {
+                        normal
+                    },
                     distance: hit.time_of_impact,
                 })
             }))
     }
 
     /// Every entity whose collider overlaps `shape` placed at `at`, in
-    /// entity order. Sensors count.
+    /// entity order. Sensors count. In a 2D profile the shape is its
+    /// outline in the plane at `at`'s x and y (a sphere is a circle, a box a
+    /// rectangle: its z is not used), turned only about Z.
     pub fn overlap(
         &self,
         shape: OverlapShape,
@@ -156,11 +181,15 @@ impl PhysicsState {
         rotation: Quat,
         mask: u32,
     ) -> Result<Vec<Entity>> {
+        let flat = plane::is_2d(self.profile);
         let shape: rp::SharedShape = match shape {
             OverlapShape::Sphere(radius) if radius.is_finite() && radius > 0.0 => {
                 rp::SharedShape::ball(radius)
             }
-            OverlapShape::Box(half) if half.is_finite() && half.min_element() > 0.0 => {
+            OverlapShape::Box(half) if flat && half.is_finite() && half.x > 0.0 && half.y > 0.0 => {
+                rp::SharedShape::cuboid(half.x, half.y, HALF_DEPTH)
+            }
+            OverlapShape::Box(half) if !flat && half.is_finite() && half.min_element() > 0.0 => {
                 rp::SharedShape::cuboid(half.x, half.y, half.z)
             }
             _ => return Err(invalid("the shape's size must be positive")),
@@ -168,6 +197,7 @@ impl PhysicsState {
         if !at.is_finite() {
             return Err(invalid("the position is not finite"));
         }
+        let (at, rotation) = plane::flatten(self.profile, at, rotation);
         let queries = self.broad.as_query_pipeline(
             self.narrow.query_dispatcher(),
             &self.bodies,

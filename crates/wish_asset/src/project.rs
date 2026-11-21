@@ -237,6 +237,72 @@ fn ambient_note(
     Some(note.at_path(pointer).at_file(file))
 }
 
+/// The warning `physics_3d_in_2d` for a scene whose physics is 2D
+/// (`PhysicsSettings.profile` `TopDown2D` or `SideView2D`, design note
+/// 1.1-physics-2d) and that writes something only 3D physics uses: a
+/// `Cylinder` collider (2D uses its side view, a rectangle), any gravity
+/// in a top-down scene (not used), a gravity with a z part (not used).
+/// Located at the field. Entities are looked at as they are written (what
+/// a prefab instance inherits is not followed), as for materials.
+fn physics_notes(source: &str, file: &str) -> Vec<Diagnostic> {
+    let Ok(root) = wish_scene::json::parse(source, file) else {
+        return Vec::new();
+    };
+    let document = root.to_value();
+    let profile = document
+        .pointer("/resources/PhysicsSettings/profile")
+        .and_then(serde_json::Value::as_str);
+    let Some(profile) = profile.filter(|p| matches!(*p, "TopDown2D" | "SideView2D")) else {
+        return Vec::new();
+    };
+    let mut found: Vec<(String, String, &str)> = Vec::new();
+    if let Some(gravity) = document.pointer("/resources/PhysicsSettings/gravity") {
+        let z = gravity
+            .get(2)
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(0.0);
+        if profile == "TopDown2D" {
+            found.push((
+                "/resources/PhysicsSettings/gravity".to_owned(),
+                "PhysicsSettings.gravity is set, but the physics profile is TopDown2D: seen from above nothing falls, so gravity is not used.".to_owned(),
+                "Remove gravity. For a game seen from the side, where things fall along -Y, set the profile to SideView2D.",
+            ));
+        } else if z != 0.0 {
+            found.push((
+                "/resources/PhysicsSettings/gravity/2".to_owned(),
+                format!("PhysicsSettings.gravity has a z part ({z}), but 2D physics lies in the X-Y plane, so it is not used."),
+                "Set the third number of gravity to 0 (gravity along -Y is [0, -9.81, 0]).",
+            ));
+        }
+    }
+    if let Some(entities) = document.get("entities").and_then(|e| e.as_object()) {
+        for (id, entity) in entities {
+            if entity
+                .pointer("/components/Collider/shape")
+                .and_then(serde_json::Value::as_str)
+                == Some("Cylinder")
+            {
+                found.push((
+                    format!("/entities/{id}/components/Collider/shape"),
+                    format!("Entity '{id}' has a Cylinder collider, a 3D shape; in 2D physics it acts as the rectangle seen from its side."),
+                    "Use a Box (a rectangle of size x by size y) or a Sphere (a circle) instead.",
+                ));
+            }
+        }
+    }
+    found
+        .into_iter()
+        .map(|(pointer, message, hint)| {
+            let mut note = Diagnostic::warning("physics_3d_in_2d", message, hint);
+            if let Some(located) = root.locate(&pointer) {
+                let span = located.key.unwrap_or(located.value);
+                note = note.at_line(span.line, Some(span.column));
+            }
+            note.at_path(pointer).at_file(file)
+        })
+        .collect()
+}
+
 /// Whether two JSON values are the same value: numbers by their value
 /// (`20000` is `20000.0`), arrays element by element.
 fn same(a: &serde_json::Value, b: &serde_json::Value) -> bool {
@@ -369,6 +435,8 @@ pub fn load_project(root: &Path, registry: &Registry) -> Result<Project> {
         if let Some(document) = scenes.get(&file.path) {
             diagnostics.extend(ambient_note(document, &file.source, &file.path, registry));
         }
+        // Something only 3D physics uses, in a scene whose physics is 2D.
+        diagnostics.extend(physics_notes(&file.source, &file.path));
     }
 
     files.sort_by(|a, b| a.path.cmp(&b.path));
