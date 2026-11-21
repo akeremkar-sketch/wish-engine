@@ -540,3 +540,41 @@ regression test that failed first where one could.
   (`card::tests::consistency_needs_two_tries_of_a_task`);
   `baseline-1.0-small.md` was made again from its JSON (`wish-evals card
   --from`), which changed only those rows.
+
+## 12. The full baseline (21 November 2026)
+
+Run with the user's approval (estimate $15.86 to $19.38, cap $20): both
+models, the 41 open tasks and the long task, three tries each, one repair
+round, no second-agent step. Card: [baseline-1.0.md](../../evals/results/baseline-1.0.md)
+(data in `baseline-1.0.json`). It took about 2 h 50 min and cost **$14.94**
+($13.44 Sonnet, $1.50 Haiku, API equivalent), under the estimate.
+
+| | Sonnet 5.5 · medium | Haiku 5.5 · medium |
+|---|---|---|
+| passed at the first attempt | 99.2 % | 98.4 % |
+| passed in the end | 100 % | 100 % |
+| believed right, refuted (first attempt) | 1 of 126 | 2 of 125 |
+| tasks passed in every try | 42 of 42 | 42 of 42 |
+| clean `check`, inspector edit by hand | 126 of 126 | 126 of 126 |
+| cost per passed try | $0.107 | $0.012 |
+| seconds to a proven result, median / 90th | 11.5 / 28 | 20 / 50.1 |
+| tick at 10,000 entities, median / worst | 14.4 / 64.0 ms | 17.4 / 65.9 ms |
+
+What it says:
+- **Correctness holds at scale.** Every task passed in every try for both
+  models in the end; three first attempts were wrong while the agent said
+  `RESULT: DONE` (all three caught by the hidden test and repaired in one
+  round). The long task passed six of six at the first attempt.
+- **Haiku is the cheap model that works:** one ninth of Sonnet's cost per
+  pass, about twice its time, a few more tool errors and repair turns.
+- **Game code at 10,000 entities is often over the frame budget** (7 of 15
+  and 7 of 13 measured results over 16.7 ms; worst about 65 ms). The agents'
+  game code is correct but not written for that scale; the engine gives no
+  hint about it yet. Recorded for the train (the lean play path and fuel per
+  system of release 1.2, and a performance hint in answers).
+- `engine_dirty` is true on the card: during the run only documents were
+  committed and edited (the 1.1 plan); the engine binaries were built from
+  commit 044dcef before the run and no code changed.
+
+This is the baseline the train is judged against (rule: never improve the
+engine against the card before its baseline; held-out tasks come in 1.2).
