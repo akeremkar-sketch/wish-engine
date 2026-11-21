@@ -50,8 +50,8 @@ Every MCP tool has an exact command-line counterpart (`wen entity query …`, `w
 
 | Tool | Purpose | Notable parameters |
 |---|---|---|
-| `sim_start` | Start a session from a scene | `scene`, `seed`, `headless` |
-| `sim_step` | Advance: N ticks or until a condition holds; inject input; `watch` reports up to 20 entities' world position and physics velocity at the end | `session`, `frames`, `until`, `input`, `max_frames`, `watch` |
+| `sim_start` | Start a session from a scene, optionally with several players (1.1) | `scene`, `seed`, `players`, `headless` |
+| `sim_step` | Advance: N ticks or until a condition holds; inject input (`input` is player 0's, `players` gives the others' by id); `watch` reports up to 20 entities' world position and physics velocity at the end | `session`, `frames`, `until`, `input`, `players`, `max_frames`, `watch` |
 | `sim_snapshot` | Save / list a moment | `session`, `label` |
 | `sim_restore` | Return to a saved moment or fork a new session from it | `snapshot`, `fork` |
 | `sim_stop` | Close the session | `session` |

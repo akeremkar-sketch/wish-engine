@@ -48,16 +48,19 @@ pub(crate) struct Session {
     /// A fingerprint of the project files the simulation read when the
     /// session started (sound and animation clip lengths, fonts).
     pub assets: String,
+    /// How many players the session has (1 to `wish_types::MAX_PLAYERS`).
+    pub players: usize,
 }
 
 /// What a replay needs of a session that was recorded from tick 0: what the
-/// player did, and the world's hash after every tick.
+/// players did, and the world's hash after every tick.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Trail {
-    /// From each listed tick on, until the next entry, the player does this.
-    pub inputs: Vec<(u64, wish_input::Values)>,
-    /// What the player did at the last tick run.
-    pub current: wish_input::Values,
+    /// From each listed tick on, until that player's next entry, the player
+    /// (by id) does this. In tick order, players in id order within a tick.
+    pub inputs: Vec<(u64, usize, wish_input::Values)>,
+    /// What each player did at the last tick run, by id.
+    pub current: Vec<wish_input::Values>,
     /// The world's hash after tick `i`, at index `i`.
     pub hashes: Vec<wish_core::Hash128>,
     /// The game code the session ran when recording started.
@@ -73,12 +76,30 @@ impl Trail {
     pub fn rewind(&mut self, tick: u64) {
         self.hashes
             .truncate(usize::try_from(tick).unwrap_or(usize::MAX));
-        self.inputs.retain(|(at, _)| *at < tick);
-        self.current = self
-            .inputs
-            .last()
-            .map(|(_, values)| values.clone())
-            .unwrap_or_default();
+        self.inputs.retain(|(at, _, _)| *at < tick);
+        for (player, current) in self.current.iter_mut().enumerate() {
+            *current = self
+                .inputs
+                .iter()
+                .rev()
+                .find(|(_, who, _)| *who == player)
+                .map(|(_, _, values)| values.clone())
+                .unwrap_or_default();
+        }
+    }
+
+    /// Notes what the players do from `tick` on, for those whose input
+    /// changed (`inputs` has one entry per player of the session).
+    pub fn note(&mut self, tick: u64, inputs: &[wish_input::Values]) {
+        if self.current.len() < inputs.len() {
+            self.current.resize(inputs.len(), wish_input::Values::new());
+        }
+        for (player, (values, current)) in inputs.iter().zip(&mut self.current).enumerate() {
+            if values != current {
+                self.inputs.push((tick, player, values.clone()));
+                current.clone_from(values);
+            }
+        }
     }
 }
 
@@ -316,8 +337,12 @@ fn step_app(
     frames: u64,
     until: Option<&Expr>,
     cancel: Option<&std::sync::atomic::AtomicBool>,
-    input: &wish_input::Values,
+    given: &[wish_input::Values],
 ) -> Result<Stepped> {
+    // One entry per player of the session; players not given are at rest.
+    let mut inputs = given.to_vec();
+    inputs.resize(session.players.max(1), wish_input::Values::new());
+    inputs.truncate(session.players.max(1));
     let before = event_totals(session.app.world());
     let mut diagnostics = Vec::new();
     let mut ticks_run = 0;
@@ -336,12 +361,10 @@ fn step_app(
         }
         // The tick's input, before any system runs. A project without
         // actions (and no pointer) has none, and its world stays as it was.
-        wish_input::apply(session.app.world_mut(), &session.input, input)?;
-        if let Some(trail) = session.recording.as_mut()
-            && input != &trail.current
-        {
-            trail.inputs.push((session.app.tick(), input.clone()));
-            trail.current.clone_from(input);
+        wish_input::apply_players(session.app.world_mut(), &session.input, &inputs)?;
+        let tick = session.app.tick();
+        if let Some(trail) = session.recording.as_mut() {
+            trail.note(tick, &inputs);
         }
         let report = session.app.step()?;
         if let Some(trail) = session.recording.as_mut() {
@@ -569,12 +592,12 @@ impl Workspace {
         })
     }
 
-    /// Starts a session from a scene. `from` restores a snapshot of another
-    /// session into the new one (a fork).
+    /// Starts a session of `players` players from a scene.
     pub(crate) fn start_session(
         &mut self,
         scene: &str,
         seed: u64,
+        players: usize,
         notes: Vec<Diagnostic>,
     ) -> Result<(String, Vec<Diagnostic>)> {
         if self.sessions.open.len() >= MAX_SESSIONS {
@@ -584,7 +607,9 @@ impl Workspace {
                 "Close one with sim_stop first.",
             ));
         }
-        let (app, script, assets) = build_app(self, scene, seed)?;
+        let (mut app, script, assets) = build_app(self, scene, seed)?;
+        // A single-player world gets nothing new (see wish_input::set_players).
+        wish_input::set_players(app.world_mut(), players)?;
         let input = self.input_map()?;
         let id = self.sessions.new_id();
         let tick = app.tick();
@@ -600,11 +625,17 @@ impl Workspace {
                 input,
                 recording: None,
                 assets,
+                players,
             },
         );
+        let who = if players > 1 {
+            format!(" and {players} players")
+        } else {
+            String::new()
+        };
         let started = Diagnostic::info(
             "session_started",
-            format!("Session {id} started from '{scene}' with seed {seed}."),
+            format!("Session {id} started from '{scene}' with seed {seed}{who}."),
             "Step it with sim_step.",
         );
         self.sessions
@@ -615,16 +646,21 @@ impl Workspace {
     /// A new session with the same scene and seed, in the state of a
     /// snapshot of `from`.
     pub(crate) fn fork_session(&mut self, from: &str, label: &str) -> Result<String> {
-        let (scene, seed, snapshot) = {
+        let (scene, seed, players, snapshot) = {
             let source = self.session(from)?;
             let saved = source
                 .saved
                 .iter()
                 .find(|s| s.label == label)
                 .ok_or_else(|| unknown_snapshot(label, &source.saved))?;
-            (source.scene.clone(), source.seed, saved.snapshot.clone())
+            (
+                source.scene.clone(),
+                source.seed,
+                source.players,
+                saved.snapshot.clone(),
+            )
         };
-        let (id, _) = self.start_session(&scene, seed, Vec::new())?;
+        let (id, _) = self.start_session(&scene, seed, players, Vec::new())?;
         let restored = self
             .session_mut(&id)
             .and_then(|session| session.app.restore(&snapshot));
@@ -641,11 +677,11 @@ impl Workspace {
         id: &str,
         frames: u64,
         until: Option<&Expr>,
-        input: &wish_input::Values,
+        inputs: &[wish_input::Values],
     ) -> Result<(Stepped, u64, String, usize)> {
         let cancel = self.cancel.clone();
         let session = self.session_mut(id)?;
-        let mut stepped = step_app(session, frames, until, cancel.as_deref(), input)?;
+        let mut stepped = step_app(session, frames, until, cancel.as_deref(), inputs)?;
         stepped.diagnostics.extend(inspect(session));
         let tick = session.app.tick();
         let hash = session.app.hash().to_string();

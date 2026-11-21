@@ -111,16 +111,19 @@ fn expand(mut function: ItemFn, before: &[LitStr], after: &[LitStr]) -> syn::Res
             fn describe(
                 types: &mut ::wish_sdk::__private::TypeTable,
             ) -> ::wish_sdk::__private::Value {
+                #[allow(unused_mut)]
+                let mut entries = ::std::vec::Vec::new();
+                #( <#types as ::wish_sdk::SystemParam>::describe_into(types, &mut entries); )*
                 ::wish_sdk::__private::system_json(
                     #name_text,
                     &[#(#before),*],
                     &[#(#after),*],
-                    ::std::vec![#( <#types as ::wish_sdk::SystemParam>::describe(types) ),*],
+                    entries,
                 )
             }
 
             fn run(frame: &mut ::wish_sdk::__private::FrameReader) {
-                #( let #args = <#types as ::wish_sdk::SystemParam>::fetch(frame.next_section()); )*
+                #( let #args = <#types as ::wish_sdk::SystemParam>::fetch_from(frame); )*
                 #name(#(#args),*);
             }
         }

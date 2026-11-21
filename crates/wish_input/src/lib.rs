@@ -3,6 +3,9 @@
 //! values, a replay — [`apply`] writes the actions' state into the world
 //! before the systems of a tick run. Game code reads
 //! [`ActionState`](wish_types::ActionState) and never sees a device.
+//! A session with more than one player feeds every player's values through
+//! [`apply_players`] (release 1.1): `ActionState` stays player 0's, and
+//! `PlayerActionState` holds everyone's.
 //!
 //! ```json
 //! { "format": 1, "actions": {
@@ -15,5 +18,6 @@
 mod apply;
 mod map;
 
-pub use apply::{CLICK, POINTER, Values, apply, register};
+pub use apply::{CLICK, POINTER, Values, apply, apply_players, register, set_players};
 pub use map::{Binding, INPUT_FILE, InputMap, key_names};
+pub use wish_types::MAX_PLAYERS;

@@ -41,8 +41,9 @@
 //!   game code does. The engine's types (`Transform`, `Camera`, …) are the
 //!   engine's own declarations (`wish_types`).
 //! - A system is a function marked `#[system]` whose parameters are
-//!   [`Query`], [`Res`], [`ResMut`], [`Commands`], [`EventReader`] and
-//!   [`EventWriter`]. Ordering: `#[system(after = "move_player")]`.
+//!   [`Query`], [`Res`], [`ResMut`], [`Commands`], [`EventReader`],
+//!   [`EventWriter`], [`Actions`] (player 0's input) and [`PlayerActions`]
+//!   (every player's). Ordering: `#[system(after = "move_player")]`.
 //! - All state lives in the world. The module itself starts fresh every
 //!   tick, so a `static` cannot carry anything from one tick to the next;
 //!   this is what makes snapshots complete and code reloads lossless.
@@ -59,8 +60,8 @@ pub mod physics;
 mod query;
 
 pub use param::{
-    Actions, Commands, EntityCommands, EventReader, EventWriter, NewEntity, Res, ResMut,
-    SystemParam,
+    Actions, Commands, EntityCommands, EventReader, EventWriter, NewEntity, PlayerActions, Res,
+    ResMut, SystemParam,
 };
 pub use query::{ColumnAccess, Query, QueryData, QueryFilter, With, Without};
 pub use wish_core::{AssetRef, Color, Entity, Text, math};
@@ -78,6 +79,7 @@ pub use wish_types::{
     UiTextAlign, UiUnit, world_position,
 };
 pub use wish_types::{AmbientSource, Antialiasing, Bloom, ColorGrading, Fog};
+pub use wish_types::{MAX_PLAYERS, PlayerActionSlots, PlayerActionState, PlayerId, Players};
 
 pub use physics::{Ray, RayHit, raycast};
 
@@ -104,6 +106,7 @@ pub mod prelude {
         UiLayout, UiLength, UiNode, UiPosition, UiSettings, UiText, UiTextAlign, UiUnit,
     };
     pub use crate::{ParticleEmitter, ParticleState, Projection, Sprite};
+    pub use crate::{PlayerActions, PlayerId, Players};
 }
 
 /// The handle of `text`, to write into a field of type `Text` (such as

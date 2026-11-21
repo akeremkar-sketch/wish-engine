@@ -35,3 +35,9 @@ pub use module::{CallReport, GuestLog, ScriptModule, fingerprint_of};
 /// The ABI version this host speaks (design note §3). A module reports its
 /// own through the `wish_abi_version` export.
 pub const ABI_VERSION: i32 = 1;
+
+/// The id of what runs game code here (ADR-028, rule 2): replays carry it,
+/// so that a divergence on another executor (a later web executor) is
+/// reported against the right cause. The executor's own version is pinned
+/// by the engine's version, which replays carry too.
+pub const EXECUTOR: &str = "wasmtime";

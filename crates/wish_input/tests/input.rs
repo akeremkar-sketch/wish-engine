@@ -6,8 +6,10 @@
 use std::collections::BTreeSet;
 
 use wish_ecs::World;
-use wish_input::{INPUT_FILE, InputMap, Values, apply, key_names, register};
-use wish_types::{ActionState, action_id};
+use wish_input::{
+    INPUT_FILE, InputMap, Values, apply, apply_players, key_names, register, set_players,
+};
+use wish_types::{ActionState, PlayerActionState, Players, action_id};
 
 fn keys(names: &[&str]) -> BTreeSet<String> {
     names.iter().map(|n| (*n).to_owned()).collect()
@@ -104,5 +106,54 @@ fn the_world_sees_actions_with_pressed_and_released_edges() {
     assert_eq!(
         (state.slot("move").unwrap().x, state.slot("move").unwrap().y),
         (0.0, 1.0)
+    );
+}
+
+#[test]
+fn every_player_has_their_own_actions_and_one_player_writes_nothing_new() {
+    let map = InputMap::starter();
+    // One player: exactly what `apply` does, and nothing about players.
+    let mut single = World::new();
+    register(&mut single).unwrap();
+    let mut alone = World::new();
+    register(&mut alone).unwrap();
+    let values = map.evaluate(&keys(&["Space"]));
+    apply(&mut single, &map, &values).unwrap();
+    set_players(&mut alone, 1).unwrap();
+    apply_players(&mut alone, &map, std::slice::from_ref(&values)).unwrap();
+    assert_eq!(single.hash(), alone.hash());
+    assert!(alone.resource::<Players>().is_none());
+    assert!(alone.resource::<PlayerActionState>().is_none());
+
+    // Three players: player 0 is still `ActionState`; each has their own edges.
+    let mut world = World::new();
+    register(&mut world).unwrap();
+    set_players(&mut world, 3).unwrap();
+    assert_eq!(world.resource::<Players>().unwrap().count, 3);
+    let step = |world: &mut World, down: [&[&str]; 3]| {
+        let inputs: Vec<Values> = down.iter().map(|d| map.evaluate(&keys(d))).collect();
+        apply_players(world, &map, &inputs).unwrap();
+        (
+            *world.resource::<ActionState>().unwrap(),
+            *world.resource::<PlayerActionState>().unwrap(),
+        )
+    };
+    let (zero, all) = step(&mut world, [&["W"], &["D"], &["Space"]]);
+    assert_eq!(zero.slots, all.players[0].slots);
+    assert_eq!(all.of(0).unwrap().slot("move").unwrap().y, 1.0);
+    assert_eq!(all.of(1).unwrap().slot("move").unwrap().x, 1.0);
+    assert!(all.of(2).unwrap().slot("jump").unwrap().pressed);
+    // Ids beyond the session are at rest (no slots at all).
+    assert!(all.of(3).unwrap().slot("jump").is_none());
+    let (_, all) = step(&mut world, [&[], &[], &["Space"]]);
+    let jump = all.of(2).unwrap().slot("jump").unwrap();
+    assert!(jump.held && !jump.pressed);
+    assert!(all.of(1).unwrap().slot("move").unwrap().released);
+    assert_eq!(Players { count: 3 }.ids().collect::<Vec<_>>(), [0, 1, 2]);
+
+    // Too many players is refused.
+    assert_eq!(
+        set_players(&mut world, 17).unwrap_err().code,
+        "invalid_parameter"
     );
 }

@@ -36,6 +36,12 @@ pub(crate) const SIM_START: Tool = Tool {
             "The random seed: the same seed gives the same run.",
         )
         .or("0"),
+        Param::optional(
+            "players",
+            Kind::Integer { min: 1, max: 16 },
+            "How many players the game has (ids 0 to players - 1); give each one's input with sim_step players. Game code reads them with PlayerActions.",
+        )
+        .or("1"),
     ],
     mutates: false,
     run: sim_start,
@@ -78,6 +84,11 @@ pub(crate) const SIM_STEP: Tool = Tool {
             "input",
             Kind::Object,
             "What the player does during these ticks, by action name (input.json): a button is true or false, an axis a number from -1 to 1, a two-axis action [x, y] such as {\"move\": [0, 1], \"jump\": true}. Held for every tick of the call and released afterwards; game code sees it through Actions. The pointer is built in: \"pointer\": [x, y] in interface pixels (UiSettings, 1280x720 by default, from the top left) and \"click\": true holds its button; to click a button, step once with both and then once with only pointer (an entity's UiLayout says where it is).",
+        ),
+        Param::optional(
+            "players",
+            Kind::Object,
+            "In a session started with several players: what each one does during these ticks, by player id, each written like input, such as {\"1\": {\"move\": [1, 0]}, \"2\": {\"jump\": true}}. input is player 0's (it may also be given here as \"0\"); players not named are at rest. Only player 0 has the pointer.",
         ),
     ],
     mutates: false,
@@ -173,12 +184,18 @@ fn sim_start(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<St
     let path = workspace.scene_path(args.str("scene"))?;
     let notes = workspace.open_document(&path, false)?;
     let seed = u64::try_from(args.int("seed").unwrap_or(0)).unwrap_or(0);
-    let (id, notes) = workspace.start_session(&path, seed, notes)?;
+    let players = usize::try_from(args.int("players").unwrap_or(1)).unwrap_or(1);
+    let (id, notes) = workspace.start_session(&path, seed, players, notes)?;
     let session = workspace.session(&id)?;
     let mut out = Map::new();
     out.insert("session".to_owned(), json!(id));
     out.insert("scene".to_owned(), json!(path));
     out.insert("seed".to_owned(), json!(seed));
+    // Said only when there are several, so a single-player answer is the
+    // same bytes it always was.
+    if players > 1 {
+        out.insert("players".to_owned(), json!(players));
+    }
     out.insert("tick".to_owned(), json!(session.app.tick()));
     out.insert(
         "entities".to_owned(),
@@ -217,11 +234,11 @@ fn sim_step(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<Str
         (None, None) => 1,
     };
     let frames = u64::try_from(frames).unwrap_or(1);
-    let input = parse_input(workspace, &id, args.value("input"))?;
+    let inputs = parse_inputs(workspace, &id, args.value("input"), args.value("players"))?;
     let watch = args.strings("watch");
     check_watch(workspace, &id, &watch)?;
     let (stepped, tick, hash, entities) =
-        workspace.step_session(&id, frames, until.as_ref(), &input)?;
+        workspace.step_session(&id, frames, until.as_ref(), &inputs)?;
     let mut out = Map::new();
     out.insert("session".to_owned(), json!(id));
     out.insert("tick".to_owned(), json!(tick));
@@ -506,6 +523,64 @@ fn logs_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<Str
     Ok(out)
 }
 
+/// What every player of session `session` does during a `sim_step` (or a
+/// test's run step): `input` is player 0's, `players` maps player ids to
+/// the same shape. One entry per player of the session.
+pub(crate) fn parse_inputs(
+    workspace: &Workspace,
+    session: &str,
+    input: Option<&Value>,
+    players: Option<&Value>,
+) -> Result<Vec<wish_input::Values>> {
+    let count = workspace.session(session)?.players.max(1);
+    let mut inputs = vec![wish_input::Values::new(); count];
+    if let Some(first) = inputs.first_mut() {
+        *first = parse_input(workspace, session, input)?;
+    }
+    let given = match players {
+        None | Some(Value::Null) => return Ok(inputs),
+        Some(Value::Object(given)) => given,
+        Some(other) => {
+            return Err(Diagnostic::error(
+                "invalid_parameter",
+                format!("'players' must be an object of player ids and their input, not {other}."),
+                "Write it like {\"1\": {\"move\": [1, 0]}}: each player id (as text) with that player's actions, written like input.",
+            )
+            .at_path("/players"));
+        }
+    };
+    for (key, value) in given {
+        let path = format!("/players/{key}");
+        let player = key.parse::<usize>().ok().filter(|p| key == &p.to_string());
+        let Some(player) = player.filter(|p| *p < count) else {
+            let ids = if count == 1 {
+                "the session has one player, id 0".to_owned()
+            } else {
+                format!("the session has {count} players, ids 0 to {}", count - 1)
+            };
+            return Err(Diagnostic::error(
+                "unknown_player",
+                format!("'{key}' is not a player of session {session}: {ids}."),
+                "Use a player id the session has, or start a session with more players (sim_start players).",
+            )
+            .at_path(path));
+        };
+        if player == 0 && input.is_some_and(|v| !v.is_null()) {
+            return Err(Diagnostic::error(
+                "invalid_parameter",
+                "Player 0's input is given twice: as input and as players \"0\".",
+                "Give player 0's actions in one of the two places.",
+            )
+            .at_path(path));
+        }
+        let values = parse_values(workspace, session, Some(value), &path, player == 0)?;
+        if let Some(slot) = inputs.get_mut(player) {
+            *slot = values;
+        }
+    }
+    Ok(inputs)
+}
+
 /// What the player does during a `sim_step`: `{ "move": [0, 1], "jump": true }`
 /// against the session's action names.
 pub(crate) fn parse_input(
@@ -513,24 +588,49 @@ pub(crate) fn parse_input(
     session: &str,
     given: Option<&Value>,
 ) -> Result<wish_input::Values> {
+    parse_values(workspace, session, given, "/input", true)
+}
+
+/// One player's actions; `base` is where they are in the call, and only
+/// player 0 (`pointer`) has the pointer.
+fn parse_values(
+    workspace: &Workspace,
+    session: &str,
+    given: Option<&Value>,
+    base: &str,
+    pointer: bool,
+) -> Result<wish_input::Values> {
     let mut values = wish_input::Values::new();
     let given = match given {
         None | Some(Value::Null) => return Ok(values),
         Some(Value::Object(given)) => given,
         Some(other) => {
+            let what = if base == "/input" {
+                "'input'".to_owned()
+            } else {
+                format!("A player's input ({base})")
+            };
             return Err(Diagnostic::error(
                 "invalid_parameter",
-                format!("'input' must be an object of actions and values, not {other}."),
+                format!("{what} must be an object of actions and values, not {other}."),
                 "Write it like {\"move\": [0, 1], \"jump\": true}: each action of input.json with its value (true for a button, a number for an axis, [x, y] for a 2D axis).",
             )
-            .at_path("/input"));
+            .at_path(base));
         }
     };
     let live = workspace.session(session)?;
     let map = &live.input;
     let names: Vec<&str> = map.names().collect();
     for (name, value) in given {
-        let path = format!("/input/{name}");
+        let path = format!("{base}/{name}");
+        if !pointer && (name == wish_input::POINTER || name == wish_input::CLICK) {
+            return Err(Diagnostic::error(
+                "invalid_parameter",
+                format!("Only player 0 has the pointer; {base} cannot hold '{name}'."),
+                "The pointer is this machine's interface: give pointer and click in input (player 0). Other players act through the actions of input.json.",
+            )
+            .at_path(path));
+        }
         if name == wish_input::POINTER {
             let number = |v: &Value| v.as_f64().filter(|n| n.is_finite() && n.abs() <= 1.0e6);
             let at = value
@@ -605,7 +705,7 @@ pub(crate) fn parse_input(
                     "click needs a pointer position: there is no pointer yet.",
                     "Give both, like {\"pointer\": [640, 360], \"click\": true}.",
                 )
-                .at_path("/input/click"));
+                .at_path(format!("{base}/click")));
             }
         }
     }
