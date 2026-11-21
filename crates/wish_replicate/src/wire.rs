@@ -19,8 +19,14 @@ pub mod kind {
     pub const LAST: u8 = 63;
 }
 
-/// The version of the replication messages.
-pub const VERSION: u8 = 1;
+/// The version of the replication messages (2: the state header carries
+/// flags, prediction package).
+pub const VERSION: u8 = 2;
+
+/// State header flag: nothing the player may see was left out by the
+/// budget, so every entity the message does not carry is unchanged since
+/// the state the client acknowledged.
+pub const FLAG_COMPLETE: u8 = 1;
 
 /// The largest message a client may send, in bytes.
 pub const MAX_CLIENT_MESSAGE: usize = 2048;
@@ -266,6 +272,9 @@ pub struct State {
     pub tick: u64,
     /// The newest input frame of this player that the host applied.
     pub input_ack: Option<u64>,
+    /// Whether nothing the player may see was left out by the budget
+    /// ([`FLAG_COMPLETE`]).
+    pub complete: bool,
     /// Network ids that left the player's view, ascending.
     pub removed: Vec<u32>,
     /// Changed entities, ascending by network id.
@@ -276,11 +285,12 @@ const OP_REMOVE: u64 = 0;
 const OP_WHOLE: u64 = 1;
 const OP_LEAVES: u64 = 2;
 
-/// The header of a state message: kind, tick, input ack.
-pub fn state_header(tick: u64, input_ack: Option<u64>) -> Vec<u8> {
+/// The header of a state message: kind, tick, input ack, flags.
+pub fn state_header(tick: u64, input_ack: Option<u64>, complete: bool) -> Vec<u8> {
     let mut out = vec![kind::STATE];
     put_varint(&mut out, tick);
     put_optional(&mut out, input_ack);
+    out.push(if complete { FLAG_COMPLETE } else { 0 });
     out
 }
 
@@ -396,6 +406,10 @@ pub fn decode_state(bytes: &[u8], layouts: &[Layout]) -> Option<State> {
     }
     let tick = reader.varint()?;
     let input_ack = read_optional(&mut reader)?;
+    let flags = reader.u8()?;
+    if flags & !FLAG_COMPLETE != 0 {
+        return None;
+    }
     let removed_count = reader.count(usize::MAX, 1)?;
     let mut removed = Vec::with_capacity(removed_count);
     for _ in 0..removed_count {
@@ -469,6 +483,7 @@ pub fn decode_state(bytes: &[u8], layouts: &[Layout]) -> Option<State> {
     reader.done().then_some(State {
         tick,
         input_ack,
+        complete: flags & FLAG_COMPLETE != 0,
         removed,
         entities,
     })
@@ -635,6 +650,27 @@ mod tests {
             }],
         };
         assert_eq!(decode_welcome(&encode_welcome(&welcome)), Some(welcome));
+    }
+
+    #[test]
+    fn the_state_header_carries_the_complete_flag_and_nothing_else() {
+        for complete in [false, true] {
+            let mut bytes = state_header(30, Some(28), complete);
+            put_varint(&mut bytes, 0);
+            put_varint(&mut bytes, 0);
+            let state = decode_state(&bytes, &[]).unwrap();
+            assert_eq!(state.tick, 30);
+            assert_eq!(state.input_ack, Some(28));
+            assert_eq!(state.complete, complete);
+        }
+        // An unknown flag is malformed.
+        let mut bytes = state_header(30, None, true);
+        if let Some(flags) = bytes.last_mut() {
+            *flags |= 2;
+        }
+        put_varint(&mut bytes, 0);
+        put_varint(&mut bytes, 0);
+        assert_eq!(decode_state(&bytes, &[]), None);
     }
 
     #[test]

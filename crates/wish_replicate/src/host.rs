@@ -124,6 +124,10 @@ pub struct HostStats {
     pub wrong_player: u64,
     /// Input frames stamped too far ahead.
     pub out_of_window: u64,
+    /// Input frames that arrived after the host had simulated their tick
+    /// (the client's tick sync ran too close; each is applied a tick late,
+    /// or never when a newer frame came with it).
+    pub late_frames: u64,
     /// Acknowledgements of ticks never sent.
     pub invalid_acks: u64,
     /// Sends the endpoint refused.
@@ -353,6 +357,23 @@ impl Host {
         self.link_of(player).and_then(|l| l.applied_input)
     }
 
+    /// How early `player`'s input arrives: the newest frame the host holds
+    /// for it (buffered, else the one applied) minus the host's current
+    /// tick. Positive means frames wait for their tick, as tick sync wants;
+    /// zero or less means they come just in time or late. `None` before the
+    /// player sent a frame.
+    pub fn input_slack(&self, player: PlayerId) -> Option<i64> {
+        let link = self.link_of(player)?;
+        let newest = link
+            .frames
+            .keys()
+            .next_back()
+            .copied()
+            .or(link.applied_input)?;
+        let now = self.tick.unwrap_or(0);
+        Some(newest as i64 - now as i64)
+    }
+
     fn note(&mut self, diagnostic: Diagnostic) {
         if self.diagnostics.len() >= MAX_DIAGNOSTICS {
             self.diagnostics.pop_front();
@@ -511,6 +532,7 @@ impl Host {
             link.snapshot_pending = true;
         }
         let mut late = false;
+        let mut behind = 0;
         for frame in message.frames {
             if link.applied_input.is_some_and(|a| frame.tick <= a) {
                 continue;
@@ -519,8 +541,15 @@ impl Host {
                 late = true;
                 continue;
             }
-            link.frames.entry(frame.tick).or_insert(frame.actions);
+            if let std::collections::btree_map::Entry::Vacant(slot) = link.frames.entry(frame.tick)
+            {
+                if self.tick.is_some_and(|t| frame.tick <= t) {
+                    behind += 1;
+                }
+                slot.insert(frame.actions);
+            }
         }
+        self.stats.late_frames += behind;
         while link.frames.len() > history.max(window as usize) {
             link.frames.pop_first();
         }
@@ -852,7 +881,8 @@ fn build(
     budget: usize,
     max: usize,
 ) -> Built {
-    let header = wire::state_header(tick, input_ack);
+    // The flags byte has one size whatever it says.
+    let header = wire::state_header(tick, input_ack, false);
     let mut ids: BTreeSet<u32> = target.keys().copied().collect();
     ids.extend(known.keys().copied());
     let mut removed = Vec::new();
@@ -899,7 +929,7 @@ fn build(
         + wire::varint_len(removed.len() as u64)
         + wire::varint_len(changed.len() as u64);
     let mut removed_in = Vec::new();
-    for id in removed {
+    for &id in &removed {
         let n = wire::varint_len(u64::from(id));
         if used + n > budget {
             break;
@@ -907,6 +937,7 @@ fn build(
         used += n;
         removed_in.push(id);
     }
+    let removals_cut = removed_in.len() < removed.len();
     let mut chosen: BTreeMap<u32, Vec<u8>> = BTreeMap::new();
     let mut deferred = 0;
     for (id, bytes) in changed {
@@ -922,7 +953,8 @@ fn build(
         credit.remove(id);
     }
 
-    let mut bytes = header;
+    let complete = deferred == 0 && !removals_cut;
+    let mut bytes = wire::state_header(tick, input_ack, complete);
     let mut carried = Vec::with_capacity(removed_in.len() + chosen.len());
     wire::put_varint(&mut bytes, removed_in.len() as u64);
     for id in &removed_in {
