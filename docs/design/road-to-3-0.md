@@ -127,6 +127,11 @@ release, the scorecard as a gate, two lanes at most, closing reviews), plus:
 
 ### 4.4 2D, all the way
 
+*First release after 2.0 (user decision, 22 November 2026: 2D at 10, and
+early). It stands on the panel registry of 1.4 and the 2D kit of 1.1 and
+1.7; where it needs a part of editor 2 (a dockable panel, the graph), it
+builds that part first and editor 2 extends it.*
+
 - 2D lights with normal maps and soft shadows from tilemaps and sprites;
   2D particles on the GPU; parallax layers; a 2D camera kit (follow, confine,
   shake, zoom to fit).
@@ -147,7 +152,8 @@ release, the scorecard as a gate, two lanes at most, closing reviews), plus:
   animation with mesh deformation (bones, weights, an importer for an open
   format), all in the world's time.
 - **2D effects:** outline, dissolve, palette swap, flash and distortion as
-  ready nodes of the shader graph (4.1), each with an off and a cost.
+  ready effects, each with an off and a cost; they become nodes of the
+  shader graph (4.1) when it arrives a release later.
 - **What the others do not have, kept as the edge:** deterministic 2D
   physics and replays, online 2D with hidden information, multiplayer tested
   by bots without people, and 2D games made and proven by agents.
@@ -233,10 +239,10 @@ release, the scorecard as a gate, two lanes at most, closing reviews), plus:
 
 | Release | Theme | Packages (about) | The thing to see |
 |---|---|---|---|
-| 2.1 | Editor 2: docking, windows, layouts, the panel manners | 14 | the editor on two screens |
-| 2.2 | UI 2: interface files, styles, binding, text shaping, the designer | 15 | a menu built by hand and by an agent |
-| 2.3 | Stability: corpus, ABI shims, `wen upgrade`, fuzzing, LTS process | 12 | an old project upgraded in one step |
-| 2.4 | 2D 3: lights, importers, rule tiles, 2D navigation, cameras, the sprite and pixel-art editor, the 2D animation editor, 2D effects, the 2D comparison | 20 | a lit 2D level drawn, animated and played inside the editor |
+| 2.1 | 2D 3 (moved first, user decision of 22 November 2026): lights, importers, rule tiles, 2D navigation, cameras, the sprite and pixel-art editor, the 2D animation editor, 2D effects, the 2D comparison | 20 | a lit 2D level drawn, animated and played inside the editor |
+| 2.2 | Editor 2: docking, windows, layouts, the panel manners | 14 | the editor on two screens |
+| 2.3 | UI 2: interface files, styles, binding, text shaping, the designer | 15 | a menu built by hand and by an agent |
+| 2.4 | Stability: corpus, ABI shims, `wen upgrade`, fuzzing, LTS process | 12 | an old project upgraded in one step |
 | 2.5 | Physics, navigation and sound | 15 | a crowd finding its way; a ragdoll |
 | 2.6 | Animation 2 and the graph editors | 14 | a character with a state machine and IK |
 | 2.7 | Graphics 2: render graph, GI probes, TAA, SSR, volumetrics, terrain, water | 18 | the showcase under the new light |
