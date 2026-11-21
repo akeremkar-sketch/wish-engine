@@ -11,23 +11,36 @@
 //! entities mapped to its own) and sends its player's input back, stamped
 //! with ticks; the host writes it into `PlayerActionState`.
 //!
+//!
+//! A [`Predictor`] (design note `docs/design/1.1-prediction.md`) runs the
+//! game's own systems on a copy of the client's world ahead of the host for
+//! what the local player owns and touches, reconciles with every state the
+//! host confirms, interpolates everyone else and keeps the client's ticks
+//! ahead of the host's by the round trip plus a margin.
+//!
 //! The crate knows the world (`wish_ecs`, `wish_schema`, the plain types of
-//! `wish_types`) and the transport (`wish_net`) and nothing else of the
-//! engine. Nothing here reads the clock: ticks and the transport's time come
+//! `wish_types`), the app loop (`wish_app`, for the prediction's systems)
+//! and the transport (`wish_net`) and nothing else of the engine. Nothing here reads the clock: ticks and the transport's time come
 //! from the caller, so a run over the network simulator is a pure function
 //! of its seed.
 
 pub mod client;
 pub mod host;
 pub mod input;
+pub mod interpolate;
 pub mod layout;
+pub mod predict;
+pub mod sync;
 pub mod value;
 pub mod visibility;
 pub mod wire;
 
-pub use client::{Client, ClientConfig, ClientStats};
+pub use client::{Client, ClientConfig, ClientStats, Confirmed};
 pub use host::{Host, HostStats, ReplicationConfig};
+pub use interpolate::Source;
 pub use layout::{Layout, Leaf, LeafKind};
+pub use predict::{FrameReport, PredictConfig, PredictStats, Predictor, Shown};
+pub use sync::SyncState;
 pub use value::{EntityView, Value, View};
 
 use wish_core::Result;

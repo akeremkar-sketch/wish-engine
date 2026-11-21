@@ -174,6 +174,15 @@ impl App {
         self.tick
     }
 
+    /// Makes `tick` the next tick to simulate, keeping the world and every
+    /// system's state. An online client's prediction uses it to line its
+    /// app up with the host's tick numbers, so its systems see the host's
+    /// [`Time`]. Real time owed by [`App::update`] is discarded.
+    pub fn set_tick(&mut self, tick: u64) {
+        self.tick = tick;
+        self.accumulator = 0.0;
+    }
+
     /// The length of one tick, in seconds.
     pub fn delta(&self) -> f32 {
         self.time().delta

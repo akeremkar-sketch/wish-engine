@@ -4913,6 +4913,7 @@ dependencies = [
 name = "wish_replicate"
 version = "0.9.0"
 dependencies = [
+ "wish_app",
  "wish_core",
  "wish_ecs",
  "wish_input",

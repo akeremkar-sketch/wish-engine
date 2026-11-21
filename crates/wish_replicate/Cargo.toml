@@ -1,6 +1,6 @@
 [package]
 name = "wish_replicate"
-description = "Online play's replication for Wish Engine: the host sends each player a schema-encoded delta of what that player may see, clients mirror it into their worlds and send their inputs back (ADR-029)."
+description = "Online play's replication for Wish Engine: the host sends each player a schema-encoded delta of what that player may see, clients mirror it into their worlds, predict their own player and send their inputs back (ADR-029)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,6 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+wish_app.workspace = true
 wish_core.workspace = true
 wish_ecs.workspace = true
 wish_net.workspace = true

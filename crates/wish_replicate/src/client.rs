@@ -25,7 +25,9 @@ pub struct ClientConfig {
     /// Received states kept per entity (as possible bases), at least 2.
     pub history: usize,
     /// How many ticks ahead of the newest host tick seen input is stamped
-    /// (tick sync replaces this in a later package).
+    /// by [`Client::send_input`]. A client that predicts stamps its frames
+    /// with its own ticks instead ([`crate::Predictor`], whose tick sync
+    /// sets the lead).
     pub input_lead: u64,
     /// After this many state messages in a row that could not be read whole
     /// (a base is gone), the client asks the host for a new snapshot.
@@ -70,8 +72,25 @@ type Shift = (u32, Option<Arc<EntityView>>, Option<Arc<EntityView>>);
 /// One replicated type, as this client's world knows it.
 #[derive(Debug, Clone)]
 struct ClientType {
+    name: String,
     id: ComponentId,
     layout: Layout,
+}
+
+/// States received of one entity, by tick (`None`: absent at that tick).
+pub type States = BTreeMap<u64, Option<Arc<EntityView>>>;
+
+/// What the host confirmed: the newest complete state message read whole
+/// (nothing the player may see was left out), as the player's whole view at
+/// that tick.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Confirmed {
+    /// The host's tick.
+    pub tick: u64,
+    /// The newest input frame of this player the host had applied by then.
+    pub input_ack: Option<u64>,
+    /// Every entity the player could see at that tick, by network id.
+    pub view: View,
 }
 
 /// What the client holds of one entity.
@@ -79,7 +98,7 @@ struct ClientType {
 struct Track {
     /// Its states by tick (`None`: absent), possible bases of later
     /// messages.
-    states: BTreeMap<u64, Option<Arc<EntityView>>>,
+    states: States,
     /// The tick of the state the world shows.
     shown: Option<u64>,
     /// The state the world shows.
@@ -102,6 +121,12 @@ pub struct Client {
     frames: BTreeMap<u64, Actions>,
     input_ack: Option<u64>,
     misses: u32,
+    /// Ticks of complete messages read whole (interpolation knows that
+    /// every entity they did not carry was unchanged).
+    complete: BTreeSet<u64>,
+    /// The newest confirmed view not taken yet.
+    confirmed: Option<Confirmed>,
+    last_confirmed: Option<u64>,
     diagnostics: VecDeque<Diagnostic>,
     stats: ClientStats,
 }
@@ -122,6 +147,9 @@ impl Client {
             frames: BTreeMap::new(),
             input_ack: None,
             misses: 0,
+            complete: BTreeSet::new(),
+            confirmed: None,
+            last_confirmed: None,
             diagnostics: VecDeque::new(),
             stats: ClientStats::default(),
         }
@@ -148,6 +176,46 @@ impl Client {
     /// The newest of this player's input frames the host applied.
     pub fn input_ack(&self) -> Option<u64> {
         self.input_ack
+    }
+
+    /// The newest host tick any message (the welcome included) came from.
+    pub fn newest_seen(&self) -> Option<u64> {
+        self.newest_seen
+    }
+
+    /// The newest confirmed view since the last call: the client read a
+    /// complete state message whole, newer than every message it read whole
+    /// before. A predicting client reconciles against it.
+    pub fn take_confirmed(&mut self) -> Option<Confirmed> {
+        self.confirmed.take()
+    }
+
+    /// The tick of the newest confirmed view, taken or not.
+    pub fn confirmed_tick(&self) -> Option<u64> {
+        self.last_confirmed
+    }
+
+    /// The states received of network id `net`, by tick (at most `history`
+    /// of them).
+    pub fn states(&self, net: u32) -> Option<&States> {
+        self.tracks.get(&net).map(|t| &t.states)
+    }
+
+    /// The ticks of the complete messages read whole lately (at most 65):
+    /// at each, every entity not carried was unchanged.
+    pub fn complete_ticks(&self) -> &BTreeSet<u64> {
+        &self.complete
+    }
+
+    /// The network ids the client's world shows, ascending.
+    pub fn shown(&self) -> Vec<u32> {
+        self.local.keys().copied().collect()
+    }
+
+    /// The names of the replicated types, in the order messages number
+    /// them, once welcomed.
+    pub fn type_names(&self) -> Vec<&str> {
+        self.types.iter().map(|t| t.name.as_str()).collect()
     }
 
     /// What the client did so far.
@@ -246,7 +314,11 @@ impl Client {
                     return None;
                 }
                 let layout = Layout::of(info.schema()).ok()?;
-                Some(ClientType { id, layout })
+                Some(ClientType {
+                    name: entry.name.clone(),
+                    id,
+                    layout,
+                })
             });
             match known {
                 Some(ty) => types.push(ty),
@@ -313,6 +385,24 @@ impl Client {
             }
         }
         if whole {
+            let newest = self.received.last().is_none_or(|last| tick > *last);
+            if message.complete {
+                self.complete.insert(tick);
+                while self.complete.len() > 65 {
+                    self.complete.pop_first();
+                }
+                if newest
+                    && self.last_confirmed.is_none_or(|last| tick > last)
+                    && let Some(view) = self.view_at(tick)
+                {
+                    self.last_confirmed = Some(tick);
+                    self.confirmed = Some(Confirmed {
+                        tick,
+                        input_ack: message.input_ack,
+                        view,
+                    });
+                }
+            }
             self.received.insert(tick);
             while self.received.len() > 65 {
                 self.received.pop_first();
@@ -352,6 +442,27 @@ impl Client {
                 || t.shown
                     .is_some_and(|s| s.saturating_add(STALE_TICKS) >= newest)
         });
+    }
+
+    /// The player's whole view at `tick`: per entity, its newest state at
+    /// or before it. Exact for a complete message read whole when it is the
+    /// newest read whole (no base older than `tick` was dropped); `None`
+    /// when some entity shown since before `tick` has no state left at or
+    /// before it (it cannot tell).
+    fn view_at(&self, tick: u64) -> Option<View> {
+        let mut view = View::new();
+        for (net, track) in &self.tracks {
+            match track.states.range(..=tick).next_back() {
+                Some((_, Some(state))) => {
+                    view.insert(*net, Arc::clone(state));
+                }
+                Some((_, None)) => {}
+                // Seen first after `tick`: it was not visible then.
+                None if track.shown.is_none_or(|s| s > tick) => {}
+                None => return None,
+            }
+        }
+        Some(view)
     }
 
     /// Reads one section into its entity's states. `None` when its base is
@@ -538,12 +649,30 @@ impl Client {
     /// [`stamp`](Self::stamp)), with up to seven earlier frames the host has
     /// not confirmed, and the acknowledgements. `None` before the welcome.
     pub fn input_message(&mut self, actions: Actions) -> Option<Vec<u8>> {
-        let player = self.player?;
+        self.player?;
         let stamp = self.stamp();
-        self.frames.insert(stamp, actions);
+        self.queue_frame(stamp, actions);
+        self.queued_message()
+    }
+
+    /// Adds the frame of tick `tick` to those the next message carries
+    /// (with the earlier ones the host has not confirmed, at most
+    /// [`wire::MAX_FRAMES`]). A frame the host already confirmed is
+    /// ignored; a frame of a tick already queued replaces it.
+    pub fn queue_frame(&mut self, tick: u64, actions: Actions) {
+        if self.input_ack.is_some_and(|ack| tick <= ack) {
+            return;
+        }
+        self.frames.insert(tick, actions);
         while self.frames.len() > wire::MAX_FRAMES {
             self.frames.pop_first();
         }
+    }
+
+    /// The input message of the queued frames and the acknowledgements.
+    /// `None` before the welcome.
+    pub fn queued_message(&mut self) -> Option<Vec<u8>> {
+        let player = self.player?;
         let resync = self.misses >= self.config.resync_after;
         if resync {
             self.stats.resyncs_requested += 1;
@@ -576,6 +705,18 @@ impl Client {
             resync,
             frames,
         }))
+    }
+
+    /// Sends [`queued_message`](Self::queued_message) to the host on the
+    /// unreliable channel (also with no new frame: it carries the
+    /// acknowledgements). Nothing is sent before the welcome.
+    pub fn send_queued<T: Transport>(&mut self, endpoint: &mut Endpoint<T>) -> Result<()> {
+        let Some(message) = self.queued_message() else {
+            return Ok(());
+        };
+        endpoint.send(PeerId::HOST, Channel::Unreliable, &message)?;
+        self.stats.inputs_sent += 1;
+        Ok(())
     }
 
     /// Sends [`input_message`](Self::input_message) to the host on the

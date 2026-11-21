@@ -328,6 +328,19 @@ fn time_is_a_tick_counter_not_a_clock() {
 }
 
 #[test]
+fn set_tick_moves_the_tick_counter_and_keeps_the_rest() {
+    let mut app = App::new(AppConfig::default());
+    app.run(3).unwrap();
+    let world = app.world().hash();
+    app.set_tick(40);
+    assert_eq!(app.tick(), 40);
+    assert_eq!(app.world().hash(), world, "the world is untouched");
+    app.step().unwrap();
+    assert_eq!(app.world().resource::<Time>().unwrap().tick, 40);
+    assert_eq!(app.tick(), 41);
+}
+
+#[test]
 fn update_turns_real_time_into_whole_ticks() {
     let mut app = App::new(AppConfig::default());
     let report = app.update(0.05).unwrap();
