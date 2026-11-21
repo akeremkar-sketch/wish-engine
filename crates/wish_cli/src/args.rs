@@ -196,6 +196,8 @@ pub enum Command {
         name: Option<String>,
         /// The template to start from (`islands`), else an empty project.
         template: Option<String>,
+        /// The project's kind, `2d` or `3d` (default: the template's, else 3d).
+        kind: Option<String>,
     },
     /// Serve the tools over MCP on standard input and output.
     Mcp(ToolContext),
@@ -555,7 +557,12 @@ fn flags_of(command: &str) -> &'static [(&'static str, bool)] {
             ("--json", false),
         ],
         "shaders" => &[("--dir", true), ("--json", false)],
-        "new" => &[("--name", true), ("--template", true), ("--json", false)],
+        "new" => &[
+            ("--name", true),
+            ("--template", true),
+            ("--kind", true),
+            ("--json", false),
+        ],
         "build" => &[("--root", true), ("--dry-run", false), ("--json", false)],
         "export" => &[
             ("--root", true),
@@ -1004,6 +1011,7 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
                 dir: positional[0].to_owned(),
                 name: value_of("--name").map(str::to_owned),
                 template: value_of("--template").map(str::to_owned),
+                kind: value_of("--kind").map(str::to_owned),
             }
         }
         "migrate" => Command::Migrate {

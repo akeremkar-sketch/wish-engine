@@ -44,15 +44,17 @@ Without a project, the editor opens on the **welcome screen**:
    - **Nobody**: you make the game by hand.
 
    Any other MCP agent can connect later (*AI* menu, *Connect an outside agent...*).
-2. **Start from**:
-   - an empty project (a camera, a sun, a ground and starter game code), or
-   - a template:
-     - *Islands*: a 3D platformer, the showcase;
-     - *Hop*: 3D jumping;
-     - *Collect*: 3D seen from above;
-     - *Bricks*: 2D;
-     - *Quiz*: interface only.
-3. **Name and place.** New projects go into `Documents/Wish Projects` by default.
+2. **What kind of game?** **3D** (models, lights and a camera in space) or **2D** (sprites on a
+   flat screen). The kind only sets where you start: a 2D project begins with an orthographic
+   camera and no ground, and the *Create* menu lists sprites first; a 2D project can still hold 3D,
+   and the other way round. The kind is written in `wish.json` (`"kind": "2d"`); a project without
+   it is a 3D project.
+3. **Start from** the templates of that kind:
+   - 3D: an empty project (a camera, a sun, a ground and starter game code), or a template:
+     *Islands* (a 3D platformer, the showcase), *Hop* (3D jumping), *Collect* (3D seen from
+     above), *Quiz* (interface only);
+   - 2D: an empty project (an orthographic camera and starter game code), or *Bricks*.
+4. **Name and place.** New projects go into `Documents/Wish Projects` by default.
 
 Press **Create**. The engine makes the project, builds its game code and opens the editor in the
 same window. On the right, **Open a game** lists the projects you opened lately, or takes the path
@@ -321,6 +323,9 @@ the same computer comes in a later release.
 wen new my_game --template islands
 ```
 
+A 2D project: `wen new my_game --kind 2d` (an empty one) or `wen new my_game --template bricks`.
+Without `--kind`, a template's own kind is used, and an empty project is 3D.
+
 ```bash
 wen edit --root my_game
 ```
@@ -386,7 +391,7 @@ recorded before the files were rewritten no longer match and have to be recorded
 ## 11. What is in a project folder
 
 ```text
-wish.json             the project: name, default scene
+wish.json             the project: name, kind (2D or 3D), default scene
 scenes/               scenes (*.scene.json) and prefabs (*.prefab.json)
 assets/               models (.glb/.gltf), images (.png), sounds (.wav/.ogg),
                       material files (*.mat.json)

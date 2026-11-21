@@ -1262,3 +1262,77 @@ fn watch_follows_material_files() {
         "assets/wall.mat.json"
     );
 }
+
+/// `wen new --kind` (release 1.1, package 1): a 2D project from nothing, a
+/// template's own kind, a kind that does not fit the template, and a word
+/// that is not a kind.
+#[test]
+fn wen_new_takes_a_kind() {
+    let base = std::env::temp_dir().join(format!("wen-new-kind-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let kind_of = |dir: &std::path::Path| -> String {
+        let config: Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("wish.json")).unwrap()).unwrap();
+        config["kind"].as_str().unwrap_or("none").to_owned()
+    };
+    let two = base.join("two");
+    let (ok, answer) = wen_json(&["new", two.to_str().unwrap(), "--kind", "2d", "--json"]);
+    assert!(ok, "{answer}");
+    assert_eq!(answer["kind"], "2d");
+    assert_eq!(kind_of(&two), "2d");
+    // Without --kind an empty project is 3D, and says so.
+    let three = base.join("three");
+    let (ok, answer) = wen_json(&["new", three.to_str().unwrap(), "--json"]);
+    assert!(ok, "{answer}");
+    assert_eq!(answer["kind"], "3d");
+    assert_eq!(kind_of(&three), "3d");
+    // A template's own kind is used.
+    let bricks = base.join("bricks");
+    let (ok, answer) = wen_json(&[
+        "new",
+        bricks.to_str().unwrap(),
+        "--template",
+        "bricks",
+        "--json",
+    ]);
+    assert!(ok, "{answer}");
+    assert_eq!(kind_of(&bricks), "2d");
+    // A kind that does not fit the template: nothing is written.
+    let clash = base.join("clash");
+    let (ok, problem) = wen_json(&[
+        "new",
+        clash.to_str().unwrap(),
+        "--kind",
+        "3d",
+        "--template",
+        "bricks",
+        "--json",
+    ]);
+    assert!(!ok);
+    assert_eq!(
+        problem["error"]["code"], "template_kind_mismatch",
+        "{problem}"
+    );
+    assert!(
+        problem["error"]["hint"]
+            .as_str()
+            .unwrap()
+            .contains("islands"),
+        "{problem}"
+    );
+    assert!(!clash.exists());
+    // Not a kind.
+    let nope = base.join("nope");
+    let (ok, problem) = wen_json(&["new", nope.to_str().unwrap(), "--kind", "4d", "--json"]);
+    assert!(!ok);
+    assert_eq!(problem["error"]["code"], "invalid_parameter", "{problem}");
+    assert!(
+        problem["error"]["hint"]
+            .as_str()
+            .unwrap()
+            .contains("--kind 2d"),
+        "{problem}"
+    );
+    assert!(!nope.exists());
+    let _ = std::fs::remove_dir_all(&base);
+}

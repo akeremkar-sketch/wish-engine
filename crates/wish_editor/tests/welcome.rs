@@ -231,7 +231,7 @@ fn a_game_by_hand_starts_empty_and_a_wrong_folder_is_explained() {
     );
     // By hand, from the empty project.
     launcher.set_assistant(Assistant::Nobody);
-    click(&mut launcher, "Empty project");
+    click(&mut launcher, "Empty 3D");
     click(&mut launcher, "Create");
     let app = launcher.app().expect("the editor opened");
     assert!(!app.agent_panel_open());
@@ -640,4 +640,61 @@ fn the_hub_forgets_a_gone_engine_and_shows_the_persons_shortcuts() {
         "{}",
         launcher.status()
     );
+}
+
+/// Release 1.1, package 1: a new game starts with its kind. 3D is chosen at
+/// first and offers the 3D templates; 2D offers the 2D ones, and its empty
+/// project is a flat one.
+#[test]
+fn a_new_game_starts_with_its_kind() {
+    let (options, base) = options("kind");
+    let mut launcher = Launcher::new(options);
+    play(&mut launcher, json!([{ "idle": 2 }]));
+    let shown = |launcher: &Launcher, text: &str| {
+        launcher
+            .widgets()
+            .iter()
+            .any(|w| w.role != "TextRun" && w.role != "Label" && w.label.as_deref() == Some(text))
+    };
+    // 3D first: its templates and its empty project; nothing of 2D.
+    assert!(shown(&launcher, "2D") && shown(&launcher, "3D"));
+    assert!(shown(&launcher, "Quiz") && shown(&launcher, "Empty 3D"));
+    assert!(!shown(&launcher, "Bricks") && !shown(&launcher, "Empty 2D"));
+    // The 2D choice swaps the templates.
+    click(&mut launcher, "2D");
+    assert!(shown(&launcher, "Bricks") && shown(&launcher, "Empty 2D"));
+    assert!(!shown(&launcher, "Quiz") && !shown(&launcher, "Empty 3D"));
+    // A flat game by hand.
+    launcher.set_assistant(Assistant::Nobody);
+    click(&mut launcher, "Empty 2D");
+    let dir = launcher.new_project_folder().unwrap();
+    click(&mut launcher, "Create");
+    let app = launcher.app().expect("the editor opened");
+    let info = app.call("project_info", &json!({}));
+    assert_eq!(info["project"]["kind"], "2d", "{info}");
+    assert_eq!(app.call("check", &json!({}))["passed"], true);
+    let config: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("wish.json")).unwrap()).unwrap();
+    assert_eq!(config["kind"], "2d");
+    let scene = std::fs::read_to_string(dir.join("scenes/main.scene.json")).unwrap();
+    assert!(scene.contains("Orthographic"), "{scene}");
+    assert!(!scene.contains("DirectionalLight"), "{scene}");
+    let _ = base;
+}
+
+/// A 2D template (Bricks) makes a 2D project, and going back to 3D offers
+/// the 3D ones again.
+#[test]
+fn a_2d_template_makes_a_2d_project() {
+    let (options, _base) = options("kind-template");
+    let mut launcher = Launcher::new(options);
+    play(&mut launcher, json!([{ "idle": 2 }]));
+    click(&mut launcher, "2D");
+    click(&mut launcher, "Bricks");
+    launcher.set_assistant(Assistant::Nobody);
+    click(&mut launcher, "Create");
+    let app = launcher.app().expect("the editor opened");
+    let info = app.call("project_info", &json!({}));
+    assert_eq!(info["project"]["kind"], "2d", "{info}");
+    assert_eq!(app.call("check", &json!({}))["passed"], true);
 }

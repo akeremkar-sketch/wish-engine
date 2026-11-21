@@ -177,9 +177,21 @@ pub fn new_project(
     dir: &str,
     name: Option<&str>,
     template: Option<&str>,
+    kind: Option<&str>,
     as_json: bool,
 ) -> Result<String> {
+    use wish_control::project::ProjectKind;
     let path = std::path::Path::new(dir);
+    let kind = match kind {
+        None => None,
+        Some(given) => Some(ProjectKind::parse(given).ok_or_else(|| {
+            wish_core::Diagnostic::error(
+                "invalid_parameter",
+                format!("'{given}' is not a project kind."),
+                "Use --kind 2d or --kind 3d.",
+            )
+        })?),
+    };
     let name = name.map_or_else(|| wish_control::scaffold::name_for(path), str::to_owned);
     // The full path of this program, so that `.mcp.json` works even when
     // `wen` is not on the PATH of the program that starts it.
@@ -188,7 +200,12 @@ pub fn new_project(
         .and_then(|exe| exe.to_str().map(str::to_owned))
         .unwrap_or_else(|| "wen".to_owned());
     let written = match template {
-        None => wish_control::scaffold::create_project(path, &name, &command)?,
+        None => wish_control::scaffold::create_project_of_kind(
+            path,
+            &name,
+            &command,
+            kind.unwrap_or_default(),
+        )?,
         Some(template) => {
             let known = wish_control::scaffold::all_templates();
             let Some(found) = known.iter().find(|known| known.id == template) else {
@@ -203,11 +220,36 @@ pub fn new_project(
                     },
                 ));
             };
+            if let Some(kind) = kind.filter(|kind| *kind != found.kind) {
+                return Err(wish_core::Diagnostic::error(
+                    "template_kind_mismatch",
+                    format!(
+                        "The template '{template}' is a {} template, not {}.",
+                        found.kind.name(),
+                        kind.name()
+                    ),
+                    format!(
+                        "Leave out --kind (the template's {} is used), or choose a {} template: {}.",
+                        found.kind.name(),
+                        kind.name(),
+                        known
+                            .iter()
+                            .filter(|known| known.kind == kind)
+                            .map(|known| known.id.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                ));
+            }
             wish_control::scaffold::create_from_template(path, &name, &command, &found.path)?
         }
     };
+    let made_kind = wish_control::project::read_project(path)
+        .ok()
+        .flatten()
+        .map_or(ProjectKind::D3, |config| config.kind());
     Ok(if as_json {
-        json!({ "ok": true, "root": dir, "name": name, "files": written, "mcp_command": command })
+        json!({ "ok": true, "root": dir, "name": name, "kind": made_kind.name(), "files": written, "mcp_command": command })
             .to_string()
     } else {
         format!(
