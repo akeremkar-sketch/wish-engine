@@ -242,6 +242,34 @@ pub struct EditorApp {
     orbiting: bool,
     /// The middle button is held on the view: the eye slides.
     panning: bool,
+    /// The scene view is in its 2D mode (release 1.1): a top-down
+    /// orthographic eye that pans and zooms over the XY plane, no orbit. A
+    /// 2D project starts in it; the view's 2D button switches.
+    flat: bool,
+    /// The person switched the mode (the project's kind no longer decides).
+    flat_chosen: bool,
+    /// The 2D mode's eye, made from the scene's first camera on first use.
+    flat_eye: RefCell<Option<crate::view2d::FlatEye>>,
+    /// Space is held (Space and the left button pan the 2D view).
+    space_held: bool,
+    /// While the 2D view pans: where the pointer was at its last move (the
+    /// world follows the pointer).
+    grab: Option<(f32, f32)>,
+    /// A rectangle being dragged out on the 2D view to select: where it
+    /// began and where the pointer is.
+    marquee: Option<((f32, f32), (f32, f32))>,
+    /// A finished rectangle waiting to select: in window pixels, and
+    /// whether Ctrl was held (add to the selection).
+    pending_marquee: Option<(Rect, bool)>,
+    /// The scene camera's pixels per meter, when it is a pixel camera (the
+    /// 2D grid is then its pixels).
+    scene_ppu: Cell<Option<f32>>,
+    /// The first tilemap's cell (meters across and up), and the scene
+    /// revision it was read at: the 2D grid otherwise.
+    tile_cell: (Option<[f32; 2]>, u64),
+    /// Each sprite's and tilemap's box on the scene view at the last
+    /// picture, by name (pixels of the view).
+    flat_boxes: BTreeMap<String, [i32; 4]>,
     /// The controls that float on the scene view (last frame's places): a
     /// press on them is theirs, not the view's.
     view_overlays: RefCell<Vec<Rect>>,
@@ -454,6 +482,8 @@ struct Actions {
     mode: Option<Mode>,
     toggle_space: bool,
     toggle_snap: bool,
+    /// Switch the scene view between its 2D and 3D modes.
+    toggle_flat: bool,
     /// What the browser asked for.
     browser: BrowserActions,
     /// A file was dropped on the view: its path, and where.
@@ -528,6 +558,7 @@ impl Actions {
             || self.mode.is_some()
             || self.toggle_space
             || self.toggle_snap
+            || self.toggle_flat
             || self.browser.any()
             || self.drop.is_some()
             || self.make_prefab.is_some()
@@ -569,6 +600,16 @@ impl EditorApp {
             focus: 8.0,
             orbiting: false,
             panning: false,
+            flat: false,
+            flat_chosen: false,
+            flat_eye: RefCell::new(None),
+            space_held: false,
+            grab: None,
+            marquee: None,
+            pending_marquee: None,
+            scene_ppu: Cell::new(None),
+            tile_cell: (None, u64::MAX),
+            flat_boxes: BTreeMap::new(),
             view_overlays: RefCell::new(Vec::new()),
             view_split: Cell::new(0.5),
             maximized: Cell::new(None),
@@ -1197,6 +1238,47 @@ impl EditorApp {
         }
     }
 
+    /// Over the 2D view: the grid (the scene camera's pixels, or the
+    /// tilemap's cells, or half meters; thinned when they would be too
+    /// close), the world's axes, and the rectangle being dragged out.
+    fn flat_overlay(&self, ui: &mut egui::Ui, area: Rect) {
+        let Some(eye) = *self.flat_eye.borrow() else {
+            return;
+        };
+        let painter = ui.painter().with_clip_rect(area);
+        let line = crate::style::pal().line;
+        let faint = egui::Stroke::new(1.0, line.gamma_multiply(0.5));
+        let (xs, ys, _) = eye.grid(area, self.flat_grid());
+        for x in xs {
+            painter.line_segment([pos2(x, area.min.y), pos2(x, area.max.y)], faint);
+        }
+        for y in ys {
+            painter.line_segment([pos2(area.min.x, y), pos2(area.max.x, y)], faint);
+        }
+        // The world's axes through the origin.
+        let origin = eye.screen_at(area, glam::Vec2::ZERO);
+        let axis = egui::Stroke::new(1.0, crate::style::pal().weak);
+        painter.line_segment(
+            [pos2(area.min.x, origin.y), pos2(area.max.x, origin.y)],
+            axis,
+        );
+        painter.line_segment(
+            [pos2(origin.x, area.min.y), pos2(origin.x, area.max.y)],
+            axis,
+        );
+        if let Some((start, now)) = self.marquee {
+            let rect = crate::view2d::marquee(pos2(start.0, start.1), pos2(now.0, now.1));
+            let select = crate::style::pal().select;
+            painter.rect_filled(rect, 0.0, select.gamma_multiply(0.15));
+            painter.rect_stroke(
+                rect,
+                0.0,
+                egui::Stroke::new(1.0, select),
+                egui::StrokeKind::Inside,
+            );
+        }
+    }
+
     /// Outlines, on the view, the cell under the pointer or the cells the
     /// stroke being made would paint.
     fn paint_outline(&self, ui: &mut egui::Ui, area: Rect) {
@@ -1365,6 +1447,12 @@ impl EditorApp {
                     && let Some(drag) =
                         Drag::begin(&eye, self.mode, handle, self.space, target, pointer)
                 {
+                    // The 2D mode snaps moves to its grid (pixels or tiles).
+                    let drag = if self.flat {
+                        drag.with_grid(self.flat_grid())
+                    } else {
+                        drag
+                    };
                     self.drag = Some(ActiveDrag {
                         drag,
                         id,
@@ -1416,7 +1504,7 @@ impl EditorApp {
         let pointer = pointer.filter(|p| self.viewport.contains(*p))?;
         let (_, target) = self.target.as_ref()?;
         let axes = gizmo::axes(target.world_rotation(), self.space);
-        gizmo::hit_test(eye, self.mode, axes, target.pivot(), pointer)
+        gizmo::hit_test(eye, self.mode, axes, target.pivot(), pointer, self.flat)
     }
 
     /// The inspector's changes, as one `edit_apply` on every selected entity
@@ -1804,6 +1892,10 @@ impl EditorApp {
             .as_str()
             .and_then(wish_control::project::ProjectKind::parse)
             .unwrap_or_default();
+        // A 2D project's scene view starts in its 2D mode.
+        if !self.flat_chosen {
+            self.flat = self.project_kind == wish_control::project::ProjectKind::D2;
+        }
         self.scenes = info["scenes"]
             .as_array()
             .map(|all| {
@@ -2440,6 +2532,7 @@ impl EditorApp {
             "agent.panel" => actions.toggle_cockpit = true,
             "view.game_view" => actions.toggle_game_view = true,
             "view.reset_camera" => actions.reset_camera = true,
+            "view.mode_2d" => actions.toggle_flat = true,
             "view.frame" => actions.frame |= self.play.is_none(),
             "view.maximize" => self.toggle_maximized(None),
             "project.check" => actions.show_problems = true,
@@ -3653,6 +3746,13 @@ impl EditorApp {
     /// Where a window pixel is on the ground (y = 0), or six metres along
     /// the pointer's ray when it does not meet the ground.
     fn ground_point(&self, at: Pos2) -> Vec3 {
+        // The 2D view puts things in the world's plane (z = 0).
+        if self.flat
+            && let Some(eye) = *self.flat_eye.borrow()
+        {
+            let point = eye.world_at(self.viewport, at);
+            return Vec3::new(point.x, point.y, 0.0);
+        }
         let Some(eye) = self.eye_now() else {
             return Vec3::ZERO;
         };
@@ -3914,6 +4014,42 @@ impl EditorApp {
     /// entity fills the view (its size from its scale: the shapes are a
     /// metre across), and turns and zooms around it from then on.
     fn frame_selection(&mut self) {
+        if self.flat
+            && let Some(eye) = self.flat_eye.borrow_mut().as_mut()
+        {
+            // The selection's boxes on the view, or its place.
+            let rect = self.viewport;
+            let mut corners: Vec<glam::Vec2> = self
+                .selected
+                .iter()
+                .filter_map(|name| self.flat_boxes.get(name))
+                .flat_map(|b| {
+                    [
+                        eye.world_at(rect, rect.min + vec2(b[0] as f32, b[1] as f32)),
+                        eye.world_at(rect, rect.min + vec2(b[2] as f32, b[3] as f32)),
+                    ]
+                })
+                .collect();
+            if corners.is_empty()
+                && let Some((_, target)) = self.target.as_ref()
+            {
+                let pivot = target.pivot();
+                let half = target.scale.abs().max_element().max(0.5);
+                corners = vec![
+                    glam::Vec2::new(pivot.x - half, pivot.y - half),
+                    glam::Vec2::new(pivot.x + half, pivot.y + half),
+                ];
+            }
+            if corners.is_empty() {
+                self.status = t("Select an entity to frame it").to_owned();
+                return;
+            }
+            let low = corners.iter().fold(corners[0], |a, b| a.min(*b));
+            let high = corners.iter().fold(corners[0], |a, b| a.max(*b));
+            eye.frame(rect, low, high);
+            self.picture_stale = true;
+            return;
+        }
         let Some((_, target)) = self.target.as_ref() else {
             self.status = t("Select an entity to frame it").to_owned();
             return;
@@ -4201,6 +4337,7 @@ impl EditorApp {
             self.inspected_for = (Vec::new(), u64::MAX);
             self.target_for = (Vec::new(), u64::MAX);
             *self.eye.borrow_mut() = None;
+            *self.flat_eye.borrow_mut() = None;
             self.refresh_scene();
         }
         if let Some(view) = actions.view {
@@ -4209,6 +4346,7 @@ impl EditorApp {
         }
         if actions.reset_camera {
             *self.eye.borrow_mut() = None;
+            *self.flat_eye.borrow_mut() = None;
             self.focus = 8.0;
             self.picture_stale = true;
         }
@@ -4454,6 +4592,14 @@ impl EditorApp {
         if actions.toggle_snap {
             self.snap = !self.snap;
         }
+        if actions.toggle_flat {
+            self.flat = !self.flat;
+            self.flat_chosen = true;
+            self.hovered = None;
+            self.marquee = None;
+            self.grab = None;
+            self.picture_stale = true;
+        }
         if let Some((id, toggle)) = actions.select {
             self.click_entity(&id, toggle);
         }
@@ -4484,6 +4630,16 @@ impl EditorApp {
             } else {
                 components()
             };
+            let mut components = components;
+            // The 2D view puts what it makes in the middle of what it shows,
+            // in the plane (a camera keeps its distance in front of it).
+            if self.flat
+                && let Some(eye) = *self.flat_eye.borrow()
+            {
+                let at = &mut components["Transform"]["translation"];
+                let z = at.get(2).and_then(Value::as_f64).unwrap_or(0.0);
+                *at = json!([eye.centre.x, eye.centre.y, z]);
+            }
             let op = json!({ "op": "spawn", "id": id, "components": components });
             if self.edit(&tf("added {id}", &[("id", &id)]), vec![op]) {
                 self.selected = vec![id];
@@ -4673,6 +4829,10 @@ impl EditorApp {
                         _ => {}
                     }
                 }
+                continue;
+            }
+            // The 2D mode pans and zooms, and has no orbit.
+            if self.flat && self.flat_input(event, over_view(self)) {
                 continue;
             }
             // Alt and the left button orbit the eye (the handles do not
@@ -4872,16 +5032,28 @@ impl EditorApp {
         }
         let redraw =
             self.picture_stale || self.drawn_size != (width, height) || self.picture.is_none();
-        if !redraw && self.pending_pick.is_none() {
+        if !redraw && self.pending_pick.is_none() && self.pending_marquee.is_none() {
             return false;
         }
         let eye = &self.eye;
         let last = &self.last_camera;
+        let flat = self.flat;
+        let flat_eye = &self.flat_eye;
+        let scene_ppu = &self.scene_ppu;
         let camera = |base: &CameraView| {
-            let mut eye = eye.borrow_mut();
-            let applied = eye
-                .get_or_insert_with(|| FlyCamera::from_view(base))
-                .apply(base);
+            scene_ppu.set(base.pixel.map(|pixel| pixel.unit()));
+            let applied = if flat {
+                // The 2D mode: top down over the plane, wherever the
+                // scene's camera looks.
+                flat_eye
+                    .borrow_mut()
+                    .get_or_insert_with(|| crate::view2d::FlatEye::from_camera(base))
+                    .camera(base)
+            } else {
+                eye.borrow_mut()
+                    .get_or_insert_with(|| FlyCamera::from_view(base))
+                    .apply(base)
+            };
             *last.borrow_mut() = Some(applied);
             applied
         };
@@ -4928,7 +5100,7 @@ impl EditorApp {
         if self.drag.is_some() {
             return false;
         }
-        if pick.is_none() && self.selected.is_empty() {
+        if pick.is_none() && self.selected.is_empty() && self.pending_marquee.is_none() {
             self.outlines.clear();
             return false;
         }
@@ -4953,15 +5125,42 @@ impl EditorApp {
             return false;
         };
         let origin = self.viewport.min;
+        // Sprites and tilemaps are not in the identity buffer: what is
+        // under the click among them, and where they are.
+        let point = pick.map(|(x, y, _)| [x - origin.x, y - origin.y]);
+        let flat_source = match &session {
+            Some(id) => self.workspace.render_flat(
+                PictureSource::Session(id),
+                if split { Some(&camera) } else { None },
+                (width, height),
+                point,
+            ),
+            None => self.workspace.render_flat(
+                PictureSource::Scene(Some(&scene)),
+                Some(&camera),
+                (width, height),
+                point,
+            ),
+        };
+        let flat_hits = flat_source.unwrap_or_default();
+        self.flat_boxes = flat_hits.boxes.clone();
         let before = self.selected.clone();
         if let Some((x, y, toggle)) = pick {
-            let hit = ids
-                .ids
-                .entity_at(
-                    (x - origin.x).max(0.0) as u32,
-                    (y - origin.y).max(0.0) as u32,
-                )
-                .and_then(|entity| ids.names.get(&entity).cloned());
+            // A sprite drawn over everything first, then what the identity
+            // buffer has there, then a tilemap's tile.
+            let hit = flat_hits
+                .sprites_under
+                .first()
+                .cloned()
+                .or_else(|| {
+                    ids.ids
+                        .entity_at(
+                            (x - origin.x).max(0.0) as u32,
+                            (y - origin.y).max(0.0) as u32,
+                        )
+                        .and_then(|entity| ids.names.get(&entity).cloned())
+                })
+                .or_else(|| flat_hits.tilemaps_under.first().cloned());
             if self.cockpit.pointing || self.ai_mode {
                 // Show and tell: what was clicked goes with the request.
                 self.cockpit.pointing = false;
@@ -4979,10 +5178,12 @@ impl EditorApp {
                 }
             }
         }
+        // A rectangle dragged out on the 2D view selects what it touches.
+        let marquee = self.pending_marquee.take();
         let mut boxes: BTreeMap<_, _> = ids
             .names
             .iter()
-            .filter(|(_, name)| self.selected.contains(name))
+            .filter(|(_, name)| marquee.is_some() || self.selected.contains(name))
             .map(|(entity, _)| (*entity, [i32::MAX, i32::MAX, i32::MIN, i32::MIN]))
             .collect();
         for y in (0..height).step_by(2) {
@@ -4997,13 +5198,43 @@ impl EditorApp {
                 }
             }
         }
-        self.outlines = boxes
-            .values()
-            .filter(|b| b[0] <= b[2])
-            .map(|b| {
+        let mut named: BTreeMap<String, [i32; 4]> = boxes
+            .iter()
+            .filter(|(_, b)| b[0] <= b[2])
+            .filter_map(|(entity, b)| {
+                ids.names
+                    .get(entity)
+                    .map(|name| (name.clone(), [b[0], b[1], b[2] + 2, b[3] + 2]))
+            })
+            .collect();
+        for (name, found) in &flat_hits.boxes {
+            named.entry(name.clone()).or_insert(*found);
+        }
+        if let Some((rect, add)) = marquee {
+            let inside = rect.translate(-origin.to_vec2());
+            let caught: Vec<String> = named
+                .iter()
+                .filter(|(name, found)| {
+                    !name.starts_with('#') && crate::view2d::touches(**found, inside)
+                })
+                .map(|(name, _)| name.clone())
+                .collect();
+            if !add {
+                self.selected.clear();
+            }
+            for name in caught {
+                if !self.selected.contains(&name) {
+                    self.selected.push(name);
+                }
+            }
+        }
+        self.outlines = named
+            .iter()
+            .filter(|(name, _)| self.selected.contains(name))
+            .map(|(_, b)| {
                 Rect::from_min_max(
                     pos2(origin.x + b[0] as f32, origin.y + b[1] as f32),
-                    pos2(origin.x + b[2] as f32 + 2.0, origin.y + b[3] as f32 + 2.0),
+                    pos2(origin.x + b[2] as f32, origin.y + b[3] as f32),
                 )
             })
             .collect();
@@ -5050,6 +5281,12 @@ impl EditorApp {
                 .clicked()
             {
                 actions.toggle_snap = true;
+            }
+            if tool_button(ui, Icon::Image, t("2D"), true, self.flat, true, None)
+                .on_hover_text(t("Switch the scene view between 2D and 3D"))
+                .clicked()
+            {
+                actions.toggle_flat = true;
             }
             if tool_button(
                 ui,
@@ -5404,6 +5641,14 @@ impl EditorApp {
             }
             if item(ui, t("Reset camera"), key("view.reset_camera"), true) {
                 actions.reset_camera = true;
+            }
+            if item(
+                ui,
+                t("Switch the scene view between 2D and 3D"),
+                key("view.mode_2d"),
+                true,
+            ) {
+                actions.toggle_flat = true;
             }
             ui.separator();
             ui.menu_button(t("Theme"), |ui| {
@@ -6190,8 +6435,11 @@ impl EditorApp {
                 // on them is theirs, not the view's.
                 if area != Rect::NOTHING {
                     if self.play.is_none() {
+                        if self.flat {
+                            self.flat_overlay(ui, area);
+                        }
                         overlays.push(self.view_tools(ui, area, &mut actions));
-                        view_hint(ui, area);
+                        view_hint(ui, area, self.flat);
                     }
                     overlays.push(self.view_shows(ui, area, &mut actions));
                 }
@@ -6375,6 +6623,7 @@ impl EditorApp {
         }
         changed |= self.cockpit_tick() || self.cockpit.run.is_some();
         self.refresh_target();
+        self.refresh_tile_cell();
         self.view_input(&events);
         self.tick_play(seconds);
         self.refresh_inspected();
@@ -6459,7 +6708,7 @@ impl EditorApp {
                     &mut self.canvas,
                     self.viewport,
                     &eye,
-                    self.mode,
+                    (self.mode, self.flat),
                     gizmo::axes(current.world_rotation(), self.space),
                     current.pivot(),
                     self.drag.as_ref().map(|d| d.drag.handle()).or(self.hovered),
@@ -6497,6 +6746,146 @@ impl EditorApp {
     /// The canvas as drawn last.
     pub fn canvas(&self) -> &Canvas {
         &self.canvas
+    }
+
+    /// Whether the scene view is in its 2D mode.
+    pub fn flat_view(&self) -> bool {
+        self.flat
+    }
+
+    /// The 2D mode's eye, once the view was drawn in it.
+    pub fn flat_eye(&self) -> Option<crate::view2d::FlatEye> {
+        *self.flat_eye.borrow()
+    }
+
+    /// The 2D grid's cell (meters across and up): the scene camera's pixels
+    /// when it is a pixel camera, else the first tilemap's cells, else half
+    /// a meter.
+    pub fn flat_grid(&self) -> [f32; 2] {
+        match (self.scene_ppu.get(), self.tile_cell.0) {
+            (Some(ppu), _) => [1.0 / ppu; 2],
+            (None, Some(cell)) => cell,
+            (None, None) => [gizmo::SNAP_MOVE; 2],
+        }
+    }
+
+    /// Reads the first tilemap's cell size when the scene changed (for the
+    /// 2D grid and snapping).
+    fn refresh_tile_cell(&mut self) {
+        if !self.flat || self.tile_cell.1 == self.revision {
+            return;
+        }
+        self.tile_cell.1 = self.revision;
+        let found = self.call(
+            "entity_query",
+            &json!({ "scene": self.scene.clone(), "with": ["Tilemap"],
+                     "components": ["Tilemap"], "limit": 1 }),
+        );
+        self.tile_cell.0 = found["entities"][0]["components"]["Tilemap"]["cell_size"]
+            .as_array()
+            .and_then(|cell| {
+                let side = |v: &Value| v.as_f64().map(|v| v as f32).filter(|v| *v > 0.0);
+                Some([side(cell.first()?)?, side(cell.get(1)?)?])
+            });
+    }
+
+    /// What a plain input event means in the 2D mode: the wheel zooms
+    /// toward the pointer, the middle button (or Space or Alt with the left
+    /// one) pans, a left drag on the view draws a rectangle to select; there
+    /// is no orbit, no looking around, no flying. Returns whether the event
+    /// was the 2D view's alone.
+    fn flat_input(&mut self, event: &ShellEvent, over_view: bool) -> bool {
+        let rect = self.viewport;
+        match event {
+            ShellEvent::Pointer { x, y } => {
+                if let Some((gx, gy)) = self.grab {
+                    if let Some(eye) = self.flat_eye.borrow_mut().as_mut() {
+                        eye.pan(rect, x - gx, y - gy);
+                    }
+                    self.grab = Some((*x, *y));
+                    self.picture_stale = true;
+                    return true;
+                }
+                if let Some(start) = self.press
+                    && self.drag.is_none()
+                    && self.paint.stroke.is_none()
+                    && ((start.0 - x).abs() >= CLICK_SLOP
+                        || (start.1 - y).abs() >= CLICK_SLOP
+                        || self.marquee.is_some())
+                {
+                    self.marquee = Some((start, (*x, *y)));
+                }
+                false
+            }
+            ShellEvent::Scroll { y, .. } if over_view => {
+                if let (Some(eye), Some((px, py))) =
+                    (self.flat_eye.borrow_mut().as_mut(), self.pointer)
+                {
+                    // One notch of a wheel (48) comes an eighth nearer.
+                    eye.zoom_at(rect, pos2(px, py), (*y / 48.0 * 0.125).clamp(-0.5, 0.5));
+                    self.picture_stale = true;
+                }
+                true
+            }
+            ShellEvent::Button {
+                button: Button::Middle,
+                pressed,
+                ..
+            } => {
+                self.grab = (*pressed && over_view).then_some(self.pointer).flatten();
+                true
+            }
+            ShellEvent::Button {
+                button: Button::Secondary,
+                ..
+            } => true,
+            ShellEvent::Button {
+                button: Button::Primary,
+                pressed: true,
+                modifiers,
+            } if over_view && (self.space_held || modifiers.alt || self.modifiers.alt) => {
+                self.grab = self.pointer;
+                self.press = None;
+                true
+            }
+            ShellEvent::Button {
+                button: Button::Primary,
+                pressed: false,
+                modifiers,
+            } => {
+                if self.grab.take().is_some() {
+                    return true;
+                }
+                if let Some((start, end)) = self.marquee.take() {
+                    self.press = None;
+                    self.pending_marquee = Some((
+                        crate::view2d::marquee(pos2(start.0, start.1), pos2(end.0, end.1)),
+                        modifiers.ctrl,
+                    ));
+                    self.picture_stale = true;
+                    return true;
+                }
+                false
+            }
+            ShellEvent::MouseDelta { .. } => true,
+            ShellEvent::Key { name, pressed, .. } if name == "Space" => {
+                let typing = self
+                    .editor
+                    .as_ref()
+                    .is_some_and(|e| e.context().egui_wants_keyboard_input());
+                self.space_held = *pressed && !typing;
+                false
+            }
+            ShellEvent::Key {
+                name,
+                pressed: true,
+                ..
+            } if name == "Escape" && self.marquee.take().is_some() => {
+                self.press = None;
+                true
+            }
+            _ => false,
+        }
     }
 }
 
@@ -6674,14 +7063,16 @@ fn floating(ui: &mut Ui, band: Rect, right: bool, add: impl FnOnce(&mut Ui)) -> 
 }
 
 /// How to move around the view, quietly at its bottom left.
-fn view_hint(ui: &Ui, area: Rect) {
+fn view_hint(ui: &Ui, area: Rect, flat: bool) {
     let font = egui::FontId::proportional(11.0);
-    let galley = ui.painter().layout_no_wrap(
+    let text = if flat {
+        t("Middle drag or Space+drag: pan · Wheel: zoom · Drag: select a rectangle · F: frame")
+    } else {
         t("Alt+drag: orbit · Middle drag: pan · Wheel: zoom · Right drag: fly (WASD) · F: frame")
-            .to_owned(),
-        font,
-        crate::style::pal().text,
-    );
+    };
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), font, crate::style::pal().text);
     let size = galley.size() + vec2(12.0, 6.0);
     if size.x + 16.0 > area.width() {
         return;

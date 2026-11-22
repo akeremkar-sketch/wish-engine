@@ -148,6 +148,11 @@ pub(crate) const COMMANDS: &[Command] = &[
         keys: "Shift+Space",
     },
     Command {
+        id: "view.mode_2d",
+        name: || t("Switch the scene view between 2D and 3D"),
+        keys: "",
+    },
+    Command {
         id: "view.frame",
         name: || t("Frame the selection"),
         keys: "F",

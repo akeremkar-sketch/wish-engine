@@ -230,13 +230,26 @@ fn ring_points(pivot: Vec3, normal: Vec3, radius: f32) -> Vec<Vec3> {
         .collect()
 }
 
+/// Whether the handle of axis `index` is shown in `mode`: in the 2D mode
+/// (`flat`) only X and Y move and scale, and only Z turns.
+fn shown(mode: Mode, index: usize, flat: bool) -> bool {
+    !flat
+        || match mode {
+            Mode::Translate | Mode::Scale => index < 2,
+            Mode::Rotate => index == 2,
+        }
+}
+
 /// The handle under the pointer, if any: the nearest within a few pixels.
+/// In the 2D mode (`flat`): only the X and Y arrows and scale handles, the
+/// Z ring, and (moving) the centre, which moves in the plane.
 pub fn hit_test(
     eye: &Eye,
     mode: Mode,
     axes: [Vec3; 3],
     pivot: Vec3,
     pointer: Pos2,
+    flat: bool,
 ) -> Option<Handle> {
     let length = eye.handle_length(pivot);
     let centre = eye.project(pivot)?;
@@ -246,7 +259,13 @@ pub fn hit_test(
             best = Some((distance, handle));
         }
     };
+    if flat && mode == Mode::Translate && (pointer - centre).length() <= 10.0 {
+        return Some(Handle::Uniform);
+    }
     for (index, axis) in axes.iter().enumerate() {
+        if !shown(mode, index, flat) {
+            continue;
+        }
         match mode {
             Mode::Translate | Mode::Scale => {
                 if let Some(end) = eye.project(pivot + *axis * length) {
@@ -320,6 +339,12 @@ pub struct Drag {
     /// from the centre, when it began.
     start: f32,
     start_target: Target,
+    /// Moving in the plane (the 2D mode's centre handle): where the
+    /// pointer's ray met the plane through the pivot when it began.
+    plane_start: Vec3,
+    /// The 2D mode's grid (meters across and up): snapping puts the moved
+    /// place on it, instead of moving by whole steps.
+    grid: Option<[f32; 2]>,
 }
 
 impl Drag {
@@ -346,9 +371,35 @@ impl Drag {
             pivot,
             start: 0.0,
             start_target: target,
+            plane_start: pivot,
+            grid: None,
         };
+        if (mode, handle) == (Mode::Translate, Handle::Uniform) {
+            drag.plane_start = drag.on_plane(eye, pointer)?;
+            return Some(drag);
+        }
         drag.start = drag.measure(eye, pointer)?;
         Some(drag)
+    }
+
+    /// Snaps moves to a grid of `step` meters (across, up) in the world's
+    /// plane: the 2D mode's pixels or tiles.
+    #[must_use]
+    pub fn with_grid(mut self, step: [f32; 2]) -> Self {
+        self.grid = Some(step);
+        self
+    }
+
+    /// Where the pointer's ray meets the plane through the pivot that faces
+    /// +Z (the 2D world's plane).
+    fn on_plane(&self, eye: &Eye, pointer: Pos2) -> Option<Vec3> {
+        let (origin, direction) = eye.ray(pointer);
+        if direction.z.abs() < 1e-6 {
+            return None;
+        }
+        let along = (self.pivot.z - origin.z) / direction.z;
+        let hit = origin + direction * along;
+        hit.is_finite().then_some(hit)
     }
 
     fn measure(&self, eye: &Eye, pointer: Pos2) -> Option<f32> {
@@ -371,15 +422,32 @@ impl Drag {
     /// The transform after the pointer moved to `pointer` (with snapping
     /// if asked): local translation, rotation, scale.
     pub fn transform(&self, eye: &Eye, pointer: Pos2, snap: bool) -> Option<Target> {
-        let now = self.measure(eye, pointer)?;
         let mut target = self.start_target;
+        let on_grid = |mut world: Vec3, axes: [bool; 2]| {
+            if let (true, Some(step)) = (snap, self.grid) {
+                for (index, moved) in axes.iter().enumerate() {
+                    if *moved && step[index].is_finite() && step[index] > 0.0 {
+                        world[index] = (world[index] / step[index]).round() * step[index];
+                    }
+                }
+            }
+            world
+        };
+        if (self.mode, self.handle) == (Mode::Translate, Handle::Uniform) {
+            let now = self.on_plane(eye, pointer)?;
+            let world = on_grid(self.pivot + (now - self.plane_start), [true, true]);
+            target.translation = target.parent.inverse().transform_point3(world);
+            return Some(target);
+        }
+        let now = self.measure(eye, pointer)?;
         match (self.mode, self.handle) {
             (Mode::Translate, Handle::Axis(i)) => {
                 let mut distance = now - self.start;
-                if snap {
+                if snap && self.grid.is_none() {
                     distance = (distance / SNAP_MOVE).round() * SNAP_MOVE;
                 }
                 let world = self.pivot + self.axes[i] * distance;
+                let world = on_grid(world, [self.axes[i].x != 0.0, self.axes[i].y != 0.0]);
                 target.translation = target.parent.inverse().transform_point3(world);
             }
             (Mode::Rotate, Handle::Axis(i)) => {
@@ -464,12 +532,13 @@ fn square(canvas: &mut Canvas, clip: Rect, at: Pos2, half: i32, color: [u8; 4]) 
 }
 
 /// Draws the handles over the picture, inside `clip`. `hot` is the handle
-/// under the pointer or being dragged.
+/// under the pointer or being dragged. In the 2D mode (`flat`): the handles
+/// [`hit_test`] takes, and a centre square that moves in the plane.
 pub fn draw(
     canvas: &mut Canvas,
     clip: Rect,
     eye: &Eye,
-    mode: Mode,
+    (mode, flat): (Mode, bool),
     axes: [Vec3; 3],
     pivot: Vec3,
     hot: Option<Handle>,
@@ -478,7 +547,18 @@ pub fn draw(
     let Some(centre) = eye.project(pivot) else {
         return;
     };
+    if flat && mode == Mode::Translate {
+        let color = if hot == Some(Handle::Uniform) {
+            ACTIVE
+        } else {
+            CENTRE
+        };
+        square(canvas, clip, centre, 5, color);
+    }
     for (index, axis) in axes.iter().enumerate() {
+        if !shown(mode, index, flat) {
+            continue;
+        }
         let color = if hot == Some(Handle::Axis(index)) {
             ACTIVE
         } else {
@@ -751,21 +831,24 @@ mod tests {
             .project(pivot + Vec3::Y * eye.handle_length(pivot) * 0.6)
             .unwrap();
         assert_eq!(
-            hit_test(&eye, Mode::Translate, world, pivot, on_y),
+            hit_test(&eye, Mode::Translate, world, pivot, on_y, false),
             Some(Handle::Axis(1))
         );
         let far = on_y + egui::vec2(60.0, 0.0);
-        assert_eq!(hit_test(&eye, Mode::Translate, world, pivot, far), None);
+        assert_eq!(
+            hit_test(&eye, Mode::Translate, world, pivot, far, false),
+            None
+        );
         let centre = eye.project(pivot).unwrap();
         assert_eq!(
-            hit_test(&eye, Mode::Scale, world, pivot, centre),
+            hit_test(&eye, Mode::Scale, world, pivot, centre, false),
             Some(Handle::Uniform)
         );
         // A ring is taken on its circle, not in its middle.
         let ring = eye
             .project(pivot + Vec3::Y * eye.handle_length(pivot) * RING)
             .unwrap();
-        assert!(hit_test(&eye, Mode::Rotate, world, pivot, ring).is_some());
+        assert!(hit_test(&eye, Mode::Rotate, world, pivot, ring, false).is_some());
     }
 
     #[test]
