@@ -11,7 +11,7 @@ use wish_core::{Diagnostic, Result};
 pub const COMMANDS: &[&str] = &[
     "run", "bench", "schema", "mv", "check", "fmt", "migrate", "watch", "capture", "describe",
     "shaders", "view", "edit", "call", "do", "new", "build", "export", "play", "replay", "test",
-    "pkg", "engines", "sdk", "package", "mcp", "examples", "help", "version",
+    "pkg", "engines", "sdk", "package", "mcp", "examples", "help", "version", "net",
 ];
 
 /// A parsed command line.
@@ -114,6 +114,8 @@ pub enum Command {
     },
     /// Play the project's game in a window.
     Play(PlayArgs),
+    /// Host or join an online match over UDP (release 1.1).
+    Net(NetArgs),
     Edit(EditArgs),
     /// Run the project's scenario tests (the `test_run` tool).
     Test {
@@ -290,6 +292,32 @@ pub struct PlayArgs {
     pub software: bool,
     /// Close after this many frames (for scripts).
     pub exit_after: Option<u64>,
+    /// Players of the game: more than one hosts a match with bots in the
+    /// other seats (release 1.1).
+    pub players: usize,
+}
+
+/// The options of `wen net`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NetArgs {
+    /// `host` or `join`.
+    pub action: String,
+    /// What `join` joins: `host:port`, or `discover`.
+    pub address: Option<String>,
+    /// The project folder.
+    pub root: Option<String>,
+    /// The scene (default: the project's).
+    pub scene: Option<String>,
+    /// The UDP port to host on (0 picks one).
+    pub port: u16,
+    /// The room code.
+    pub room: Option<String>,
+    /// The seats of the match (host).
+    pub players: usize,
+    /// The player's name.
+    pub name: Option<String>,
+    /// Stop after this many ticks (for scripts and tests).
+    pub frames: Option<u64>,
 }
 
 /// The options of `wen view`.
@@ -582,6 +610,17 @@ fn flags_of(command: &str) -> &'static [(&'static str, bool)] {
             ("--size", true),
             ("--software", false),
             ("--exit-after", true),
+            ("--players", true),
+            ("--json", false),
+        ],
+        "net" => &[
+            ("--root", true),
+            ("--scene", true),
+            ("--port", true),
+            ("--room", true),
+            ("--players", true),
+            ("--name", true),
+            ("--frames", true),
             ("--json", false),
         ],
         "edit" => &[
@@ -654,6 +693,21 @@ fn parse_number(flag: &str, value: &str) -> Result<u64> {
     })
 }
 
+/// `--players`: 1 to 16 (1 when not given).
+fn players_of(value: Option<&str>) -> Result<usize> {
+    let Some(value) = value else {
+        return Ok(1);
+    };
+    let count = parse_number("--players", value)?;
+    if !(1..=16).contains(&count) {
+        return Err(usage_error(
+            format!("--players {count} is not a number of players."),
+            "Give 1 to 16 players.".to_owned(),
+        ));
+    }
+    Ok(usize::try_from(count).unwrap_or(1))
+}
+
 /// Parses the arguments after the program name.
 pub fn parse(arguments: &[String]) -> Result<Args> {
     let Some((first, rest)) = arguments.split_first() else {
@@ -686,7 +740,15 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
         index += 1;
         if matches!(
             command,
-            "mv" | "check" | "fmt" | "migrate" | "new" | "test" | "replay" | "pkg" | "engines"
+            "mv" | "check"
+                | "fmt"
+                | "migrate"
+                | "new"
+                | "test"
+                | "replay"
+                | "pkg"
+                | "engines"
+                | "net"
         ) && !argument.starts_with('-')
         {
             positional.push(argument);
@@ -906,7 +968,48 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
             exit_after: value_of("--exit-after")
                 .map(|value| parse_number("--exit-after", value))
                 .transpose()?,
+            players: players_of(value_of("--players"))?,
         }),
+        "net" => {
+            const ACTIONS: &[&str] = &["host", "join"];
+            let action = positional.first().copied().unwrap_or("");
+            if !ACTIONS.contains(&action) {
+                return Err(usage_error(
+                    format!("'{action}' is not a wen net action."),
+                    "Write wen net host [--port 47600] [--players 4], or wen net join <host:port | discover> --room <code>.".to_owned(),
+                )
+                .with_candidates(ACTIONS.iter().copied()));
+            }
+            let address = positional.get(1).map(|w| (*w).to_owned());
+            if action == "join" && address.is_none() {
+                return Err(usage_error(
+                    "'wen net join' needs the host's address.".to_owned(),
+                    "Write it like: wen net join 192.168.1.20:47600 --room ABC234, or wen net join discover.".to_owned(),
+                ));
+            }
+            let port = value_of("--port")
+                .map(|value| parse_number("--port", value))
+                .transpose()?
+                .unwrap_or(0);
+            Command::Net(NetArgs {
+                action: action.to_owned(),
+                address,
+                root: value_of("--root").map(str::to_owned),
+                scene: value_of("--scene").map(str::to_owned),
+                port: u16::try_from(port).map_err(|_| {
+                    usage_error(
+                        format!("--port {port} is not a port."),
+                        "Give a port from 0 to 65535 (0 picks a free one).".to_owned(),
+                    )
+                })?,
+                room: value_of("--room").map(str::to_owned),
+                players: players_of(value_of("--players"))?.max(2),
+                name: value_of("--name").map(str::to_owned),
+                frames: value_of("--frames")
+                    .map(|value| parse_number("--frames", value))
+                    .transpose()?,
+            })
+        }
         "build" => Command::Build {
             root: value_of("--root").map(str::to_owned),
             dry_run: values.iter().any(|(flag, _)| *flag == "--dry-run"),

@@ -231,6 +231,21 @@ asla yazılmaz.
   - *Testleri çalıştır* hepsini koşar; başarısızlık adımı, tick'i ve okunan değerleri söyler.
   - Resim adımları altın görüntülerle karşılaştırılır; *Altın resimleri güncelle* yenilerini
     kaydeder.
+- **Çevrim içi oyun (1.1'de önizleme):**
+  - *Oyun → Oyuncular* ve 2 ya da daha büyük bir sayı: *Oynat* düzenleyicide çevrim içi bir maç kurar.
+    Ev sahibi sizsiniz (oyuncu 0); diğer koltukları benzetilmiş bir ağ üzerinden botlar alır ve
+    her koltuk hazır olunca maç başlar.
+  - *Oyun → Ağ paneli* lobiyi ve her koltuğu gösterir: hazır, bağlı, gidiş dönüş süresi ve aldığı
+    baytlar. *Oyun görünümünde göster* oyun görünümünü bir oyuncunun makinesine gönderilene çevirir
+    (*Ev sahibi*, *Oyuncu 1*, ...): gizli rollü bir oyun her oyuncuya yalnızca görebileceğini
+    gösterir.
+  - `wen play --players 4` aynısını kendi penceresinde yapar. `wen net host --port 47600` yerel
+    ağda insanlar için bir maç kurar ve oda kodunu yazar; başka bir bilgisayarda
+    `wen net join <adres>:47600 --room <kod>` (ya da `wen net join discover`) ona katılır.
+  - Testler ve ajanlar maçları `net` aracıyla oynar: bir senaryo testinin başındaki
+    `"net": { "players": 6, "bots": 5, "auto_start": true, "network": { "latency_ms": 100, "loss": 0.05 } }`
+    maçı kötü bir ağda botlarla oynar; bir `expect` adımındaki `"player": 3` oyuncu 3'ün
+    makinesinde olanı denetler. Bir maçın tekrar kaydı ev sahibinin günlüğünü tutar ve aynen oynar.
 - **Kendi penceresinde:** `wen play` oyunu kendi penceresinde oynatır. Oyun kodunu kaydetmek oyunu
   durdurmadan yeni koda geçirir.
 

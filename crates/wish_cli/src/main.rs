@@ -15,6 +15,7 @@ mod bench_render;
 mod bench_script;
 mod capture;
 mod edit;
+mod net;
 mod play;
 mod project_cmds;
 mod scene;
@@ -61,7 +62,9 @@ USAGE:
     wen replay <name> [--root <folder>] [--json]
     wen edit [--root <folder>] [--size <w>x<h>] [--software] [--exit-after <frames>]
              [--headless-frame <script.json> --out <picture.png>] [--lang <code>]
-    wen play [--root <folder>] [--scene <file>] [--size <w>x<h>] [--software] [--exit-after <frames>]
+    wen play [--root <folder>] [--scene <file>] [--size <w>x<h>] [--software] [--exit-after <frames>] [--players <n>]
+    wen net host [--port <port>] [--room <code>] [--players <n>] [--root <folder>] [--frames <ticks>]
+    wen net join <host:port | discover> [--room <code>] [--name <name>] [--root <folder>] [--frames <ticks>]
     wen pkg [list | search [words...] | add <id> | remove <id> | update [id] | lock | check <folder>
             | install <folder>] [--index <folder>] [--version <requirement>] [--user] [--replace]
             [--dry-run] [--root <folder>] [--json]
@@ -137,6 +140,12 @@ COMMANDS:
                scripts/src/lib.rs builds the new code and switches to it without stopping the game
                or losing its state; a compile error is shown and the old code keeps running. Escape
                closes the window. Needs a desktop session. Edits to scenes need a restart.
+               --players N plays an online match in the same window: you are the host and
+               N-1 bots take the other seats over the network simulator.
+    net        Online play over UDP with people on the local network (or through a relay): host
+               opens a match on --port (0 picks one) and prints its room code and every change of
+               the lobby; join joins one by its address and room code, or finds it with discover.
+               Runs until the match closes (or --frames ticks). Same as the net tool.
     test       Run the project's scenario tests (tests/*.test.json): each plays the game from a scene and
                a seed through its steps and says which step failed, at which tick, with the values
                the condition read. Pictures are compared with golden images (software adapter);
@@ -564,6 +573,7 @@ fn execute(args: Args) -> Result<String> {
         )),
         Command::View(view) => view::view(&view, args.json),
         Command::Play(play) => play::play(&play, args.json),
+        Command::Net(net) => net::run(&net, args.json),
         Command::Edit(edit) => edit::edit(&edit, args.json),
         Command::Schema { example } => schema(example.as_deref(), args.json),
         Command::Examples => Ok(if args.json {

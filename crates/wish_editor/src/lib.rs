@@ -13,6 +13,7 @@ mod gizmo;
 mod hub;
 pub mod i18n;
 mod inspector;
+mod netplay;
 mod packages_window;
 mod panels;
 pub mod parity;

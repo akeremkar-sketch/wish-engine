@@ -19,6 +19,15 @@
 //! `{ "input": { "move": [1, 0] }, "players": { "1": { "move": [-1, 0] } }, "frames": 60 }`
 //! (`input` is player 0's). Without `players` a test has one player, as
 //! every test before it.
+//!
+//! A test of an online game (release 1.1, design note
+//! `docs/design/1.1-net-tool.md` §5) says `"net"` at the top, the arguments
+//! of `net host` (`players` seats, `bots`, `drive`, `auto_start`,
+//! `host_plays`, `network`, `room_code`); its steps run on the networked
+//! session, `players` in a run step gives input by seat, and an `expect`
+//! with `"player": 3` checks what player 3's machine has. When every step
+//! holds, the host's match log is played into a fresh host world and must
+//! give the same world at every tick (`replay_verified`).
 
 use std::path::Path;
 
@@ -61,6 +70,8 @@ enum Step {
         expression: String,
         entity: Option<String>,
         message: Option<String>,
+        /// The seat whose machine's world is checked (a networked test).
+        player: Option<u32>,
     },
     Capture {
         camera: Option<String>,
@@ -77,8 +88,21 @@ struct Spec {
     scene: String,
     seed: u64,
     players: usize,
+    /// A networked match: the `net host` arguments (release 1.1).
+    net: Option<Value>,
     steps: Vec<Step>,
 }
+
+/// The keys of a test's `net`: `net host`'s own.
+const NET_KEYS: &[&str] = &[
+    "auto_start",
+    "bots",
+    "drive",
+    "host_plays",
+    "network",
+    "players",
+    "room_code",
+];
 
 fn text_of(step: &Value, key: &str) -> Option<String> {
     step.get(key).and_then(Value::as_str).map(str::to_owned)
@@ -114,6 +138,36 @@ fn parse(text: &str, file: &str) -> Result<Spec> {
                 )
             })?,
     };
+    let net = match value.get("net") {
+        None => None,
+        Some(Value::Object(given)) => {
+            if let Some(extra) = given.keys().find(|key| !NET_KEYS.contains(&key.as_str())) {
+                return Err(invalid(
+                    file,
+                    &format!("/net/{extra}"),
+                    &format!(
+                        "'{extra}' is not a setting of a test's match; they are {}",
+                        NET_KEYS.join(", ")
+                    ),
+                ));
+            }
+            if value.get("players").is_some() {
+                return Err(invalid(
+                    file,
+                    "/players",
+                    "a networked test says its seats in net.players, not at the top",
+                ));
+            }
+            Some(Value::Object(given.clone()))
+        }
+        Some(_) => {
+            return Err(invalid(
+                file,
+                "/net",
+                "'net' is the match, like { \"players\": 6, \"bots\": 5, \"auto_start\": true, \"network\": { \"latency_ms\": 100, \"loss\": 0.05 } }",
+            ));
+        }
+    };
     let list = value
         .get("steps")
         .and_then(Value::as_array)
@@ -138,6 +192,7 @@ fn parse(text: &str, file: &str) -> Result<Spec> {
             "entity",
             "message",
             "capture",
+            "player",
         ];
         if let Some(object) = step.as_object()
             && let Some(extra) = object.keys().find(|key| !known.contains(&key.as_str()))
@@ -149,10 +204,26 @@ fn parse(text: &str, file: &str) -> Result<Spec> {
             ));
         }
         if let Some(expression) = text_of(step, "expect") {
+            let player = match step.get("player") {
+                None => None,
+                Some(seat) => Some(
+                    seat.as_u64()
+                        .and_then(|s| u32::try_from(s).ok())
+                        .filter(|s| *s < 16 && net.is_some())
+                        .ok_or_else(|| {
+                            invalid(
+                                file,
+                                &format!("{at}/player"),
+                                "'player' is a seat (0 to 15) of a networked test (one with net)",
+                            )
+                        })?,
+                ),
+            };
             steps.push(Step::Expect {
                 expression,
                 entity: text_of(step, "entity"),
                 message: text_of(step, "message"),
+                player,
             });
         } else if let Some(capture) = step.get("capture") {
             let golden = text_of(capture, "golden").ok_or_else(|| {
@@ -205,6 +276,7 @@ fn parse(text: &str, file: &str) -> Result<Spec> {
         scene,
         seed,
         players,
+        net,
         steps,
     })
 }
@@ -399,6 +471,14 @@ impl Workspace {
         let started = (|| -> Result<String> {
             let scene = self.scene_path(Some(&spec.scene))?;
             self.open_document(&scene, false)?;
+            if let Some(net) = &spec.net {
+                let mut args = net.clone();
+                args["action"] = json!("host");
+                args["scene"] = json!(scene);
+                args["seed"] = json!(spec.seed);
+                let answer = self.run_tool("net", &args, &crate::parse_actor("test"))?;
+                return Ok(answer["session"].as_str().unwrap_or_default().to_owned());
+            }
             Ok(self
                 .start_session(&scene, spec.seed, spec.players, Vec::new())?
                 .0)
@@ -409,10 +489,32 @@ impl Workspace {
                 return json!({ "file": file, "name": name, "passed": false, "ticks": 0, "failure": problem_failure("setup", &problem) });
             }
         };
-        let outcome = self.run_steps(&id, &spec, &name, update_golden, dry_run);
+        let mut outcome = self.run_steps(&id, &spec, &name, update_golden, dry_run);
         let ticks = self.session(&id).map_or(0, |s| s.app.tick());
+        // A match is also its replay: the host's log played into a fresh
+        // host world must give the same world at every tick.
+        let mut verified = None;
+        if spec.net.is_some() && outcome.is_none() {
+            match self.verify_match(&id) {
+                Ok(None) => verified = Some(true),
+                Ok(Some(tick)) => {
+                    outcome = Some(step_failure(
+                        spec.steps.len(),
+                        "replay_diverged",
+                        tick,
+                        format!(
+                            "The host's match log, played into a fresh host world, differs from the match at tick {tick}."
+                        ),
+                    ));
+                }
+                Err(problem) => outcome = Some(problem_failure("replay", &problem)),
+            }
+        }
         self.sessions.open.remove(&id);
         let mut result = json!({ "file": file, "name": name, "passed": outcome.is_none(), "ticks": ticks, "steps": spec.steps.len() });
+        if let Some(verified) = verified {
+            result["replay_verified"] = json!(verified);
+        }
         if let Some(found) = outcome {
             result["failure"] = Value::Object(found);
         }
@@ -447,7 +549,14 @@ impl Workspace {
                     expression,
                     entity,
                     message,
-                } => self.expect_step(id, index, expression, entity.as_deref(), message.as_deref()),
+                    player,
+                } => self.expect_step(
+                    id,
+                    index,
+                    expression,
+                    (entity.as_deref(), *player),
+                    message.as_deref(),
+                ),
                 Step::Capture {
                     camera,
                     golden,
@@ -498,7 +607,8 @@ impl Workspace {
             },
             None => None,
         };
-        let stepped = match self.step_session(id, frames, condition.as_ref(), &values) {
+        let named = crate::tools::named_players(input, players, values.len());
+        let stepped = match self.step_session(id, frames, condition.as_ref(), (&values, &named)) {
             Ok((stepped, ..)) => stepped,
             Err(problem) => return Some(problem_failure("step", &problem).with_step(index)),
         };
@@ -533,7 +643,7 @@ impl Workspace {
         id: &str,
         index: usize,
         text: &str,
-        entity: Option<&str>,
+        (entity, player): (Option<&str>, Option<u32>),
         message: Option<&str>,
     ) -> Option<Map<String, Value>> {
         let tick = self.session(id).map_or(0, |s| s.app.tick());
@@ -556,8 +666,10 @@ impl Workspace {
             );
             return Some(found);
         }
-        let session = self.session(id).ok()?;
-        let world = session.app.world();
+        let world = match self.session_world(id, player) {
+            Ok(world) => world,
+            Err(problem) => return Some(problem_failure("expect", &problem).with_step(index)),
+        };
         let only = match entity {
             Some(wanted) => match entity_names(world).get(wanted) {
                 Some(found) => Some((wanted, *found)),

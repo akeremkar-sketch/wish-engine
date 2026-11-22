@@ -9,6 +9,7 @@ mod checkpoint;
 mod design;
 mod engines;
 mod export;
+mod net;
 mod packages;
 mod permissions;
 mod physics;
@@ -26,7 +27,8 @@ pub use design::{
     BRIEF_FIELDS, CardField, DESIGN_FILE, card_fields, read_design, summary as design_summary,
 };
 pub use engines::{act as engines_act, act_in as engines_act_in};
-pub(crate) use sim::parse_inputs;
+pub(crate) use net::{not_networked as net_not_networked, unknown_player as net_unknown_player};
+pub(crate) use sim::{named_players, parse_input, parse_inputs};
 pub use view::{IdPicture, Picture, PictureSource};
 
 /// How much a tool tells: `summary` (the default, cheapest), `normal`, `full`.
@@ -74,4 +76,5 @@ pub(crate) const CATALOG: &[Tool] = &[
     packages::PACKAGES,
     engines::ENGINES,
     tilemap::TILEMAP_EDIT,
+    net::NET,
 ];

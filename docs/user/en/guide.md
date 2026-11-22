@@ -232,6 +232,20 @@ the change enters the history as *file*, and a broken file is reported, never ov
   - Picture steps compare with golden images; *Update golden pictures* saves new ones.
 - **A window of its own:** `wen play` plays the game in its own window. Saving the game code
   switches to the new code without stopping.
+- **Online play (a preview in 1.1):**
+  - *Game → Players* and a number from 2: *Play* then hosts an online match in the editor. You
+    are the host (player 0); bots take the other seats over a simulated network, and the match
+    starts once every seat is ready.
+  - *Game → Network panel* shows the lobby and every seat: ready, connected, round trip and the
+    bytes it receives. *Show in the game view* switches the game view to what a player's machine
+    was sent (*Host*, *Player 1*, ...): a hidden-role game shows each player only what it may see.
+  - `wen play --players 4` does the same in a window of its own. `wen net host --port 47600`
+    hosts a match on the local network for people and prints its room code; on another computer
+    `wen net join <address>:47600 --room <code>` (or `wen net join discover`) joins it.
+  - Tests and agents play matches with the `net` tool: `"net": { "players": 6, "bots": 5,
+    "auto_start": true, "network": { "latency_ms": 100, "loss": 0.05 } }` at the top of a scenario
+    test plays it with bots over a bad network; `"player": 3` on an `expect` step checks what
+    player 3's machine has. A match's replay keeps the host's log and plays back exactly.
 
 ## 5. Game code
 

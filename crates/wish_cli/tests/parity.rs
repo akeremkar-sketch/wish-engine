@@ -270,6 +270,28 @@ fn examples() -> Vec<(&'static str, Value)> {
             json!({ "session": "s5", "players": { "4": { "jump": true } } }),
         ),
         ("sim_stop", json!({ "session": "s5" })),
+        // Online play (release 1.1): a match of two seats with a bot over
+        // the simulator, the bot's machine looked at, and two mistakes.
+        (
+            "net",
+            json!({ "action": "host", "players": 2, "bots": 1, "auto_start": true, "seed": 2,
+                    "network": { "latency_ms": 20, "seed": 3 } }),
+        ),
+        (
+            "net",
+            json!({ "action": "step", "session": "s6", "until": "Lobby.phase == 'Running'", "max_frames": 600 }),
+        ),
+        (
+            "net",
+            json!({ "action": "status", "session": "s6", "player": 1 }),
+        ),
+        (
+            "entity_query",
+            json!({ "session": "s6", "player": 1, "with": ["Camera"] }),
+        ),
+        ("net", json!({ "action": "status", "session": "s1" })),
+        ("sim_snapshot", json!({ "session": "s6" })),
+        ("net", json!({ "action": "stop", "session": "s6" })),
         // Scenario tests: none yet, then one that cannot be found.
         ("test_run", json!({})),
         ("test_run", json!({ "paths": ["tests/win.test.json"] })),
@@ -1006,6 +1028,36 @@ fn two_process_calls() -> Vec<(&'static str, Vec<(&'static str, Value)>)> {
                 ("sim_stop", json!({ "session": "s3" })),
                 ("sim_stop", json!({ "session": "s2" })),
                 ("sim_stop", json!({ "session": "s1" })),
+            ],
+        ),
+        // Online play: a match over a lossy simulated network, a player's
+        // machine, the match saved as a replay and played back.
+        (
+            "net",
+            vec![
+                (
+                    "net",
+                    json!({ "action": "host", "players": 2, "bots": 1, "auto_start": true, "seed": 2,
+                            "network": { "latency_ms": 30, "jitter_ms": 5, "loss": 0.05, "seed": 4 } }),
+                ),
+                (
+                    "net",
+                    json!({ "action": "step", "session": "s7", "until": "Lobby.phase == 'Running'", "max_frames": 600 }),
+                ),
+                (
+                    "net",
+                    json!({ "action": "step", "session": "s7", "frames": 20, "inputs": { "1": { "move": [1, 0] } } }),
+                ),
+                (
+                    "net",
+                    json!({ "action": "status", "session": "s7", "player": 1 }),
+                ),
+                (
+                    "replay",
+                    json!({ "action": "save", "session": "s7", "name": "match" }),
+                ),
+                ("replay", json!({ "action": "run", "name": "match" })),
+                ("net", json!({ "action": "stop", "session": "s7" })),
             ],
         ),
         ("script_build", vec![("script_build", json!({}))]),

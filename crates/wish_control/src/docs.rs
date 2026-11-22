@@ -633,6 +633,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "A client sent input for a player id that is not its own. The message was dropped: a client only ever sends its own player's input, so a modified client tried to move someone else.",
     ),
     (
+        "net_join_failed",
+        "A player could not join an online match: the address is not one (write host:port, such as 192.168.1.20:47600), discovery found no host of this game on the network, or the session has no host to join. Check that the host runs and is reachable, or join by its address.",
+    ),
+    (
         "net_key_rejected",
         "The other side of an online connection sent a public key that gives no shared secret (a point of low order). Nothing was sent to it: the other program is broken or hostile.",
     ),
@@ -659,6 +663,14 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "net_not_connected",
         "A message was sent before the connection was open. Wait for the Connected event first.",
+    ),
+    (
+        "net_not_networked",
+        "A net action (or player on entity_query, entity_get, capture_frame or describe_view) names a session that is not a networked match. Host one with net (action host); its world is the host's, and join and bots add players.",
+    ),
+    (
+        "net_player_unknown",
+        "A player seat named on a networked session has no player machine in this process (not seated yet, or a player on another machine). Step the session until net status lists the seat; only machines in this process can be looked at.",
     ),
     (
         "net_players_full",
@@ -691,6 +703,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "net_sequence_exhausted",
         "A connection's reliable channel used all its sequence numbers (about four billion fragments). Close the connection and join again.",
+    ),
+    (
+        "net_session_unsupported",
+        "A snapshot, a fork, a replay recording or a live edit was asked of a networked session. A match is the host, every player and the network in flight, so these are refused; play it again from the start (same scene, seeds and calls give the same match), and save its replay with replay save (no record needed).",
     ),
     (
         "net_socket_failed",

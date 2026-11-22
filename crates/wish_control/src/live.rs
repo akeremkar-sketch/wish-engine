@@ -221,6 +221,7 @@ impl Workspace {
         dry_run: bool,
     ) -> Result<Map<String, Value>> {
         let session = self.session_mut(id)?;
+        session.not_networked(id, "a live edit")?;
         if session.recording.is_some() {
             return Err(Diagnostic::error(
                 "live_edit_while_recording",

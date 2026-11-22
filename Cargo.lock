@@ -4733,6 +4733,7 @@ dependencies = [
  "wish_import",
  "wish_input",
  "wish_lobby",
+ "wish_net",
  "wish_particles",
  "wish_physics",
  "wish_render",
@@ -4744,6 +4745,7 @@ dependencies = [
  "wish_sight",
  "wish_text",
  "wish_transform",
+ "wish_types",
  "wish_ui",
 ]
 

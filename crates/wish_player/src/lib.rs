@@ -42,6 +42,10 @@ pub struct PlayOptions {
     pub develop: bool,
     /// The window's title (`None`: the project's name).
     pub title: Option<String>,
+    /// Players: more than one hosts an online match over the network
+    /// simulator with bots in the other seats, and the person plays the
+    /// host's seat (`wen play --players`, release 1.1).
+    pub players: usize,
 }
 
 /// Loads every model the scene's Model entities name from the project and
@@ -117,6 +121,7 @@ pub struct Game {
     root: PathBuf,
     scene: Option<String>,
     develop: bool,
+    players: usize,
     session: Option<String>,
     /// Real time owed to the game, in ticks.
     owed: f64,
@@ -145,6 +150,7 @@ impl Game {
             root: options.root.clone(),
             scene: options.scene.clone(),
             develop: options.develop,
+            players: options.players.max(1),
             session: None,
             owed: 0.0,
             messages: Vec::new(),
@@ -207,7 +213,15 @@ impl Game {
         if let Some(scene) = &self.scene {
             args["scene"] = json!(scene);
         }
-        let answer = self.run_tool("sim_start", &args);
+        let answer = if self.players > 1 {
+            args["action"] = json!("host");
+            args["players"] = json!(self.players);
+            args["bots"] = json!(self.players - 1);
+            args["auto_start"] = json!(true);
+            self.run_tool("net", &args)
+        } else {
+            self.run_tool("sim_start", &args)
+        };
         if answer["ok"] != true {
             return Err(
                 serde_json::from_value::<Diagnostic>(answer["error"].clone()).unwrap_or_else(

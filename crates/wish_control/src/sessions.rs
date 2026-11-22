@@ -50,6 +50,26 @@ pub(crate) struct Session {
     pub assets: String,
     /// How many players the session has (1 to `wish_types::MAX_PLAYERS`).
     pub players: usize,
+    /// The match, when the session is networked (`net host`, `net join`):
+    /// then `app` is the host's world (or this machine's, joined to a host
+    /// elsewhere) and stepping it steps the whole match.
+    pub net: Option<Box<crate::netplay::NetMatch>>,
+}
+
+impl Session {
+    /// Refuses what a networked session cannot do (`what`, for the message).
+    pub(crate) fn not_networked(&self, id: &str, what: &str) -> Result<()> {
+        if self.net.is_some() {
+            return Err(Diagnostic::error(
+                "net_session_unsupported",
+                format!(
+                    "Session {id} is a networked match: {what} is not possible on it (a match is the host, every player and the network in flight)."
+                ),
+                "Play the match again from the start instead: the same scene, seeds and calls give the same match. A networked session's replay is saved with replay save (no record needed).",
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// What a replay needs of a session that was recorded from tick 0: what the
@@ -232,11 +252,13 @@ impl Subject for LiveSubject<'_> {
 
 /// Builds the world of a session: the project's types, the example's
 /// systems (if the project names one), the game code's systems, the
-/// scene's entities.
-fn build_app(
+/// scene's entities. A player's machine of a networked match (`player`)
+/// leaves out the scene's replicated entities: they come from the host.
+pub(crate) fn build_app(
     workspace: &mut Workspace,
     scene: &str,
     seed: u64,
+    player: bool,
 ) -> Result<(App, Option<wish_script::ScriptRuntime>, String)> {
     let example = workspace.example().map(str::to_owned);
     let mut app = App::new(AppConfig {
@@ -247,6 +269,16 @@ fn build_app(
     // The scene first, so that its resource values win over system defaults.
     let open = workspace.document(scene)?;
     open.doc.instantiate(app.world_mut())?;
+    if player {
+        let replicated: Vec<Entity> = app
+            .world()
+            .entities()
+            .filter(|entity| app.world().has::<wish_types::Replicated>(*entity))
+            .collect();
+        for entity in replicated {
+            app.world_mut().despawn(entity)?;
+        }
+    }
     if let Some(name) = &example {
         wish_examples::add_systems(name, &mut app)?;
     }
@@ -373,13 +405,15 @@ fn until_holds(world: &World, until: &Expr) -> Vec<String> {
     found
 }
 
-/// Simulates up to `frames` ticks, stopping early when `until` holds.
+/// Simulates up to `frames` ticks, stopping early when `until` holds. In a
+/// networked session a tick is the whole match's, and `named[p]` says
+/// whether seat `p`'s input was given (else its player holds its own).
 fn step_app(
     session: &mut Session,
     frames: u64,
     until: Option<&Expr>,
     cancel: Option<&std::sync::atomic::AtomicBool>,
-    given: &[wish_input::Values],
+    (given, named): (&[wish_input::Values], &[bool]),
 ) -> Result<Stepped> {
     // One entry per player of the session; players not given are at rest.
     let mut inputs = given.to_vec();
@@ -400,6 +434,19 @@ fn step_app(
         if cancel.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed)) {
             stopped_by = "cancelled";
             break;
+        }
+        if let Some(net) = session.net.as_mut() {
+            let failures = net.tick(&mut session.app, &session.input, &inputs, named)?;
+            ticks_run += 1;
+            diagnostics.extend(failures);
+            if let Some(until) = until {
+                matched = until_holds(session.app.world(), until);
+                if !matched.is_empty() {
+                    stopped_by = "until";
+                    break;
+                }
+            }
+            continue;
         }
         // The tick's input, before any system runs. A project without
         // actions (and no pointer) has none, and its world stays as it was.
@@ -649,7 +696,7 @@ impl Workspace {
                 "Close one with sim_stop first.",
             ));
         }
-        let (mut app, script, assets) = build_app(self, scene, seed)?;
+        let (mut app, script, assets) = build_app(self, scene, seed, false)?;
         // A single-player world gets nothing new (see wish_input::set_players).
         wish_input::set_players(app.world_mut(), players)?;
         let input = self.input_map()?;
@@ -668,6 +715,7 @@ impl Workspace {
                 recording: None,
                 assets,
                 players,
+                net: None,
             },
         );
         let who = if players > 1 {
@@ -690,6 +738,7 @@ impl Workspace {
     pub(crate) fn fork_session(&mut self, from: &str, label: &str) -> Result<String> {
         let (scene, seed, players, snapshot) = {
             let source = self.session(from)?;
+            source.not_networked(from, "forking")?;
             let saved = source
                 .saved
                 .iter()
@@ -719,13 +768,28 @@ impl Workspace {
         id: &str,
         frames: u64,
         until: Option<&Expr>,
-        inputs: &[wish_input::Values],
+        (inputs, named): (&[wish_input::Values], &[bool]),
     ) -> Result<(Stepped, u64, String, usize)> {
         let cancel = self.cancel.clone();
         let session = self.session_mut(id)?;
-        let mut stepped = step_app(session, frames, until, cancel.as_deref(), inputs)?;
+        let mut stepped = step_app(session, frames, until, cancel.as_deref(), (inputs, named))?;
         stepped.diagnostics.extend(inspect(session));
+        // What the match's network and sessions noticed goes into the log
+        // (logs_get kinds ["net"]) and the match's recent list (net status).
+        let net_notes = session
+            .net
+            .as_mut()
+            .map(|net| {
+                let notes = net.take_diagnostics();
+                net.remember(&notes);
+                notes
+            })
+            .unwrap_or_default();
         let tick = session.app.tick();
+        for note in &net_notes {
+            self.sessions.record(Some(id), Some(tick), "net", note);
+        }
+        let session = self.session_mut(id)?;
         let hash = session.app.hash().to_string();
         let entities = session.app.world().entities().count();
         let logs = session

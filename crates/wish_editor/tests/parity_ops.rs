@@ -1915,3 +1915,38 @@ fn a_tilemap_is_painted_by_hand() {
         .collect();
     assert_eq!(actions, expected, "{history}");
 }
+
+#[test]
+fn an_online_match_is_played_with_two_players_by_hand() {
+    let dir = project("online");
+    let mut app = open(&dir);
+    project_menu(&mut app, &["Players", "2 players"]);
+    assert!(
+        app.status().contains("online match of 2 players"),
+        "{}",
+        app.status()
+    );
+    let start = named(&app, "Play");
+    click(&mut app, start);
+    assert!(app.playing());
+    // The bot joins, is ready, and the match starts by itself.
+    play(&mut app, json!([{ "seconds": 2.0 }, { "idle": 3 }]));
+    let status = app
+        .network_status()
+        .cloned()
+        .expect("the network panel reads the match");
+    assert_eq!(status["seats"].as_array().unwrap().len(), 2, "{status}");
+    assert_eq!(status["lobby"]["phase"], "Running", "{status}");
+    assert_eq!(status["seats"][1]["machine"], "bot", "{status}");
+    // The switcher shows the bot's machine in the game view, then the host's.
+    let bot = named(&app, "Player 1");
+    click(&mut app, bot);
+    assert_eq!(app.watched_player(), Some(1));
+    let host = named(&app, "Host");
+    click(&mut app, host);
+    assert_eq!(app.watched_player(), None);
+    let stop = named(&app, "Stop");
+    click(&mut app, stop);
+    assert!(!app.playing());
+    assert!(app.network_status().is_none());
+}
