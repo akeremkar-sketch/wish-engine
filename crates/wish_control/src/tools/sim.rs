@@ -167,7 +167,7 @@ pub(crate) const LOGS_GET: Tool = Tool {
         Param::optional(
             "kinds",
             Kind::StringList,
-            "Only these kinds: session, system, inspector, script (game code logs and reloads), audio (what was heard), edit (live edits of the running game).",
+            "Only these kinds: session, system, inspector, script (game code logs and reloads), audio (what was heard), edit (live edits of the running game), net (a networked match: joins, drops, refused or malformed messages).",
         ),
         Param::optional(
             "limit",
@@ -235,10 +235,11 @@ fn sim_step(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<Str
     };
     let frames = u64::try_from(frames).unwrap_or(1);
     let inputs = parse_inputs(workspace, &id, args.value("input"), args.value("players"))?;
+    let named = named_players(args.value("input"), args.value("players"), inputs.len());
     let watch = args.strings("watch");
     check_watch(workspace, &id, &watch)?;
     let (stepped, tick, hash, entities) =
-        workspace.step_session(&id, frames, until.as_ref(), &inputs)?;
+        workspace.step_session(&id, frames, until.as_ref(), (&inputs, &named))?;
     let mut out = Map::new();
     out.insert("session".to_owned(), json!(id));
     out.insert("tick".to_owned(), json!(tick));
@@ -334,6 +335,7 @@ fn sim_snapshot(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map
         out.insert("snapshots".to_owned(), json!(list));
         return Ok(out);
     }
+    session.not_networked(&id, "a snapshot")?;
     let label = match args.str("label") {
         Some(label) if !label.trim().is_empty() && label.chars().count() <= 60 => label.to_owned(),
         Some(_) => {
@@ -399,6 +401,7 @@ fn sim_restore(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<
         fork
     } else {
         let session = workspace.session_mut(&id)?;
+        session.not_networked(&id, "returning to a snapshot")?;
         let snapshot = session
             .saved
             .iter()
@@ -483,7 +486,15 @@ fn logs_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<Str
         _ => 0,
     };
     let kinds = args.strings("kinds");
-    const KNOWN: &[&str] = &["session", "system", "inspector", "script", "audio", "edit"];
+    const KNOWN: &[&str] = &[
+        "session",
+        "system",
+        "inspector",
+        "script",
+        "audio",
+        "edit",
+        "net",
+    ];
     for kind in &kinds {
         if !KNOWN.contains(&kind.as_str()) {
             return Err(Diagnostic::error(
@@ -521,6 +532,29 @@ fn logs_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<Str
         json!(workspace.sessions.log.back().map_or(0, |e| e.seq)),
     );
     Ok(out)
+}
+
+/// Which players' input a call gives (`input` is player 0's, `players` by
+/// id): in a networked session the others keep the input they hold.
+pub(crate) fn named_players(
+    input: Option<&Value>,
+    players: Option<&Value>,
+    count: usize,
+) -> Vec<bool> {
+    let mut named = vec![false; count];
+    if input.is_some_and(|value| !value.is_null())
+        && let Some(first) = named.first_mut()
+    {
+        *first = true;
+    }
+    if let Some(Value::Object(given)) = players {
+        for key in given.keys() {
+            if let Some(slot) = key.parse::<usize>().ok().and_then(|p| named.get_mut(p)) {
+                *slot = true;
+            }
+        }
+    }
+    named
 }
 
 /// What every player of session `session` does during a `sim_step` (or a

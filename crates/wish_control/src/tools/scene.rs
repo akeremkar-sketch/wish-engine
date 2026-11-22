@@ -29,6 +29,29 @@ const SESSION: Param = Param::optional(
     "Look at this play session's live world instead of the scene file (a session id from sim_start).",
 );
 
+/// A seat of a networked session, to look at what that player's machine has.
+pub(crate) const PLAYER: Param = Param::optional(
+    "player",
+    Kind::Integer { min: 0, max: 15 },
+    "With a networked session (net): look at what this seat's machine has instead of the host's world.",
+);
+
+/// The seat a call asks to look at; it needs a session.
+pub(crate) fn player_of(args: &Args, session: Option<&String>) -> Result<Option<u32>> {
+    let Some(player) = args.int("player") else {
+        return Ok(None);
+    };
+    if session.is_none() {
+        return Err(Diagnostic::error(
+            "invalid_parameter",
+            "player looks at a player's machine in a networked session; give the session too.",
+            "Pass \"session\": the id net host gave, with \"player\": the seat.",
+        )
+        .at_path("/player"));
+    }
+    Ok(u32::try_from(player).ok())
+}
+
 /// Components the engine keeps for itself and does not show by default.
 const INTERNAL: &[&str] = &["SceneId", "Hierarchy", "GlobalTransform"];
 
@@ -62,6 +85,7 @@ pub(crate) const ENTITY_QUERY: Tool = Tool {
     params: &[
         SCENE,
         SESSION,
+        PLAYER,
         Param::optional(
             "with",
             Kind::StringList,
@@ -110,6 +134,7 @@ pub(crate) const ENTITY_GET: Tool = Tool {
     params: &[
         SCENE,
         SESSION,
+        PLAYER,
         Param::optional(
             "ids",
             Kind::StringList,
@@ -472,6 +497,7 @@ fn entity_query(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map
         Some(id) => Some(workspace.session_id(Some(id))?),
         None => None,
     };
+    let player = player_of(args, session_id.as_ref())?;
     let (path, mut notes) = if session_id.is_some() {
         (String::new(), Vec::new())
     } else {
@@ -528,12 +554,12 @@ fn entity_query(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map
     let limit = usize::try_from(args.int("limit").unwrap_or(50)).unwrap_or(50);
     let cursor = args.str("cursor").map(str::to_owned);
     let revision = match &session_id {
-        Some(id) => workspace.session(id)?.app.tick(),
+        Some(id) => workspace.session_world_tick(id, player)?,
         None => workspace.document(&path)?.doc.revision(),
     };
     let (world, ids): (&World, Cow<'_, BTreeMap<String, Entity>>) = match &session_id {
         Some(id) => {
-            let world = workspace.session(id)?.app.world();
+            let world = workspace.session_world(id, player)?;
             (world, Cow::Owned(entity_names(world)))
         }
         None => {
@@ -654,6 +680,7 @@ fn entity_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<S
         Some(id) => Some(workspace.session_id(Some(id))?),
         None => None,
     };
+    let player = player_of(args, session_id.as_ref())?;
     let (path, mut notes) = if session_id.is_some() {
         (String::new(), Vec::new())
     } else {
@@ -691,7 +718,7 @@ fn entity_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<S
         check_component_names(workspace, &asked_only, "components")?;
     }
     let revision = match &session_id {
-        Some(id) => workspace.session(id)?.app.tick(),
+        Some(id) => workspace.session_world_tick(id, player)?,
         None => workspace.document(&path)?.doc.revision(),
     };
     let doc = match &session_id {
@@ -700,7 +727,7 @@ fn entity_get(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Map<S
     };
     let (world, names): (&World, Cow<'_, BTreeMap<String, Entity>>) = match &session_id {
         Some(id) => {
-            let world = workspace.session(id)?.app.world();
+            let world = workspace.session_world(id, player)?;
             (world, Cow::Owned(entity_names(world)))
         }
         None => {

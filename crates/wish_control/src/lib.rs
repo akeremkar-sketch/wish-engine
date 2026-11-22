@@ -31,6 +31,7 @@ pub mod licenses;
 mod live;
 pub mod looks;
 pub mod migrate;
+mod netplay;
 pub mod ops;
 pub mod package_index;
 pub mod packages;

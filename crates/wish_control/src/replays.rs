@@ -21,6 +21,13 @@
 //! multi-player one instead of playing player 1's input as player 0's.
 //! `engine` and `executor` (ADR-028, rule 2) were added to the header of
 //! both formats in 1.1; a replay without them was recorded before.
+//!
+//! **Format 3** (release 1.1) is a networked match, as its host saw it: the
+//! header says `"net": { "host_plays": true }`, a `match` line holds the
+//! host's match log (`wish_lobby::MatchLog`, base64 of its bytes) instead of
+//! input lines, and playing it back applies each tick's record to a fresh
+//! host world before the tick (design note `docs/design/1.1-net-tool.md`
+//! §6).
 
 use std::path::Path;
 
@@ -62,6 +69,9 @@ pub(crate) struct Replay {
     /// (tick, player, what that player does from then on).
     pub inputs: Vec<(u64, usize, wish_input::Values)>,
     pub hashes: Vec<u64>,
+    /// A networked match's host log (format 3): its bytes, and whether the
+    /// host played.
+    pub net: Option<(Vec<u8>, bool)>,
 }
 
 fn invalid(file: &str, line: usize, what: &str) -> Diagnostic {
@@ -90,8 +100,13 @@ impl Replay {
             text.push('\n');
         };
         let several = self.players > 1;
+        let format = match (&self.net, several) {
+            (Some(_), _) => 3,
+            (None, true) => 2,
+            (None, false) => 1,
+        };
         let mut header = json!({
-            "kind": "header", "format": if several { 2 } else { 1 }, "scene": self.scene,
+            "kind": "header", "format": format, "scene": self.scene,
             "scene_hash": self.scene_hash, "seed": self.seed, "tick_rate": self.tick_rate,
             "code": self.code, "ticks": self.ticks(), "assets": self.assets,
             "engine": self.engine, "executor": self.executor,
@@ -99,7 +114,13 @@ impl Replay {
         if several {
             header["players"] = json!(self.players);
         }
+        if let Some((_, host_plays)) = &self.net {
+            header["net"] = json!({ "host_plays": host_plays });
+        }
         line(header);
+        if let Some((log, _)) = &self.net {
+            line(json!({ "kind": "match", "log": crate::render::base64(log) }));
+        }
         for (tick, player, values) in &self.inputs {
             if several {
                 line(json!({ "kind": "input", "tick": tick, "player": player, "values": values }));
@@ -116,6 +137,7 @@ impl Replay {
         let mut header: Option<Value> = None;
         let mut inputs = Vec::new();
         let mut hashes: Option<Vec<u64>> = None;
+        let mut log: Option<Vec<u8>> = None;
         for (index, line) in text.lines().enumerate() {
             let number = index + 1;
             if line.trim().is_empty() {
@@ -147,6 +169,16 @@ impl Replay {
                     })?;
                     inputs.push((tick, player, (number, values)));
                 }
+                Some("match") if log.is_none() => {
+                    let bytes = value
+                        .get("log")
+                        .and_then(Value::as_str)
+                        .and_then(crate::render::base64_decode)
+                        .ok_or_else(|| {
+                            invalid(file, number, "'log' must be the match log in base64")
+                        })?;
+                    log = Some(bytes);
+                }
                 Some("hashes") if hashes.is_none() => {
                     let digits = value
                         .get("values")
@@ -167,7 +199,36 @@ impl Replay {
         }
         let header = header.ok_or_else(|| invalid(file, 1, "the replay has no header"))?;
         let hashes = hashes.ok_or_else(|| invalid(file, 1, "the replay has no hashes"))?;
+        let net = match header["format"].as_u64() {
+            Some(3) => {
+                let host_plays = header["net"]["host_plays"].as_bool().unwrap_or(true);
+                let log = log.take().ok_or_else(|| {
+                    invalid(
+                        file,
+                        1,
+                        "a format-3 replay (a networked match) has a match line",
+                    )
+                })?;
+                if !inputs.is_empty() {
+                    return Err(invalid(
+                        file,
+                        1,
+                        "a format-3 replay keeps its inputs in the match log, not in input lines",
+                    ));
+                }
+                Some((log, host_plays))
+            }
+            _ if log.is_some() => {
+                return Err(invalid(
+                    file,
+                    1,
+                    "only a format-3 replay (a networked match) has a match line",
+                ));
+            }
+            _ => None,
+        };
         let players = match header["format"].as_u64() {
+            Some(3) => 1,
             Some(1) if header.get("players").is_none() => 1,
             Some(2) => header
                 .get("players")
@@ -255,6 +316,7 @@ impl Replay {
             players,
             inputs,
             hashes,
+            net,
         })
     }
 }
@@ -337,6 +399,7 @@ impl Workspace {
     /// from the start of the scene.
     pub(crate) fn replay_record(&mut self, id: &str) -> Result<()> {
         let session = self.session_mut(id)?;
+        session.not_networked(id, "recording (the match log is kept from tick 0)")?;
         if session.app.tick() != 0 {
             return Err(Diagnostic::error(
                 "replay_not_at_start",
@@ -386,6 +449,9 @@ impl Workspace {
             .at_path("/name"));
         }
         let session = self.session(id)?;
+        if let Some(net) = session.net.as_deref() {
+            return self.match_save(id, net, (name, &path), dry_run);
+        }
         let Some(trail) = &session.recording else {
             return Err(Diagnostic::error(
                 "replay_not_recording",
@@ -412,6 +478,7 @@ impl Workspace {
             players: session.players.max(1),
             inputs: trail.inputs.clone(),
             hashes: trail.hashes.iter().map(|h| short(*h)).collect(),
+            net: None,
         };
         if replay.ticks() > MAX_TICKS {
             return Err(Diagnostic::error(
@@ -509,7 +576,11 @@ impl Workspace {
         notes.extend(made_by(&replay));
         let opened = self.open_document(&replay.scene, false)?;
         notes.extend(opened);
-        let (id, _) = self.start_session(&replay.scene, replay.seed, replay.players, Vec::new())?;
+        let (id, _) = if replay.net.is_some() {
+            self.start_match_replay(&replay.scene, replay.seed)?
+        } else {
+            self.start_session(&replay.scene, replay.seed, replay.players, Vec::new())?
+        };
         let now = self.session(&id)?.assets.clone();
         if replay
             .assets
@@ -521,6 +592,9 @@ impl Workspace {
                 "Project files the game reads (sound or animation clips, fonts) changed since the replay was recorded.",
                 "Clip lengths decide when sounds and animations end, fonts decide the interface layout and where clicks land: a divergence below may just be that.",
             ));
+        }
+        if let Some((log, _)) = &replay.net {
+            return self.match_run(name, &id, (&replay, log), keep, notes);
         }
         let cancel = self.cancel.clone();
         let session = self.session_mut(&id)?;
@@ -596,6 +670,172 @@ impl Workspace {
             out.insert("session".to_owned(), json!(id));
         } else {
             self.sessions.open.remove(&id);
+        }
+        if !notes.is_empty() {
+            out.insert("diagnostics".to_owned(), json!(notes));
+        }
+        Ok(out)
+    }
+}
+
+impl Workspace {
+    /// Writes a networked session's match (format 3).
+    fn match_save(
+        &self,
+        id: &str,
+        net: &crate::netplay::NetMatch,
+        (name, path): (&str, &str),
+        dry_run: bool,
+    ) -> Result<Map<String, Value>> {
+        let session = self.session(id)?;
+        let Some(host) = net.host.as_ref() else {
+            return Err(Diagnostic::error(
+                "net_session_unsupported",
+                format!(
+                    "Session {id} plays in a match hosted elsewhere; the match log is the host's."
+                ),
+                "Save the replay on the machine that hosts the match.",
+            ));
+        };
+        if net.hashes.is_empty() {
+            return Err(Diagnostic::error(
+                "replay_empty",
+                "The match has not run a tick yet.",
+                "Step it with net step (or sim_step) first.",
+            ));
+        }
+        let replay = Replay {
+            scene: session.scene.clone(),
+            scene_hash: net.scene_hash.clone(),
+            seed: session.seed,
+            tick_rate: session.app.config().tick_rate_hz,
+            code: net.code.clone(),
+            assets: Some(session.assets.clone()),
+            engine: Some(ENGINE.to_owned()),
+            executor: Some(wish_script::EXECUTOR.to_owned()),
+            players: 1,
+            inputs: Vec::new(),
+            hashes: net.hashes.iter().map(|h| short(*h)).collect(),
+            net: Some((host.session.log().to_bytes(), net.host_plays)),
+        };
+        if replay.ticks() > MAX_TICKS {
+            return Err(Diagnostic::error(
+                "replay_too_long",
+                format!(
+                    "The match has {} ticks; a replay can have {MAX_TICKS}.",
+                    replay.ticks()
+                ),
+                "Record shorter matches: a quarter of an hour is the longest.",
+            ));
+        }
+        if !dry_run {
+            write_atomic(self.root(), path, &replay.to_text())?;
+        }
+        let mut out = Map::new();
+        out.insert("session".to_owned(), json!(id));
+        out.insert("name".to_owned(), json!(name));
+        out.insert("path".to_owned(), json!(path));
+        out.insert("ticks".to_owned(), json!(replay.ticks()));
+        out.insert("format".to_owned(), json!(3));
+        out.insert(
+            "match_records".to_owned(),
+            json!(host.session.log().records.len()),
+        );
+        out.insert("dry_run".to_owned(), json!(dry_run));
+        out.insert(
+            "final_hash".to_owned(),
+            json!(format!(
+                "{:016x}",
+                replay.hashes.last().copied().unwrap_or(0)
+            )),
+        );
+        Ok(out)
+    }
+
+    /// A session for playing a match back: the host's world as `net host`
+    /// builds it, not networked.
+    fn start_match_replay(&mut self, scene: &str, seed: u64) -> Result<(String, Vec<Diagnostic>)> {
+        let (id, notes) = self.start_session(scene, seed, 1, Vec::new())?;
+        let (app, script, _) = self.net_host_app(scene, seed)?;
+        let session = self.session_mut(&id)?;
+        session.app = app;
+        session.script = script;
+        Ok((id, notes))
+    }
+
+    /// Plays a match's log back in session `id` (format 3).
+    fn match_run(
+        &mut self,
+        name: &str,
+        id: &str,
+        (replay, log): (&Replay, &[u8]),
+        keep: bool,
+        mut notes: Vec<Diagnostic>,
+    ) -> Result<Map<String, Value>> {
+        let log = wish_lobby::MatchLog::from_bytes(log)?;
+        let cancel = self.cancel.clone();
+        let session = self.session_mut(id)?;
+        let mut carry = wish_lobby::Carry::new();
+        let mut diverged: Option<(u64, u64, u64)> = None;
+        let mut cancelled = false;
+        let mut failures = Vec::new();
+        let mut ran = 0;
+        for (tick, expected) in (0..replay.ticks()).zip(&replay.hashes) {
+            if cancel
+                .as_ref()
+                .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed))
+            {
+                cancelled = true;
+                break;
+            }
+            let (_, problems) =
+                wish_lobby::apply(session.app.world_mut(), &log.record(tick), &mut carry)?;
+            failures.extend(problems);
+            failures.extend(session.app.step()?.failures);
+            ran += 1;
+            let actual = short(session.app.hash());
+            if actual != *expected {
+                diverged = Some((tick, *expected, actual));
+                break;
+            }
+        }
+        let mut out = Map::new();
+        out.insert("name".to_owned(), json!(name));
+        out.insert("ticks".to_owned(), json!(replay.ticks()));
+        out.insert("ticks_run".to_owned(), json!(ran));
+        out.insert("format".to_owned(), json!(3));
+        let passed = diverged.is_none() && !cancelled;
+        out.insert("passed".to_owned(), json!(passed));
+        if cancelled {
+            out.insert("stopped_by".to_owned(), json!("cancelled"));
+        }
+        if let Some((tick, expected, actual)) = diverged {
+            out.insert("diverged_at".to_owned(), json!(tick));
+            out.insert(
+                "expected_hash".to_owned(),
+                json!(format!("{expected:016x}")),
+            );
+            out.insert("actual_hash".to_owned(), json!(format!("{actual:016x}")));
+            notes.push(Diagnostic::error(
+                "replay_diverged",
+                format!("The match's replay and the game parted ways at tick {tick}: the host's world there is not the one that was recorded."),
+                format!("Session {id} is left open at that tick (the host's world, after it ran): look with entity_query / entity_get. Close it with sim_stop."),
+            ));
+        }
+        notes.extend(failures);
+        if passed {
+            out.insert(
+                "final_hash".to_owned(),
+                json!(format!(
+                    "{:016x}",
+                    replay.hashes.last().copied().unwrap_or(0)
+                )),
+            );
+        }
+        if diverged.is_some() || keep {
+            out.insert("session".to_owned(), json!(id));
+        } else {
+            self.sessions.open.remove(id);
         }
         if !notes.is_empty() {
             out.insert("diagnostics".to_owned(), json!(notes));

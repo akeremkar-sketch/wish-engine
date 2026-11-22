@@ -505,7 +505,8 @@ impl Workspace {
                 values.insert(wish_input::CLICK.to_owned(), [1.0, 0.0]);
             }
         }
-        let (stepped, ..) = self.step_session(id, frames, None, std::slice::from_ref(&values))?;
+        let (stepped, ..) =
+            self.step_session(id, frames, None, (std::slice::from_ref(&values), &[true]))?;
         Ok(stepped.diagnostics)
     }
 

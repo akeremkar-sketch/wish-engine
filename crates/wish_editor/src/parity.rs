@@ -209,6 +209,11 @@ pub const PARITY: &[Capability] = &[
         "play::a_change_made_while_playing_is_live_and_not_kept",
     ),
     op(
+        "net",
+        "Game > Players (2 or more), then Play: the editor hosts an online match with bots over a simulated network (net host, step, stop); the network panel (Game > Network panel) shows the lobby and the seats (net status) and which player's machine the game view shows",
+        "parity_ops::an_online_match_is_played_with_two_players_by_hand",
+    ),
+    op(
         "replay",
         "Toolbar: Record, then Play and Stop (saved); Game > Replays (play back)",
         "parity_ops::a_run_is_recorded_and_played_back",

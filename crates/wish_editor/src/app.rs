@@ -75,6 +75,10 @@ pub(crate) fn open_with_os(path: &std::path::Path) -> Result<(), String> {
     spawned.map(|_| ()).map_err(|error| error.to_string())
 }
 
+/// What the game picture was drawn for: the scene's revision, the game's
+/// tick, the size, and the player watched in an online match.
+type GameDrawn = (u64, Option<u64>, u32, u32, Option<u32>);
+
 /// A before/after comparison: a checkpoint's picture of the scene and
 /// now's.
 struct Compare {
@@ -103,6 +107,8 @@ struct Play {
     since_read: f64,
     /// The run is being recorded as a replay (saved when it stops).
     recording: bool,
+    /// The run is an online match (`net host`): no timeline snapshots.
+    net: bool,
     /// Snapshots made so far (labels are never reused).
     made: u64,
 }
@@ -225,6 +231,11 @@ pub struct EditorApp {
     compare: Option<Compare>,
     /// Record the next run as a replay.
     record: bool,
+    /// Players of the next run: more than one hosts an online match with
+    /// bots (release 1.1).
+    players: usize,
+    /// The network panel (release 1.1).
+    network: crate::netplay::NetView,
     /// The project has game code that is not built yet.
     unbuilt: bool,
     view: View,
@@ -297,8 +308,9 @@ pub struct EditorApp {
     /// interface.
     game_picture: Option<RgbaImage>,
     /// What the game picture was drawn for (scene revision, game tick,
-    /// size), so it is drawn again only when one of them changes.
-    game_drawn: Option<(u64, Option<u64>, u32, u32)>,
+    /// size, the player watched), so it is drawn again only when one of
+    /// them changes.
+    game_drawn: Option<GameDrawn>,
     /// Boxes around the selected entities, in window pixels.
     outlines: Vec<Rect>,
     drawn_size: (u32, u32),
@@ -458,6 +470,8 @@ struct Actions {
     replay: Option<String>,
     save_picture: bool,
     toggle_record: bool,
+    /// The Players menu and the network panel.
+    net: crate::netplay::NetActions,
     /// An entity was clicked in the hierarchy: its id, and whether to toggle.
     select: Option<(String, bool)>,
     /// The empty part of the hierarchy was clicked.
@@ -695,6 +709,8 @@ impl EditorApp {
             assistant: None,
             compare: None,
             record: false,
+            players: 1,
+            network: crate::netplay::NetView::default(),
             unbuilt: false,
             frames: 0,
             exit: false,
@@ -1796,6 +1812,18 @@ impl EditorApp {
         self.editor.as_ref().map_or(&[], |editor| editor.widgets())
     }
 
+    /// The seat whose machine the game view shows while playing online
+    /// (`None`: the host's).
+    pub fn watched_player(&self) -> Option<u32> {
+        self.network.watching
+    }
+
+    /// The network panel's last `net status` answer, while it is open and
+    /// the game is an online match.
+    pub fn network_status(&self) -> Option<&Value> {
+        self.network.status.as_ref()
+    }
+
     /// Whether the game is running in the editor (paused or not).
     pub fn playing(&self) -> bool {
         self.play.is_some()
@@ -2531,6 +2559,7 @@ impl EditorApp {
             "ai.settings" => actions.ai.settings = Some(true),
             "agent.panel" => actions.toggle_cockpit = true,
             "view.game_view" => actions.toggle_game_view = true,
+            "game.network" => actions.net.toggle = true,
             "view.reset_camera" => actions.reset_camera = true,
             "view.mode_2d" => actions.toggle_flat = true,
             "view.frame" => actions.frame |= self.play.is_none(),
@@ -3206,13 +3235,67 @@ impl EditorApp {
         &self.found
     }
 
+    /// Reads the match into the network panel (one `net status` call), when
+    /// the panel is open and the game is an online match.
+    fn refresh_network(&mut self) {
+        let Some(session) = self
+            .play
+            .as_ref()
+            .filter(|play| play.net)
+            .map(|play| play.session.clone())
+        else {
+            self.network.status = None;
+            return;
+        };
+        if !self.network.open {
+            return;
+        }
+        let status = self.call("net", &json!({ "action": "status", "session": session }));
+        self.network.status = (status["ok"] == true).then_some(status);
+    }
+
+    /// What the Players menu and the network panel asked for.
+    fn network_act(&mut self, asked: crate::netplay::NetActions) {
+        if let Some(players) = asked.players
+            && self.play.is_none()
+        {
+            self.players = players.clamp(1, 16);
+            self.status = if self.players > 1 {
+                tf(
+                    "Play hosts an online match of {count} players",
+                    &[("count", &self.players)],
+                )
+            } else {
+                t("Play runs the game for one player").to_owned()
+            };
+        }
+        if asked.toggle {
+            self.network.open = !self.network.open;
+            self.refresh_network();
+        }
+        if let Some(watching) = asked.watch {
+            self.network.watching = watching;
+            self.game_drawn = None;
+            self.picture_stale = true;
+        }
+    }
+
     /// Starts the game from the scene being edited.
     fn start_play(&mut self) {
         if self.scene.ends_with(".prefab.json") {
             self.status = t("a prefab cannot be played; open a scene").to_owned();
             return;
         }
-        let started = self.call("sim_start", &json!({ "scene": self.scene.clone() }));
+        let online = self.players > 1;
+        let started = if online {
+            self.call(
+                "net",
+                &json!({ "action": "host", "scene": self.scene.clone(), "players": self.players,
+                         "bots": self.players - 1, "auto_start": true }),
+            )
+        } else {
+            self.call("sim_start", &json!({ "scene": self.scene.clone() }))
+        };
         let Some(session) = started["session"].as_str().map(str::to_owned) else {
             let message = started["error"]["message"]
                 .as_str()
@@ -3236,9 +3319,18 @@ impl EditorApp {
             tick: 0,
             since_read: 0.0,
             recording: false,
+            net: online,
             made: 0,
         });
-        if self.record {
+        if online {
+            // A match keeps its log from tick 0: it is saved without record.
+            if let Some(play) = self.play.as_mut() {
+                play.recording = self.record;
+            }
+            self.network.open = true;
+            self.network.watching = None;
+            self.refresh_network();
+        } else if self.record {
             let recorded = self.call(
                 "replay",
                 &json!({ "action": "record", "session": started["session"].clone() }),
@@ -3274,7 +3366,13 @@ impl EditorApp {
             } else {
                 None
             };
-            self.call("sim_stop", &json!({ "session": play.session }));
+            if play.net {
+                self.call("net", &json!({ "action": "stop", "session": play.session }));
+                self.network.status = None;
+                self.network.watching = None;
+            } else {
+                self.call("sim_stop", &json!({ "session": play.session }));
+            }
             self.status = t("stopped (live changes were not kept)").to_owned();
             // Entities made while playing are gone with the game.
             self.revision = u64::MAX;
@@ -3586,6 +3684,9 @@ impl EditorApp {
         let Some(play) = self.play.as_ref() else {
             return;
         };
+        if play.net {
+            return;
+        }
         if play.snapshots.len() >= MAX_TIMELINE {
             return;
         }
@@ -3658,6 +3759,7 @@ impl EditorApp {
         if play.since_read >= 0.25 {
             play.since_read = 0.0;
             self.inspected_for = (Vec::new(), u64::MAX);
+            self.refresh_network();
         }
         let Some(play) = self.play.as_mut() else {
             return;
@@ -4252,6 +4354,7 @@ impl EditorApp {
         if actions.toggle_record {
             self.record = !self.record;
         }
+        self.network_act(actions.net);
         if let Some((path, mut args)) = actions.browser.create.take() {
             args["path"] = json!(path);
             let made = self.call("asset_create", &args);
@@ -4989,11 +5092,17 @@ impl EditorApp {
         }
         let (width, height) = (area.width() as u32, area.height() as u32);
         let preview = self.drag.as_ref().and_then(|active| active.ops.clone());
+        let watching = self
+            .play
+            .as_ref()
+            .filter(|play| play.net)
+            .and(self.network.watching);
         let key = (
             self.revision,
             self.play.as_ref().map(|play| play.tick),
             width,
             height,
+            watching,
         );
         if preview.is_none() && self.game_drawn == Some(key) && self.game_picture.is_some() {
             return;
@@ -5001,6 +5110,9 @@ impl EditorApp {
         let scene = self.scene.clone();
         let session = self.play.as_ref().map(|play| play.session.clone());
         let source = match (&session, &preview) {
+            (Some(id), _) if watching.is_some() => {
+                PictureSource::Player(id, watching.unwrap_or_default())
+            }
             (Some(id), _) => PictureSource::Session(id),
             (None, Some(ops)) => PictureSource::Preview(Some(&scene), ops),
             (None, None) => PictureSource::Scene(Some(&scene)),
@@ -5703,6 +5815,7 @@ impl EditorApp {
                 actions.toggle_record = true;
                 ui.close();
             }
+            crate::netplay::menu(ui, self.players, editing, self.network.open, &mut actions.net);
             ui.menu_button(t("Replays"), |ui| {
                 let replays = self.replays();
                 if replays.is_empty() {
@@ -6358,6 +6471,7 @@ impl EditorApp {
         crate::packages_window::window(ui, &self.packages, &mut actions.packages);
         self.palette_window(ui, &mut actions);
         self.export_window(ui, &mut actions);
+        crate::netplay::window(ui, &self.network, &mut actions.net);
         // The middle is not painted: the scene's picture shows through.
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
@@ -6512,6 +6626,7 @@ impl EditorApp {
         crate::packages_window::window(ui, &self.packages, &mut actions.packages);
         self.palette_window(ui, actions);
         self.export_window(ui, actions);
+        crate::netplay::window(ui, &self.network, &mut actions.net);
         let scene_view = self.ai.borrow().scene_view;
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)

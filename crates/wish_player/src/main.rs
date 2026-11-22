@@ -130,6 +130,7 @@ fn run() -> ExitCode {
         exit_after: value_of(&args, "--exit-after").and_then(|n| n.parse().ok()),
         develop: false,
         title: None,
+        players: 1,
     };
     match play(&options, Box::new(|message| eprintln!("{message}"))) {
         Ok(_) => ExitCode::SUCCESS,

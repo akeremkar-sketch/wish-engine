@@ -23,6 +23,7 @@ pub fn play(args: &PlayArgs, as_json: bool) -> Result<String> {
         exit_after: args.exit_after,
         develop: true,
         title: Some("wen play".to_owned()),
+        players: args.players,
     };
     let played = wish_player::play(
         &options,

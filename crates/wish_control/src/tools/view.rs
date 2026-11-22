@@ -41,6 +41,7 @@ pub(crate) const CAPTURE_FRAME: Tool = Tool {
     params: &[
         SCENE,
         SESSION,
+        super::scene::PLAYER,
         CAMERA,
         Param::optional(
             "width",
@@ -88,6 +89,7 @@ pub(crate) const DESCRIBE_VIEW: Tool = Tool {
     params: &[
         SCENE,
         SESSION,
+        super::scene::PLAYER,
         CAMERA,
         Param::optional(
             "width",
@@ -235,7 +237,13 @@ fn prepare(workspace: &mut Workspace, args: &Args) -> Result<Prepared> {
     if let Some(name) = args.str("checkpoint") {
         return prepare_checkpoint(workspace, name, args.str("scene"));
     }
-    prepare_source(workspace, args.str("session"), args.str("scene"))
+    let player = super::scene::player_of(args, args.str("session").map(str::to_owned).as_ref())?;
+    prepare_with(
+        workspace,
+        (args.str("session"), player),
+        args.str("scene"),
+        None,
+    )
 }
 
 /// A scene as checkpoint `name` kept it (for "before" pictures).
@@ -261,21 +269,13 @@ fn prepare_checkpoint(
     Ok(prepared)
 }
 
-/// [`prepare`] without the tool's arguments: a session's live world, or a
-/// scene file's (the project's by default).
-fn prepare_source(
-    workspace: &mut Workspace,
-    session: Option<&str>,
-    scene: Option<&str>,
-) -> Result<Prepared> {
-    prepare_with(workspace, session, scene, None)
-}
-
-/// [`prepare_source`], optionally with `preview` edit operations applied on a
-/// copy of the scene (what it would look like after them).
+/// A session's live world (a player's machine's, with a seat) or a scene
+/// file's (the project's by default), optionally with `preview` edit
+/// operations applied on a copy of the scene (what it would look like after
+/// them).
 fn prepare_with(
     workspace: &mut Workspace,
-    session: Option<&str>,
+    (session, player): (Option<&str>, Option<u32>),
     scene: Option<&str>,
     preview: Option<&Value>,
 ) -> Result<Prepared> {
@@ -285,14 +285,13 @@ fn prepare_with(
     };
     let (mut scene, by_name, notes, source) = match &session {
         Some(id) => {
-            let session = workspace.session(id)?;
-            let world = session.app.world();
-            (
-                extract(world)?,
-                entity_names(world),
-                Vec::new(),
-                json!({ "session": id, "tick": session.app.tick() }),
-            )
+            let world = workspace.session_world(id, player)?;
+            let tick = workspace.session_world_tick(id, player)?;
+            let mut source = json!({ "session": id, "tick": tick });
+            if let Some(player) = player {
+                source["player"] = json!(player);
+            }
+            (extract(world)?, entity_names(world), Vec::new(), source)
         }
         None => {
             let path = workspace.scene_path(scene)?;
@@ -835,6 +834,9 @@ pub enum PictureSource<'a> {
     Preview(Option<&'a str>, &'a Value),
     /// A play session's live world.
     Session(&'a str),
+    /// What a player's machine has in a networked session: the session and
+    /// the seat.
+    Player(&'a str, u32),
     /// A scene file as a checkpoint kept it (`None`: the project's scene):
     /// the "before" of a before/after comparison.
     Checkpoint(Option<&'a str>, &'a str),
@@ -867,9 +869,14 @@ impl Workspace {
         view: View,
     ) -> Result<Picture> {
         let mut prepared = match source {
-            PictureSource::Scene(scene) => prepare_with(self, None, scene, None)?,
-            PictureSource::Preview(scene, ops) => prepare_with(self, None, scene, Some(ops))?,
-            PictureSource::Session(id) => prepare_with(self, Some(id), None, None)?,
+            PictureSource::Scene(scene) => prepare_with(self, (None, None), scene, None)?,
+            PictureSource::Preview(scene, ops) => {
+                prepare_with(self, (None, None), scene, Some(ops))?
+            }
+            PictureSource::Session(id) => prepare_with(self, (Some(id), None), None, None)?,
+            PictureSource::Player(id, seat) => {
+                prepare_with(self, (Some(id), Some(seat)), None, None)?
+            }
             PictureSource::Checkpoint(scene, name) => prepare_checkpoint(self, name, scene)?,
         };
         if let (Some(camera), Some(first)) = (camera, prepared.scene.cameras.first_mut()) {
@@ -924,9 +931,14 @@ impl Workspace {
         height: u32,
     ) -> Result<IdPicture> {
         let mut prepared = match source {
-            PictureSource::Scene(scene) => prepare_with(self, None, scene, None)?,
-            PictureSource::Preview(scene, ops) => prepare_with(self, None, scene, Some(ops))?,
-            PictureSource::Session(id) => prepare_with(self, Some(id), None, None)?,
+            PictureSource::Scene(scene) => prepare_with(self, (None, None), scene, None)?,
+            PictureSource::Preview(scene, ops) => {
+                prepare_with(self, (None, None), scene, Some(ops))?
+            }
+            PictureSource::Session(id) => prepare_with(self, (Some(id), None), None, None)?,
+            PictureSource::Player(id, seat) => {
+                prepare_with(self, (Some(id), Some(seat)), None, None)?
+            }
             PictureSource::Checkpoint(scene, name) => prepare_checkpoint(self, name, scene)?,
         };
         if let (Some(camera), Some(first)) = (camera, prepared.scene.cameras.first_mut()) {

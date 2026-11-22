@@ -138,6 +138,11 @@ pub(crate) const COMMANDS: &[Command] = &[
         keys: "",
     },
     Command {
+        id: "game.network",
+        name: || t("Show or hide the network panel"),
+        keys: "",
+    },
+    Command {
         id: "view.reset_camera",
         name: || t("Reset camera"),
         keys: "",
