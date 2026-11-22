@@ -21,8 +21,11 @@ pub(crate) struct NetView {
     pub open: bool,
     /// The last `net status` answer, while playing online.
     pub status: Option<Value>,
-    /// The seat whose machine the game view shows (`None`: the host's).
+    /// The seat whose machine the game view shows (`None`: the person's
+    /// own machine, or the host's once `host_view`).
     pub watching: Option<u32>,
+    /// The person chose the host's view.
+    pub host_view: bool,
 }
 
 /// What the person asked for in the menu or the panel.
@@ -54,7 +57,7 @@ pub(crate) fn menu(
             if ui
                 .add_enabled(editing, egui::Button::selectable(players == count, label))
                 .on_hover_text(t(
-                    "With 2 or more, Play hosts an online match: you are the host, bots take the other seats over a simulated network",
+                    "With 2 or more, Play hosts an online match over a simulated internet (50 ms each way): you play a seat as an online player does, with your own player predicted, and bots take the other seats",
                 ))
                 .clicked()
             {
@@ -98,9 +101,16 @@ pub(crate) fn window(ui: &mut Ui, view: &NetView, actions: &mut NetActions) {
             ui.separator();
             ui.label(t("Show in the game view:"));
             let seats = status["seats"].as_array().cloned().unwrap_or_default();
+            // The person's own seat, shown until another is chosen.
+            let you = seats
+                .iter()
+                .find(|seat| seat["machine"] == "you")
+                .and_then(|seat| seat["player"].as_u64())
+                .and_then(|p| u32::try_from(p).ok());
+            let shown = view.watching.or(if view.host_view { None } else { you });
             ui.horizontal_wrapped(|ui| {
                 if ui
-                    .add(egui::Button::selectable(view.watching.is_none(), t("Host")))
+                    .add(egui::Button::selectable(shown.is_none(), t("Host")))
                     .clicked()
                 {
                     actions.watch = Some(None);
@@ -110,16 +120,17 @@ pub(crate) fn window(ui: &mut Ui, view: &NetView, actions: &mut NetActions) {
                     else {
                         continue;
                     };
-                    let local = matches!(seat["machine"].as_str(), Some("bot" | "local"));
+                    let local = matches!(seat["machine"].as_str(), Some("bot" | "local" | "you"));
                     if player == 0 || !local {
                         continue;
                     }
-                    let label = tf("Player {seat}", &[("seat", &player)]);
+                    let label = if you == Some(player) {
+                        tf("You (player {seat})", &[("seat", &player)])
+                    } else {
+                        tf("Player {seat}", &[("seat", &player)])
+                    };
                     if ui
-                        .add(egui::Button::selectable(
-                            view.watching == Some(player),
-                            label,
-                        ))
+                        .add(egui::Button::selectable(shown == Some(player), label))
                         .clicked()
                     {
                         actions.watch = Some(Some(player));

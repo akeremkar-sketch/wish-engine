@@ -285,8 +285,10 @@ fn prepare_with(
     };
     let (mut scene, by_name, notes, source) = match &session {
         Some(id) => {
-            let world = workspace.session_world(id, player)?;
             let tick = workspace.session_world_tick(id, player)?;
+            // A player's machine is drawn as it shows itself: its own
+            // player predicted, the others interpolated.
+            let world = workspace.session_picture_world(id, player)?;
             let mut source = json!({ "session": id, "tick": tick });
             if let Some(player) = player {
                 source["player"] = json!(player);

@@ -183,6 +183,14 @@ pub struct Args {
 }
 
 impl Args {
+    /// The same arguments less `name` (for passing a call's arguments on
+    /// to a part that must not see one of them).
+    pub(crate) fn without(&self, name: &str) -> Self {
+        let mut values = self.values.clone();
+        values.remove(name);
+        Self { values }
+    }
+
     /// The raw value of a parameter, if given or defaulted.
     pub fn value(&self, name: &str) -> Option<&Value> {
         self.values.get(name).filter(|value| !value.is_null())

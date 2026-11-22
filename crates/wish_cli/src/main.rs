@@ -143,8 +143,9 @@ COMMANDS:
                scripts/src/lib.rs builds the new code and switches to it without stopping the game
                or losing its state; a compile error is shown and the old code keeps running. Escape
                closes the window. Needs a desktop session. Edits to scenes need a restart.
-               --players N plays an online match in the same window: you are the host and
-               N-1 bots take the other seats over the network simulator.
+               --players N plays an online match in the same window over a simulated
+               internet (50 ms each way): you play a seat as an online player, your own
+               player predicted, and N-1 bots take the other seats.
     net        Online play over UDP with people on the local network (or through a relay): host
                opens a match on --port (0 picks one) and prints its room code and every change of
                the lobby; join joins one by its address and room code, or finds it with discover.

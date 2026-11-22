@@ -19,7 +19,7 @@ use wish_net::{
     Announce, Config, DISCOVERY_PORT, DiscoveryQuery, DiscoveryResponder, Endpoint, Entropy,
     LinkConditions, PeerId, Recv, RoomCode, SimNetwork, SimTransport, Transport, UdpTransport,
 };
-use wish_replicate::{Client, ReplicationConfig};
+use wish_replicate::{Client, PredictConfig, Predictor, ReplicationConfig, TickHook};
 use wish_types::{LobbyPhase, MAX_PLAYERS, PlayerId};
 
 use crate::project::NetSettings;
@@ -143,6 +143,14 @@ pub(crate) struct Machine {
     pub left: bool,
     /// Diagnostics of its own (discovery), taken with the session's.
     pub notes: Vec<Diagnostic>,
+    /// Ticks it has been connected (or connecting) to its host.
+    pub ticks: u64,
+    /// The person at this computer plays it (`net host` `play_as:
+    /// "player"`): the session's own input drives it.
+    pub person: bool,
+    /// The pointer of every tick its prediction ran and the host has not
+    /// confirmed, so that a tick played again sees the same pointer.
+    pub pointers: std::collections::BTreeMap<u64, wish_input::Values>,
 }
 
 impl Machine {
@@ -154,12 +162,30 @@ impl Machine {
     }
 }
 
-/// A player machine in this process, with its own world.
+/// A player machine in this process (design note `1.1-net-tool.md` §12):
+/// the mirror of what its host sent, and the prediction, where its game
+/// runs ahead of the host with its own player's input.
 pub(crate) struct Player {
-    pub app: App,
-    /// The game code its world runs (kept with the systems that use it).
+    /// The mirror: exactly what the host sent (the replication client and
+    /// the lobby write into it; no system runs on it).
+    pub mirror: App,
+    /// The prediction: the game's systems in an app built like the host's.
+    pub predictor: Predictor,
+    /// The game code the prediction runs (kept with the systems that use
+    /// it).
     pub _script: Option<wish_script::ScriptRuntime>,
     pub machine: Machine,
+    /// The world the machine shows (the prediction with every entity where
+    /// it is drawn), made when a picture asks for it, and the tick count it
+    /// was made at.
+    pub shown: Option<(u64, App)>,
+}
+
+impl Player {
+    /// The world this machine's game runs in: the prediction world.
+    pub(crate) fn world(&self) -> &World {
+        self.predictor.world()
+    }
 }
 
 /// The host of a match.
@@ -208,6 +234,15 @@ pub(crate) struct NetMatch {
 
 /// How many of the match's diagnostics `net status` shows.
 const RECENT: usize = 16;
+
+/// The simulated network of Play with N players in the editor and of `wen
+/// play --players`: 50 ms each way with 5 ms of jitter and no loss (an
+/// ordinary internet connection), so that the person plays a seat as an
+/// online player does and sees the prediction answer at once (design note
+/// `1.1-net-tool.md` §12).
+pub fn play_network() -> Value {
+    json!({ "latency_ms": 50, "jitter_ms": 5, "seed": 1 })
+}
 
 /// What a host is set up with.
 pub(crate) struct HostSetup {
@@ -475,6 +510,9 @@ impl NetMatch {
             link,
             left: false,
             notes: Vec::new(),
+            ticks: 0,
+            person: false,
+            pointers: std::collections::BTreeMap::new(),
         })
     }
 
@@ -540,18 +578,21 @@ impl NetMatch {
                 &mut failures,
             )?;
         }
+        // The session's own input drives the person's machine when the host
+        // does not play.
+        let own_input = (!self.host_plays && named.first() == Some(&true))
+            .then(|| inputs.first().cloned().unwrap_or_default());
         for player in &mut self.players {
             let seat = player.machine.session.seat().map(|s| s as usize);
-            let given = match seat {
-                Some(seat) if named.get(seat) == Some(&true) => {
+            let given = match (seat, &own_input) {
+                (Some(seat), _) if seat > 0 && named.get(seat) == Some(&true) => {
                     inputs.get(seat).cloned().unwrap_or_default()
                 }
+                (_, Some(own)) if player.machine.person => own.clone(),
                 _ => player.machine.held.clone(),
             };
-            tick_machine(
-                &mut player.app,
-                &mut player.machine,
-                map,
+            tick_player(
+                player,
                 &given,
                 (now, self.steps),
                 &self.network,
@@ -559,6 +600,14 @@ impl NetMatch {
             )?;
         }
         Ok(failures)
+    }
+
+    /// The seat of the person's machine (`play_as: "player"`), once seated.
+    pub(crate) fn person_seat(&self) -> Option<PlayerId> {
+        self.players
+            .iter()
+            .find(|p| p.machine.person)
+            .and_then(|p| p.machine.session.seat())
     }
 
     /// The machine seated at `seat` in this process.
@@ -576,7 +625,14 @@ impl NetMatch {
         if self.own.as_ref().and_then(|m| m.session.seat()) == Some(seat) {
             return Some(app.world());
         }
-        self.player_at(seat).map(|p| p.app.world())
+        self.player_at(seat).map(Player::world)
+    }
+
+    /// The machine seated at `seat` in this process, to change.
+    pub(crate) fn player_at_mut(&mut self, seat: PlayerId) -> Option<&mut Player> {
+        self.players
+            .iter_mut()
+            .find(|p| p.machine.session.seat() == Some(seat))
     }
 
     /// Every seat a player of the match is known at.
@@ -676,21 +732,30 @@ impl NetMatch {
                         item["rtt_ms"] = json!(rtt);
                     }
                     item["machine"] = json!("remote");
+                    item["late_frames"] = json!(host.session.replication().late_frames(player));
                 }
             }
             if let Some(local) = self.player_at(player) {
-                item["machine"] = json!(if local.machine.bot { "bot" } else { "local" });
+                item["machine"] = json!(match (local.machine.bot, local.machine.person) {
+                    (true, _) => "bot",
+                    (false, true) => "you",
+                    (false, false) => "local",
+                });
                 item["drive"] = json!(local.machine.drive.name());
                 if let Some(endpoint) = local.machine.endpoint() {
                     let stats = endpoint.stats();
-                    let ticks = local.app.tick().max(1);
+                    let ticks = local.machine.ticks.max(1);
                     item["bytes_received"] = json!(stats.bytes_received);
                     item["bytes_sent"] = json!(stats.bytes_sent);
                     item["received_per_second"] =
                         json!(stats.bytes_received.saturating_mul(u64::from(rate)) / ticks);
                     item["resent"] = json!(stats.resent);
                 }
-                item["predicted"] = json!(false);
+                let predicted = local.predictor.stats();
+                item["predicted"] = json!(true);
+                item["lead_ticks"] = json!(local.predictor.sync().lead);
+                item["corrections"] = json!(predicted.corrections);
+                item["largest_correction_mm"] = json!(predicted.largest_correction_mm);
             }
             seats.push(item);
         }
@@ -784,8 +849,9 @@ impl NetMatch {
         if let Some(player) = self.player_at(seat) {
             let replication = player.machine.session.replication();
             let stats = replication.stats();
-            item["tick"] = json!(player.app.tick());
+            item["tick"] = json!(player.predictor.app().tick());
             item["replicated_entities"] = json!(replication.shown().len());
+            item["mirror_hash"] = json!(player.mirror.world().hash().to_string());
             item["states_received"] = json!(stats.states_received);
             item["out_of_order"] = json!(stats.out_of_order);
             item["resyncs_requested"] = json!(stats.resyncs_requested);
@@ -794,6 +860,14 @@ impl NetMatch {
                 && let Some(rtt) = endpoint.rtt_ms(PeerId::HOST)
             {
                 item["rtt_ms"] = json!(rtt);
+            }
+            item["prediction"] = prediction_json(&player.predictor);
+            if let Some(host) = &self.host {
+                item["prediction"]["late_frames"] =
+                    json!(host.session.replication().late_frames(seat));
+                if let Some(slack) = host.session.replication().input_slack(seat) {
+                    item["prediction"]["input_slack_ticks"] = json!(slack);
+                }
             }
         }
         Some(item)
@@ -826,17 +900,136 @@ fn discovery_game(name: &str) -> String {
     }
 }
 
-/// One tick of a player machine (`(now, steps)`: the endpoints' time and the
-/// match's step count).
-fn tick_machine(
-    app: &mut App,
-    machine: &mut Machine,
-    map: &wish_input::InputMap,
+/// A predicting machine's prediction as `net status` shows it (ticks and
+/// counts, no clock).
+fn prediction_json(predictor: &Predictor) -> Value {
+    let stats = predictor.stats();
+    let sync = predictor.sync();
+    json!({
+        "predicted_tick": predictor.tick(),
+        "confirmed_tick": predictor.confirmed_tick(),
+        "lead_ticks": sync.lead,
+        "round_trip_ms": sync.rtt_us / 1000,
+        "predicted_entities": predictor.predicted().len(),
+        "predicted_ticks": stats.predicted_ticks,
+        "confirmations": stats.confirmations,
+        "exact": stats.exact,
+        "corrections": stats.corrections,
+        "largest_correction_mm": stats.largest_correction_mm,
+        "replayed_ticks": stats.replayed_ticks,
+        "longest_replay": stats.longest_replay,
+        "rebases": stats.rebases,
+        "jumps": stats.jumps,
+        "held_ticks": stats.held_ticks,
+        "stalls": stats.stalls,
+        "late_reports": sync.late_reports,
+        "smoothing_mm": (predictor.largest_offset() * 1000.0).round() as u64,
+    })
+}
+
+/// The prediction settings of a match whose endpoints' clock moves
+/// `tick_ms` milliseconds a tick (the prediction's tick is that long, so
+/// that its clock and the host's agree).
+pub(crate) fn predict_config(tick_ms: u64) -> PredictConfig {
+    PredictConfig::new(u32::try_from(tick_ms.saturating_mul(1000)).unwrap_or(16_000))
+}
+
+/// What a predicting machine adds around every tick its prediction runs:
+/// the pointer (its actions go through the prediction itself).
+struct PointerHook<'a> {
+    given: &'a wish_input::Values,
+    pointers: &'a mut std::collections::BTreeMap<u64, wish_input::Values>,
+}
+
+impl TickHook for PointerHook<'_> {
+    fn before(
+        &mut self,
+        world: &mut World,
+        tick: u64,
+        again: bool,
+        _: &dyn Fn(u32) -> wish_core::Entity,
+    ) -> Result<()> {
+        let values = if again {
+            self.pointers.get(&tick).cloned().unwrap_or_default()
+        } else {
+            let values: wish_input::Values = self
+                .given
+                .iter()
+                .filter(|(name, _)| {
+                    [wish_input::POINTER, wish_input::CLICK, wish_input::SCREEN]
+                        .contains(&name.as_str())
+                })
+                .map(|(name, value)| (name.clone(), *value))
+                .collect();
+            if !values.is_empty() {
+                self.pointers.insert(tick, values.clone());
+            }
+            values
+        };
+        wish_input::apply_pointer(world, &values)
+    }
+}
+
+/// One tick of a player machine in this process (design note
+/// `1.1-net-tool.md` §12): the host's news into the mirror, then a frame of
+/// the prediction with this tick's input (`given`, or what the machine's own
+/// game code holds when it drives itself).
+fn tick_player(
+    player: &mut Player,
     given: &wish_input::Values,
     (now, steps): (u64, u64),
     network: &Network,
     failures: &mut Vec<Diagnostic>,
 ) -> Result<()> {
+    if !connect_machine(&mut player.machine, steps, network)? {
+        return Ok(());
+    }
+    let machine = &mut player.machine;
+    let Link::Connected(endpoint) = &mut machine.link else {
+        return Ok(());
+    };
+    endpoint.update(now);
+    machine
+        .session
+        .begin_tick(player.mirror.world_mut(), endpoint)?;
+    machine.ticks += 1;
+    if machine.session.seat().is_some()
+        && machine.session.closed().is_none()
+        && machine.auto_ready
+        && !machine.ready_sent
+    {
+        machine.session.set_ready(endpoint, true)?;
+        machine.ready_sent = true;
+    }
+    // A machine that left, or whose host is gone, has nothing to predict
+    // for and no one to send to.
+    if machine.session.closed().is_some() || !endpoint.peers().contains(&PeerId::HOST) {
+        endpoint.update(now);
+        return Ok(());
+    }
+    let actions = match machine.drive {
+        Drive::Input => actions_of(given),
+        Drive::Game => Client::local_actions(player.predictor.world()),
+    };
+    let mut hook = PointerHook {
+        given,
+        pointers: &mut machine.pointers,
+    };
+    let report =
+        machine
+            .session
+            .predict(&mut player.predictor, endpoint, now, &actions, &mut hook)?;
+    if let Some(confirmed) = player.predictor.confirmed_tick() {
+        machine.pointers.retain(|tick, _| *tick > confirmed);
+    }
+    failures.extend(report.failures);
+    endpoint.update(now);
+    Ok(())
+}
+
+/// Moves a machine that is finding its host by discovery on: `true` once it
+/// is connected (or connecting) to a host.
+fn connect_machine(machine: &mut Machine, steps: u64, network: &Network) -> Result<bool> {
     if let Link::Discovering {
         query,
         room,
@@ -882,16 +1075,34 @@ fn tick_machine(
                     "Check that a host is running and discoverable on the same network (a firewall may block the discovery port, 47610), or join by its address.",
                 ));
                 machine.link = Link::Gone;
-                return Ok(());
+                return Ok(false);
             }
             None => {
                 if steps.saturating_sub(*asked_at) >= DISCOVERY_RESEND_TICKS {
                     *asked_at = steps;
                     query.send(broadcast_addr(DISCOVERY_PORT))?;
                 }
-                return Ok(());
+                return Ok(false);
             }
         }
+    }
+    Ok(matches!(machine.link, Link::Connected(_)))
+}
+
+/// One tick of this session's own machine when it plays in a match hosted
+/// elsewhere (`(now, steps)`: the endpoints' time and the match's step
+/// count): it mirrors the host and runs its systems on the mirror.
+fn tick_machine(
+    app: &mut App,
+    machine: &mut Machine,
+    map: &wish_input::InputMap,
+    given: &wish_input::Values,
+    (now, steps): (u64, u64),
+    network: &Network,
+    failures: &mut Vec<Diagnostic>,
+) -> Result<()> {
+    if !connect_machine(machine, steps, network)? {
+        return Ok(());
     }
     let Link::Connected(endpoint) = &mut machine.link else {
         return Ok(());
@@ -986,7 +1197,11 @@ impl crate::workspace::Workspace {
             let session = self.session(id)?;
             (session.scene.clone(), session.seed)
         };
-        let (app, script, _) = crate::sessions::build_app(self, &scene, seed, true)?;
+        let (mut app, script, _) = crate::sessions::build_app(self, &scene, seed, true)?;
+        // The project's actions at rest, as on the host: the prediction
+        // writes its player's input against these ids.
+        let map = self.input_map()?;
+        wish_input::apply(app.world_mut(), &map, &wish_input::Values::new())?;
         Ok((app, script))
     }
 
@@ -999,6 +1214,10 @@ impl crate::workspace::Workspace {
         args: &crate::param::Args,
     ) -> Result<()> {
         let held = crate::tools::parse_input(self, id, args.value("input"))?;
+        // The mirror (what the host sent) and the prediction (where the
+        // machine's game runs) are two worlds of the same build; the
+        // mirror runs no system, so its copy of the game code is not kept.
+        let (mirror, _) = self.net_player_app(id)?;
         let (app, script) = self.net_player_app(id)?;
         let session = self.session_mut(id)?;
         let Some(net) = session.net.as_deref_mut() else {
@@ -1029,13 +1248,16 @@ impl crate::workspace::Workspace {
             Some(text) => Target::At(parse_address(text)?, room),
         };
         let color = u32::try_from(args.int("color").unwrap_or(0)).unwrap_or(0);
-        let mut machine = net.machine(app.world(), (name, color, bot), drive, target)?;
+        let mut machine = net.machine(mirror.world(), (name, color, bot), drive, target)?;
         machine.held = held;
         machine.auto_ready = args.value("ready").and_then(Value::as_bool) != Some(false);
+        let predictor = Predictor::new(app, predict_config(net.tick_ms))?;
         net.players.push(Player {
-            app,
+            mirror,
+            predictor,
             _script: script,
             machine,
+            shown: None,
         });
         Ok(())
     }
@@ -1223,10 +1445,70 @@ impl crate::workspace::Workspace {
         let tick = match (seat, session.net.as_deref()) {
             (Some(seat), Some(net)) => net
                 .player_at(seat)
-                .map_or(session.app.tick(), |p| p.app.tick()),
+                .map_or(session.app.tick(), |p| p.predictor.app().tick()),
             _ => session.app.tick(),
         };
         Ok(tick)
+    }
+
+    /// The world a picture of session `id` draws: as
+    /// [`Self::session_world`], except that a predicting player's machine
+    /// shows its presented view (design note `1.1-net-tool.md` §12): its
+    /// prediction world with every entity it mirrors moved to where the
+    /// machine draws it (its own player predicted and smoothed, the others
+    /// interpolated between the host's states).
+    pub(crate) fn session_picture_world(
+        &mut self,
+        id: &str,
+        seat: Option<PlayerId>,
+    ) -> Result<&World> {
+        let Some(seat) = seat else {
+            return self.session_world(id, None);
+        };
+        let needed = self
+            .session(id)?
+            .net
+            .as_deref()
+            .and_then(|net| net.player_at(seat))
+            .map(|player| player.shown.is_none());
+        let Some(needed) = needed else {
+            return self.session_world(id, Some(seat));
+        };
+        // A world of the same build to draw from, made once.
+        let blank = if needed {
+            Some(self.net_player_app(id)?.0)
+        } else {
+            None
+        };
+        let session = self.session_mut(id)?;
+        let Some(player) = session
+            .net
+            .as_deref_mut()
+            .and_then(|net| net.player_at_mut(seat))
+        else {
+            return Err(crate::tools::net_not_networked(id).at_path("/player"));
+        };
+        if let Some(blank) = blank {
+            player.shown = Some((u64::MAX, blank));
+        }
+        let ticks = player.machine.ticks;
+        let Some((at, shown)) = player.shown.as_mut() else {
+            return Err(crate::tools::net_not_networked(id).at_path("/player"));
+        };
+        if *at != ticks {
+            let world = shown.world_mut();
+            world.restore(&player.predictor.world().snapshot())?;
+            for (net, drawn) in player.predictor.presented() {
+                if let Some(entity) = player.predictor.entity(*net)
+                    && world.contains(entity)
+                {
+                    world.insert(entity, drawn.transform)?;
+                }
+            }
+            wish_transform::update_global_transforms(world)?;
+            *at = ticks;
+        }
+        Ok(shown.world())
     }
 
     /// Plays the host's match log of session `id` into a fresh host world

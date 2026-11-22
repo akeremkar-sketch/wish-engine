@@ -17,7 +17,7 @@ use std::net::SocketAddr;
 use wish_app::{App, AppConfig, System, SystemContext};
 use wish_core::math::Vec3;
 use wish_core::{Entity, Result, StableHasher, Text};
-use wish_ecs::{With, World};
+use wish_ecs::{ChangeTick, With, World};
 use wish_lobby::{ClientSession, ClientSessionConfig, HostSession, LobbyConfig, RoleConfig, apply};
 use wish_net::crypto::{KeyPair, SessionKeys};
 use wish_net::wire::{self as net_wire, Frame, Packet};
@@ -25,7 +25,7 @@ use wish_net::{
     Captured, Config, Endpoint, Entropy, LinkConditions, RoomCode, SimNetwork, SimTransport,
     Transport,
 };
-use wish_replicate::ReplicationConfig;
+use wish_replicate::{PredictConfig, Predictor, ReplicationConfig, TickHook};
 use wish_schema::{component, event, resource};
 use wish_types::{
     ActionSlot, ActionState, Lobby, LobbyPhase, LocalPlayer, MAX_PLAYERS, MatchRoles, Net,
@@ -499,7 +499,13 @@ pub fn walk_input(seat: PlayerId, tick: u64) -> Vec<(u32, [f32; 2])> {
 pub struct Player {
     pub endpoint: Endpoint<SimTransport>,
     pub session: ClientSession,
+    /// The machine's world, or its mirror when it predicts.
     pub app: App,
+    /// The prediction, where the game runs, when the machine predicts.
+    pub predictor: Option<Predictor>,
+    /// Messages the game sent again in ticks a correction played again
+    /// (the session must not send them twice).
+    pub replayed_sends: u64,
     pub seed: u64,
     pub name: String,
     pub color: u32,
@@ -510,8 +516,12 @@ impl Player {
         self.endpoint.transport().local_addr()
     }
 
+    /// The world the machine's game runs in.
     pub fn world(&self) -> &World {
-        self.app.world()
+        match &self.predictor {
+            Some(predictor) => predictor.world(),
+            None => self.app.world(),
+        }
     }
 
     pub fn heard(&self) -> Heard {
@@ -543,6 +553,32 @@ pub struct Party {
     pub player_hashes: Vec<Vec<u128>>,
     /// Whether the players walk.
     pub walking: bool,
+    /// Whether players who join from now on predict.
+    pub predicting: bool,
+}
+
+/// Counts the game's messages in ticks a correction plays again.
+struct CountReplays<'a> {
+    sends: &'a mut u64,
+}
+
+impl TickHook for CountReplays<'_> {
+    fn after(
+        &mut self,
+        world: &World,
+        _: u64,
+        again: bool,
+        mark: ChangeTick,
+        _: &dyn Fn(Entity) -> u32,
+    ) -> Result<()> {
+        if again {
+            let sent = world.events_since::<ChatSay>(mark)?.len()
+                + world.events_since::<Vote>(mark)?.len()
+                + world.events_since::<Point>(mark)?.len();
+            *self.sends += sent as u64;
+        }
+        Ok(())
+    }
 }
 
 impl Party {
@@ -571,6 +607,7 @@ impl Party {
             hashes: BTreeMap::new(),
             player_hashes: Vec::new(),
             walking: true,
+            predicting: false,
         }
     }
 
@@ -595,10 +632,15 @@ impl Party {
             Entropy::seeded(seed),
         )
         .unwrap();
+        let predictor = self
+            .predicting
+            .then(|| Predictor::new(game_app(), PredictConfig::new(TICK_MS * 1000)).unwrap());
         self.players.push(Player {
             endpoint,
             session,
             app,
+            predictor,
+            replayed_sends: 0,
             seed,
             name: name.to_owned(),
             color,
@@ -646,6 +688,31 @@ impl Party {
         self.hashes.insert(tick, self.app.world().hash().as_u128());
         for (index, player) in self.players.iter_mut().enumerate() {
             player.endpoint.update(now);
+            if let Some(predictor) = player.predictor.as_mut() {
+                // A predicting machine: the host's news into the mirror,
+                // then a frame of the prediction (the game runs there).
+                player
+                    .session
+                    .begin_tick(player.app.world_mut(), &mut player.endpoint)
+                    .unwrap();
+                let input = match player.session.seat() {
+                    Some(seat) if self.walking => {
+                        walk_input(seat, predictor.tick().map_or(0, |t| t + 1))
+                    }
+                    _ => Vec::new(),
+                };
+                let mut count = CountReplays {
+                    sends: &mut player.replayed_sends,
+                };
+                let report = player
+                    .session
+                    .predict(predictor, &mut player.endpoint, now, &input, &mut count)
+                    .unwrap();
+                assert!(report.failures.is_empty(), "{:?}", report.failures);
+                player.endpoint.update(now);
+                self.player_hashes[index].push(predictor.hash().as_u128());
+                continue;
+            }
             let mark = player
                 .session
                 .begin_tick(player.app.world_mut(), &mut player.endpoint)

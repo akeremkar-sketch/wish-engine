@@ -19,8 +19,8 @@ mod apply;
 mod map;
 
 pub use apply::{
-    CLICK, POINTER, SCREEN, Values, apply, apply_players, game_screen, interface_to_picture,
-    main_camera, picture_to_interface, register, set_players,
+    CLICK, POINTER, SCREEN, Values, apply, apply_players, apply_pointer, game_screen,
+    interface_to_picture, main_camera, picture_to_interface, register, set_players,
 };
 pub use map::{Binding, INPUT_FILE, InputMap, key_names};
 pub use wish_types::MAX_PLAYERS;

@@ -249,13 +249,14 @@ asla yazılmaz.
   - Resim adımları altın görüntülerle karşılaştırılır; *Altın resimleri güncelle* yenilerini
     kaydeder.
 - **Çevrim içi oyun (1.1'de önizleme):**
-  - *Oyun → Oyuncular* ve 2 ya da daha büyük bir sayı: *Oynat* düzenleyicide çevrim içi bir maç kurar.
-    Ev sahibi sizsiniz (oyuncu 0); diğer koltukları benzetilmiş bir ağ üzerinden botlar alır ve
-    her koltuk hazır olunca maç başlar.
+  - *Oyun → Oyuncular* ve 2 ya da daha büyük bir sayı: *Oynat* düzenleyicide benzetilmiş bir
+    internet üzerinden (her yöne 50 ms) çevrim içi bir maç kurar. Bir koltuğu çevrim içi bir oyuncu
+    gibi oynarsınız: kendi oyuncunuz öngörülür, bu yüzden tuşlarınıza hemen cevap verir; ötekiler
+    biraz geriden akıcı çizilir. Diğer koltukları botlar alır ve her koltuk hazır olunca maç başlar.
   - *Oyun → Ağ paneli* lobiyi ve her koltuğu gösterir: hazır, bağlı, gidiş dönüş süresi ve aldığı
-    baytlar. *Oyun görünümünde göster* oyun görünümünü bir oyuncunun makinesine gönderilene çevirir
-    (*Ev sahibi*, *Oyuncu 1*, ...): gizli rollü bir oyun her oyuncuya yalnızca görebileceğini
-    gösterir.
+    baytlar. *Oyun görünümünde göster* oyun görünümünü bir oyuncunun makinesinin gösterdiğine çevirir
+    (*Ev sahibi*, *Siz (oyuncu 1)*, *Oyuncu 2*, ...): gizli rollü bir oyun her oyuncuya yalnızca
+    görebileceğini gösterir.
   - `wen play --players 4` aynısını kendi penceresinde yapar. `wen net host --port 47600` yerel
     ağda insanlar için bir maç kurar ve oda kodunu yazar; başka bir bilgisayarda
     `wen net join <adres>:47600 --room <kod>` (ya da `wen net join discover`) ona katılır.

@@ -75,18 +75,59 @@ wish_sdk::export! {
 }
 "#;
 
+/// The game of an online game made for prediction (design note
+/// `1.1-net-tool.md` §12): every machine walks every avatar with its
+/// player's `move` (2 m/s), so a player's machine predicts its own avatar
+/// with the host's own system.
+const PREDICTED_GAME: &str = r#"use wish_sdk::prelude::*;
+
+/// A player's body.
+#[component]
+pub struct Avatar {
+    /// The player who walks it.
+    #[schema(range = 0..=15)]
+    pub player: PlayerId,
+}
+
+/// A number only its owner may see.
+#[component]
+pub struct Secret {
+    /// The number.
+    pub number: u32,
+}
+
+/// Walks every avatar with its player's input, on every machine.
+#[system]
+fn walk(players: PlayerActions, mut avatars: Query<(&Avatar, &mut Transform)>, time: Res<Time>) {
+    for (avatar, transform) in avatars.iter_mut() {
+        let step = players.of(avatar.player).axis2("move");
+        transform.translation += Vec3::new(step.x, 0.0, -step.y) * 2.0 * time.delta;
+    }
+}
+
+wish_sdk::export! {
+    components: [Avatar, Secret],
+    systems: [walk],
+}
+"#;
+
 /// A built project with six avatars `a0`..`a5` (at x = 2k, everyone sees
 /// them) and six secrets `s0`..`s5` (only their owner sees them), and a
 /// `net` section that replicates them.
 fn project(name: &str) -> (PathBuf, Workspace) {
+    project_with(name, GAME, &["Transform", "NetOwner", "Avatar", "Secret"])
+}
+
+/// [`project`] with another game and replicated types.
+fn project_with(name: &str, game: &str, replicate: &[&str]) -> (PathBuf, Workspace) {
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("net-{name}"));
     let _ = std::fs::remove_dir_all(&dir);
     create_project(&dir, "Net test", "wen").unwrap();
-    std::fs::write(dir.join(SCRIPTS_ENTRY), GAME).unwrap();
+    std::fs::write(dir.join(SCRIPTS_ENTRY), game).unwrap();
     let file = dir.join("wish.json");
     let mut config: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
     config["net"] = json!({
-        "replicate": ["Transform", "NetOwner", "Avatar", "Secret"],
+        "replicate": replicate,
         "lobby": { "roles": [{ "name": "crew" }, { "name": "saboteur", "count": 1 }] }
     });
     std::fs::write(&file, serde_json::to_string_pretty(&config).unwrap()).unwrap();
@@ -99,7 +140,7 @@ fn project(name: &str) -> (PathBuf, Workspace) {
         ops.push(
             json!({ "op": "spawn", "id": format!("a{k}"), "components": {
             "Transform": { "translation": [2 * k, 0, 0] }, "Avatar": { "player": k },
-            "NetOwner": { "player": k }, "Replicated": {} } }),
+            "NetOwner": { "player": k }, "Replicated": {}, "Primitive": { "shape": "Cube" } } }),
         );
         ops.push(
             json!({ "op": "spawn", "id": format!("s{k}"), "components": {
@@ -216,6 +257,23 @@ fn bots_play_a_match_over_a_lossy_network_and_each_sees_what_it_may() {
         (x1_seen - 4.0).abs() < 1e-3,
         "player 2 sees a1 at {x1_seen}"
     );
+    // Player 1's own machine predicted a1 with a game that walks only on
+    // the host: every confirmation of the walk corrected it, and once the
+    // walk was over it ended where the host says, nothing left to smooth.
+    let x1_own = x_of(&mut ws, &session, Some(1), "a1");
+    assert!((x1_own - 4.0).abs() < 1e-3, "player 1 has a1 at {x1_own}");
+    let one = call(
+        &mut ws,
+        "net",
+        json!({ "action": "status", "session": session, "player": 1 }),
+    );
+    let prediction = &one["player"]["prediction"];
+    assert!(prediction["corrections"].as_u64().unwrap() > 0, "{one}");
+    assert!(
+        prediction["largest_correction_mm"].as_u64().unwrap() > 0,
+        "{one}"
+    );
+    assert_eq!(prediction["smoothing_mm"], 0, "{one}");
     let secrets = call(
         &mut ws,
         "entity_query",
@@ -513,4 +571,185 @@ fn a_match_runs_over_localhost_udp() {
         "net",
         json!({ "action": "stop", "session": session }),
     );
+}
+
+/// The types a predicting game replicates (the avatars' cube included, so
+/// that a player's machine draws them).
+const PREDICTED_TYPES: &[&str] = &["Transform", "NetOwner", "Avatar", "Secret", "Primitive"];
+
+/// The bad network of the prediction tests: 100 ms each way, jitter, 5 %
+/// loss.
+fn bad_network() -> Value {
+    json!({ "latency_ms": 100, "jitter_ms": 10, "loss": 0.05, "seed": 9 })
+}
+
+/// A scenario test of a match over 100 ms and 5 % loss in which a player's
+/// avatar answers its input on the very tick in its own view (while the
+/// host has not heard of it yet), and both end where the host says (design
+/// note `1.1-net-tool.md` §12).
+#[test]
+fn a_player_sees_its_own_avatar_answer_at_once_over_a_bad_network() {
+    let (dir, mut ws) = project_with("predicted", PREDICTED_GAME, PREDICTED_TYPES);
+    std::fs::create_dir_all(dir.join("tests")).unwrap();
+    std::fs::write(
+        dir.join("tests/predicted.test.json"),
+        json!({
+            "format": 1, "scene": "scenes/main.scene.json", "seed": 4,
+            "net": { "players": 3, "bots": 2, "auto_start": true, "network": bad_network() },
+            "steps": [
+                { "until": "Lobby.phase == 'Running'", "max_frames": 1500 },
+                { "frames": 120 },
+                { "players": { "1": { "move": [1, 0] } }, "frames": 1 },
+                { "expect": "Avatar.player == 1 && Transform.translation.x > 2.03 && Transform.translation.x < 2.07",
+                  "player": 1, "message": "player 1's own avatar moved on the tick it pressed" },
+                { "expect": "Transform.translation.x == 2", "entity": "a1",
+                  "message": "the host has not heard of it yet" },
+                { "players": { "1": { "move": [1, 0] } }, "frames": 59 },
+                { "frames": 120 },
+                { "expect": "Transform.translation.x > 3.99 && Transform.translation.x < 4.01", "entity": "a1",
+                  "message": "the host walked a1 one second" },
+                { "expect": "Avatar.player == 1 && Transform.translation.x > 3.99 && Transform.translation.x < 4.01",
+                  "player": 1, "message": "player 1's prediction ends where the host says" },
+                { "expect": "Avatar.player == 1 && Transform.translation.x > 3.99 && Transform.translation.x < 4.01",
+                  "player": 2, "message": "player 2 sees a1 there too" }
+            ]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let ran = ws.call(
+        "test_run",
+        &json!({ "paths": ["tests/predicted.test.json"] }),
+        &parse_actor("agent"),
+    );
+    assert_eq!(ran["passed"], true, "{ran}");
+    assert_eq!(ran["results"][0]["replay_verified"], true, "{ran}");
+    let again = ws.call(
+        "test_run",
+        &json!({ "paths": ["tests/predicted.test.json"] }),
+        &parse_actor("agent"),
+    );
+    assert_eq!(ran.to_string(), again.to_string(), "the same match twice");
+}
+
+/// The person plays a seat as a predicting player (`play_as: "player"`):
+/// its own avatar answers at once in its own view and in its picture,
+/// corrections stay rare and end, the host hears its frames in time, and two
+/// workspaces give the same answers byte for byte.
+#[test]
+fn the_person_plays_a_predicted_seat_and_corrections_stay_rare() {
+    let run = |name: &str| {
+        let (_dir, mut ws) = project_with(name, PREDICTED_GAME, PREDICTED_TYPES);
+        let hosted = call(
+            &mut ws,
+            "net",
+            json!({ "action": "host", "players": 3, "bots": 2, "auto_start": true, "seed": 4,
+                    "play_as": "player", "network": bad_network() }),
+        );
+        assert_eq!(hosted["host_plays"], false, "{hosted}");
+        assert_eq!(hosted["you"], "You", "{hosted}");
+        let session = hosted["session"].as_str().unwrap().to_owned();
+        let mut answers = Vec::new();
+        let started = call(
+            &mut ws,
+            "net",
+            json!({ "action": "step", "session": session, "until": "Lobby.phase == 'Running'", "max_frames": 1500 }),
+        );
+        assert_eq!(started["stopped_by"], "until", "{started}");
+        answers.push(started.to_string());
+        let settled = call(
+            &mut ws,
+            "net",
+            json!({ "action": "step", "session": session, "frames": 120 }),
+        );
+        answers.push(settled.to_string());
+        let seats = settled["seats"].as_array().unwrap().clone();
+        assert_eq!(seats.len(), 3, "{settled}");
+        let you = seats
+            .iter()
+            .find(|s| s["machine"] == "you")
+            .and_then(|s| s["player"].as_u64())
+            .unwrap_or_else(|| panic!("no seat of the person: {settled}"));
+        for seat in &seats {
+            assert_eq!(seat["predicted"], true, "{seat}");
+            assert!(
+                seat["lead_ticks"].as_i64().unwrap() > 6,
+                "the lead covers the trip: {seat}"
+            );
+        }
+        let avatar = format!("a{you}");
+        let start = x_of(&mut ws, &session, None, &avatar);
+        // One tick of the person's input (the session's own input).
+        call(
+            &mut ws,
+            "net",
+            json!({ "action": "step", "session": session, "frames": 1, "input": { "move": [1, 0] } }),
+        );
+        let own = x_of(&mut ws, &session, Some(you as u32), &avatar);
+        // The frame predicts one tick (two when tick sync catches up).
+        let moved = (own - start) * 30.0;
+        assert!(
+            (moved - 1.0).abs() < 1e-3 || (moved - 2.0).abs() < 1e-3,
+            "the person's avatar answers on the tick: {start} -> {own}"
+        );
+        let on_host = x_of(&mut ws, &session, None, &avatar);
+        assert_eq!(on_host, start, "the host has not heard of it yet");
+        // The picture the person sees draws it there too.
+        let seen = ws.play_scene(&session).unwrap();
+        let drawn: Vec<f32> = seen.draws.iter().map(|draw| draw.world.w_axis.x).collect();
+        assert!(
+            drawn.iter().any(|x| (f64::from(*x) - own).abs() < 1e-4),
+            "the person's picture draws its avatar where it predicted it ({own}): {drawn:?}"
+        );
+        // A second of walking, then rest.
+        answers.push(
+            call(
+                &mut ws,
+                "net",
+                json!({ "action": "step", "session": session, "frames": 59, "input": { "move": [1, 0] } }),
+            )
+            .to_string(),
+        );
+        answers.push(
+            call(
+                &mut ws,
+                "net",
+                json!({ "action": "step", "session": session, "frames": 180 }),
+            )
+            .to_string(),
+        );
+        let host_x = x_of(&mut ws, &session, None, &avatar);
+        let own_x = x_of(&mut ws, &session, Some(you as u32), &avatar);
+        assert!(
+            (host_x - start - 2.0).abs() < 1e-3,
+            "the host walked it 2 m: {host_x}"
+        );
+        assert_eq!(own_x, host_x, "the prediction ends where the host says");
+        let mine = call(
+            &mut ws,
+            "net",
+            json!({ "action": "status", "session": session, "player": you }),
+        );
+        let prediction = &mine["player"]["prediction"];
+        let confirmations = prediction["confirmations"].as_u64().unwrap();
+        let corrections = prediction["corrections"].as_u64().unwrap();
+        assert!(confirmations > 100, "{mine}");
+        assert!(
+            corrections * 50 <= confirmations,
+            "corrections are rare (at most 2 % of the confirmations): {mine}"
+        );
+        assert_eq!(
+            prediction["smoothing_mm"], 0,
+            "nothing is left to smooth: {mine}"
+        );
+        assert!(
+            prediction["late_frames"].as_u64().unwrap() <= 2,
+            "the host hears the person's frames in time: {mine}"
+        );
+        answers.push(mine.to_string());
+        answers
+    };
+    let first = run("predicted-a");
+    let second = run("predicted-b");
+    assert_eq!(first, second, "the same calls give the same answers");
 }
