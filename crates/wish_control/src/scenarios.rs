@@ -25,7 +25,8 @@
 //! of `net host` (`players` seats, `bots`, `drive`, `auto_start`,
 //! `host_plays`, `network`, `room_code`); its steps run on the networked
 //! session, `players` in a run step gives input by seat, and an `expect`
-//! with `"player": 3` checks what player 3's machine has. When every step
+//! with `"player": 3` checks what player 3's machine has (a `capture` step
+//! with `"player"` draws that machine's picture). When every step
 //! holds, the host's match log is played into a fresh host world and must
 //! give the same world at every tick (`replay_verified`).
 
@@ -80,6 +81,8 @@ enum Step {
         channel: u8,
         fraction: f64,
         view: String,
+        /// The seat whose machine's picture is taken (a networked test).
+        player: Option<u32>,
     },
 }
 
@@ -203,22 +206,22 @@ fn parse(text: &str, file: &str) -> Result<Spec> {
                 &format!("'{extra}' is not a step key; they are {}", known.join(", ")),
             ));
         }
+        let player = match step.get("player") {
+            None => None,
+            Some(seat) => Some(
+                seat.as_u64()
+                    .and_then(|s| u32::try_from(s).ok())
+                    .filter(|s| *s < 16 && net.is_some())
+                    .ok_or_else(|| {
+                        invalid(
+                            file,
+                            &format!("{at}/player"),
+                            "'player' is a seat (0 to 15) of a networked test (one with net), on an expect or a capture step",
+                        )
+                    })?,
+            ),
+        };
         if let Some(expression) = text_of(step, "expect") {
-            let player = match step.get("player") {
-                None => None,
-                Some(seat) => Some(
-                    seat.as_u64()
-                        .and_then(|s| u32::try_from(s).ok())
-                        .filter(|s| *s < 16 && net.is_some())
-                        .ok_or_else(|| {
-                            invalid(
-                                file,
-                                &format!("{at}/player"),
-                                "'player' is a seat (0 to 15) of a networked test (one with net)",
-                            )
-                        })?,
-                ),
-            };
             steps.push(Step::Expect {
                 expression,
                 entity: text_of(step, "entity"),
@@ -246,8 +249,16 @@ fn parse(text: &str, file: &str) -> Result<Spec> {
                 channel: number("tolerance", 2.0).clamp(0.0, 255.0) as u8,
                 fraction: number("fraction", 0.001).clamp(0.0, 1.0),
                 view: text_of(capture, "view").unwrap_or_else(|| "lit".to_owned()),
+                player,
             });
         } else {
+            if player.is_some() {
+                return Err(invalid(
+                    file,
+                    &format!("{at}/player"),
+                    "'player' belongs to an expect or a capture step; a run step gives seats their input with 'players'",
+                ));
+            }
             let until = text_of(step, "until");
             let frames = match (step.get("frames"), step.get("max_frames")) {
                 (Some(frames), _) => frames.as_i64(),
@@ -326,12 +337,22 @@ fn explain(
             .filter(|(path, value)| world_values.get(path) != Some(value))
             .collect();
         if !from_entity.is_empty() {
-            entities.push(json!({ "entity": name, "values": from_entity }));
-            if entities.len() >= 5 {
-                break;
-            }
+            // How many of the condition's components the entity has: the
+            // entities the condition is about come first (friction F18:
+            // `Avatar.player == 1 && Transform.translation.x > 36` listed
+            // the first five things with a Transform, none of them avatars).
+            let kinds: std::collections::BTreeSet<&str> = from_entity
+                .keys()
+                .map(|path| path.split(['.', '[']).next().unwrap_or(path))
+                .collect();
+            entities.push((
+                kinds.len(),
+                json!({ "entity": name, "values": from_entity }),
+            ));
         }
     }
+    entities.sort_by_key(|entity| std::cmp::Reverse(entity.0));
+    let entities: Vec<Value> = entities.into_iter().take(5).map(|(_, e)| e).collect();
     json!({ "world": world_values, "entities": entities })
 }
 
@@ -564,11 +585,12 @@ impl Workspace {
                     channel,
                     fraction,
                     view,
+                    player,
                 } => self.capture_step(
                     id,
                     index,
                     name,
-                    (camera.as_deref(), golden, *size, view),
+                    (camera.as_deref(), golden, *size, view, *player),
                     Tolerance {
                         channel: *channel,
                         fraction: *fraction,
@@ -726,7 +748,7 @@ impl Workspace {
         id: &str,
         index: usize,
         test: &str,
-        (camera, golden, size, view): (Option<&str>, &str, (u32, u32), &str),
+        (camera, golden, size, view, player): (Option<&str>, &str, (u32, u32), &str, Option<u32>),
         tolerance: Tolerance,
         (update_golden, dry_run): (bool, bool),
     ) -> Option<Map<String, Value>> {
@@ -741,6 +763,9 @@ impl Workspace {
         let mut args = json!({ "session": id, "width": size.0, "height": size.1, "view": view });
         if let Some(camera) = camera {
             args["camera"] = json!(camera);
+        }
+        if let Some(player) = player {
+            args["player"] = json!(player);
         }
         let answer = self.call("capture_frame", &args, &crate::parse_actor("test"));
         let Some(image) = answer["image"]["data"]

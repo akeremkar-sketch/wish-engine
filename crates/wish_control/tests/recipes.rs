@@ -142,6 +142,15 @@ fn behaviour(title: &str) -> Option<(Value, Value)> {
                 { "expect": "SpriteAnimator.clip == \"idle\" && SpriteAnimator.frame == 0", "entity": "hero", "message": "it stops, and idle starts at its first frame" }
             ]),
         )
+    } else if title.starts_with("Vision cut by walls") {
+        (
+            json!([]),
+            json!([
+                { "frames": 5 },
+                { "expect": "Thing.seen == false", "entity": "behind", "message": "the wall hides it" },
+                { "expect": "Thing.seen == true", "entity": "open", "message": "nothing stands in the way" }
+            ]),
+        )
     } else if title.starts_with("A top-down character") {
         (
             json!([]),
@@ -220,6 +229,8 @@ fn every_recipe_builds_and_applies() {
         .unwrap();
         ws.set_toolchain(toolchain().clone());
         let agent = parse_actor("agent");
+        // A recipe's own test of an online match is played as written.
+        let mut own_test: Option<Value> = None;
         for block in blocks {
             match block.info.as_str() {
                 "rust" => {
@@ -258,6 +269,9 @@ fn every_recipe_builds_and_applies() {
                         .unwrap_or_else(|e| panic!("'{title}': the test is not JSON: {e}"));
                     assert_eq!(test["format"], 1, "'{title}'");
                     assert!(test["steps"].as_array().is_some_and(|s| !s.is_empty()));
+                    if test.get("net").is_some() {
+                        own_test = Some(test.clone());
+                    }
                     tests += 1;
                 }
                 other => panic!("'{title}' has a block of unknown kind '{other}'"),
@@ -348,6 +362,16 @@ fn every_recipe_builds_and_applies() {
             drawn += 1;
         }
         // And it does what it says.
+        if let Some(test) = own_test {
+            std::fs::write(
+                dir.join("tests/recipe.test.json"),
+                serde_json::to_string_pretty(&test).unwrap(),
+            )
+            .unwrap();
+            let ran = ws.call("test_run", &json!({}), &agent);
+            assert_eq!(ran["passed"], true, "'{title}' does not work: {ran}");
+            played += 1;
+        }
         if let Some((ops, test)) = behaviour(title) {
             if ops.as_array().is_some_and(|o| !o.is_empty()) {
                 let answer = ws.call("edit_apply", &json!({ "ops": ops }), &agent);
@@ -364,7 +388,7 @@ fn every_recipe_builds_and_applies() {
         }
     }
     assert!(
-        built >= 7 && applied >= 10 && tests >= 1 && played >= 8 && called >= 3 && drawn == 2,
+        built >= 10 && applied >= 12 && tests >= 3 && played >= 11 && called >= 3 && drawn == 2,
         "{built} {applied} {tests} {played} {called} {drawn}"
     );
 }

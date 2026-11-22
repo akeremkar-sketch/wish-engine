@@ -290,6 +290,9 @@ pub(crate) fn lobby_config(settings: &NetSettings, setup: &HostSetup) -> LobbyCo
     if let Some(n) = settings.min_players {
         config.min_players = n;
     }
+    if let Some(n) = settings.max_players {
+        config.max_players = n;
+    }
     if let Some(n) = settings.colors {
         config.colors = n;
     }
@@ -305,7 +308,7 @@ pub(crate) fn lobby_config(settings: &NetSettings, setup: &HostSetup) -> LobbyCo
     config.roles = settings
         .roles
         .iter()
-        .map(|(name, count)| RoleConfig::new(name, *count))
+        .map(|role| RoleConfig::new(&role.name, role.count).more_from(&role.more_from))
         .collect();
     config
 }

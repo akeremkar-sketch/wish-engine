@@ -1,0 +1,42 @@
+{
+  "format": 1,
+  "scene": "scenes/main.scene.json",
+  "seed": 4,
+  "net": {
+    "players": 6, "bots": 5, "auto_start": true,
+    "network": { "latency_ms": 100, "jitter_ms": 20, "loss": 0.05, "seed": 9 }
+  },
+  "steps": [
+    { "until": "Lobby.phase == 'Running' && Station.phase == 'Playing'", "max_frames": 900 },
+    { "frames": 30 },
+    { "expect": "MatchRoles.roles[3] == 1", "message": "seed 4 deals the static to seat 3 (the host knows every role)" },
+    { "expect": "LocalPlayer.role == 0 && LocalPlayer.role_name == \"keeper\"", "player": 2, "message": "a keeper's machine knows its own role" },
+    { "expect": "!has(MatchRoles) || MatchRoles.roles[3] == 0", "player": 2, "message": "a keeper's machine never holds the static's role" },
+    { "expect": "LocalPlayer.role == 1 && LocalPlayer.role_name == \"static\"", "player": 3, "message": "the static knows it is the static" },
+    { "expect": "count(Private) == 1 && Private.player == 2", "player": 2, "message": "a machine receives its own private state only" },
+    { "capture": { "golden": "tests/golden/keeper-view.png", "width": 384, "height": 216 }, "player": 2 },
+
+    { "input": { "move": [0, 1] }, "until": "Avatar.player == 0 && Transform.translation.y > 25", "max_frames": 400 },
+    { "players": { "5": { "move": [0, -1] } }, "until": "Avatar.player == 5 && Transform.translation.y < 6.1", "max_frames": 400 },
+    { "players": { "5": { "move": [-1, 0] } }, "until": "Avatar.player == 5 && Transform.translation.x < 6.2", "max_frames": 600 },
+    { "players": { "5": { "move": [0, -1] } }, "until": "Avatar.player == 5 && Transform.translation.y < 5.6", "max_frames": 200 },
+    { "players": { "4": { "move": [0, 1] } }, "until": "Avatar.player == 4 && Transform.translation.y > 15.8", "max_frames": 200 },
+    { "players": { "4": { "move": [-1, 0] } }, "until": "Avatar.player == 4 && Transform.translation.x < 6", "max_frames": 600 },
+    { "players": { "4": { "move": [0, 1] } }, "until": "Avatar.player == 4 && Transform.translation.y > 16.5", "max_frames": 200 },
+    { "players": { "1": { "move": [0, -1] } }, "until": "Avatar.player == 1 && Transform.translation.y < 16.2", "max_frames": 200 },
+    { "players": { "1": { "move": [1, 0] } }, "until": "Avatar.player == 1 && Transform.translation.x > 36", "max_frames": 600 },
+    { "players": { "1": { "move": [0, 1] } }, "until": "Avatar.player == 1 && Transform.translation.y > 18.4", "max_frames": 200 },
+    { "players": { "2": { "move": [0, -1] } }, "until": "Avatar.player == 2 && Transform.translation.y < 16.2", "max_frames": 200 },
+    { "players": { "2": { "move": [1, 0] } }, "until": "Avatar.player == 2 && Transform.translation.x > 36.6", "max_frames": 600 },
+    { "players": { "2": { "move": [0, 1] } }, "until": "Avatar.player == 2 && Transform.translation.y > 24.8", "max_frames": 300 },
+    { "frames": 20 },
+
+    { "input": { "use": true }, "players": { "1": { "use": true }, "2": { "use": true }, "4": { "use": true }, "5": { "use": true } },
+      "until": "Station.phase == 'Over'", "max_frames": 300 },
+    { "expect": "Station.repairs == 5 && Station.winner == 'Keepers' && Station.how == 1", "message": "five repairs win the match for the keepers" },
+    { "frames": 30 },
+    { "expect": "Lobby.phase == 'Ended' && Lobby.outcome == 1", "message": "the host ended the match with its outcome" },
+    { "expect": "Station.winner == 'Keepers' && Lobby.phase == 'Ended'", "player": 4, "message": "every machine hears it" },
+    { "expect": "UiText.text == \"The keepers repaired Ridgewatch!\"", "entity": "result_title", "player": 4 }
+  ]
+}

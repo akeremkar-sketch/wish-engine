@@ -119,8 +119,15 @@ impl ClientSession {
             host_index: BTreeMap::new(),
             seat: None,
             token: None,
-            lobby: LobbyState::default(),
-            lobby_dirty: false,
+            // A player's machine is in an online session from its first
+            // tick: until the host's lobby arrives it says the lobby is
+            // open (joining), never `Offline`, which game code reads as a
+            // game alone (friction F13).
+            lobby: LobbyState {
+                phase: LobbyPhase::Open,
+                ..LobbyState::default()
+            },
+            lobby_dirty: true,
             local: LocalState::default(),
             local_dirty: false,
             inbox: VecDeque::new(),

@@ -29,6 +29,10 @@ pub struct RoleConfig {
     pub name: String,
     /// How many players get it (ignored for role 0, which is the rest).
     pub count: u32,
+    /// One more player gets it from each of these numbers of players in
+    /// the match: `[7]` deals `count` to six players or fewer and
+    /// `count + 1` from seven (a party game's second saboteur).
+    pub more_from: Vec<u32>,
 }
 
 impl RoleConfig {
@@ -37,7 +41,25 @@ impl RoleConfig {
         Self {
             name: name.to_owned(),
             count,
+            more_from: Vec::new(),
         }
+    }
+
+    /// The same role, dealt to one more player from each of `players`.
+    pub fn more_from(mut self, players: &[u32]) -> Self {
+        self.more_from = players.to_vec();
+        self
+    }
+
+    /// How many players get it in a match of `players`.
+    pub fn count_for(&self, players: usize) -> u32 {
+        let more = self
+            .more_from
+            .iter()
+            .filter(|from| players >= **from as usize)
+            .count();
+        self.count
+            .saturating_add(u32::try_from(more).unwrap_or(u32::MAX))
     }
 }
 
@@ -55,6 +77,9 @@ pub struct LobbyConfig {
     pub host_color: u32,
     /// Players seated before the host may start (1 to 16).
     pub min_players: u32,
+    /// The most players a match takes, the host's own included (1 to 16,
+    /// at least `min_players`): a game with ten characters seats ten.
+    pub max_players: u32,
     /// Colours of the game's palette (1 to 64); a colour is an index below.
     pub colors: u32,
     /// The roles (at most 16; the first is everyone else's). Empty: one
@@ -88,6 +113,7 @@ impl Default for LobbyConfig {
             host_name: "Host".to_owned(),
             host_color: 0,
             min_players: 1,
+            max_players: MAX_PLAYERS as u32,
             colors: 16,
             roles: Vec::new(),
             tick_rate_hz: 60,
@@ -117,6 +143,16 @@ impl LobbyConfig {
                 "A match needs 1 to 16 players.",
             );
         }
+        if !(self.min_players..=MAX_PLAYERS as u32).contains(&self.max_players) {
+            return bad(
+                "max_players",
+                format!(
+                    "max_players is {} (min_players is {})",
+                    self.max_players, self.min_players
+                ),
+                "A match takes at most 1 to 16 players, and no fewer than min_players.",
+            );
+        }
         if !(1..=MAX_COLORS).contains(&self.colors) {
             return bad(
                 "colors",
@@ -125,15 +161,19 @@ impl LobbyConfig {
             );
         }
         if self.roles.len() > MAX_ROLES
-            || self
-                .roles
-                .iter()
-                .any(|r| r.name.is_empty() || r.name.len() > MAX_ROLE_NAME)
+            || self.roles.iter().any(|r| {
+                r.name.is_empty()
+                    || r.name.len() > MAX_ROLE_NAME
+                    || r.more_from.len() > MAX_PLAYERS
+                    || r.more_from
+                        .iter()
+                        .any(|n| !(1..=MAX_PLAYERS as u32).contains(n))
+            })
         {
             return bad(
                 "roles",
                 format!("{} roles are listed", self.roles.len()),
-                "List at most 16 roles, each with a name of 1 to 64 bytes.",
+                "List at most 16 roles, each with a name of 1 to 64 bytes (and more_from numbers of players from 1 to 16).",
             );
         }
         if !(1..=1000).contains(&self.tick_rate_hz) {
@@ -432,7 +472,7 @@ pub fn deal_roles(
     let mut dealt = BTreeMap::new();
     let mut next = 0usize;
     for (role, spec) in roles.iter().enumerate().skip(1) {
-        for _ in 0..spec.count {
+        for _ in 0..spec.count_for(players.len()) {
             let Some(player) = order.get(next) else {
                 break;
             };
@@ -525,5 +565,27 @@ mod tests {
         assert!(rounds.iter().any(|r| *r != a), "another round deals again");
         let few = deal_roles(7, 1, &[4], &roles);
         assert_eq!(few[&4], 1, "too few players: the later roles go first");
+    }
+
+    /// Friction F14: a party game deals a second saboteur only to a large
+    /// match.
+    #[test]
+    fn a_role_can_grow_with_the_match() {
+        let roles = vec![
+            RoleConfig::new("keeper", 0),
+            RoleConfig::new("static", 1).more_from(&[7]),
+        ];
+        let statics = |n: u32| {
+            let players: Vec<PlayerId> = (0..n).collect();
+            deal_roles(3, 1, &players, &roles)
+                .values()
+                .filter(|r| **r == 1)
+                .count()
+        };
+        assert_eq!(statics(4), 1);
+        assert_eq!(statics(6), 1);
+        assert_eq!(statics(7), 2);
+        assert_eq!(statics(10), 2);
+        assert_eq!(roles[1].count_for(7), 2);
     }
 }

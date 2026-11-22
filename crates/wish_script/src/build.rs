@@ -309,6 +309,27 @@ impl BuildReport {
     }
 }
 
+/// The engine's own advice for a query handed to a helper function: inside
+/// `#[system]` the macro gives a query's references the `'static` lifetime,
+/// so a helper that takes `&Query<(&Bell, &Transform)>` does not match, and
+/// the compiler's words (invariance, "does not necessarily outlive") do not
+/// say what to write (friction F11, `docs/friction.md`).
+fn query_lifetime_hint(message: &Value) -> Option<&'static str> {
+    let rendered = message
+        .get("rendered")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let text = message.get("message").and_then(Value::as_str).unwrap_or("");
+    let about_query = rendered.contains("Query<") || rendered.contains("QueryData");
+    let about_lifetime = rendered.contains("'static")
+        || rendered.contains("outlive")
+        || text.contains("escapes")
+        || text.contains("lifetime");
+    (about_query && about_lifetime).then_some(
+        "A query given to a helper function needs `'static` on its references, as #[system] gives them: write `fn helper(found: &Query<(&'static Bell, &'static Transform)>)`, or pass the helper the values it needs instead of the query.",
+    )
+}
+
 /// One compiler message as a diagnostic.
 fn from_rustc(message: &Value) -> Option<Diagnostic> {
     let level = message.get("level")?.as_str()?;
@@ -374,6 +395,10 @@ fn from_rustc(message: &Value) -> Option<Diagnostic> {
         } else {
             joined
         }
+    };
+    let hint = match query_lifetime_hint(message) {
+        Some(advice) => format!("{advice} {hint}"),
+        None => hint,
     };
     let prefix = code.map(|c| format!("[{c}] ")).unwrap_or_default();
     let (diagnostic_code, kind) = if severity == Severity::Error {
@@ -842,5 +867,32 @@ mod tests {
         assert_eq!(written["rustc"], made["rustc"]);
         assert_eq!(written["externs"], made["externs"]);
         let _ = std::fs::remove_dir_all(&sdk);
+    }
+
+    /// Friction F11: a query handed to a helper function failed with the
+    /// compiler's words on invariance; the hint now says what to write.
+    #[test]
+    fn a_query_in_a_helper_function_gets_the_engines_advice() {
+        let message = json!({
+            "level": "error",
+            "message": "borrowed data escapes outside of function",
+            "code": { "code": "E0521" },
+            "rendered": "error[E0521]: borrowed data escapes outside of function\n  = note: requirement occurs because of the type `wish_sdk::Query<(&Bell, &wish_sdk::Transform)>`, which makes the generic argument invariant",
+            "children": [],
+            "spans": [{ "file_name": "scripts/src/lib.rs", "line_start": 9, "column_start": 5, "is_primary": true }]
+        });
+        let found = from_rustc(&message).unwrap();
+        assert!(found.hint.contains("&'static Bell"), "{}", found.hint);
+        assert!(
+            found.hint.contains("rustc --explain E0521"),
+            "{}",
+            found.hint
+        );
+        // Another error keeps the compiler's own advice alone.
+        let other = json!({
+            "level": "error", "message": "cannot find value `x` in this scope",
+            "code": { "code": "E0425" }, "rendered": "error[E0425]: cannot find value `x`", "children": []
+        });
+        assert!(!from_rustc(&other).unwrap().hint.contains("'static"));
     }
 }
