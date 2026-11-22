@@ -306,6 +306,10 @@ struct Saved {
     views: View,
 }
 
+/// Changes of the local player's actions kept for the host at most (about
+/// a quarter of a second of taps at 60 Hz, one change a frame).
+pub const WAITING_CHANGES: usize = 16;
+
 /// A client's prediction, reconciliation, interpolation and tick sync.
 pub struct Predictor {
     config: PredictConfig,
@@ -330,6 +334,12 @@ pub struct Predictor {
     inputs: BTreeMap<u64, Actions>,
     /// The actions of the newest predicted tick.
     last_actions: Actions,
+    /// Changes of the local player's actions that no tick sent in time has
+    /// used yet, oldest first (at most [`WAITING_CHANGES`]): a press held
+    /// for one frame while the prediction stalls, waits for its first
+    /// confirmed state or predicts with held actions still reaches the
+    /// host, one tick for each change, instead of being lost.
+    waiting: VecDeque<Actions>,
     /// The oldest tick from which every predicted tick's frame was sent (a
     /// jump sends only the newest eight).
     sent_from: Option<u64>,
@@ -381,6 +391,7 @@ impl Predictor {
             simulated: None,
             inputs: BTreeMap::new(),
             last_actions: Actions::new(),
+            waiting: VecDeque::new(),
             sent_from: None,
             skipped: 0,
             history: BTreeMap::new(),
@@ -520,6 +531,15 @@ impl Predictor {
             self.ensure_types(client)?;
             self.reconcile(confirmed, &mut report, hook)?;
         }
+        // Every change of the actions is kept until a tick sent in time
+        // uses it: a short press is never lost to a frame that runs no tick
+        // or only ticks predicted with the held actions.
+        if self.waiting.back().unwrap_or(&self.last_actions) != actions {
+            if self.waiting.len() == WAITING_CHANGES {
+                self.waiting.pop_front();
+            }
+            self.waiting.push_back(actions.clone());
+        }
         if let Some(predicted) = self.tick {
             let rtt = endpoint.rtt_ms(PeerId::HOST).map(|ms| ms * 1000);
             let Plan {
@@ -542,13 +562,21 @@ impl Predictor {
             // simulates it (the start, a jump, a client fallen behind) is
             // predicted with the actions in force before, and its frame is
             // not sent: the host holds the frame in force for every tick it
-            // has no newer frame for, which are those actions. The frame's
-            // own actions start with the first tick that arrives in time.
+            // has no newer frame for, which are those actions. The changes
+            // waiting since (this frame's among them) start with the first
+            // tick that arrives in time, one tick each.
             let held = self.last_actions.clone();
             for _ in 0..allowed {
                 let tick = self.tick.map_or(0, |t| t + 1);
                 let in_time = tick >= in_time_from;
-                let used = if in_time { actions } else { &held };
+                let used = if in_time {
+                    self.waiting
+                        .pop_front()
+                        .unwrap_or_else(|| self.last_actions.clone())
+                } else {
+                    held.clone()
+                };
+                let used = &used;
                 self.inputs.insert(tick, used.clone());
                 self.simulate(tick, used, &mut report, hook)?;
                 self.stats.predicted_ticks += 1;
@@ -886,9 +914,10 @@ impl Predictor {
         let Some(me) = self.player else {
             return Ok(());
         };
-        let world = self.app.world_mut();
-        input::ensure_players(world, me + 1)?;
-        input::write_players(world, &|player| (player == me).then(|| actions.clone()))?;
+        // The player's own actions are this machine's (`ActionState`, what
+        // game code reads as the local player) and its seat's; the host and
+        // the other players are at rest here.
+        input::write_predicted(self.app.world_mut(), me, actions)?;
         if self.app.tick() != tick {
             self.app.set_tick(tick);
         }
@@ -898,6 +927,11 @@ impl Predictor {
         hook.before(self.app.world_mut(), tick, again, &|net| {
             ids.get(&net).copied().unwrap_or(Entity::NULL)
         })?;
+        // As a session's own tick does (`begin_tick`): what the systems
+        // write or send comes after `mark`, the first system's too (its
+        // messages were read as older than the tick and never sent, 22
+        // November 2026).
+        self.app.world_mut().advance_change_tick();
         let step = self.app.step()?;
         report.failures.extend(step.failures);
         self.simulated = Some(self.simulated.map_or(tick, |s| s.max(tick)));

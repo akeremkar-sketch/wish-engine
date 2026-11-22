@@ -21,9 +21,9 @@ use wish_net::{
 };
 use wish_replicate::wire::{self, Frame, Input};
 use wish_replicate::{
-    Client, ClientConfig, Host, PredictConfig, Predictor, ReplicationConfig, Source, View,
+    Client, ClientConfig, Host, PredictConfig, Predictor, ReplicationConfig, Source, TickHook, View,
 };
-use wish_schema::component;
+use wish_schema::{component, event};
 use wish_types::{
     ActionSlot, ActionState, NetOwner, NetViewer, PlayerActionSlots, PlayerActionState, PlayerId,
     Players, Replicated, Transform, action_id,
@@ -206,6 +206,9 @@ struct Game {
     crate_: Entity,
     peers: Vec<Peer>,
     bot: Bot,
+    /// A frame at which every client holds `move` right, for that frame
+    /// only (a tap), whatever the bot does.
+    tap: Option<u64>,
     frames: u64,
     /// The host's target of every player at every tick.
     records: BTreeMap<(PlayerId, u64), View>,
@@ -247,6 +250,7 @@ impl Game {
             crate_,
             peers: Vec::new(),
             bot,
+            tap: None,
             frames: 0,
             records: BTreeMap::new(),
             predictions: BTreeMap::new(),
@@ -311,7 +315,11 @@ impl Game {
         drop(peer.client.pump(&mut peer.mirror, &mut peer.endpoint));
         let player = peer.client.player();
         let next = peer.predictor.tick().map_or(0, |t| t + 1);
-        let actions = player.map(|p| bot(p, next)).unwrap_or_default();
+        let actions = if self.tap == Some(self.frames) {
+            vec![(move_id(), [1.0, 0.0])]
+        } else {
+            player.map(|p| bot(p, next)).unwrap_or_default()
+        };
         let before = peer.predictor.tick();
         let report = peer
             .predictor
@@ -551,6 +559,131 @@ impl Watch {
         }
         worst
     }
+}
+
+/// Sent by the prediction's first system every tick.
+#[event]
+pub struct Shout {
+    /// The tick it was sent at.
+    pub tick: u64,
+}
+
+fn shout(world: &mut World, context: &mut SystemContext<'_>) -> Result<()> {
+    world.send(Shout {
+        tick: context.time.tick,
+    })
+}
+
+/// Counts what each tick's first run sent since its mark.
+#[derive(Default)]
+struct Heard {
+    ticks: u64,
+    shouts: u64,
+    /// Ticks at which the machine's own `ActionState` held `move`.
+    held: u64,
+}
+
+impl TickHook for Heard {
+    fn after(
+        &mut self,
+        world: &World,
+        _tick: u64,
+        again: bool,
+        mark: wish_ecs::ChangeTick,
+        _: &dyn Fn(Entity) -> u32,
+    ) -> Result<()> {
+        if !again {
+            let id = world.registry().event_id_of::<Shout>().unwrap();
+            self.ticks += 1;
+            self.shouts += world.event_bytes_since(id, mark)?.len() as u64;
+            let state = world.resource::<ActionState>().unwrap();
+            if state.slots.iter().any(|s| s.id == move_id() && s.held) {
+                self.held += 1;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// What a tick's first system sends is after the tick's mark, as on a
+/// machine that does not predict, and game code reads the machine's own
+/// player in `ActionState` there too: a vote sent by a game's first system
+/// on a key press was never seen nor sent (22 November 2026).
+#[test]
+fn the_prediction_world_sees_its_own_input_and_sends_what_its_systems_send() {
+    let mut game = Game::new(SEED, LinkConditions::PERFECT, 1);
+    let mut app = game_app();
+    app.world_mut().register_event::<Shout>().unwrap();
+    app.add_system(System::new("shout", shout).before("walk"))
+        .unwrap();
+    game.peers[0].predictor = Predictor::new(app, config()).unwrap();
+    let mut heard = Heard::default();
+    for _ in 0..60 {
+        game.net.step();
+        game.host_step();
+        let now = game.net.now_ms();
+        let peer = &mut game.peers[0];
+        peer.endpoint.update(now);
+        drop(peer.client.pump(&mut peer.mirror, &mut peer.endpoint));
+        peer.predictor
+            .frame_with(
+                &mut peer.client,
+                &mut peer.endpoint,
+                now,
+                &vec![(move_id(), [1.0, 0.0])],
+                &mut heard,
+            )
+            .unwrap();
+        peer.endpoint.update(now);
+    }
+    assert!(heard.ticks > 30, "only {} ticks predicted", heard.ticks);
+    assert_eq!(heard.shouts, heard.ticks, "a tick's own shout was missed");
+    // Every tick after the start (whose first ticks hold the actions in
+    // force before) sees the press.
+    assert!(
+        heard.held + 12 >= heard.ticks && heard.held > 0,
+        "{} of {} ticks saw the press",
+        heard.held,
+        heard.ticks
+    );
+}
+
+fn still(_: PlayerId, _: u64) -> Vec<(u32, [f32; 2])> {
+    Vec::new()
+}
+
+/// A press held for one frame reaches the host whatever the prediction
+/// does in that frame: waiting for its first confirmed state, predicting
+/// with the held actions after the start or a jump, or stalling (a vote or
+/// a cursor push in a party game was lost this way, 22 November 2026).
+#[test]
+fn a_press_held_for_one_frame_is_never_lost() {
+    let conditions = LinkConditions {
+        latency_ms: 100,
+        jitter_ms: 20,
+        ..LinkConditions::PERFECT
+    };
+    let mut lost = Vec::new();
+    for frame in (0..90u64).step_by(3) {
+        let mut game = Game::new(SEED ^ frame, conditions, 1);
+        game.bot = still;
+        game.tap = Some(frame);
+        game.run(frame + 120);
+        let world = game.app.world_mut();
+        let x = world
+            .query::<(&NetOwner, &Transform)>()
+            .unwrap()
+            .find(|(owner, _)| owner.player == 1)
+            .map(|(_, t)| t.translation.x)
+            .unwrap();
+        if (x - 0.05).abs() > 1e-4 {
+            lost.push((frame, x, game.late_frames()));
+        }
+    }
+    assert!(
+        lost.is_empty(),
+        "taps lost or doubled (frame, x, late frames): {lost:?}"
+    );
 }
 
 #[test]

@@ -126,7 +126,8 @@ pub struct HostStats {
     pub out_of_window: u64,
     /// Input frames that arrived after the host had simulated their tick
     /// (the client's tick sync ran too close; each is applied a tick late,
-    /// or never when a newer frame came with it).
+    /// or passed over when a newer frame came with it, unless it holds a
+    /// press the newer one does not: then it is applied for one tick).
     pub late_frames: u64,
     /// Acknowledgements of ticks never sent.
     pub invalid_acks: u64,
@@ -662,12 +663,28 @@ impl Host {
         self.tick = Some(self.tick.map_or(tick, |t| t.max(tick)));
         let mut held: BTreeMap<PlayerId, Actions> = BTreeMap::new();
         for link in self.links.values_mut() {
-            if let Some((&stamp, _)) = link.frames.range(..=tick).next_back()
-                && let Some(actions) = link.frames.remove(&stamp)
-            {
-                link.held = actions;
-                link.applied_input = Some(stamp);
-                link.frames.retain(|t, _| *t > stamp);
+            if let Some((&newest, newer)) = link.frames.range(..=tick).next_back() {
+                // A frame that came late together with a newer one is passed
+                // over, unless it holds an action that neither the held
+                // frame nor the newer one holds: a short press (a vote, a
+                // cursor push) is then applied for this one tick instead of
+                // being lost, and the next tick takes the newest again.
+                let holds = |actions: &Actions, id: u32| actions.iter().any(|(a, _)| *a == id);
+                let press = link
+                    .frames
+                    .range(..newest)
+                    .find(|(_, actions)| {
+                        actions
+                            .iter()
+                            .any(|(id, _)| !holds(&link.held, *id) && !holds(newer, *id))
+                    })
+                    .map(|(stamp, _)| *stamp);
+                let stamp = press.unwrap_or(newest);
+                if let Some(actions) = link.frames.remove(&stamp) {
+                    link.held = actions;
+                    link.applied_input = Some(stamp);
+                    link.frames.retain(|t, _| *t > stamp);
+                }
             }
             held.insert(link.player, link.held.clone());
         }

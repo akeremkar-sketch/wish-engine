@@ -5,7 +5,7 @@ use wish_core::Result;
 use wish_ecs::World;
 use wish_types::{
     ActionSlot, ActionState, MAX_ACTIONS, MAX_PLAYERS, PlayerActionSlots, PlayerActionState,
-    Players,
+    PlayerId, Players,
 };
 
 /// `(action id, [x, y])` for every action of a player that is not at rest.
@@ -90,6 +90,40 @@ pub fn write_local(world: &mut World, actions: &[(u32, [f32; 2])]) -> Result<()>
     };
     if next != current {
         world.insert_resource(next)?;
+    }
+    Ok(())
+}
+
+/// Writes a predicting client's own actions into its prediction world: into
+/// `ActionState` (what game code reads as this machine's player, as on a
+/// machine alone) and into `PlayerActionState` as player `me`'s, with the
+/// host's entry 0 and every other player at rest (their input is the
+/// host's to know). The same cleaning and edges as everywhere; nothing is
+/// written when the project has no actions, nor when nothing changed.
+pub fn write_predicted(world: &mut World, me: PlayerId, actions: &[(u32, [f32; 2])]) -> Result<()> {
+    write_local(world, actions)?;
+    if me == 0 {
+        return write_players(world, &|_| None);
+    }
+    ensure_players(world, me + 1)?;
+    let count = world
+        .resource::<Players>()
+        .map_or(1, |p| p.count)
+        .min(MAX_PLAYERS as u32);
+    let Some(local) = world.resource::<ActionState>().copied() else {
+        return Ok(());
+    };
+    let previous = world.resource::<PlayerActionState>().copied();
+    let mut state = PlayerActionState::default();
+    for (player, entry) in state.players.iter_mut().enumerate().take(count as usize) {
+        let own: &[(u32, [f32; 2])] = if player == me as usize { actions } else { &[] };
+        let before = previous.as_ref().and_then(|p| p.players.get(player));
+        *entry = PlayerActionSlots {
+            slots: slots(&local.slots, own, before.map(|b| &b.slots)),
+        };
+    }
+    if previous != Some(state) {
+        world.insert_resource(state)?;
     }
     Ok(())
 }
