@@ -803,7 +803,7 @@ fn haunt(
     lobby: Res<Lobby>,
     mut groups: ResMut<NetGroups>,
     avatars: Query<(&Avatar, &Transform)>,
-    mut ghosts: Query<(&mut Ghost, &mut Transform, &mut Sprite)>,
+    mut ghosts: Query<(&mut Ghost, &mut Transform, &mut Sprite, &mut Replicated)>,
 ) {
     if !authority(&local, &lobby) {
         return;
@@ -812,7 +812,7 @@ fn haunt(
         .iter()
         .map(|(a, t)| (a.player, t.translation, a.present && a.out))
         .collect();
-    for (ghost, transform, sprite) in ghosts.iter_mut() {
+    for (ghost, transform, sprite, replicated) in ghosts.iter_mut() {
         let wanted = out.iter().any(|(p, _, o)| *p == ghost.player && *o);
         if wanted && !ghost.active {
             ghost.active = true;
@@ -830,6 +830,9 @@ fn haunt(
         if let Some(bits) = groups.players.get_mut(ghost.player as usize) {
             *bits = if ghost.active { GHOSTS } else { 0 };
         }
+        // A ghost is sent to the ghosts only while it haunts (its owner
+        // always has it).
+        replicated.groups = if ghost.active { GHOSTS } else { 0 };
     }
 }
 
