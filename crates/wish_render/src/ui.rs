@@ -193,17 +193,38 @@ fn background_of(view: &UiBoxView) -> [f32; 4] {
     [r * factor, g * factor, b * factor, a]
 }
 
+/// How the interface's virtual screen fits a `width` × `height` picture:
+/// the scale and where its top left corner goes. Under a letterboxing pixel
+/// camera it fits the game's picture (`game_screen`: left, top, right,
+/// bottom), never the bars.
+pub fn fit(
+    scene: &RenderScene,
+    (width, height): (u32, u32),
+    game_screen: Option<[u32; 4]>,
+) -> (f32, [f32; 2]) {
+    match game_screen {
+        Some([left, top, right, bottom]) => {
+            let (scale, [x, y]) = scene.ui_settings.fit(
+                right.saturating_sub(left) as f32,
+                bottom.saturating_sub(top) as f32,
+            );
+            (scale, [left as f32 + x, top as f32 + y])
+        }
+        None => scene.ui_settings.fit(width as f32, height as f32),
+    }
+}
+
 /// Prepares the interface of `scene` for a `width` × `height` picture.
 /// `pictures` are the decoded pictures by project path; boxes asking for
 /// one that is not there show their background only.
 pub(crate) fn build(
     scene: &RenderScene,
-    width: u32,
-    height: u32,
+    (width, height): (u32, u32),
+    game_screen: Option<[u32; 4]>,
     pictures: &BTreeMap<String, UiPicture>,
 ) -> Batch {
     let (w, h) = (width as f32, height as f32);
-    let (scale, [left, top]) = scene.ui_settings.fit(w, h);
+    let (scale, [left, top]) = fit(scene, (width, height), game_screen);
     let picture = |x: f32, y: f32| [left + x * scale, top + y * scale];
     let mut atlas = Atlas::new();
     let mut quads = Quads {
@@ -361,7 +382,11 @@ pub struct UiElement {
 /// text, a picture, or a button), in drawing order, placed in a `width` ×
 /// `height` picture.
 pub fn ui_elements(scene: &RenderScene, width: u32, height: u32) -> Vec<UiElement> {
-    let (scale, [left, top]) = scene.ui_settings.fit(width as f32, height as f32);
+    let game_screen = scene
+        .cameras
+        .first()
+        .and_then(|camera| camera.game_screen(width, height));
+    let (scale, [left, top]) = fit(scene, (width, height), game_screen);
     scene
         .ui
         .iter()

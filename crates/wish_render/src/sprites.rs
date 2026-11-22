@@ -469,10 +469,47 @@ struct Item {
     disc: bool,
     smooth: bool,
     layer: i32,
+    /// The order within the layer (`Sprite.order`, `Tilemap.order`).
+    order: i32,
     distance: f32,
-    /// In a layer whose sprites sort by height (`Tilemap.y_sort`): the
-    /// height that decides (higher first); tiles come first of all.
+    /// In a layer whose sprites sort by height (`Tilemap.y_sort`,
+    /// `SortingLayer.y_sort`): the height that decides (higher first);
+    /// tiles come first of all.
     height: Option<f32>,
+}
+
+/// The layers whose sprites sort by height: those a `SortingLayer` or a
+/// `Tilemap` on them says so for.
+fn y_sorted_layers(scene: &RenderScene) -> BTreeSet<i32> {
+    scene
+        .tilemaps
+        .iter()
+        .filter(|view| view.tilemap.y_sort)
+        .map(|view| view.tilemap.layer)
+        .chain(
+            scene
+                .sorting_layers
+                .iter()
+                .filter(|named| named.y_sort)
+                .map(|named| named.layer),
+        )
+        .collect()
+}
+
+/// Draws `a` before `b` (under it): lower layers first, then lower orders,
+/// then (in a layer sorted by height) higher first, then farther first.
+fn draw_order(
+    (a_layer, a_order, a_height, a_distance): (i32, i32, Option<f32>, f32),
+    (b_layer, b_order, b_height, b_distance): (i32, i32, Option<f32>, f32),
+) -> std::cmp::Ordering {
+    a_layer
+        .cmp(&b_layer)
+        .then(a_order.cmp(&b_order))
+        .then_with(|| match (a_height, b_height) {
+            (Some(ha), Some(hb)) => hb.total_cmp(&ha),
+            _ => std::cmp::Ordering::Equal,
+        })
+        .then(b_distance.total_cmp(&a_distance))
 }
 
 /// Consecutive instances drawn with one picture and one sampler.
@@ -546,17 +583,11 @@ pub(crate) fn build(
     {
         return None;
     }
-    let aspect = width as f32 / height as f32;
     let mut items: Vec<Item> = Vec::new();
     let distance = |point: Vec3| -camera.view.transform_point3(point).z;
-    let view_proj = camera.projection(aspect) * camera.view;
+    let view_proj = camera.projection_for(width, height) * camera.view;
     // The layers whose sprites sort by height.
-    let by_height: BTreeSet<i32> = scene
-        .tilemaps
-        .iter()
-        .filter(|view| view.tilemap.y_sort)
-        .map(|view| view.tilemap.layer)
-        .collect();
+    let by_height = y_sorted_layers(scene);
     // Tilemaps first: at the same layer and distance, a map is under the
     // sprites standing on it.
     for view in &scene.tilemaps {
@@ -573,6 +604,8 @@ pub(crate) fn build(
         }
         let cell = view.tilemap.cell();
         let depth = distance(view.world.transform_point3(Vec3::ZERO));
+        // A pixel camera puts the map's origin on the game's pixels.
+        let shift = camera.snap_offset(cell_corner(view, cell, 0, 0));
         let (pw, ph) = (picture.width.max(1) as f32, picture.height.max(1) as f32);
         let height = by_height
             .contains(&view.tilemap.layer)
@@ -585,13 +618,14 @@ pub(crate) fn build(
             let (l, t) = (tx as f32, ty as f32);
             let (r, b) = (l + tw as f32, t + th as f32);
             items.push(Item {
-                corners: cell_quad(view, cell, x, y),
+                corners: cell_quad(view, cell, x, y).map(|corner| corner + shift),
                 uv: [l / pw, t / ph, r / pw, b / ph],
                 texture: Some(grid.image.clone()),
                 colour,
                 disc: false,
                 smooth: view.tilemap.smooth,
                 layer: view.tilemap.layer,
+                order: view.tilemap.order,
                 distance: depth,
                 height,
             });
@@ -610,6 +644,8 @@ pub(crate) fn build(
             .image
             .and_then(|path| pictures.get(path).map(|p| (path, p)));
         let centre = (outline[0] + outline[2]) * 0.5;
+        // A pixel camera puts the sprite's corner on the game's pixels.
+        let shift = camera.snap_offset(outline[0]);
         let height = by_height
             .contains(&view.sprite.layer)
             .then(|| view.world.transform_point3(Vec3::ZERO).y);
@@ -622,13 +658,14 @@ pub(crate) fn build(
                 None => (None, [0.5; 4]),
             };
             items.push(Item {
-                corners,
+                corners: corners.map(|corner| corner + shift),
                 uv,
                 texture,
                 colour,
                 disc: false,
                 smooth: view.sprite.smooth,
                 layer: view.sprite.layer,
+                order: view.sprite.order,
                 distance: distance(centre),
                 height,
             });
@@ -659,6 +696,7 @@ pub(crate) fn build(
                 disc: true,
                 smooth: true,
                 layer: 0,
+                order: 0,
                 distance: distance(p),
                 height: by_height.contains(&0).then_some(p.y),
             });
@@ -678,17 +716,15 @@ pub(crate) fn build(
         ));
         items.truncate(MAX_INSTANCES);
     }
-    // Back to front: lower layers first, then (in a layer sorted by
-    // height) higher first, then farther first. Stable, so a sliced
-    // sprite's pieces and a map's tiles stay together and in order.
+    // Back to front: lower layers first, then lower orders, then (in a
+    // layer sorted by height) higher first, then farther first. Stable, so
+    // a sliced sprite's pieces and a map's tiles stay together and in
+    // order.
     items.sort_by(|a, b| {
-        a.layer
-            .cmp(&b.layer)
-            .then_with(|| match (a.height, b.height) {
-                (Some(ha), Some(hb)) => hb.total_cmp(&ha),
-                _ => std::cmp::Ordering::Equal,
-            })
-            .then(b.distance.total_cmp(&a.distance))
+        draw_order(
+            (a.layer, a.order, a.height, a.distance),
+            (b.layer, b.order, b.height, b.distance),
+        )
     });
     let mut instances = Vec::with_capacity(items.len() * INSTANCE_BYTES as usize);
     let mut batches: Vec<Batch> = Vec::new();
@@ -785,13 +821,15 @@ pub(crate) fn elements(
     pictures: &BTreeMap<String, UiPicture>,
     sheets: &BTreeMap<String, SpriteSheet>,
 ) -> Vec<OverlayElement> {
-    let view_proj = camera.projection(width as f32 / height.max(1) as f32) * camera.view;
+    let view_proj = camera.projection_for(width, height) * camera.view;
     let names = |entity: Entity| scene.name_of(entity);
     let mut found = Vec::new();
     for view in &scene.sprites {
         let shown = shown(view, sheets, &names, None);
-        let bounding_box = sprite_pieces(view, &shown, pictures)
-            .and_then(|(_, outline)| picture_box(&outline, &view_proj, width, height));
+        let bounding_box = sprite_pieces(view, &shown, pictures).and_then(|(_, outline)| {
+            let shift = camera.snap_offset(outline[0]);
+            picture_box(&outline.map(|c| c + shift), &view_proj, width, height)
+        });
         found.push(OverlayElement {
             entity: view.entity,
             bounding_box,
@@ -822,6 +860,148 @@ pub(crate) fn elements(
         });
     }
     found
+}
+
+/// A sprite under a point of the picture.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SpriteUnder {
+    /// The sprite's entity.
+    pub entity: Entity,
+    /// Its layer.
+    pub layer: i32,
+    /// Its order within the layer.
+    pub order: i32,
+    /// The pixel of its picture under the point (x, y from the picture's
+    /// top left), for a sprite with a picture.
+    pub texel: Option<[u32; 2]>,
+}
+
+/// The least alpha (picture's alpha times the tint's) a sprite must have at
+/// a point to count as under it: a click on a sprite's clear corner falls
+/// through to what is behind it.
+pub const PICK_ALPHA: f32 = 0.1;
+
+/// Where `point` is inside the quad `corners` (bottom left, bottom right,
+/// top right, top left) seen through `view_proj` in a `width` × `height`
+/// picture: across (0 at the left edge, 1 at the right) and up (0 at the
+/// bottom, 1 at the top); `None` outside it or behind the camera.
+fn inside_quad(
+    corners: &[Vec3; 4],
+    view_proj: &Mat4,
+    (width, height): (u32, u32),
+    [x, y]: [f32; 2],
+) -> Option<(f32, f32)> {
+    let mut screen = [[0.0f32; 2]; 4];
+    for (at, corner) in screen.iter_mut().zip(corners) {
+        let clip: Vec4 = *view_proj * corner.extend(1.0);
+        if clip.w <= 1e-6 {
+            return None;
+        }
+        *at = [
+            (clip.x / clip.w * 0.5 + 0.5) * width as f32,
+            (0.5 - clip.y / clip.w * 0.5) * height as f32,
+        ];
+    }
+    // The parallelogram of the bottom left corner and its two edges (a
+    // sprite seen straight on is exactly that).
+    let [o, right, _, up] = screen;
+    let (ax, ay) = (right[0] - o[0], right[1] - o[1]);
+    let (bx, by) = (up[0] - o[0], up[1] - o[1]);
+    let det = ax * by - ay * bx;
+    if det.abs() < 1e-9 {
+        return None;
+    }
+    let (px, py) = (x - o[0], y - o[1]);
+    let u = (px * by - py * bx) / det;
+    let v = (ax * py - ay * px) / det;
+    ((0.0..=1.0).contains(&u) && (0.0..=1.0).contains(&v)).then_some((u, v))
+}
+
+/// The sprites of `scene` under the pixel `point` of a `width` × `height`
+/// picture seen through `camera`, the one drawn in front first: those whose
+/// drawn rectangle holds the point where their picture is not clear (alpha
+/// at least [`PICK_ALPHA`]).
+pub(crate) fn sprites_under(
+    scene: &RenderScene,
+    camera: &CameraView,
+    (width, height): (u32, u32),
+    point: [f32; 2],
+    (pictures, sheets): (&BTreeMap<String, UiPicture>, &BTreeMap<String, SpriteSheet>),
+) -> Vec<SpriteUnder> {
+    type Key = (i32, i32, Option<f32>, f32);
+    // A letterboxing pixel camera's bars show nothing.
+    if let Some([left, top, right, bottom]) = camera.game_screen(width, height) {
+        let [x, y] = point;
+        if x < left as f32 || x >= right as f32 || y < top as f32 || y >= bottom as f32 {
+            return Vec::new();
+        }
+    }
+    let view_proj = camera.projection_for(width, height) * camera.view;
+    let names = |entity: Entity| scene.name_of(entity);
+    let by_height = y_sorted_layers(scene);
+    let distance = |p: Vec3| -camera.view.transform_point3(p).z;
+    let mut found: Vec<(Key, usize, SpriteUnder)> = Vec::new();
+    for (index, view) in scene.sprites.iter().enumerate() {
+        let shown = shown(view, sheets, &names, None);
+        let Some((pieces, outline)) = sprite_pieces(view, &shown, pictures) else {
+            continue;
+        };
+        let shift = camera.snap_offset(outline[0]);
+        let tint = view.sprite.color.to_array()[3];
+        let picture = shown.image.and_then(|path| pictures.get(path));
+        let mut hit = None;
+        for (corners, [l, t, r, b]) in pieces.iter().rev() {
+            let corners = corners.map(|c| c + shift);
+            let Some((across, up)) = inside_quad(&corners, &view_proj, (width, height), point)
+            else {
+                continue;
+            };
+            let (alpha, texel) = match picture {
+                Some(picture) if picture.width > 0 && picture.height > 0 => {
+                    let tx = (l + across * (r - l))
+                        .floor()
+                        .clamp(0.0, picture.width as f32 - 1.0);
+                    let ty = (b + up * (t - b))
+                        .floor()
+                        .clamp(0.0, picture.height as f32 - 1.0);
+                    let (tx, ty) = (tx as u32, ty as u32);
+                    let at = (ty as usize * picture.width as usize + tx as usize) * 4 + 3;
+                    let alpha = picture.rgba.get(at).copied().unwrap_or(0);
+                    (f32::from(alpha) / 255.0, Some([tx, ty]))
+                }
+                _ => (1.0, None),
+            };
+            if alpha * tint >= PICK_ALPHA {
+                hit = Some(texel);
+                break;
+            }
+        }
+        let Some(texel) = hit else {
+            continue;
+        };
+        let centre = (outline[0] + outline[2]) * 0.5;
+        let height = by_height
+            .contains(&view.sprite.layer)
+            .then(|| view.world.transform_point3(Vec3::ZERO).y);
+        found.push((
+            (
+                view.sprite.layer,
+                view.sprite.order,
+                height,
+                distance(centre),
+            ),
+            index,
+            SpriteUnder {
+                entity: view.entity,
+                layer: view.sprite.layer,
+                order: view.sprite.order,
+                texel,
+            },
+        ));
+    }
+    // In drawing order (stable by entity order), then the last drawn first.
+    found.sort_by(|a, b| draw_order(a.0, b.0).then(a.1.cmp(&b.1)));
+    found.into_iter().rev().map(|(_, _, under)| under).collect()
 }
 
 /// What `describe` says about a tilemap.
@@ -855,7 +1035,7 @@ pub(crate) fn tilemap_elements(
     pictures: &BTreeMap<String, UiPicture>,
     grids: &BTreeMap<String, TileGrid>,
 ) -> Vec<TilemapElement> {
-    let view_proj = camera.projection(width as f32 / height.max(1) as f32) * camera.view;
+    let view_proj = camera.projection_for(width, height) * camera.view;
     let mut found = Vec::new();
     for view in &scene.tilemaps {
         let grid = grids
@@ -874,12 +1054,13 @@ pub(crate) fn tilemap_elements(
             && finite(&view.world)
         {
             let cell = view.tilemap.cell();
+            let shift = camera.snap_offset(cell_corner(view, cell, 0, 0));
             let mut corners: Vec<Vec3> = Vec::new();
             for (_, x, y, tile) in visible_tiles(view, grid, &view_proj) {
                 if tile as usize >= grid.tiles.len() {
                     continue;
                 }
-                let quad = cell_quad(view, cell, x, y);
+                let quad = cell_quad(view, cell, x, y).map(|c| c + shift);
                 if picture_box(&quad, &view_proj, width, height).is_none() {
                     continue;
                 }
@@ -918,7 +1099,7 @@ pub(crate) fn tiles_under(
     point: [f32; 2],
     grids: &BTreeMap<String, TileGrid>,
 ) -> Vec<TileUnder> {
-    let view_proj = camera.projection(width as f32 / height.max(1) as f32) * camera.view;
+    let view_proj = camera.projection_for(width, height) * camera.view;
     let inverse = view_proj.inverse();
     let ndc_x = point[0] / width.max(1) as f32 * 2.0 - 1.0;
     let ndc_y = 1.0 - point[1] / height.max(1) as f32 * 2.0;
@@ -933,15 +1114,17 @@ pub(crate) fn tiles_under(
         if !finite(&view.world) {
             continue;
         }
-        // The map's plane: through its origin, facing its own +Z.
+        // The map's plane: through its origin, facing its own +Z (where a
+        // pixel camera draws it).
+        let shift = camera.snap_offset(cell_corner(view, view.tilemap.cell(), 0, 0));
         let origin = view.world.transform_point3(Vec3::ZERO);
         let normal = view.world.transform_vector3(Vec3::Z);
         let across = direction.dot(normal);
         if across.abs() < 1e-9 {
             continue;
         }
-        let along = (origin - near).dot(normal) / across;
-        let hit = near + direction * along;
+        let along = (origin + shift - near).dot(normal) / across;
+        let hit = near + direction * along - shift;
         let local = view.world.inverse().transform_point3(hit);
         let cell = view.tilemap.cell();
         let (x, y) = ((local.x / cell[0]).floor(), (local.y / cell[1]).floor());

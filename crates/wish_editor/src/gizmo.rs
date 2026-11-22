@@ -537,6 +537,7 @@ mod tests {
             near: 0.1,
             far: 100.0,
             ortho_height: ortho,
+            pixel: None,
         };
         Eye::new(
             &camera,

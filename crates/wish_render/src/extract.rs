@@ -242,6 +242,11 @@ pub struct CameraView {
     /// For an orthographic camera, the height it shows in meters; `None` for
     /// a perspective one.
     pub ortho_height: Option<f32>,
+    /// A pixel-perfect camera's settings (`PixelCamera`), when its entity
+    /// has one: the projection is then its whole-number fit of the picture
+    /// ([`CameraView::projection_for`]), and with letterboxing the picture
+    /// has bars around the game's.
+    pub pixel: Option<wish_types::render::PixelCamera>,
 }
 
 impl CameraView {
@@ -260,6 +265,56 @@ impl CameraView {
                 self.fov_y, aspect, self.near, self.far,
             ),
         }
+    }
+
+    /// The projection for a picture `width` × `height` pixels: as
+    /// [`CameraView::projection`] for its shape, or a pixel camera's
+    /// whole-number fit of it.
+    pub fn projection_for(&self, width: u32, height: u32) -> Mat4 {
+        match &self.pixel {
+            Some(pixel) => wish_types::render::camera_projection(
+                self.fov_y,
+                (self.near, self.far),
+                self.ortho_height,
+                Some(pixel),
+                (width, height),
+            ),
+            None => self.projection(width as f32 / height.max(1) as f32),
+        }
+    }
+
+    /// With a letterboxing pixel camera, the game's picture in a picture
+    /// `width` × `height` pixels, clipped to it: left, top, right, bottom
+    /// (the rest is bars); `None` without bars.
+    pub fn game_screen(&self, width: u32, height: u32) -> Option<[u32; 4]> {
+        let pixel = self.pixel.as_ref().filter(|pixel| pixel.letterbox)?;
+        let [left, top, w, h] = pixel.fit(width, height).screen;
+        let clip = |v: i64, limit: u32| v.clamp(0, i64::from(limit)) as u32;
+        let rect = [
+            clip(left, width),
+            clip(top, height),
+            clip(left + w, width),
+            clip(top + h, height),
+        ];
+        (rect != [0, 0, width, height]).then_some(rect)
+    }
+
+    /// Where a point of the camera's plane must move to stand on the game's
+    /// pixels, as a pixel camera with `snap` draws it (`Vec3::ZERO` for
+    /// any other camera): what sprites and tilemaps are shifted by.
+    pub fn snap_offset(&self, point: Vec3) -> Vec3 {
+        let Some(pixel) = self.pixel.as_ref().filter(|pixel| pixel.snap) else {
+            return Vec3::ZERO;
+        };
+        let step = 1.0 / pixel.unit();
+        let seen = self.view.transform_point3(point);
+        let shift = Vec3::new(
+            (seen.x / step).round() * step - seen.x,
+            (seen.y / step).round() * step - seen.y,
+            0.0,
+        );
+        let world = self.view.inverse().transform_vector3(shift);
+        if world.is_finite() { world } else { Vec3::ZERO }
     }
 }
 
@@ -351,6 +406,42 @@ pub struct TilemapView {
     pub tilemap: wish_types::tilemap::Tilemap,
     /// The tilemap file's project path (`*.tilemap.json`).
     pub map: String,
+}
+
+/// A named sorting layer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SortingLayerView {
+    /// The entity that names it.
+    pub entity: Entity,
+    /// Its name.
+    pub name: String,
+    /// The layer number it names.
+    pub layer: i32,
+    /// Whether its sprites sort by height.
+    pub y_sort: bool,
+}
+
+impl RenderScene {
+    /// The name of layer `layer`: the first `SortingLayer` (in entity
+    /// order) that names it.
+    pub fn layer_name(&self, layer: i32) -> Option<&str> {
+        self.sorting_layers
+            .iter()
+            .find(|named| named.layer == layer && !named.name.is_empty())
+            .map(|named| named.name.as_str())
+    }
+
+    /// Whether the sprites of layer `layer` sort by height: a
+    /// `SortingLayer` of that number says so, or a `Tilemap` on it does.
+    pub fn y_sorted(&self, layer: i32) -> bool {
+        self.sorting_layers
+            .iter()
+            .any(|named| named.layer == layer && named.y_sort)
+            || self
+                .tilemaps
+                .iter()
+                .any(|view| view.tilemap.layer == layer && view.tilemap.y_sort)
+    }
 }
 
 /// A particle emitter where it stands.
@@ -467,6 +558,8 @@ pub struct RenderScene {
     pub sprites: Vec<SpriteView>,
     /// The tilemaps, in entity order.
     pub tilemaps: Vec<TilemapView>,
+    /// The named sorting layers (`SortingLayer`), in entity order.
+    pub sorting_layers: Vec<SortingLayerView>,
     /// The particle emitters, in entity order.
     pub emitters: Vec<EmitterView>,
     /// 2D lighting (`Lighting2D`), the 2D lights and the visions, with the
@@ -587,6 +680,7 @@ pub fn extract(world: &World) -> Result<RenderScene> {
             .unwrap_or_default(),
         sprites: Vec::new(),
         tilemaps: Vec::new(),
+        sorting_layers: Vec::new(),
         emitters: Vec::new(),
         lighting_2d: crate::lights2d::extract(world),
         time: wish_particles::now(world),
@@ -641,6 +735,17 @@ pub fn extract(world: &World) -> Result<RenderScene> {
                     });
                 }
             }
+            if let Some(named) = world
+                .get::<wish_types::sprite::SortingLayer>(entity)
+                .copied()
+            {
+                scene.sorting_layers.push(SortingLayerView {
+                    entity,
+                    name: world.text(named.name).unwrap_or_default().to_owned(),
+                    layer: named.layer,
+                    y_sort: named.y_sort,
+                });
+            }
             if let Some(emitter) = world
                 .get::<wish_types::particles::ParticleEmitter>(entity)
                 .copied()
@@ -670,7 +775,15 @@ pub fn extract(world: &World) -> Result<RenderScene> {
                     "Check the camera's Transform (and its parents') for NaN or infinite values.",
                 ));
             }
+            let pixel = world
+                .get::<wish_types::render::PixelCamera>(entity)
+                .copied();
             let view = placement.inverse();
+            // A pixel camera stands on the game's pixels.
+            let view = match &pixel {
+                Some(pixel) => pixel.snap_view(view),
+                None => view,
+            };
             if !finite_matrix(&view) {
                 return Err(bad_camera(
                     entity,
@@ -678,21 +791,20 @@ pub fn extract(world: &World) -> Result<RenderScene> {
                     "Give the camera's Transform (and its parents') a non-zero scale.",
                 ));
             }
+            let position = if pixel.is_some() {
+                view.inverse().w_axis.truncate()
+            } else {
+                placement.w_axis.truncate()
+            };
             scene.cameras.push(CameraView {
                 entity,
                 view,
-                position: placement.w_axis.truncate(),
+                position,
                 fov_y: camera.fov_y_deg.to_radians(),
                 near: camera.near,
                 far: camera.far,
-                ortho_height: (camera.projection == crate::components::Projection::Orthographic)
-                    .then(|| {
-                        if camera.ortho_height.is_finite() {
-                            camera.ortho_height.max(0.001)
-                        } else {
-                            10.0
-                        }
-                    }),
+                ortho_height: camera.orthographic_height(),
+                pixel,
             });
         }
         if let Some(light) = world.get::<DirectionalLight>(entity).copied() {

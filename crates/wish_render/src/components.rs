@@ -8,8 +8,8 @@ use wish_core::Result;
 use wish_ecs::World;
 pub use wish_types::render::{
     AlphaMode, Ambient, AmbientSource, Antialiasing, Bloom, Camera, ColorGrading, DirectionalLight,
-    EMISSIVE_NITS, Exposure, Fog, Material, MaterialFile, Model, PointLight, Primitive, Projection,
-    RenderSettings, Shape, Sky, SpotLight,
+    EMISSIVE_NITS, Exposure, Fog, Material, MaterialFile, Model, PixelCamera, PointLight,
+    Primitive, Projection, RenderSettings, Shape, Sky, SpotLight,
 };
 
 /// Registers every rendering component and resource.
@@ -36,5 +36,9 @@ pub fn register(world: &mut World) -> Result<()> {
     world.register_component::<wish_types::lights2d::Light2D>()?;
     world.register_component::<wish_types::lights2d::Vision2D>()?;
     world.register_resource::<wish_types::lights2d::Lighting2D>()?;
+    // Release 1.1, package 6: the pixel-perfect camera and named sorting
+    // layers.
+    world.register_component::<wish_types::render::PixelCamera>()?;
+    world.register_component::<wish_types::sprite::SortingLayer>()?;
     Ok(())
 }

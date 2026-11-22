@@ -45,10 +45,11 @@ pub use physics::{
 };
 pub use render::{
     AlphaMode, Ambient, AmbientSource, Antialiasing, Bloom, Camera, ColorGrading, DirectionalLight,
-    EMISSIVE_NITS, Exposure, Fog, Material, MaterialFile, Model, PointLight, Primitive, Projection,
-    RenderSettings, Shape, Sky, SpotLight,
+    EMISSIVE_NITS, Exposure, Fog, Material, MaterialFile, Model, PixelCamera, PixelFit, PointLight,
+    Primitive, Projection, RenderSettings, Shape, Sky, SpotLight, camera_projection,
+    screen_to_plane,
 };
-pub use sprite::{Sprite, SpriteAnimator};
+pub use sprite::{SortingLayer, Sprite, SpriteAnimator};
 pub use tilemap::Tilemap;
 pub use time::Time;
 pub use transform::{GLOBAL_TRANSFORM, GlobalTransform, Transform, world_position};

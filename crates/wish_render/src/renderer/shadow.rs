@@ -790,6 +790,7 @@ mod tests {
             near: 0.1,
             far: 1000.0,
             ortho_height,
+            pixel: None,
         }
     }
 

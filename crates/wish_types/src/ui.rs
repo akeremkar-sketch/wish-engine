@@ -287,4 +287,13 @@ pub struct Pointer {
     pub pressed: bool,
     /// Whether the button went up this tick.
     pub released: bool,
+    /// Where it is in the world: the point of the world's XY plane (z = 0)
+    /// under it, seen through the main camera (the first entity with a
+    /// `Camera`), as that camera stood at the start of the tick. For a 2D
+    /// game, the place the player points at.
+    #[schema(unit = "m")]
+    pub world: [f32; 2],
+    /// Whether `world` means something: there is a pointer, a camera, and
+    /// the line under the pointer meets the plane.
+    pub in_world: bool,
 }

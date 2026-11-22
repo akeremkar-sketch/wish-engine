@@ -70,6 +70,11 @@ pub struct Sprite {
     /// a whole.
     #[schema(unit = "px")]
     pub slice: [f32; 4],
+    /// The order within its layer: of two sprites (or tilemaps) on the same
+    /// layer, the higher order is drawn over the lower, before height (a
+    /// y-sorted layer) and distance decide.
+    #[schema(range = -32768..=32767)]
+    pub order: i32,
 }
 
 impl Sprite {
@@ -128,4 +133,26 @@ impl SpriteAnimator {
         }
         self.playing = true;
     }
+}
+
+/// A named sorting layer (design note `docs/design/1.1-editor-2d.md` §3):
+/// gives the sprites and tilemaps whose `layer` is `layer` a name, for
+/// people, agents and `describe_view`, and says how they are sorted. Put one
+/// on an entity of its own for each layer a game names ("ground", "actors",
+/// "roofs"); without any, layers are plain numbers, as they always were.
+///
+/// Drawing order is `layer` (lower first), then `order` within it, then (on
+/// a y-sorted layer) height, then distance.
+#[component]
+pub struct SortingLayer {
+    /// The layer's name.
+    pub name: Text,
+    /// The layer number it names (`Sprite.layer`, `Tilemap.layer`).
+    #[schema(range = -1000..=1000)]
+    pub layer: i32,
+    /// Sorts the layer's sprites by height, for top-down games: a sprite
+    /// lower on the map (its anchor at a smaller y) is drawn over one higher
+    /// up, and every one of them over the layer's tilemaps. (A `Tilemap`
+    /// with `y_sort` does the same for its own layer.)
+    pub y_sort: bool,
 }

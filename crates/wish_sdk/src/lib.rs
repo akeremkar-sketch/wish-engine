@@ -85,6 +85,7 @@ pub use wish_types::{AmbientSource, Antialiasing, Bloom, ColorGrading, Fog};
 pub use wish_types::{Light2D, Lighting2D, Occluder, Vision2D};
 pub use wish_types::{MAX_PLAYERS, PlayerActionSlots, PlayerActionState, PlayerId, Players};
 pub use wish_types::{NetGroups, NetOwner, NetViewer, NetVisibility, Replicated};
+pub use wish_types::{PixelCamera, SortingLayer};
 
 pub use physics::{Ray, RayHit, raycast};
 pub use sight::{can_see, can_see_ignoring, visible_area};
@@ -117,6 +118,7 @@ pub mod prelude {
     };
     pub use crate::{NetGroups, NetOwner, NetViewer, NetVisibility, Replicated};
     pub use crate::{ParticleEmitter, ParticleState, Projection, Sprite, SpriteAnimator, Tilemap};
+    pub use crate::{PixelCamera, SortingLayer};
     pub use crate::{PlayerActions, PlayerId, Players};
 }
 

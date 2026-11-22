@@ -4,7 +4,7 @@
 //! Colours are linear RGB, not sRGB. Units: meters, degrees where a name
 //! says so (`fov_y_deg`), lux for illuminance.
 
-use wish_core::math::Vec3;
+use wish_core::math::{Mat4, Vec3};
 use wish_core::{AssetRef, Color};
 use wish_schema::{component, resource, schema};
 
@@ -41,6 +41,186 @@ pub struct Camera {
     /// top to bottom (the width follows from the picture's shape).
     #[schema(unit = "m", range = 0.001..=100000.0, default = 10.0)]
     pub ortho_height: f32,
+}
+
+impl Camera {
+    /// For an orthographic camera, the height it shows, cleaned (a number
+    /// that is not finite is 10, and it is at least a millimetre); `None`
+    /// for a perspective one.
+    pub fn orthographic_height(&self) -> Option<f32> {
+        (self.projection == Projection::Orthographic).then(|| {
+            if self.ortho_height.is_finite() {
+                self.ortho_height.max(0.001)
+            } else {
+                10.0
+            }
+        })
+    }
+}
+
+/// A pixel-perfect 2D camera (design note `docs/design/1.1-editor-2d.md`
+/// §2): beside a [`Camera`], it makes the camera draw a game made for a
+/// fixed picture of `resolution` pixels, scaled up by a whole number so
+/// that every one of the game's pixels is a square of the same number of
+/// screen pixels; what is left of the screen is bars (`letterbox`) or more
+/// of the world.
+///
+/// With it the camera is orthographic whatever its `projection` says, and
+/// shows `resolution[1] / pixels_per_unit` meters from top to bottom
+/// (`ortho_height` is not used). With `snap`, the camera and every sprite
+/// and tilemap stand on the game's pixels when drawn, so moving things never
+/// shimmer.
+#[component]
+pub struct PixelCamera {
+    /// The picture the game is made for, in its own pixels: width and
+    /// height (each 1 to 8192).
+    #[schema(unit = "px", default = [320, 180])]
+    pub resolution: [u32; 2],
+    /// How many of the game's pixels make one meter (the `pixels_per_unit`
+    /// of its sprites, to draw them texel for pixel).
+    #[schema(range = 0.01..=10000.0, default = 16.0)]
+    pub pixels_per_unit: f32,
+    /// Bars around the game's picture where the screen is larger than a
+    /// whole number of it (true), or more of the world there (false). Either
+    /// way the scale is whole.
+    #[schema(default = true)]
+    pub letterbox: bool,
+    /// The bars' colour (linear RGB).
+    #[schema(default = Color::BLACK)]
+    pub bars: Color,
+    /// The camera, sprites and tilemaps stand on the game's pixels when
+    /// drawn (their place is rounded to the nearest of them): pixel art
+    /// never shimmers as it moves.
+    #[schema(default = true)]
+    pub snap: bool,
+}
+
+/// How a [`PixelCamera`] fits a screen of a given size: worked out the same
+/// way for drawing, for the pointer and for the editor.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PixelFit {
+    /// Screen pixels per game pixel (at least 1).
+    pub scale: u32,
+    /// The game's picture on the screen: left, top, width, height in screen
+    /// pixels (the whole screen without letterboxing). It can reach past a
+    /// screen smaller than the game's picture.
+    pub screen: [i64; 4],
+    /// The screen pixel the camera's position is drawn at (a corner between
+    /// pixels): x, y from the top left.
+    pub anchor: [i64; 2],
+    /// What the whole screen shows, in meters from the camera in its own
+    /// space: left, right, bottom, top.
+    pub bounds: [f32; 4],
+}
+
+impl PixelCamera {
+    /// The game's picture size, cleaned: each side 1 to 8192.
+    pub fn size(&self) -> [u32; 2] {
+        self.resolution.map(|side| side.clamp(1, 8192))
+    }
+
+    /// The pixels per meter, cleaned: finite and at least 0.01, or 16.
+    pub fn unit(&self) -> f32 {
+        if self.pixels_per_unit.is_finite() && self.pixels_per_unit >= 0.01 {
+            self.pixels_per_unit.min(10000.0)
+        } else {
+            16.0
+        }
+    }
+
+    /// How the camera fits a screen `width` × `height` pixels.
+    pub fn fit(&self, width: u32, height: u32) -> PixelFit {
+        let [rw, rh] = self.size().map(i64::from);
+        let (w, h) = (i64::from(width.max(1)), i64::from(height.max(1)));
+        let scale = (w / rw).min(h / rh).max(1);
+        let (gw, gh) = (rw * scale, rh * scale);
+        let (left, top) = ((w - gw).div_euclid(2), (h - gh).div_euclid(2));
+        // The camera at the game picture's middle pixel corner: an odd side
+        // keeps its extra pixel on the right and at the bottom.
+        let anchor = [left + rw / 2 * scale, top + rh / 2 * scale];
+        let screen = if self.letterbox {
+            [left, top, gw, gh]
+        } else {
+            [0, 0, w, h]
+        };
+        let meters = 1.0 / (self.unit() * scale as f32);
+        PixelFit {
+            scale: u32::try_from(scale).unwrap_or(u32::MAX),
+            screen,
+            anchor,
+            bounds: [
+                -(anchor[0] as f32) * meters,
+                (w - anchor[0]) as f32 * meters,
+                -((h - anchor[1]) as f32) * meters,
+                anchor[1] as f32 * meters,
+            ],
+        }
+    }
+
+    /// The camera's view matrix (world to camera space) with its place
+    /// rounded to the game's pixels in its own plane, when `snap` is on:
+    /// the world's origin then lands on a corner between the game's pixels.
+    pub fn snap_view(&self, view: Mat4) -> Mat4 {
+        if !self.snap {
+            return view;
+        }
+        let step = 1.0 / self.unit();
+        let mut snapped = view;
+        let round = |v: f32| (v / step).round() * step;
+        snapped.w_axis.x = round(view.w_axis.x);
+        snapped.w_axis.y = round(view.w_axis.y);
+        if snapped.is_finite() { snapped } else { view }
+    }
+}
+
+/// The projection of a camera (right-handed view space, clip depth 0 to 1,
+/// +Y up) for a screen `width` × `height` pixels: perspective with `fov_y`
+/// radians, orthographic `ortho_height` meters tall, or a pixel camera's
+/// whole-number fit. One function for drawing, for the pointer in the world
+/// and for the editor.
+pub fn camera_projection(
+    fov_y: f32,
+    (near, far): (f32, f32),
+    ortho_height: Option<f32>,
+    pixel: Option<&PixelCamera>,
+    (width, height): (u32, u32),
+) -> Mat4 {
+    use wish_core::math::camera::rh::proj::directx;
+    if let Some(pixel) = pixel {
+        let [left, right, bottom, top] = pixel.fit(width, height).bounds;
+        return directx::orthographic(left, right, bottom, top, near, far);
+    }
+    let aspect = width.max(1) as f32 / height.max(1) as f32;
+    match ortho_height {
+        Some(h) => {
+            let (half_h, half_w) = (h * 0.5, h * 0.5 * aspect);
+            directx::orthographic(-half_w, half_w, -half_h, half_h, near, far)
+        }
+        None => directx::perspective(fov_y, aspect, near, far),
+    }
+}
+
+/// Where the line through the screen pixel (`x`, `y`) of a `width` ×
+/// `height` screen seen through `view_proj` meets the world's XY plane
+/// (z = 0): the point a 2D game means by "under the pointer". `None` when
+/// the line runs along the plane.
+pub fn screen_to_plane(
+    view_proj: Mat4,
+    (width, height): (u32, u32),
+    x: f32,
+    y: f32,
+) -> Option<Vec3> {
+    let inverse = view_proj.inverse();
+    let nx = x / width.max(1) as f32 * 2.0 - 1.0;
+    let ny = 1.0 - y / height.max(1) as f32 * 2.0;
+    let near = inverse.project_point3(Vec3::new(nx, ny, 0.0));
+    let far = inverse.project_point3(Vec3::new(nx, ny, 1.0));
+    let direction = far - near;
+    if direction.z.abs() < 1e-9 || !near.is_finite() || !direction.is_finite() {
+        return None;
+    }
+    let hit = near + direction * (-near.z / direction.z);
+    hit.is_finite().then_some(hit)
 }
 
 /// A light as far away as the sun: parallel rays along its entity's -Z
