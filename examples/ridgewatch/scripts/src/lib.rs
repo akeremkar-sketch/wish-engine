@@ -421,6 +421,17 @@ fn seated(lobby: &Lobby, player: PlayerId) -> bool {
         .is_some_and(|seat| seat.taken && !seat.left)
 }
 
+/// The seats still standing, in seat order (the meeting's list).
+fn standing_seats(avatars: &Query<&'static Avatar>) -> Vec<u32> {
+    let mut seats: Vec<u32> = avatars
+        .iter()
+        .filter(|a| a.present && !a.out)
+        .map(|a| a.player)
+        .collect();
+    seats.sort_unstable();
+    seats
+}
+
 fn bell_at(bells: &Query<(&'static Bell, &'static Transform)>) -> Vec3 {
     bells
         .iter()
@@ -1189,16 +1200,14 @@ fn hands(
             ..Default::default()
         });
     }
-    let standing: Vec<u32> = avatars
-        .iter()
-        .filter(|a| a.present && !a.out)
-        .map(|a| a.player)
-        .collect();
+    let standing = standing_seats(&avatars);
     let me_standing = standing.contains(&me);
     // A new meeting: the cursor starts on the first keeper.
     if station.phase == Phase::Meeting && mine.seen != Phase::Meeting {
         mine.voted = false;
-        mine.choice = standing.first().copied().unwrap_or(SKIP);
+        // On skip: one push down goes to the first keeper. Every machine
+        // counts the same way, whatever it has received so far.
+        mine.choice = SKIP;
         sounds.send(PlaySound {
             clip: asset("assets/sounds/bell.wav"),
             ..Default::default()
@@ -1315,11 +1324,7 @@ fn show(
     for (panel, node) in panels.iter_mut() {
         node.visible = panel.screen == screen;
     }
-    let standing: Vec<u32> = avatars
-        .iter()
-        .filter(|a| a.present && !a.out)
-        .map(|a| a.player)
-        .collect();
+    let standing = standing_seats(&avatars);
     let me_out = avatars.iter().any(|a| a.player == me && a.present && a.out);
     let is_static = !offline && local.role == STATIC;
     let private = privates.iter().find(|p| p.player == me);

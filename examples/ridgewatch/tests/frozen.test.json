@@ -1,0 +1,16 @@
+{
+  "format": 1,
+  "scene": "scenes/main.scene.json",
+  "seed": 4,
+  "net": {
+    "players": 8, "bots": 7, "auto_start": true,
+    "network": { "latency_ms": 100, "jitter_ms": 20, "loss": 0.05, "seed": 9 }
+  },
+  "steps": [
+    { "until": "Lobby.phase == 'Running' && Station.phase == 'Playing'", "max_frames": 900 },
+    { "expect": "MatchRoles.roles[0] == 1 && MatchRoles.roles[5] == 1", "message": "eight players get two statics (more_from 7): seats 0 and 5" },
+    { "frames": 30 },
+    { "expect": "LocalPlayer.role == 1", "player": 5 },
+    { "expect": "LocalPlayer.role == 0 && (!has(MatchRoles) || MatchRoles.roles[5] == 0)", "player": 6, "message": "a keeper's machine never holds a static's role" }
+  ]
+}
