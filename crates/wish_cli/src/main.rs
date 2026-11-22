@@ -17,6 +17,7 @@ mod capture;
 mod edit;
 mod play;
 mod project_cmds;
+mod relay_cmd;
 mod scene;
 mod tool_cmds;
 mod types;
@@ -70,6 +71,8 @@ USAGE:
     wen sdk [--out <folder>] [--json]
     wen package [--out <folder>] [--json]
     wen mcp [--root <folder>] [--software] [--http <port or address>]
+    wen relay [--port <port>] [--bind <address>] [--max-rooms <n>] [--max-peers <n>]
+              [--max-clients <n>] [--seconds <n>] [--json]
     wen call <tool> ['{json args}' | --<param> <value> ...] [--root <folder>] [--actor <name>]
     wen do [<file> | -] [--root <folder>] [--actor <name>]
     wen mv <from> <to> --example <name> [--root <folder>] [--dry-run] [--json]
@@ -169,6 +172,13 @@ COMMANDS:
     mcp        Serve the tools over MCP (Model Context Protocol, stdio). Claude Code and other MCP
                clients start it themselves from .mcp.json (wen new writes it); --software draws
                with the CPU adapter. Standard output carries only the protocol.
+    relay      Run a relay for online play over the internet, on a small server whose UDP port
+               (default 47620) is open: a host behind a home router registers its room there and
+               players join with the relay's address and the room code. The relay carries the
+               players' sealed packets and cannot read them; it runs no game logic, stores
+               nothing on disk and limits rates (defaults: 256 rooms, 32 players a room, 4096 in
+               all). One line per room or player that comes or goes (one JSON line with --json)
+               and a summary every minute; --seconds stops it (0: run until stopped).
     call       Run one control-plane tool (the same tools the MCP server offers) and print its
                JSON answer, exactly as an MCP client receives it. Arguments are one JSON object
                or --name value flags. `wen call project_info` is a good start; an unknown tool
@@ -483,6 +493,7 @@ fn execute_any(args: Args) -> Result<Outcome> {
             root,
             seconds,
         } => project_cmds::watch(example, scene, &root_of(root), *seconds, args.json),
+        Command::Relay(relay) => relay_cmd::relay(relay, args.json),
         _ => execute(args).map(|text| Outcome {
             text,
             success: true,
@@ -557,6 +568,7 @@ fn execute(args: Args) -> Result<String> {
         | Command::Mcp(_)
         | Command::Call(_)
         | Command::Do(_)
+        | Command::Relay(_)
         | Command::Watch { .. } => Err(Diagnostic::error(
             "internal_error",
             "A project command was run through the simple path.",

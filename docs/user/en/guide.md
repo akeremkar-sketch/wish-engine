@@ -249,6 +249,26 @@ the change enters the history as *file*, and a broken file is reported, never ov
 - **A window of its own:** `wen play` plays the game in its own window. Saving the game code
   switches to the new code without stopping.
 
+### Playing over the internet
+
+A host at home sits behind a router that does not let players in from outside. A **relay** carries
+their packets instead: a small program you run yourself on a small server with a public address (a
+cheap Linux server is plenty). There is no account, no fee and no service of anybody else's.
+
+1. Unpack the Linux archive of the engine on the server.
+2. Run `./wen relay`. It listens on UDP port 47620 (`--port` picks another) and prints a line for
+   every room and player that comes or goes.
+3. Open that UDP port in the server's firewall, for example `sudo ufw allow 47620/udp`.
+4. The host plays through the relay at the server's address; the players join with the same address
+   and the room code.
+
+The relay carries packets that are sealed between each player and the host and cannot open them. It
+never receives the room code itself, only a hash of it, writes nothing to disk and logs no
+payloads; it does see which addresses play together and how much they send. Limits: `--max-rooms`
+(256), `--max-peers` (32 players a room), `--max-clients` (4096 in all). A host that goes quiet
+loses its room after 15 seconds. To keep the relay running after you log out, run it in `tmux` or
+as a service.
+
 ## 5. Game code
 
 Game logic is Rust in `scripts/src/lib.rs`, built to WebAssembly by the engine.
