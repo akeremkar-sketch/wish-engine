@@ -336,7 +336,7 @@ impl Renderer {
         let overlay = crate::sprites::build(
             scene,
             view,
-            aspect,
+            (width, height),
             (&self.ui_pictures, &self.sprite_sheets, &self.tile_grids),
             &mut warnings,
         );
@@ -469,7 +469,14 @@ impl Renderer {
             &draws,
             shadow.as_ref(),
             lights_in_view(&scene.local_lights, &clusters),
-            (look.effects(), bloom.as_ref().map_or(0, BloomPlan::passes)),
+            (
+                Effects {
+                    lights_2d: overlay.as_ref().is_some_and(|o| o.lit()),
+                    vision: overlay.as_ref().is_some_and(|o| o.dark()),
+                    ..look.effects()
+                },
+                bloom.as_ref().map_or(0, BloomPlan::passes),
+            ),
             overlay.as_ref(),
             interface.as_ref(),
         );

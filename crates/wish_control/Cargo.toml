@@ -28,6 +28,7 @@ wish_scene.workspace = true
 wish_schema.workspace = true
 wish_script.workspace = true
 wish_sdk.workspace = true
+wish_sight.workspace = true
 wish_text.workspace = true
 wish_transform.workspace = true
 wish_ui.workspace = true

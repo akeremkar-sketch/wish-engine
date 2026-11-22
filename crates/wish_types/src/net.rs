@@ -22,8 +22,9 @@ pub enum NetVisibility {
     /// The players with a `NetViewer` within `radius` metres.
     Near,
     /// The players who can see it: within `radius` metres of a `NetViewer`
-    /// and, once the engine's line of sight exists, not behind a wall.
-    /// Until then, the same as `Near`.
+    /// and not behind a wall (a solid tile of a tilemap's colliding layer,
+    /// or an `Occluder`) on the straight line between them in the X-Y
+    /// plane. Without walls, the same as `Near`.
     Sight,
     /// The players whose bit is set in `players`, written by game code: a
     /// system decides any rule it likes and writes the bits.

@@ -1,0 +1,21 @@
+[package]
+name = "wish_sight"
+description = "Line of sight for Wish Engine: walls from tilemaps and occluders, a deterministic visibility polygon in the X-Y plane, and 'can A see B' for game code, online play and 2D lights."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+wish_app.workspace = true
+wish_core.workspace = true
+wish_ecs.workspace = true
+wish_schema.workspace = true
+wish_types.workspace = true
+
+[dev-dependencies]
+wish_transform.workspace = true
+
+[lints]
+workspace = true

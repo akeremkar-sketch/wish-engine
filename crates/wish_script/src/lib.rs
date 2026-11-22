@@ -29,6 +29,7 @@ pub use game::{
 };
 pub use host::{
     HostServices, MAX_NEW_TEXTS_PER_CALL, MAX_TEXT_BYTES, MAX_WORLD_TEXT_BYTES, MAX_WORLD_TEXTS,
+    WORK_FUEL,
 };
 pub use module::{CallReport, GuestLog, ScriptModule, fingerprint_of};
 

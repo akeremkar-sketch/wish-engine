@@ -449,6 +449,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "Stored data was made by a different version of a type. Re-create it with the current version.",
     ),
     (
+        "light_2d_without_lighting",
+        "A scene has Light2D components while 2D lighting is off, so they light nothing. Set Lighting2D.enabled to true (and its ambient to how dark the scene is without lights).",
+    ),
+    (
         "light_clusters_full",
         "Too many point and spot lights reach the same part of the picture (more than 128); some were left out there, so it is darker than it should be. Spread lights out or give them a smaller range.",
     ),
@@ -728,6 +732,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "nothing_to_move",
         "The file or folder to move does not exist.",
+    ),
+    (
+        "occluder_without_collider",
+        "An entity has an Occluder and no Collider, so it blocks no sight and no 2D light: an occluder's outline is its collider's in the X-Y plane. Add a Collider (a Box for a door), or remove the Occluder.",
     ),
     (
         "old_format",
@@ -1183,6 +1191,10 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     (
         "sheet_not_loaded",
         "Render warning: a SpriteAnimator names a sprite sheet that could not be used (it does not exist, is not a *.sheet.json, or has a mistake: the message says which). The sprite shows its own Sprite.image and rect until the sheet is fixed; check lists everything wrong with the project's sheets.",
+    ),
+    (
+        "sight_occluders_cut_short",
+        "The world has more than 65,536 wall segments for line of sight; the rest were left out, so some walls do not block sight or 2D light. Use fewer occluders; tilemap walls cost little (solid cells merge into boxes).",
     ),
     (
         "snapshot_exists",
@@ -2007,7 +2019,7 @@ it is a nine-slice: the corners keep their size and the rest stretches (panels, 
 sprite sheet (`*.sheet.json`: a PNG cut into frames by a `grid` or `frames` rectangles, and named `clips` with their
 `frames`, `fps`, `loop`; `asset_create` makes one) and a `SpriteAnimator { sheet, clip, playing, speed, time, frame }`
 beside the `Sprite`: the engine moves it every tick and writes the frame shown; game code switches clips with
-`animator.play(text(\"walk\"))`, and `describe_view` says each sprite's clip and frame. Sprites are not lit; higher
+`animator.play(text(\"walk\"))`, and `describe_view` says each sprite's clip and frame. Sprites are not lit (unless 2D lighting is on, below); higher
 `layer` is drawn over lower. For 2D physics set `PhysicsSettings.profile` to
 `SideView2D` or `TopDown2D` (see Physics): no per-body locks are needed.
 
@@ -2015,6 +2027,16 @@ Rooms and walls are a tilemap: `asset_create` makes a tileset (`*.tileset.json`:
 {\"8\": {solid: true}}) and a tilemap (`*.tilemap.json`: the tileset and `layers`); a `Tilemap { map, cell_size }`
 entity draws it and makes solid tiles walls. Paint with `tilemap_edit` (one change per call; `edit_history` with the map
 as scene undoes it).
+
+Walls block sight: solid tiles of colliding layers, and entities with an `Occluder { enabled }` beside their `Collider`
+(a door: enabled while closed). Game code asks `can_see(from: Vec2, to: Vec2) -> bool` (`can_see_ignoring(from, to,
+entity)` when the target is itself an occluder) and `visible_area(from, radius) -> Vec<Vec2>` (the outline of what
+is seen: a circle cut by walls); both see the walls as of the end of the previous tick, and `physics_query sight`
+answers the same. Online, `NetVisibility::Sight` sends an entity only to players whose `NetViewer` can see it. 2D
+lights: the resource `Lighting2D { enabled, ambient }` turns lighting of sprites and tilemaps on (off by default),
+each `Light2D { color, intensity, radius, shadows }` adds light that walls stop; a `Vision2D { enabled, radius,
+softness, darkness }` on the player's character darkens everything it cannot see. Sabotage the lights by lowering
+`Lighting2D.ambient` or the lights' `intensity`.
 
 A `ParticleEmitter { rate, burst, lifetime, speed, spread_deg, gravity, size_start/end, color_start/end, seed,
 start_time, duration, max, playing }` gives off soft round particles in a cone around its entity's +Y axis.

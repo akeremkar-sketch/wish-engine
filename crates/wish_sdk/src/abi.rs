@@ -149,9 +149,17 @@ pub fn log(severity: i32, message: &str) {
 /// Asks the engine a physics question (`wish.physics_query`); the answer's
 /// bytes, or `None` off the engine or if the engine could not answer.
 pub fn physics_query(request: &[u8]) -> Option<Vec<u8>> {
+    physics_query_into(request, crate::physics::ANSWER_LEN)
+}
+
+/// Asks the engine a question through `wish.physics_query` (a ray, or a
+/// line-of-sight question) whose answer is at most `capacity` bytes; the
+/// answer's bytes, or `None` off the engine or if the engine could not
+/// answer.
+pub fn physics_query_into(request: &[u8], capacity: usize) -> Option<Vec<u8>> {
     #[cfg(target_arch = "wasm32")]
     {
-        let mut out = vec![0u8; crate::physics::ANSWER_LEN];
+        let mut out = vec![0u8; capacity];
         // SAFETY: the engine reads `len` bytes at `request` and writes at
         // most `capacity` bytes at `out`, both inside this module's memory
         // and alive for the call.
@@ -160,7 +168,7 @@ pub fn physics_query(request: &[u8]) -> Option<Vec<u8>> {
                 request.as_ptr(),
                 request.len() as i32,
                 out.as_mut_ptr(),
-                out.len() as i32,
+                i32::try_from(out.len()).unwrap_or(i32::MAX),
             )
         };
         let written = usize::try_from(written).ok()?;
@@ -169,7 +177,7 @@ pub fn physics_query(request: &[u8]) -> Option<Vec<u8>> {
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let _ = request;
+        let _ = (request, capacity);
         None
     }
 }

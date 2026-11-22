@@ -41,6 +41,7 @@ wish_ui = { path = "crates/wish_ui" }
 wish_editor = { path = "crates/wish_editor" }
 wish_net = { path = "crates/wish_net" }
 wish_replicate = { path = "crates/wish_replicate" }
+wish_sight = { path = "crates/wish_sight" }
 
 # External crates. Check the license before adding one (see deny.toml).
 #

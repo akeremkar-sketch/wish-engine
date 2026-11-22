@@ -286,7 +286,16 @@ const ENTRY_POINTS: &[(&str, &[(naga::ShaderStage, &str)])] = {
         ("ui_pass", &[(Vertex, "vs_main"), (Fragment, "fs_main")]),
         (
             "sprite_pass",
-            &[(Vertex, "vs_instance"), (Fragment, "fs_main")],
+            &[
+                (Vertex, "vs_instance"),
+                (Fragment, "fs_main"),
+                (Fragment, "fs_lit"),
+                (Vertex, "vs_fan"),
+                (Fragment, "fs_light"),
+                (Fragment, "fs_vision"),
+                (Vertex, "vs_screen"),
+                (Fragment, "fs_darkness"),
+            ],
         ),
     ]
 };

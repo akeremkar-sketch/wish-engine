@@ -202,6 +202,7 @@ pub(crate) fn check_system_names(example: Option<&str>, module: &GameModule) -> 
         wish_anim::SYSTEM.to_owned(),
         wish_ui::SYSTEM.to_owned(),
         wish_particles::SYSTEM.to_owned(),
+        wish_sight::SYSTEM.to_owned(),
     ];
     // Engine systems run after every game system (their results are seen
     // the next tick): a game system asking to run after one is a cycle the
@@ -249,12 +250,51 @@ pub(crate) fn check_system_names(example: Option<&str>, module: &GameModule) -> 
 }
 
 /// What the engine answers game code during a call: physics ray casts,
-/// against the physics world as it was at the start of the tick.
+/// against the physics world as it was at the start of the tick, and line
+/// of sight, against the walls as the `sight` system last gathered them
+/// (design note 1.1-lights-2d §5).
 struct EngineServices;
 
 impl wish_script::HostServices for EngineServices {
     fn physics_query(&self, world: &wish_ecs::World, request: &[u8]) -> Option<Vec<u8>> {
+        self.physics_query_with_work(world, request)
+            .map(|(answer, _)| answer)
+    }
+
+    fn physics_query_with_work(
+        &self,
+        world: &wish_ecs::World,
+        request: &[u8],
+    ) -> Option<(Vec<u8>, u64)> {
         use wish_sdk::physics::{Ray, RayHit, encode_answer};
+        use wish_sdk::sight::{AreaQuestion, SightAnswer, SightLine, encode_area};
+        match request.first() {
+            Some(&wish_sdk::sight::CAN_SEE) => {
+                let line = SightLine::decode(request)?;
+                let walls = wish_sight::current(world);
+                let sight = walls.can_see(
+                    [line.from.x, line.from.y],
+                    [line.to.x, line.to.y],
+                    [line.ignore, None],
+                );
+                return Some((
+                    SightAnswer {
+                        visible: sight.visible,
+                        blocked_by: sight.blocked_by,
+                    }
+                    .encode(),
+                    u64::from(sight.tested),
+                ));
+            }
+            Some(&wish_sdk::sight::VISIBLE_AREA) => {
+                let question = AreaQuestion::decode(request)?;
+                let walls = wish_sight::current(world);
+                let area =
+                    walls.visible_polygon([question.from.x, question.from.y], question.radius);
+                return Some((encode_area(&area.points), area.tested));
+            }
+            _ => {}
+        }
         let ray = Ray::decode(request)?;
         let hit = world
             .extension::<wish_physics::PhysicsState>()
@@ -264,12 +304,15 @@ impl wish_script::HostServices for EngineServices {
                     .ok()
                     .flatten()
             });
-        Some(encode_answer(hit.map(|hit| RayHit {
-            entity: hit.entity,
-            point: hit.point,
-            normal: hit.normal,
-            distance: hit.distance,
-        })))
+        Some((
+            encode_answer(hit.map(|hit| RayHit {
+                entity: hit.entity,
+                point: hit.point,
+                normal: hit.normal,
+                distance: hit.distance,
+            })),
+            0,
+        ))
     }
 }
 
@@ -304,6 +347,7 @@ pub(crate) fn propagation_after_all(app: &mut wish_app::App) -> Result<()> {
                 wish_anim::SYSTEM,
                 wish_ui::SYSTEM,
                 wish_particles::SYSTEM,
+                wish_sight::SYSTEM,
             ]
             .contains(&name.as_str())
         })
@@ -332,6 +376,9 @@ pub(crate) fn propagation_after_all(app: &mut wish_app::App) -> Result<()> {
         propagation = propagation.after(name);
     }
     app.replace_system(propagation)?;
+    // Walls where things were put this tick: what blocks sight for
+    // replication now and for game code next tick.
+    app.replace_system(wish_sight::system().after(PROPAGATION))?;
     // Sound last: it hears where things are after they moved.
     app.replace_system(wish_audio::system().after(PROPAGATION))
 }

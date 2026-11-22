@@ -263,6 +263,8 @@ fn build_app(
     // Physics knows the scene before the first tick, so that questions
     // asked during it (game code's ray casts) see it.
     wish_physics::prepare(app.world_mut())?;
+    // And the walls that block sight, for game code's questions during it.
+    wish_sight::prepare(app.world_mut());
     let clips = workspace.audio_clips();
     let animations = workspace.animation_clips();
     // The interface is laid out before the first tick, so that a picture

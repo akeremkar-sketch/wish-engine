@@ -90,7 +90,13 @@ impl Ray {
             dir: vec3_at(bytes, 13)?,
             max: f32_at(bytes, 25)?,
             mask: u32::from_le_bytes(bytes.get(29..33)?.try_into().ok()?),
-            ignore: (bytes[33] != 0).then(|| u64_at(bytes, 34).map(Entity::from_bits))?,
+            // No entity to ignore is a valid request too (`raycast`): the
+            // flag decides, and only a flagged entity must be readable.
+            ignore: if bytes[33] != 0 {
+                Some(Entity::from_bits(u64_at(bytes, 34)?))
+            } else {
+                None
+            },
         })
     }
 }
@@ -161,6 +167,12 @@ mod tests {
             ignore: Some(Entity::from_bits(42 | (3 << 32))),
         };
         assert_eq!(Ray::decode(&ray.encode()), Some(ray));
+        // Without an entity to ignore (what `raycast` sends).
+        let plain = Ray {
+            ignore: None,
+            ..ray
+        };
+        assert_eq!(Ray::decode(&plain.encode()), Some(plain));
         let hit = RayHit {
             entity: Entity::from_bits(9),
             point: Vec3::new(1.0, 0.0, 3.0),

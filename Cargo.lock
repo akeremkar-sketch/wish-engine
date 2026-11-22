@@ -4740,6 +4740,7 @@ dependencies = [
  "wish_schema",
  "wish_script",
  "wish_sdk",
+ "wish_sight",
  "wish_text",
  "wish_transform",
  "wish_ui",
@@ -4869,6 +4870,7 @@ dependencies = [
  "wish_app",
  "wish_core",
  "wish_ecs",
+ "wish_sight",
  "wish_transform",
  "wish_types",
 ]
@@ -4903,6 +4905,7 @@ dependencies = [
  "wish_particles",
  "wish_scene",
  "wish_schema",
+ "wish_sight",
  "wish_text",
  "wish_transform",
  "wish_types",
@@ -4919,6 +4922,7 @@ dependencies = [
  "wish_input",
  "wish_net",
  "wish_schema",
+ "wish_sight",
  "wish_types",
 ]
 
@@ -4987,6 +4991,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.10",
+]
+
+[[package]]
+name = "wish_sight"
+version = "0.9.0"
+dependencies = [
+ "wish_app",
+ "wish_core",
+ "wish_ecs",
+ "wish_schema",
+ "wish_transform",
+ "wish_types",
 ]
 
 [[package]]
