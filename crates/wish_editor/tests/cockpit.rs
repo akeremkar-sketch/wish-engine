@@ -297,7 +297,9 @@ fn an_outside_agent_and_the_cockpit_agent_work_together() {
     let history = app
         .call("edit_history", &json!({ "limit": 50 }))
         .to_string();
-    let activity = app.call("activity_get", &json!({ "limit": 50 })).to_string();
+    let activity = app
+        .call("activity_get", &json!({ "limit": 50 }))
+        .to_string();
     let names = ids(app.rows());
     for id in ["tower", "wall", "crate", "barrel", "star"] {
         assert!(
