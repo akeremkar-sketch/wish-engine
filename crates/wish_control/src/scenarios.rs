@@ -351,7 +351,7 @@ fn explain(
             ));
         }
     }
-    entities.sort_by(|a, b| b.0.cmp(&a.0));
+    entities.sort_by_key(|entity| std::cmp::Reverse(entity.0));
     let entities: Vec<Value> = entities.into_iter().take(5).map(|(_, e)| e).collect();
     json!({ "world": world_values, "entities": entities })
 }
