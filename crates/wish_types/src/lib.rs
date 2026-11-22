@@ -16,6 +16,7 @@ pub mod anim;
 pub mod audio;
 pub mod input;
 pub mod lights2d;
+pub mod lobby;
 pub mod net;
 pub mod particles;
 pub mod physics;
@@ -36,6 +37,10 @@ pub use input::{
     PlayerId, Players, action_id,
 };
 pub use lights2d::{Light2D, Lighting2D, Occluder, Vision2D};
+pub use lobby::{
+    Lobby, LobbyAction, LobbyClosed, LobbyPhase, LobbyRequest, LocalPlayer, MatchRoles, Net, NetTo,
+    Seat,
+};
 pub use net::{NetGroups, NetOwner, NetViewer, NetVisibility, Replicated};
 pub use particles::{ParticleEmitter, ParticleState};
 pub use physics::{

@@ -76,6 +76,24 @@ pub fn ensure_players(world: &mut World, count: u32) -> Result<()> {
     Ok(())
 }
 
+/// Writes this machine's player's actions into `ActionState`, with the same
+/// cleaning and edges as the players' (the ids are those `ActionState`
+/// already holds: the project's actions, in order). Nothing is written when
+/// the project has no actions, nor when nothing changed. A host that records
+/// its inputs (the lobby's match log) writes its own player's this way.
+pub fn write_local(world: &mut World, actions: &[(u32, [f32; 2])]) -> Result<()> {
+    let Some(current) = world.resource::<ActionState>().copied() else {
+        return Ok(());
+    };
+    let next = ActionState {
+        slots: slots(&current.slots, actions, Some(&current.slots)),
+    };
+    if next != current {
+        world.insert_resource(next)?;
+    }
+    Ok(())
+}
+
 /// Writes every player's actions into `PlayerActionState`: entry 0 is the
 /// host's own `ActionState`; entry `p` comes from `remote(p)` (a connected
 /// player's held frame) and is at rest when it gives `None`. Players beyond

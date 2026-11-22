@@ -155,6 +155,18 @@ impl Client {
         }
     }
 
+    /// Forgets the match: despawns every entity it mirrored into `world` and
+    /// starts again as a new client with the same settings (a player who
+    /// rejoins on a new connection gets a new welcome and a full snapshot).
+    pub fn forget(&mut self, world: &mut World) {
+        for entity in self.local.values() {
+            if world.contains(*entity) {
+                let _ = world.despawn(*entity);
+            }
+        }
+        *self = Self::new(self.config.clone());
+    }
+
     /// This client's player id, once welcomed.
     pub fn player(&self) -> Option<PlayerId> {
         self.player

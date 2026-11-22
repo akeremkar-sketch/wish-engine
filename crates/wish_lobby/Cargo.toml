@@ -1,0 +1,22 @@
+[package]
+name = "wish_lobby"
+description = "Online play's sessions for Wish Engine: targeted messages between game code on the host and the players, the lobby (room code, seats, names, colours, ready, secret roles, start and end) and the host's match log that replays a match bit for bit (ADR-029)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+wish_core.workspace = true
+wish_ecs.workspace = true
+wish_net.workspace = true
+wish_replicate.workspace = true
+wish_schema.workspace = true
+wish_types.workspace = true
+
+[dev-dependencies]
+wish_app.workspace = true
+
+[lints]
+workspace = true

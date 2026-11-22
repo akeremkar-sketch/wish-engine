@@ -425,6 +425,65 @@ impl Host {
         rest
     }
 
+    /// Admits `peer` as player `player`, for a layer above replication that
+    /// chooses seats itself (the lobby: a player who rejoins gets its old
+    /// seat). Unlike a `Connected` event through
+    /// [`handle_event`](Self::handle_event) it writes nothing into the
+    /// world: the caller raises `Players.count` at its tick boundary. The
+    /// peer gets its welcome and a full snapshot with the next send.
+    pub fn admit(&mut self, peer: PeerId, player: PlayerId) -> Result<()> {
+        if player == 0 || player as usize >= MAX_PLAYERS {
+            return Err(Diagnostic::error(
+                "invalid_parameter",
+                format!("player id {player} cannot be given to a peer"),
+                "Peers get player ids 1 to 15; 0 is the host's own player.",
+            ));
+        }
+        if let Some(link) = self.links.get(&peer) {
+            if link.player == player {
+                return Ok(());
+            }
+            return Err(Diagnostic::error(
+                "invalid_parameter",
+                format!("{peer} is already player {}", link.player),
+                "Release the peer before admitting it again.",
+            ));
+        }
+        if self.links.values().any(|l| l.player == player) {
+            return Err(Diagnostic::error(
+                "invalid_parameter",
+                format!("player id {player} is taken"),
+                "Release the peer that holds it first.",
+            ));
+        }
+        self.links.insert(
+            peer,
+            Link {
+                player,
+                welcome_pending: true,
+                snapshot_pending: true,
+                next_id: 1,
+                ..Link::default()
+            },
+        );
+        Ok(())
+    }
+
+    /// Forgets `peer` (it left): its player id is free again. Returns the
+    /// player id it had.
+    pub fn release(&mut self, peer: PeerId) -> Option<PlayerId> {
+        self.links.remove(&peer).map(|l| l.player)
+    }
+
+    /// The network id `player` knows host entity `entity` by, **only if the
+    /// player may see it now** (a message to that player names only what
+    /// it may see; anything else becomes "none").
+    pub fn network_id(&self, player: PlayerId, entity: Entity) -> Option<u32> {
+        let link = self.link_of(player)?;
+        let id = link.ids.get(&entity).copied()?;
+        link.target.contains_key(&id).then_some(id)
+    }
+
     fn connect(&mut self, world: &mut World, peer: PeerId) {
         if self.links.contains_key(&peer) {
             return;
@@ -577,9 +636,21 @@ impl Host {
     /// `PlayerActionState`; entry 0 is the host's own `ActionState`. Call it
     /// after the host's own input and before the systems.
     pub fn apply_inputs(&mut self, world: &mut World, tick: u64) -> Result<()> {
+        let held = self.take_inputs(tick);
+        if let Some(highest) = held.keys().next_back() {
+            input::ensure_players(world, highest + 1)?;
+        }
+        input::write_players(world, &|player| held.get(&player).cloned())
+    }
+
+    /// Every connected player's input for `tick`, without writing the world:
+    /// the newest frame stamped at or before it, or the one held when none
+    /// is newer. What [`apply_inputs`](Self::apply_inputs) writes; a layer
+    /// that records the host's inputs (the lobby's match log) writes them
+    /// itself with `input::write_players`.
+    pub fn take_inputs(&mut self, tick: u64) -> BTreeMap<PlayerId, Actions> {
         self.tick = Some(self.tick.map_or(tick, |t| t.max(tick)));
         let mut held: BTreeMap<PlayerId, Actions> = BTreeMap::new();
-        let mut highest = 0;
         for link in self.links.values_mut() {
             if let Some((&stamp, _)) = link.frames.range(..=tick).next_back()
                 && let Some(actions) = link.frames.remove(&stamp)
@@ -589,12 +660,8 @@ impl Host {
                 link.frames.retain(|t, _| *t > stamp);
             }
             held.insert(link.player, link.held.clone());
-            highest = highest.max(link.player);
         }
-        if !self.links.is_empty() {
-            input::ensure_players(world, highest + 1)?;
-        }
-        input::write_players(world, &|player| held.get(&player).cloned())
+        held
     }
 
     /// Sends every connected player its state for `tick` (ticks must
