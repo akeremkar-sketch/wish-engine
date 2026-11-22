@@ -83,6 +83,15 @@ Dil, karşılama ekranının sağ üstünden, sonra da *Görünüm* menüsünden
 - **Alt** ve sol tuş öndeki noktanın çevresinde döndürür (yörünge); orta tuş kaydırır; tekerlek
   yakınlaştırır; **F** seçileni çerçeveler (*Görünüm → Seçileni çerçevele*).
 - *Kamerayı sıfırla* sahnenin kamerasına döner.
+- **2B görünüm:** 2B bir projenin sahne görünümü düz dünyaya tam yukarıdan bakar (görünümün
+  araçları arasındaki *2B* düğmesi ya da *Görünüm > Sahne görünümünü 2B ile 3B arasında değiştir*
+  geçiş yapar). Orada tekerlek imlecin olduğu yere doğru yakınlaştırır, orta tuş (ya da sol tuşla
+  birlikte **Boşluk** veya **Alt**) dünyayı sürükler; yörünge yoktur. Bir sprite'a tıklayınca
+  seçilir (resminin saydam kısmı sprite sayılmaz); boş bir yerden sürükleyince dikdörtgenin
+  değdiği her şey seçilir. Tutamaç X ve Y yönünde taşır (ortadaki kare düzlemde serbestçe taşır)
+  ve Z çevresinde döndürür; *Yapış* açıkken taşıma ızgaraya oturur: kamerada `PixelCamera` varsa
+  oyunun pikselleri, yoksa ilk karo haritasının hücreleri. *Oluştur* yeni şeyleri görünümün
+  ortasına koyar.
 
 **Kısayollar:**
 
@@ -186,6 +195,14 @@ Dil, karşılama ekranının sağ üstünden, sonra da *Görünüm* menüsünden
     karoyu duvar yapar: katı karolar karakterleri durdurur (`collide` açık olan katmanda).
   - Harita kendi `layer` katmanındaki sprite'ların altında çizilir; `y_sort` bu sprite'ları,
     yukarıdan görülen oyunlar için, aşağıdakini yukarıdakinin üstüne çizer.
+- **Çizim sırası ve piksel sanatı (2B):**
+  - Yüksek `layer` alçak olanın, aynı katmanda yüksek `order` alçak olanın üstüne çizilir.
+    `SortingLayer` taşıyan bir nesne bir katman numarasına ad verir; `y_sort` ile o katmanın
+    sprite'larını aşağıdakini yukarıdakinin üstüne sıralar.
+  - `Camera`nın yanındaki `PixelCamera`, belli sayıda piksel için yapılmış bir oyunu
+    (`resolution`, `pixels_per_unit`) tam sayı kadar büyüterek çizer, çevresine bantlar koyar
+    (`letterbox`) ve sprite'ları oyunun piksellerinde tutar (`snap`); piksel sanatı keskin kalır.
+    Oyun kodu imlecin dünyadaki yerini `Pointer.world` ile okur.
 - **Prefab'lar:**
   - *Prefab yap* seçimi yeniden kullanılabilir bir parçaya çevirir.
   - Örnekler *{prefab} örneği* diye görünür; değiştirilmiş alanları işaretlidir.

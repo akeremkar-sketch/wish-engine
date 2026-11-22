@@ -81,6 +81,14 @@ The language is chosen at the top right of the welcome screen, and later in the 
 - **Alt** and the left button turn around the point ahead (orbit); the middle button slides; the
   wheel zooms; **F** frames the selection (*View → Frame the selection*).
 - *Reset camera* returns to the scene's camera.
+- **The 2D view:** a 2D project's scene view looks straight down on the flat world (the *2D*
+  button among the view's tools, or *View > Switch the scene view between 2D and 3D*, switches).
+  There the wheel zooms toward the pointer, the middle button (or **Space** or **Alt** with the
+  left button) drags the world, and there is no orbit. Click a sprite to select it (a clear part
+  of its picture is not the sprite); drag from an empty place to select everything a rectangle
+  touches. The gizmo moves in X and Y (its centre square moves freely in the plane) and turns
+  about Z; with *Snap* a move lands on the grid: the game's pixels when the camera has a
+  `PixelCamera`, else the first tilemap's cells. *Create* puts things in the middle of the view.
 
 **Shortcuts:**
 
@@ -185,6 +193,14 @@ The language is chosen at the top right of the welcome screen, and later in the 
     wall: solid tiles stop characters (in a layer whose `collide` is on).
   - The map is drawn under the sprites of its `layer`; `y_sort` draws those sprites lower over
     higher, for games seen from above.
+- **Drawing order and pixel art (2D):**
+  - A higher `layer` is drawn over a lower one, and within a layer a higher `order`. An entity
+    with a `SortingLayer` gives a layer number a name, and with `y_sort` sorts its sprites lower
+    over higher.
+  - A `PixelCamera` beside the `Camera` draws a game made for a fixed number of pixels
+    (`resolution`, `pixels_per_unit`) scaled up by a whole number, with bars around it
+    (`letterbox`), and keeps sprites on the game's pixels (`snap`), so pixel art stays sharp.
+    Game code reads where the pointer is in the world in `Pointer.world`.
 - **Prefabs:**
   - *Make prefab* turns the selection into a reusable piece.
   - Instances show *Instance of {prefab}*; their changed fields are marked.
