@@ -681,6 +681,22 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "A peer that holds the connection's keys sent frames that break the protocol (malformed frames, fragment counts above the limit, messages out of shape), so the host closed that connection. The other program is broken or hostile.",
     ),
     (
+        "net_relay_full",
+        "The relay (`wen relay`) holds as many rooms, or players in all, as it was set to take, so it refused a new room or a new player. Try again later, or ask whoever runs the relay to raise --max-rooms or --max-clients.",
+    ),
+    (
+        "net_relay_no_room",
+        "The relay has no room with this room code: the code is mistyped, or the host plays through another relay or has not registered yet. The join goes on trying, so it starts once the host is there.",
+    ),
+    (
+        "net_relay_room_full",
+        "The room at the relay holds as many players as the relay lets one room have (--max-peers of `wen relay`, 32 by default). Ask whoever runs the relay to raise it, or wait for a player to leave.",
+    ),
+    (
+        "net_relay_room_taken",
+        "Another host holds a room with this code at the relay (the room is kept by a secret token only its host has). If this host restarted, its old room expires within 15 seconds and the registration goes on trying; otherwise host with a new room code.",
+    ),
+    (
         "net_replaced",
         "The same address joined a match again with a new key (a player's game restarted), so the old connection was closed. Nothing needs doing.",
     ),

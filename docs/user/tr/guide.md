@@ -266,6 +266,28 @@ asla yazılmaz.
 - **Kendi penceresinde:** `wen play` oyunu kendi penceresinde oynatır. Oyun kodunu kaydetmek oyunu
   durdurmadan yeni koda geçirir.
 
+### İnternet üzerinden oynamak
+
+Evde oyunu kuran oyuncu (ev sahibi), dışarıdan gelen oyuncuları içeri almayan bir modemin
+arkasındadır. Onların paketlerini bunun yerine bir **aktarıcı** (relay) taşır: herkese açık adresi
+olan küçük bir sunucuda kendinizin çalıştırdığı küçük bir program (ucuz bir Linux sunucusu yeter).
+Hesap yok, ücret yok, başka birinin hizmeti yok.
+
+1. Motorun Linux arşivini sunucuda açın.
+2. `./wen relay` çalıştırın. UDP 47620 numaralı bağlantı noktasını dinler (`--port` başkasını
+   seçer) ve gelen ya da giden her oda ve oyuncu için bir satır yazar.
+3. Sunucunun güvenlik duvarında bu UDP bağlantı noktasını açın, örneğin
+   `sudo ufw allow 47620/udp`.
+4. Ev sahibi sunucunun adresindeki aktarıcı üzerinden oynar; oyuncular aynı adresle ve oda koduyla
+   katılır.
+
+Aktarıcı, her oyuncuyla ev sahibi arasında mühürlenmiş paketleri taşır ve onları açamaz. Oda
+kodunun kendisini hiç almaz, yalnızca bir özetini (hash) alır; diske bir şey yazmaz ve paketlerin
+içeriğini kaydetmez. Hangi adreslerin birlikte oynadığını ve ne kadar veri gönderdiğini ise görür.
+Sınırlar: `--max-rooms` (256), `--max-peers` (oda başına 32 oyuncu), `--max-clients` (toplam
+4096). Sessiz kalan bir ev sahibi 15 saniye sonra odasını kaybeder. Oturumu kapattıktan sonra da
+çalışsın diye aktarıcıyı `tmux` içinde ya da bir hizmet olarak çalıştırın.
+
 ## 5. Oyun kodu
 
 Oyun mantığı `scripts/src/lib.rs` içinde Rust ile yazılır; motor onu WebAssembly'ye derler.

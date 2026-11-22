@@ -4707,6 +4707,7 @@ dependencies = [
  "wish_examples",
  "wish_import",
  "wish_mcp",
+ "wish_net",
  "wish_player",
  "wish_render",
  "wish_scene",

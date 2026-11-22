@@ -11,7 +11,7 @@ use wish_core::{Diagnostic, Result};
 pub const COMMANDS: &[&str] = &[
     "run", "bench", "schema", "mv", "check", "fmt", "migrate", "watch", "capture", "describe",
     "shaders", "view", "edit", "call", "do", "new", "build", "export", "play", "replay", "test",
-    "pkg", "engines", "sdk", "package", "mcp", "examples", "help", "version", "net",
+    "pkg", "engines", "sdk", "package", "mcp", "examples", "help", "version", "net", "relay",
 ];
 
 /// A parsed command line.
@@ -190,6 +190,8 @@ pub enum Command {
         /// Where to put it (default: `sdk` next to wen).
         out: Option<String>,
     },
+    /// Run a relay for online play over the internet.
+    Relay(RelayArgs),
     /// Create a new project folder.
     New {
         /// The folder to create the project in.
@@ -318,6 +320,23 @@ pub struct NetArgs {
     pub name: Option<String>,
     /// Stop after this many ticks (for scripts and tests).
     pub frames: Option<u64>,
+}
+
+/// The options of `wen relay`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RelayArgs {
+    /// The UDP port to listen on.
+    pub port: u16,
+    /// The address to listen on (`0.0.0.0` is every IPv4 address).
+    pub bind: String,
+    /// Rooms the relay holds.
+    pub max_rooms: u32,
+    /// Players one room holds.
+    pub max_peers: u32,
+    /// Players the relay holds in all rooms.
+    pub max_clients: u32,
+    /// Stop after this many seconds (0: run until stopped).
+    pub seconds: u64,
 }
 
 /// The options of `wen view`.
@@ -646,6 +665,15 @@ fn flags_of(command: &str) -> &'static [(&'static str, bool)] {
             ("--json", false),
         ],
         "package" => &[("--out", true), ("--json", false)],
+        "relay" => &[
+            ("--port", true),
+            ("--bind", true),
+            ("--max-rooms", true),
+            ("--max-peers", true),
+            ("--max-clients", true),
+            ("--seconds", true),
+            ("--json", false),
+        ],
         "view" => &[
             ("--example", true),
             ("--scene", true),
@@ -1025,6 +1053,43 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
         "sdk" => Command::Sdk {
             out: value_of("--out").map(str::to_owned),
         },
+        "relay" => {
+            let defaults = wish_net::RelayConfig::default();
+            let bounded = |flag: &str, default: u64, max: u64| -> Result<u64> {
+                let value = value_of(flag).map_or(Ok(default), |v| parse_number(flag, v))?;
+                if value > max {
+                    return Err(usage_error(
+                        format!("{flag} is {value}, more than {max}."),
+                        format!("Give {flag} a number up to {max}."),
+                    ));
+                }
+                Ok(value)
+            };
+            Command::Relay(RelayArgs {
+                port: bounded(
+                    "--port",
+                    u64::from(wish_net::relay::RELAY_PORT),
+                    u64::from(u16::MAX),
+                )? as u16,
+                bind: value_of("--bind").unwrap_or("0.0.0.0").to_owned(),
+                max_rooms: bounded(
+                    "--max-rooms",
+                    u64::from(defaults.max_rooms),
+                    u64::from(wish_net::relay::MAX_ROOMS_LIMIT),
+                )? as u32,
+                max_peers: bounded(
+                    "--max-peers",
+                    u64::from(defaults.max_peers),
+                    u64::from(wish_net::endpoint::MAX_PEERS_LIMIT),
+                )? as u32,
+                max_clients: bounded(
+                    "--max-clients",
+                    u64::from(defaults.max_clients),
+                    u64::from(wish_net::relay::MAX_CLIENTS_LIMIT),
+                )? as u32,
+                seconds: value_of("--seconds").map_or(Ok(0), |v| parse_number("--seconds", v))?,
+            })
+        }
         "pkg" => {
             const ACTIONS: &[&str] = &[
                 "list", "search", "add", "remove", "update", "lock", "check", "install",
@@ -1313,6 +1378,39 @@ mod tests {
 
         let valued_switch = parse(&args("run --json=yes")).unwrap_err();
         assert_eq!(valued_switch.message, "--json does not take a value.");
+    }
+
+    #[test]
+    fn parses_relay_with_defaults_and_limits() {
+        let Command::Relay(relay) = parse(&args("relay")).unwrap().command else {
+            panic!("relay");
+        };
+        assert_eq!(relay.port, wish_net::relay::RELAY_PORT);
+        assert_eq!(relay.bind, "0.0.0.0");
+        assert_eq!(relay.max_rooms, wish_net::RelayConfig::default().max_rooms);
+        assert_eq!(relay.seconds, 0);
+        let Command::Relay(relay) = parse(&args(
+            "relay --port 9000 --bind :: --max-rooms 10 --max-peers 8 --max-clients 80 --seconds 2",
+        ))
+        .unwrap()
+        .command
+        else {
+            panic!("relay");
+        };
+        assert_eq!(
+            relay,
+            RelayArgs {
+                port: 9000,
+                bind: "::".to_owned(),
+                max_rooms: 10,
+                max_peers: 8,
+                max_clients: 80,
+                seconds: 2,
+            }
+        );
+        assert!(parse(&args("relay --port 70000")).is_err());
+        assert!(parse(&args("relay --max-peers 300")).is_err());
+        assert!(parse(&args("relay --room ABCD")).is_err());
     }
 
     #[test]
