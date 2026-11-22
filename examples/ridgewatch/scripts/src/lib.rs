@@ -1186,11 +1186,13 @@ fn hands(
     // The lobby: `use` toggles ready; the host starts once all are ready.
     if lobby.phase == LobbyPhase::Open && local.joined && actions.pressed("use") {
         let seat = lobby.seats.get(me as usize).copied().unwrap_or_default();
+        // The host's own seat counts as ready when it starts.
         let ready = lobby
             .seats
             .iter()
-            .filter(|s| s.taken && s.connected)
-            .all(|s| s.ready);
+            .enumerate()
+            .filter(|(at, s)| s.taken && s.connected && *at as u32 != me)
+            .all(|(_, s)| s.ready);
         let action = if local.host && ready {
             LobbyAction::Start
         } else if seat.ready {

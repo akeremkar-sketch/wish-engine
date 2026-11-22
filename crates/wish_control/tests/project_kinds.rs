@@ -138,6 +138,13 @@ fn a_new_project_says_its_kind() {
         scene["resources"]["PhysicsSettings"]["profile"], "SideView2D",
         "{scene}"
     );
+    // Friction F23: the 3D look shows nothing under sprites and costs a
+    // picture time; a flat game starts with the Plain look.
+    assert_eq!(scene["resources"]["Bloom"]["strength"], 0.0, "{scene}");
+    assert_eq!(
+        scene["resources"]["RenderSettings"]["antialiasing"], "Off",
+        "{scene}"
+    );
     // A 3D project's scene has no resources key (as 1.0 wrote it).
     let scene3: Value = serde_json::from_str(
         &std::fs::read_to_string(three.join("scenes/main.scene.json")).unwrap(),
@@ -170,6 +177,11 @@ fn templates_have_a_kind_and_a_new_project_takes_it() {
     let all = templates(&examples);
     let kind_of = |id: &str| all.iter().find(|t| t.id == id).unwrap().kind;
     assert_eq!(kind_of("bricks"), ProjectKind::D2);
+    assert_eq!(
+        kind_of("ridgewatch"),
+        ProjectKind::D2,
+        "the online party template"
+    );
     for id in ["islands", "hop", "collect", "quiz"] {
         assert_eq!(kind_of(id), ProjectKind::D3, "{id}");
     }

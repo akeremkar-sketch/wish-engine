@@ -2029,6 +2029,7 @@ fn about(id: &str) -> Option<&'static str> {
         "hop" => t("3D: jump between platforms and pick up coins"),
         "collect" => t("3D, top down: walk and pick up every coin"),
         "bricks" => t("2D: break the bricks with a ball"),
+        "ridgewatch" => t("2D online party: hidden roles, a meeting and a vote (4 to 10 players)"),
         "quiz" => t("Interface only: questions and answer buttons"),
         _ => return None,
     })

@@ -153,7 +153,12 @@ impl Workspace {
 
     /// Changes the project's name and/or default scene and writes
     /// `wish.json` (canonically, all at once).
-    pub(crate) fn write_config(&mut self, name: Option<&str>, scene: Option<&str>) -> Result<()> {
+    pub(crate) fn write_config(
+        &mut self,
+        name: Option<&str>,
+        scene: Option<&str>,
+        net: Option<serde_json::Value>,
+    ) -> Result<()> {
         let Some(config) = self.config.as_mut() else {
             return Ok(());
         };
@@ -163,6 +168,9 @@ impl Workspace {
         }
         if let Some(scene) = scene {
             next.scene = scene.to_owned();
+        }
+        if let Some(net) = net {
+            next.net = Some(net);
         }
         let text = next.to_canonical()?;
         crate::documents::write_project_file(&self.root, crate::project::PROJECT_FILE, &text)?;

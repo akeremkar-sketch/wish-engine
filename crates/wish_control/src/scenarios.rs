@@ -25,7 +25,8 @@
 //! of `net host` (`players` seats, `bots`, `drive`, `auto_start`,
 //! `host_plays`, `network`, `room_code`); its steps run on the networked
 //! session, `players` in a run step gives input by seat, and an `expect`
-//! with `"player": 3` checks what player 3's machine has. When every step
+//! with `"player": 3` checks what player 3's machine has (a `capture` step
+//! with `"player"` draws that machine's picture). When every step
 //! holds, the host's match log is played into a fresh host world and must
 //! give the same world at every tick (`replay_verified`).
 

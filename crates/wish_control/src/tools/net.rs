@@ -44,7 +44,7 @@ pub(crate) const NET: Tool = Tool {
         Param::optional(
             "players",
             Kind::Integer { min: 1, max: 16 },
-            "host: the seats the match is for (the host's own player included when host_plays); auto_start waits for them.",
+            "host: the seats the match is for (the host's own player included when host_plays); auto_start waits for them. To give a step input by seat (sim_step's players), use inputs.",
         )
         .or("2"),
         Param::optional(

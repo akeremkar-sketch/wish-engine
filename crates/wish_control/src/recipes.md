@@ -650,6 +650,257 @@ whose `base_color` alpha is below 1. Its alpha is how much of it covers what is 
 - `capture_frame` and `describe_view` count them in `stats.blended_surfaces`; `describe_view` marks each one
   `"blended": true` and still lists what is seen through it as visible.
 
+## Vision cut by walls
+
+What a character can see in the X-Y plane: walls are the solid tiles of a tilemap's colliding layers and entities with
+an `Occluder` beside their `Collider` (a door: `Occluder.enabled` false while it is open). Game code asks
+`can_see(from, to)` and `visible_area(from, radius)`; they see the walls as of the end of the last tick. A `Vision2D`
+on the player's character draws darkness over what it cannot see (with `Lighting2D.enabled` for 2D lights); online,
+enable only the local player's, and replicate others with `NetVisibility::Sight` (or decide `Replicated.players`
+yourself, as below) so a machine is never sent what its player cannot see.
+
+```rust
+use wish_sdk::prelude::*;
+
+/// Something a lookout may or may not see.
+#[component]
+pub struct Thing {
+    /// Whether the lookout sees it now.
+    pub seen: bool,
+}
+
+/// The one who looks.
+#[component]
+pub struct Lookout {}
+
+#[system]
+fn look(lookouts: Query<(&Lookout, &Transform)>, mut things: Query<(&mut Thing, &Transform)>) {
+    let Some((_, eye)) = lookouts.single() else {
+        return;
+    };
+    let from = Vec2::new(eye.translation.x, eye.translation.y);
+    for (thing, at) in things.iter_mut() {
+        thing.seen = can_see(from, Vec2::new(at.translation.x, at.translation.y));
+    }
+}
+
+wish_sdk::export! {
+    components: [Thing, Lookout],
+    systems: [look],
+}
+```
+
+```json ops
+[
+  { "op": "despawn", "id": "ground" },
+  { "op": "set", "id": "camera", "component": "Camera", "value": { "projection": "Orthographic", "ortho_height": 10 } },
+  { "op": "replace", "id": "camera", "component": "Transform", "value": { "translation": [0, 0, 10] } },
+  { "op": "set_resource", "name": "Lighting2D", "value": { "enabled": true, "ambient": [0.6, 0.6, 0.7, 1] } },
+  { "op": "spawn", "id": "lookout", "components": {
+    "Transform": { "translation": [-3, 0, 0] }, "Lookout": {},
+    "Sprite": { "rect": [0, 0, 50, 50], "color": [0.9, 0.8, 0.3, 1] },
+    "Vision2D": { "radius": 7 } } },
+  { "op": "spawn", "id": "wall", "components": {
+    "Transform": { "translation": [0, 1.5, 0] }, "Collider": { "size": [0.5, 3, 1] }, "Occluder": {},
+    "Sprite": { "rect": [0, 0, 50, 300], "color": [0.3, 0.3, 0.4, 1] } } },
+  { "op": "spawn", "id": "behind", "components": {
+    "Transform": { "translation": [3, 1.5, 0] }, "Thing": {}, "Sprite": { "rect": [0, 0, 40, 40] } } },
+  { "op": "spawn", "id": "open", "components": {
+    "Transform": { "translation": [3, -2, 0] }, "Thing": {}, "Sprite": { "rect": [0, 0, 40, 40] } } }
+]
+```
+
+- `physics_query` with `{ "sight": { "from": [-3, 0], "to": [3, 1.5] } }` answers `visible` and what blocks it;
+  `{ "sight": { "from": [-3, 0], "radius": 7 } }` the visible area's points.
+- Touching counts as blocked: a line along the shared edge of two wall tiles, or through a corner, does not see.
+
+## A lobby with a room code
+
+An online game's lobby is the engine's: the `Lobby` resource (phase, round, room code, the seats with names, colours,
+ready flags) and `LocalPlayer` (this machine's seat, whether it is the host, its secret role). Game code asks for
+changes with a `LobbyRequest` (`Ready`, `NotReady`, `Name`, `Color`, and for the host `Start`, `End`, `Reopen`); the
+engine checks them. `net` hosts and joins matches (`host` with `players`, `bots`, a simulated `network`); `wish.json`
+`net.lobby` sets `min_players`, `max_players` and the roles (`project_settings` writes it).
+
+```rust
+use wish_sdk::prelude::*;
+
+/// A text the lobby screen fills.
+#[component]
+pub struct LobbyLabel {}
+
+/// `jump` (Space) makes a player ready; the host starts once all are.
+#[system]
+fn lobby_keys(actions: Actions, local: Res<LocalPlayer>, lobby: Res<Lobby>, mut requests: EventWriter<LobbyRequest>) {
+    if lobby.phase != LobbyPhase::Open || !local.joined || !actions.pressed("jump") {
+        return;
+    }
+    // The host's own seat counts as ready when it starts.
+    let all_ready = lobby
+        .seats
+        .iter()
+        .enumerate()
+        .filter(|(seat, s)| s.taken && s.connected && *seat as u32 != local.player)
+        .all(|(_, s)| s.ready);
+    let action = if local.host && all_ready {
+        LobbyAction::Start
+    } else {
+        LobbyAction::Ready
+    };
+    requests.send(LobbyRequest { action, ..Default::default() });
+}
+
+/// Shows the room code and who is ready.
+#[system]
+fn lobby_screen(lobby: Res<Lobby>, mut labels: Query<(&LobbyLabel, &mut UiText)>) {
+    let ready = lobby.seats.iter().filter(|s| s.taken && s.ready).count();
+    let seated = lobby.seats.iter().filter(|s| s.taken).count();
+    let line = format!("Room {}: {ready} of {seated} ready", text_of(lobby.room));
+    for (_, label) in labels.iter_mut() {
+        label.text = text(&line);
+    }
+}
+
+wish_sdk::export! {
+    components: [LobbyLabel],
+    systems: [lobby_keys, lobby_screen],
+}
+```
+
+```json ops
+[
+  { "op": "spawn", "id": "lobby_label", "components": {
+    "UiNode": { "position": "Absolute", "offset": [40, 40] }, "UiText": { "text": "", "size": 32 }, "LobbyLabel": {} } }
+]
+```
+
+```json test
+{
+  "format": 1,
+  "scene": "scenes/main.scene.json",
+  "seed": 3,
+  "net": { "players": 3, "bots": 2, "network": { "latency_ms": 100, "jitter_ms": 20, "loss": 0.05, "seed": 2 } },
+  "steps": [
+    { "frames": 120 },
+    { "input": { "jump": true }, "frames": 2 },
+    { "until": "Lobby.phase == 'Running'", "max_frames": 120 },
+    { "frames": 30 },
+    { "expect": "Lobby.phase == 'Running' && LocalPlayer.player == 2", "player": 2, "message": "the host started; the bots' machines hear it" },
+    { "expect": "matches(UiText.text, 'Room *: 2 of 3 ready')", "entity": "lobby_label", "player": 2, "message": "the bots got ready (the host never needs to)" }
+  ]
+}
+```
+
+- Bots (`net bots`, or `bots` in a test's `net`) ask to be ready by themselves; a person's machine sends `Ready`.
+- `Lobby.room` is the code people type to join (`wen net join <address> --room CODE`); `room_code` fixes it.
+- A player's machine says `Open` from its first tick until the host's lobby arrives; `Offline` means a game alone.
+
+## A meeting with a vote
+
+Network messages are events with a field `net: Net`. A player's machine sends only to the host
+(`NetWriter::to_host`); the host passes things on to one player, a group or everyone. `NetReader` reads the ones the
+engine delivered, with `net.from` set from the connection (never from the sender's bytes). Resources are never sent,
+so what the host keeps in one (who voted for whom) stays on the host.
+
+```rust
+use wish_sdk::prelude::*;
+
+/// A vote, to the host.
+#[event]
+pub struct Vote {
+    /// Who sends it and where (the engine fills `from`).
+    pub net: Net,
+    /// The seat voted for.
+    pub choice: u32,
+}
+
+/// The result, from the host to everyone.
+#[event]
+pub struct Verdict {
+    /// From the host.
+    pub net: Net,
+    /// How many voted.
+    pub votes: u32,
+}
+
+/// The host's count: who voted, as bits.
+#[resource]
+pub struct Tally {
+    /// One bit per seat that voted.
+    pub voted: u32,
+    /// How many votes came in.
+    pub votes: u32,
+}
+
+/// What this machine heard.
+#[resource]
+pub struct Heard {
+    /// The last verdict's count of votes.
+    pub votes: u32,
+}
+
+/// `jump` votes for seat 0.
+#[system]
+fn cast(actions: Actions, mut out: NetWriter<Vote>) {
+    if actions.pressed("jump") {
+        out.to_host(Vote { choice: 0, ..Default::default() });
+    }
+}
+
+/// The host counts one vote per seat and tells everyone.
+#[system]
+fn count(local: Res<LocalPlayer>, votes: NetReader<Vote>, mut tally: ResMut<Tally>, mut out: NetWriter<Verdict>) {
+    if !local.host {
+        return;
+    }
+    let before = tally.votes;
+    for vote in votes.read() {
+        let bit = 1 << vote.net.from;
+        if tally.voted & bit == 0 {
+            tally.voted |= bit;
+            tally.votes += 1;
+        }
+    }
+    if tally.votes != before {
+        out.to_everyone(Verdict { votes: tally.votes, ..Default::default() });
+    }
+}
+
+/// Every machine hears the verdict.
+#[system]
+fn hear(verdicts: NetReader<Verdict>, mut heard: ResMut<Heard>) {
+    for verdict in verdicts.read() {
+        heard.votes = verdict.votes;
+    }
+}
+
+wish_sdk::export! {
+    resources: [Tally, Heard],
+    events: [Vote, Verdict],
+    systems: [cast, count, hear],
+}
+```
+
+```json test
+{
+  "format": 1,
+  "scene": "scenes/main.scene.json",
+  "seed": 3,
+  "net": { "players": 3, "bots": 2, "auto_start": true, "network": { "latency_ms": 100, "jitter_ms": 20, "loss": 0.05, "seed": 2 } },
+  "steps": [
+    { "until": "Lobby.phase == 'Running'", "max_frames": 600 },
+    { "players": { "1": { "jump": true }, "2": { "jump": true } }, "frames": 2 },
+    { "frames": 60 },
+    { "expect": "Tally.votes == 2", "message": "the host counted each seat once" },
+    { "expect": "Heard.votes == 2", "player": 2, "message": "everyone heard the verdict" }
+  ]
+}
+```
+
+- Chat is the same: a `Say` to the host, which the host passes on with `to_everyone`, or with `to_group` when only
+  some may hear it (`NetGroups` bits: the ghosts of a party game).
+- Messages are sent reliably and in order; a player may send 30 a second (`net.lobby.messages_per_second`).
+
 ## Proving it: scenario tests and replays
 
 A scenario test plays the game from a scene with inputs and checks values; `test_run` says which step failed, at which

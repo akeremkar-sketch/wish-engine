@@ -108,3 +108,29 @@ pub fn manifest_json(types: &TypeTable, systems: Vec<Value>) -> String {
     })
     .to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    /// Friction F12: a type every system asks for is described once; the
+    /// table then answers its name without building its schema again (a
+    /// twelve-system game ran out of fuel describing `Lobby` and
+    /// `PlayerActionState` once per parameter).
+    #[test]
+    fn a_type_is_described_once_whatever_asks_for_it() {
+        let mut table = TypeTable::new();
+        for _ in 0..50 {
+            assert_eq!(table.resource::<wish_types::Lobby>(), "Lobby");
+            table.resource::<wish_types::PlayerActionState>();
+        }
+        assert_eq!(table.types.len(), 2);
+        assert_eq!(table.seen.len(), 2);
+        // The same type in another role is listed again (the engine then
+        // refuses the clash).
+        table.component::<wish_types::Sprite>();
+        assert_eq!(table.types.len(), 3);
+    }
+}

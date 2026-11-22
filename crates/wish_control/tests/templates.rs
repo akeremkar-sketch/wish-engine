@@ -25,7 +25,10 @@ fn the_engine_examples_are_the_templates() {
     let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
     let ids: Vec<String> = templates(&examples).into_iter().map(|t| t.id).collect();
     // (first-pixel is a capture example without a wish.json: not a template)
-    assert_eq!(ids, ["bricks", "collect", "hop", "islands", "quiz"]);
+    assert_eq!(
+        ids,
+        ["bricks", "collect", "hop", "islands", "quiz", "ridgewatch"]
+    );
 }
 
 #[test]

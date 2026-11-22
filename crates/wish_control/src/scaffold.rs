@@ -14,7 +14,7 @@
 
 use std::path::{Path, PathBuf};
 
-use serde_json::json;
+use serde_json::{Value, json};
 use wish_core::{Diagnostic, Result};
 
 use crate::project::{PROJECT_FILE, ProjectConfig, ProjectKind};
@@ -74,7 +74,23 @@ pub fn starting_entities(kind: ProjectKind) -> serde_json::Value {
 pub fn starting_resources(kind: ProjectKind) -> serde_json::Value {
     match kind {
         ProjectKind::D3 => json!({}),
-        ProjectKind::D2 => json!({ "PhysicsSettings": { "profile": "SideView2D" } }),
+        ProjectKind::D2 => {
+            // Sprites, tilemaps and the interface are drawn after the 3D
+            // look, so in a flat game its fog, bloom and smoothing cost a
+            // picture time and show nothing: a 2D project starts with the
+            // Plain look (friction F23; a person can apply another).
+            let mut resources = serde_json::Map::new();
+            if let Ok(plain) = crate::looks::find("plain") {
+                for (name, fields) in plain.resources {
+                    resources.insert(name, Value::Object(fields));
+                }
+            }
+            resources.insert(
+                "PhysicsSettings".to_owned(),
+                json!({ "profile": "SideView2D" }),
+            );
+            Value::Object(resources)
+        }
     }
 }
 

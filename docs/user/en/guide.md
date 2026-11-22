@@ -262,6 +262,23 @@ the change enters the history as *file*, and a broken file is reported, never ov
     "auto_start": true, "network": { "latency_ms": 100, "loss": 0.05 } }` at the top of a scenario
     test plays it with bots over a bad network; `"player": 3` on an `expect` step checks what
     player 3's machine has. A match's replay keeps the host's log and plays back exactly.
+- **Make an online party game:** start from the *Ridgewatch* template, a hidden-role game for 4 to
+  10 players (keepers repair a storm-bound observatory; a hidden "static" freezes them; the bell
+  calls a meeting with chat and a vote).
+  1. On the welcome screen choose *2D*, then *Ridgewatch* ("2D online party"); or run
+     `wen new my-party --kind 2d --template ridgewatch`.
+  2. *Game → Build code*, then *Game → Players* 6 and *Play*: you host, five bots join, the match
+     starts. Walk with WASD, hold E at a machine to repair it, R at the bell calls a meeting; in a
+     meeting Up/Down chooses a keeper, E votes, 1 to 4 say something.
+  3. *Run tests*: three matches play with bots over a bad network (repairs, a vote, the statics
+     freezing everyone) and each is checked as its replay.
+  4. Make it yours: the map is `assets/maps/station.tilemap.json` (paint it in the 2D view), the
+     numbers of the game are the `Rules` resource, the roles and the seats are `wish.json`'s `net`
+     section (`max_players`, and a role's `more_from` for a second saboteur in large matches),
+     and the code is `scripts/src/lib.rs`. The recipes "A lobby with a room code", "A meeting with
+     a vote" and "Vision cut by walls" (`wish://docs/recipes`) explain each piece.
+  5. Play with people: `wen net host --port 47600` on one computer, `wen net join discover` on the
+     others in the same network.
 
 ## 5. Game code
 
