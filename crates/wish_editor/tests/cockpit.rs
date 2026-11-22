@@ -150,10 +150,20 @@ fn an_agent_works_from_the_cockpit_and_everything_is_kept() {
         "{transcript:?}"
     );
     // Its change and the person's are both there; the agent's is its own.
+    // (A gate under load once lost the person's lamp, 22 November 2026: the
+    // history and the feed say which write replaced it.)
+    let history = app
+        .call("edit_history", &json!({ "limit": 50 }))
+        .to_string();
+    let activity = app
+        .call("activity_get", &json!({ "limit": 50 }))
+        .to_string();
     let names = ids(app.rows());
     assert!(
         names.contains("crate") && names.contains("lamp"),
-        "{names:?}"
+        "{names:?}
+history: {history}
+activity: {activity}"
     );
     let history = app.call("edit_history", &json!({}));
     assert!(history.to_string().contains("agent:scripted"), "{history}");
