@@ -53,6 +53,9 @@ fn lobby_line(status: &Value) -> String {
             if seat["left"] == true {
                 flags.push("left");
             }
+            if seat["via"] == "relay" {
+                flags.push("relay");
+            }
             let flags = if flags.is_empty() {
                 String::new()
             } else {
@@ -65,8 +68,16 @@ fn lobby_line(status: &Value) -> String {
             )
         })
         .collect();
+    let relay = match status["relay"]["state"].as_str() {
+        Some("refused") => format!(
+            " [relay refused: {}]",
+            status["relay"]["reason"].as_str().unwrap_or("?")
+        ),
+        Some(state) => format!(" [relay {state}]"),
+        None => String::new(),
+    };
     format!(
-        "{} round {}: {}",
+        "{} round {}: {}{relay}",
         lobby["phase"].as_str().unwrap_or("?"),
         lobby["round"],
         if seats.is_empty() {
@@ -104,32 +115,46 @@ pub fn run(args: &NetArgs, as_json: bool) -> Result<String> {
     if let Some(name) = &args.name {
         start["name"] = json!(name);
     }
+    if let Some(relay) = &args.relay {
+        start["relay"] = json!(relay);
+    }
     if args.action == "host" {
         start["players"] = json!(args.players);
         start["port"] = json!(args.port);
         start["discoverable"] = json!(true);
         // People mark ready in the game; the match starts once every seat is.
         start["auto_start"] = json!(true);
-    } else {
-        start["address"] = json!(args.address);
+    } else if let Some(address) = &args.address {
+        start["address"] = json!(address);
     }
     let started = call(&mut workspace, "net", &start)?;
     let session = started["session"].as_str().unwrap_or("s1").to_owned();
     if args.action == "host" {
         let port = started["network"]["port"].clone();
         let room = started["room_code"].clone();
+        let through = match &args.relay {
+            Some(relay) => format!(" and through the relay at {relay}"),
+            None => String::new(),
+        };
         say(
             as_json,
             &format!(
-                "Hosting on UDP port {port}, room code {}.",
+                "Hosting on UDP port {port}{through}, room code {}.",
                 room.as_str().unwrap_or("?")
             ),
-            json!({ "event": "hosting", "session": session, "port": port, "room_code": room }),
+            json!({ "event": "hosting", "session": session, "port": port, "room_code": room, "relay": started["relay"] }),
         );
     } else {
+        let to = match (&args.relay, &args.address) {
+            (Some(relay), _) => format!(
+                "room {} through the relay at {relay}",
+                args.room.as_deref().unwrap_or("?")
+            ),
+            (None, address) => address.as_deref().unwrap_or("?").to_owned(),
+        };
         say(
             as_json,
-            &format!("Joining {}...", args.address.as_deref().unwrap_or("?")),
+            &format!("Joining {to}..."),
             json!({ "event": "joining", "session": session }),
         );
     }
@@ -154,7 +179,7 @@ pub fn run(args: &NetArgs, as_json: bool) -> Result<String> {
             say(
                 as_json,
                 &line,
-                json!({ "event": "lobby", "tick": status["tick"], "lobby": status["lobby"], "seats": status["seats"] }),
+                json!({ "event": "lobby", "tick": status["tick"], "lobby": status["lobby"], "seats": status["seats"], "relay": status["relay"] }),
             );
             last = line;
         }

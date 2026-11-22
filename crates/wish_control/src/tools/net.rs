@@ -12,7 +12,7 @@ use crate::workspace::Workspace;
 pub(crate) const NET: Tool = Tool {
     name: "net",
     title: "Online play",
-    description: "Hosts an online match in a session and plays it with bots over a simulated network (or real UDP), to test an online game without people. host starts a networked session (its world is the host's; players seats, bots, network {latency_ms, jitter_ms, loss, duplicate, reorder, seed}, or port for real UDP; auto_start starts once every seat is ready); join adds a player (address \"host:port\" or \"discover\"); bots adds bots (drive input: held input, inputs by seat in step; drive game: the bot's own game code); start and end are the host's lobby; step runs host and players together (the same as sim_step on the session; inputs by seat); status shows the lobby, seats, round trips, bytes and the host's counts, with player one player's machine; leave and stop end a player or the match. Over the simulator the same calls give the same match every time. entity_query, entity_get, capture_frame and describe_view take player to look at what a player's machine has; replay save writes the match.",
+    description: "Hosts an online match in a session and plays it with bots over a simulated network (or real UDP), to test an online game without people. host starts a networked session (its world is the host's; players seats, bots, network {latency_ms, jitter_ms, loss, duplicate, reorder, seed}, or port for real UDP; auto_start starts once every seat is ready); join adds a player (address \"host:port\" or \"discover\"); relay (host and join): play through a relay (\"host:port\" of wen relay over UDP, \"simulated\" for one the session runs on its simulated network), the host taking direct and relayed players at once; bots adds bots (drive input: held input, inputs by seat in step; drive game: the bot's own game code); start and end are the host's lobby; step runs host and players together (the same as sim_step on the session; inputs by seat); status shows the lobby, seats, round trips, bytes and the host's counts, with player one player's machine; leave and stop end a player or the match. Over the simulator the same calls give the same match every time. entity_query, entity_get, capture_frame and describe_view take player to look at what a player's machine has; replay save writes the match.",
     params: &[
         Param::optional(
             "action",
@@ -74,6 +74,11 @@ pub(crate) const NET: Tool = Tool {
             "port",
             Kind::Integer { min: 0, max: 65535 },
             "host: play over real UDP on this port (0 picks one) instead of the simulator.",
+        ),
+        Param::optional(
+            "relay",
+            Kind::String,
+            "host: also take players through the relay at this \"host:port\" (wen relay; over UDP), registering the room code there, or \"simulated\": a relay the session runs on its simulated network. join, bots: reach the host through this relay (\"simulated\": the session's own) with room_code; with no networked session open, this process joins that room (a new session).",
         ),
         Param::optional(
             "room_code",
@@ -282,8 +287,13 @@ fn host(workspace: &mut Workspace, args: &Args) -> Result<Map<String, Value>> {
             .config()
             .map_or_else(|| "wish".to_owned(), |c| c.name.clone()),
         tick_rate: 60,
+        relay: args.str("relay").map(str::to_owned),
     };
     let id = workspace.start_net_session(&scene, &setup)?;
+    // The host's relay is the host's: the machines added with it join it
+    // directly (bots and join take relay to go through it).
+    let direct = args.without("relay");
+    let args = &direct;
     if as_player {
         // The person's machine joins first; the held input is the bots'.
         let own = args.without("input");
@@ -327,6 +337,9 @@ fn host(workspace: &mut Workspace, args: &Args) -> Result<Map<String, Value>> {
                 .remove("network")
                 .unwrap_or(Value::Null),
         );
+        if let Some(relay) = net.relay_status() {
+            out.insert("relay".to_owned(), relay);
+        }
     }
     if !added.is_empty() {
         out.insert("bots".to_owned(), json!(added));
@@ -360,15 +373,24 @@ fn join(workspace: &mut Workspace, args: &Args) -> Result<Map<String, Value>> {
     let any_networked = workspace.sessions.open.values().any(|s| s.net.is_some());
     if args.str("session").is_none()
         && !any_networked
-        && let Some(address) = address
+        && (address.is_some() || args.str("relay").is_some())
     {
         let id = workspace.join_outside(address, args)?;
         let mut out = Map::new();
         out.insert("session".to_owned(), json!(id));
-        out.insert("address".to_owned(), json!(address));
+        if let Some(address) = address {
+            out.insert("address".to_owned(), json!(address));
+        }
+        if let Some(relay) = args.str("relay") {
+            out.insert("relay".to_owned(), json!(relay));
+        }
         out.insert(
             "joining".to_owned(),
             json!(args.str("name").unwrap_or("Player")),
+        );
+        out.insert(
+            "next".to_owned(),
+            json!("Step the session (net step) until net status lists your seat; your own player is predicted, so it answers your input at once."),
         );
         return Ok(out);
     }

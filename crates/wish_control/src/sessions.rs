@@ -436,7 +436,7 @@ fn step_app(
             break;
         }
         if let Some(net) = session.net.as_mut() {
-            let failures = net.tick(&mut session.app, &session.input, &inputs, named)?;
+            let failures = net.tick(&mut session.app, &inputs, named)?;
             ticks_run += 1;
             diagnostics.extend(failures);
             if let Some(until) = until {

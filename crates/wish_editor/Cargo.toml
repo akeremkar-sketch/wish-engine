@@ -25,6 +25,7 @@ wish_window.workspace = true
 [dev-dependencies]
 egui.workspace = true
 png.workspace = true
+wish_net.workspace = true
 
 [lints]
 workspace = true

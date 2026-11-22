@@ -4783,6 +4783,7 @@ dependencies = [
  "wish_control",
  "wish_core",
  "wish_mcp",
+ "wish_net",
  "wish_render",
  "wish_script",
  "wish_text",

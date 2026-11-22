@@ -280,7 +280,17 @@ Hesap yok, ücret yok, başka birinin hizmeti yok.
 3. Sunucunun güvenlik duvarında bu UDP bağlantı noktasını açın, örneğin
    `sudo ufw allow 47620/udp`.
 4. Ev sahibi sunucunun adresindeki aktarıcı üzerinden oynar; oyuncular aynı adresle ve oda koduyla
-   katılır.
+   katılır:
+   - Komut satırında: `wen net host --relay <sunucu>:47620` oda kodunu yazar;
+     `wen net join --relay <sunucu>:47620 --room <kod>` katılır. Ev sahibinin kendi ağındaki
+     oyuncular yine doğrudan katılabilir.
+   - Düzenleyicide: *Oyun → Ağ paneli*, aktarıcının adresini *Aktarıcı* kutusuna yazın (projede
+     değil, bu bilgisayarda saklanır), sonra *Çevrim içi kur*; panel oda kodunu gösterir. Bir
+     oyuncu aynı aktarıcıyı ve oda kodunu yazıp *Katıl*'a basar. Aktarıcı yoksa *Katıl* yerel
+     ağdaki bir ev sahibini bulur.
+   - Katılan oyuncunun kendi karakteri tahmin edilir, bu yüzden internet üzerinden de tuşlara
+     hemen yanıt verir. Ağ panelindeki *Yol* sütunu hangi oyuncuların aktarıcı üzerinden
+     geldiğini söyler.
 
 Aktarıcı, her oyuncuyla ev sahibi arasında mühürlenmiş paketleri taşır ve onları açamaz. Oda
 kodunun kendisini hiç almaz, yalnızca bir özetini (hash) alır; diske bir şey yazmaz ve paketlerin

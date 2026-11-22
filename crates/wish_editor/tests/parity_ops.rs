@@ -1968,3 +1968,166 @@ fn an_online_match_is_played_with_two_players_by_hand() {
     assert!(!app.playing());
     assert!(app.network_status().is_none());
 }
+
+/// A relay (`wish_net::relay::Relay`) on this computer's loopback address,
+/// run by a thread on real time until dropped.
+struct TestRelay {
+    addr: std::net::SocketAddr,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl TestRelay {
+    fn start() -> Self {
+        use std::sync::atomic::Ordering;
+        let socket = wish_net::UdpTransport::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        // The editors here run their games on their own clocks, one at a
+        // time and slower than real time, so a room is kept for an hour of
+        // the relay's real time instead of 15 seconds.
+        let config = wish_net::relay::RelayConfig {
+            room_idle_ms: 3_600_000,
+            client_idle_ms: 3_600_000,
+            ..wish_net::relay::RelayConfig::default()
+        };
+        let mut relay =
+            wish_net::relay::Relay::new(socket, config, wish_net::Entropy::os().unwrap()).unwrap();
+        let addr = relay.local_addr();
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = stop.clone();
+        let thread = std::thread::spawn(move || {
+            let start = std::time::Instant::now();
+            while !flag.load(Ordering::Relaxed) {
+                relay.update(start.elapsed().as_millis() as u64);
+                while relay.poll_event().is_some() {}
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        });
+        Self {
+            addr,
+            stop,
+            thread: Some(thread),
+        }
+    }
+}
+
+impl Drop for TestRelay {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+/// Online play for people by hand (design note `1.1-net-tool.md` §13):
+/// one editor types a relay's address into the network panel (kept as the
+/// person's preference, never in the project) and hosts online; a second
+/// editor, which finds the relay in its preferences, types the room code
+/// and joins through the relay; both see the seat come through the relay,
+/// and the joined editor's own seat is predicted.
+#[test]
+fn an_online_match_is_hosted_and_joined_through_a_relay_by_hand() {
+    let relay = TestRelay::start();
+    let dir = project("online-relay");
+    let prefs = dir.with_extension("prefs.json");
+    let _ = std::fs::remove_file(&prefs);
+    let project_before = std::fs::read_to_string(dir.join("wish.json")).unwrap();
+    let mut host = open(&dir);
+    host.use_preferences(prefs.clone());
+    project_menu(&mut host, &["Players", "2 players"]);
+    project_menu(&mut host, &["Network panel"]);
+    let field = named(&host, "Relay address (host:port)");
+    type_into(&mut host, field, &relay.addr.to_string());
+    let remembered: Value =
+        serde_json::from_str(&std::fs::read_to_string(&prefs).unwrap()).unwrap();
+    assert_eq!(remembered["relay"], relay.addr.to_string(), "{remembered}");
+    let start = named(&host, "Host online");
+    click(&mut host, start);
+    assert!(host.playing(), "{}", host.status());
+    // The room is registered at the relay.
+    for _ in 0..40 {
+        if host
+            .network_status()
+            .is_some_and(|s| s["relay"]["state"] == "ready")
+        {
+            break;
+        }
+        play(&mut host, json!([{ "seconds": 0.25 }, { "idle": 1 }]));
+    }
+    let status = host
+        .network_status()
+        .cloned()
+        .expect("the panel reads the match");
+    assert_eq!(status["relay"]["state"], "ready", "{status}");
+    assert_eq!(status["network"]["kind"], "udp", "{status}");
+    let room = status["room_code"].as_str().unwrap().to_owned();
+    assert!(has_text(&host, &format!("Room code: {room}")));
+
+    // A second editor on this computer: the relay comes from its
+    // preferences; the person types the room code and joins.
+    let mut guest = open(&dir);
+    guest.use_preferences(prefs.clone());
+    project_menu(&mut guest, &["Network panel"]);
+    let code = named(&guest, "The host's room code");
+    type_into(&mut guest, code, &room);
+    let join = named(&guest, "Join");
+    click(&mut guest, join);
+    assert!(guest.playing(), "{}", guest.status());
+    let mut seated = false;
+    for _ in 0..80 {
+        play(&mut host, json!([{ "seconds": 0.1 }, { "idle": 1 }]));
+        play(&mut guest, json!([{ "seconds": 0.1 }, { "idle": 1 }]));
+        let running = |s: Option<&Value>| s.is_some_and(|s| s["lobby"]["phase"] == "Running");
+        let mine = guest.network_status().and_then(|s| {
+            s["seats"]
+                .as_array()?
+                .iter()
+                .find(|seat| seat["machine"] == "you")
+                .cloned()
+        });
+        if running(host.network_status()) && running(guest.network_status()) && mine.is_some() {
+            seated = true;
+            break;
+        }
+    }
+    let host_status = host.network_status().cloned().unwrap();
+    let guest_status = guest.network_status().cloned().unwrap();
+    assert!(seated, "host: {host_status}\nguest: {guest_status}");
+    let you = guest_status["seats"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|seat| seat["machine"] == "you")
+        .unwrap()
+        .clone();
+    assert_eq!(you["via"], "relay", "{guest_status}");
+    assert_eq!(
+        you["predicted"], true,
+        "the joined machine predicts: {guest_status}"
+    );
+    assert_eq!(guest_status["relay"]["state"], "ready", "{guest_status}");
+    assert_eq!(guest_status["relay"]["role"], "player", "{guest_status}");
+    let seen_by_host = host_status["seats"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|seat| seat["player"] == you["player"])
+        .cloned()
+        .unwrap_or_else(|| panic!("{host_status}"));
+    assert_eq!(seen_by_host["via"], "relay", "{host_status}");
+    // The joined editor's panel names its own seat and the relay's state.
+    let you_seat = you["player"].as_u64().unwrap();
+    assert!(find(&guest, &format!("You (player {you_seat})")).is_some());
+    assert!(has_text(&guest, ": ready"));
+    // The relay is the person's, not the project's.
+    assert_eq!(
+        std::fs::read_to_string(dir.join("wish.json")).unwrap(),
+        project_before
+    );
+    for app in [&mut guest, &mut host] {
+        let stop = named(app, "Stop");
+        click(app, stop);
+        assert!(!app.playing());
+    }
+    drop(relay);
+}

@@ -210,7 +210,7 @@ pub const PARITY: &[Capability] = &[
     ),
     op(
         "net",
-        "Game > Players (2 or more), then Play: the editor hosts an online match with bots over a simulated network (net host, step, stop); the network panel (Game > Network panel) shows the lobby and the seats (net status) and which player's machine the game view shows",
+        "Game > Players (2 or more), then Play: the editor hosts an online match with bots over a simulated network (net host, step, stop); the network panel (Game > Network panel) shows the lobby and the seats (net status) and which player's machine the game view shows; with no game running, its Relay field (a person's preference), Room code, Host online and Join host for people over UDP and join a host, through the relay when one is set (net host and net join with relay; parity_ops::an_online_match_is_hosted_and_joined_through_a_relay_by_hand)",
         "parity_ops::an_online_match_is_played_with_two_players_by_hand",
     ),
     op(

@@ -64,8 +64,9 @@ USAGE:
     wen edit [--root <folder>] [--size <w>x<h>] [--software] [--exit-after <frames>]
              [--headless-frame <script.json> --out <picture.png>] [--lang <code>]
     wen play [--root <folder>] [--scene <file>] [--size <w>x<h>] [--software] [--exit-after <frames>] [--players <n>]
-    wen net host [--port <port>] [--room <code>] [--players <n>] [--root <folder>] [--frames <ticks>]
+    wen net host [--port <port>] [--room <code>] [--players <n>] [--relay <relay:port>] [--root <folder>] [--frames <ticks>]
     wen net join <host:port | discover> [--room <code>] [--name <name>] [--root <folder>] [--frames <ticks>]
+    wen net join --relay <relay:port> --room <code> [--name <name>] [--root <folder>] [--frames <ticks>]
     wen pkg [list | search [words...] | add <id> | remove <id> | update [id] | lock | check <folder>
             | install <folder>] [--index <folder>] [--version <requirement>] [--user] [--replace]
             [--dry-run] [--root <folder>] [--json]

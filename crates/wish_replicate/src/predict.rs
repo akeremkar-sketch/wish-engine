@@ -404,6 +404,17 @@ impl Predictor {
         &self.app
     }
 
+    /// Exchanges the prediction app with `app`, for an owner that keeps the
+    /// prediction world in a place of its own between frames (a control
+    /// plane session whose world is the prediction): swap it in before
+    /// [`Self::frame_with`] and back out after. Between two swaps the
+    /// predictor holds whatever it was given, so the same world must come
+    /// back before every frame (its history and entity map are that
+    /// world's).
+    pub fn swap_app(&mut self, app: &mut App) {
+        std::mem::swap(&mut self.app, app);
+    }
+
     /// The newest predicted tick, once the first confirmation arrived.
     pub fn tick(&self) -> Option<u64> {
         self.tick

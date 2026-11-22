@@ -2143,6 +2143,9 @@ impl EditorApp {
         if let Some(on) = prefs.get("ai_mode").and_then(Value::as_bool) {
             self.ai_mode = on;
         }
+        if let Some(relay) = prefs.get("relay").and_then(Value::as_str) {
+            self.network.relay = relay.to_owned();
+        }
         if let Some(agent) = prefs.get("agent").and_then(Value::as_object) {
             let settings = &mut self.cockpit.settings;
             settings.model = agent
@@ -3279,6 +3282,92 @@ impl EditorApp {
             self.game_drawn = None;
             self.picture_stale = true;
         }
+        if let Some(room) = asked.room {
+            self.network.room = room;
+        }
+        if let Some(relay) = asked.relay {
+            self.network.relay = relay;
+            // The person's preference, never the project's.
+            if let Some(path) = self.preferences.clone() {
+                let address = self.network.relay.trim().to_owned();
+                let _ = crate::prefs::update(&path, |prefs| {
+                    if address.is_empty() {
+                        prefs.remove("relay");
+                    } else {
+                        prefs.insert("relay".to_owned(), json!(address));
+                    }
+                });
+            }
+        }
+        if (asked.host_online || asked.join) && self.play.is_none() {
+            self.start_online(asked.join);
+        }
+        // The panel's next frame knows whether online play can start.
+        self.network.playing = self.play.is_some();
+    }
+
+    /// Hosts a match for people over UDP (`net host` with a port, and the
+    /// relay when one is set), or joins one (`net join` through the relay
+    /// with the room code, else found on the local network), by `human`.
+    fn start_online(&mut self, join: bool) {
+        if self.scene.ends_with(".prefab.json") {
+            self.status = t("a prefab cannot be played; open a scene").to_owned();
+            return;
+        }
+        let relay = self.network.relay.trim().to_owned();
+        let room = self.network.room.trim().to_owned();
+        let mut args = if join {
+            json!({ "action": "join", "scene": self.scene.clone(), "room_code": room })
+        } else {
+            json!({ "action": "host", "scene": self.scene.clone(), "players": self.players.max(2),
+                    "port": 0, "auto_start": true, "discoverable": true })
+        };
+        if !relay.is_empty() {
+            args["relay"] = json!(relay);
+        } else if join {
+            args["address"] = json!("discover");
+        }
+        let started = self.call("net", &args);
+        let Some(session) = started["session"].as_str().map(str::to_owned) else {
+            let message = started["error"]["message"]
+                .as_str()
+                .unwrap_or(t("it did not start"));
+            let hint = started["error"]["hint"].as_str().unwrap_or("");
+            self.status = tf(
+                "play failed: {message} {hint}",
+                &[("message", &message), ("hint", &hint)],
+            );
+            return;
+        };
+        self.drag = None;
+        self.play = Some(Play {
+            session,
+            paused: false,
+            owed: 0.0,
+            held: BTreeSet::new(),
+            since_snapshot: 0.0,
+            snapshots: Vec::new(),
+            cursor: 0,
+            tick: 0,
+            since_read: 0.0,
+            // A host keeps its match log (saved without record); a joined
+            // game's log is at its host.
+            recording: !join && self.record,
+            net: true,
+            made: 0,
+        });
+        self.network.open = true;
+        self.network.watching = None;
+        self.network.host_view = false;
+        self.refresh_network();
+        self.snapshot();
+        self.status = if join {
+            t("joining an online match").to_owned()
+        } else {
+            t("hosting an online match").to_owned()
+        };
+        self.inspected_for = (Vec::new(), u64::MAX);
+        self.picture_stale = true;
     }
 
     /// Starts the game from the scene being edited.

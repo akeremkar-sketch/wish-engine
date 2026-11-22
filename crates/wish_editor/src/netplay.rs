@@ -3,7 +3,9 @@
 //! (Play then hosts an online match over the network simulator with bots in
 //! the other seats, one `net` call by `human`), and the network panel: the
 //! lobby, every seat with its round trip and bandwidth (a `net status`
-//! call), and which player's machine the game view shows.
+//! call), and which player's machine the game view shows. With no game
+//! running, the panel hosts for people over UDP and joins a host, through a
+//! relay when the person set one (package 14c, the note's §13).
 
 use egui::Ui;
 use serde_json::Value;
@@ -26,6 +28,13 @@ pub(crate) struct NetView {
     pub watching: Option<u32>,
     /// The person chose the host's view.
     pub host_view: bool,
+    /// The address of the relay the person plays through over the internet
+    /// (the `relay` preference: the person's, never the project's).
+    pub relay: String,
+    /// The room code to join, as typed.
+    pub room: String,
+    /// A game is running in the editor (online play cannot start).
+    pub playing: bool,
 }
 
 /// What the person asked for in the menu or the panel.
@@ -37,6 +46,75 @@ pub(crate) struct NetActions {
     pub toggle: bool,
     /// Show this seat's machine in the game view (`Some(None)`: the host's).
     pub watch: Option<Option<u32>>,
+    /// The relay field now says this (it is remembered).
+    pub relay: Option<String>,
+    /// The room code field now says this.
+    pub room: Option<String>,
+    /// Host a match for people on the network (UDP), also through the relay
+    /// when one is set.
+    pub host_online: bool,
+    /// Join a match: through the relay with the room code when a relay is
+    /// set, else found on the local network.
+    pub join: bool,
+}
+
+/// The online section of the network panel when no match runs: the relay's
+/// address, a room code, Host online and Join.
+fn online(ui: &mut Ui, view: &NetView, actions: &mut NetActions) {
+    ui.strong(t("Play with people"));
+    ui.horizontal(|ui| {
+        // The explanation is the label's, so that the box keeps its hint as
+        // its name.
+        ui.label(t("Relay")).on_hover_text(t(
+            "A relay you run with wen relay carries players from the internet to a host behind a home router. It is kept on this computer, never in the project. Leave it empty to play on the local network only",
+        ));
+        let mut relay = view.relay.clone();
+        if ui
+            .add(
+                egui::TextEdit::singleline(&mut relay)
+                    .hint_text(t("Relay address (host:port)"))
+                    .desired_width(200.0),
+            )
+            .changed()
+        {
+            actions.relay = Some(relay);
+        }
+    });
+    ui.horizontal(|ui| {
+        ui.label(t("Room code"));
+        let mut room = view.room.clone();
+        if ui
+            .add(
+                egui::TextEdit::singleline(&mut room)
+                    .hint_text(t("The host's room code"))
+                    .desired_width(120.0),
+            )
+            .changed()
+        {
+            actions.room = Some(room);
+        }
+    });
+    ui.horizontal(|ui| {
+        if ui
+            .add_enabled(!view.playing, egui::Button::new(t("Host online")))
+            .on_hover_text(t(
+                "Hosts the game for people on the local network, and through the relay when one is set; you play the first seat and the panel shows the room code to give the others",
+            ))
+            .clicked()
+        {
+            actions.host_online = true;
+        }
+        let can_join = !view.playing && !view.room.trim().is_empty();
+        if ui
+            .add_enabled(can_join, egui::Button::new(t("Join")))
+            .on_hover_text(t(
+                "Joins the host with this room code: through the relay when one is set, else on the local network. Your own player answers at once (predicted)",
+            ))
+            .clicked()
+        {
+            actions.join = true;
+        }
+    });
 }
 
 /// The Game menu's Players submenu and the network panel's switch.
@@ -83,6 +161,8 @@ pub(crate) fn window(ui: &mut Ui, view: &NetView, actions: &mut NetActions) {
     let mut open = true;
     egui::Window::new(t("Network"))
         .open(&mut open)
+        // Below the toolbar, so that it never covers Play and Stop.
+        .default_pos(egui::pos2(16.0, 80.0))
         .default_width(360.0)
         .resizable(true)
         .show(ui.ctx(), |ui| {
@@ -90,6 +170,8 @@ pub(crate) fn window(ui: &mut Ui, view: &NetView, actions: &mut NetActions) {
                 ui.weak(t(
                     "Not an online game: choose 2 or more Players in the Game menu, then Play.",
                 ));
+                ui.separator();
+                online(ui, view, actions);
                 return;
             };
             let phase = status["lobby"]["phase"].as_str().unwrap_or("?").to_owned();
@@ -98,6 +180,24 @@ pub(crate) fn window(ui: &mut Ui, view: &NetView, actions: &mut NetActions) {
                 "Lobby: {phase}, round {round}",
                 &[("phase", &phase), ("round", &round)],
             ));
+            if let Some(code) = status["room_code"].as_str() {
+                ui.label(tf("Room code: {code}", &[("code", &code)]));
+            }
+            if let Some(state) = status["relay"]["state"].as_str() {
+                let state = match state {
+                    "ready" => t("ready").to_owned(),
+                    "waiting" => t("waiting").to_owned(),
+                    _ => tf(
+                        "refused ({reason})",
+                        &[("reason", &status["relay"]["reason"].as_str().unwrap_or("?"))],
+                    ),
+                };
+                let address = status["relay"]["address"].as_str().unwrap_or("?");
+                ui.label(tf(
+                    "Relay {address}: {state}",
+                    &[("address", &address), ("state", &state)],
+                ));
+            }
             ui.separator();
             ui.label(t("Show in the game view:"));
             let seats = status["seats"].as_array().cloned().unwrap_or_default();
@@ -109,9 +209,11 @@ pub(crate) fn window(ui: &mut Ui, view: &NetView, actions: &mut NetActions) {
                 .and_then(|p| u32::try_from(p).ok());
             let shown = view.watching.or(if view.host_view { None } else { you });
             ui.horizontal_wrapped(|ui| {
-                if ui
-                    .add(egui::Button::selectable(shown.is_none(), t("Host")))
-                    .clicked()
+                // A match hosted elsewhere has no host's world here.
+                if status["role"] != "player"
+                    && ui
+                        .add(egui::Button::selectable(shown.is_none(), t("Host")))
+                        .clicked()
                 {
                     actions.watch = Some(None);
                 }
@@ -140,13 +242,14 @@ pub(crate) fn window(ui: &mut Ui, view: &NetView, actions: &mut NetActions) {
             ui.separator();
             egui::Grid::new("network-seats")
                 .striped(true)
-                .num_columns(6)
+                .num_columns(7)
                 .show(ui, |ui| {
                     for header in [
                         t("Seat"),
                         t("Name"),
                         t("Ready"),
                         t("Connected"),
+                        t("Path"),
                         t("Round trip"),
                         t("Received"),
                     ] {
@@ -159,6 +262,11 @@ pub(crate) fn window(ui: &mut Ui, view: &NetView, actions: &mut NetActions) {
                         ui.label(seat["name"].as_str().unwrap_or("?"));
                         ui.label(yes(&seat["ready"]));
                         ui.label(yes(&seat["connected"]));
+                        ui.label(match seat["via"].as_str() {
+                            Some("relay") => t("relay"),
+                            Some(_) => t("direct"),
+                            None => "-",
+                        });
                         match seat["rtt_ms"].as_u64() {
                             Some(ms) => ui.label(tf("{ms} ms", &[("ms", &ms)])),
                             None => ui.label("-"),

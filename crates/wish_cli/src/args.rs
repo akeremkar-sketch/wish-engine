@@ -314,6 +314,8 @@ pub struct NetArgs {
     pub port: u16,
     /// The room code.
     pub room: Option<String>,
+    /// The relay to host or join through (`host:port`).
+    pub relay: Option<String>,
     /// The seats of the match (host).
     pub players: usize,
     /// The player's name.
@@ -637,6 +639,7 @@ fn flags_of(command: &str) -> &'static [(&'static str, bool)] {
             ("--scene", true),
             ("--port", true),
             ("--room", true),
+            ("--relay", true),
             ("--players", true),
             ("--name", true),
             ("--frames", true),
@@ -1004,15 +1007,22 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
             if !ACTIONS.contains(&action) {
                 return Err(usage_error(
                     format!("'{action}' is not a wen net action."),
-                    "Write wen net host [--port 47600] [--players 4], or wen net join <host:port | discover> --room <code>.".to_owned(),
+                    "Write wen net host [--port 47600] [--players 4] [--relay <relay:port>], or wen net join <host:port | discover> --room <code>, or wen net join --relay <relay:port> --room <code>.".to_owned(),
                 )
                 .with_candidates(ACTIONS.iter().copied()));
             }
             let address = positional.get(1).map(|w| (*w).to_owned());
-            if action == "join" && address.is_none() {
+            let relay = value_of("--relay").map(str::to_owned);
+            if action == "join" && address.is_none() && relay.is_none() {
                 return Err(usage_error(
-                    "'wen net join' needs the host's address.".to_owned(),
-                    "Write it like: wen net join 192.168.1.20:47600 --room ABC234, or wen net join discover.".to_owned(),
+                    "'wen net join' needs the host's address, or a relay.".to_owned(),
+                    "Write it like: wen net join 192.168.1.20:47600 --room ABC234, wen net join discover, or wen net join --relay 203.0.113.7:47620 --room ABC234.".to_owned(),
+                ));
+            }
+            if action == "join" && relay.is_some() && value_of("--room").is_none() {
+                return Err(usage_error(
+                    "'wen net join --relay' needs the room code.".to_owned(),
+                    "Write it like: wen net join --relay 203.0.113.7:47620 --room ABC234 (the host shows its room code).".to_owned(),
                 ));
             }
             let port = value_of("--port")
@@ -1031,6 +1041,7 @@ pub fn parse(arguments: &[String]) -> Result<Args> {
                     )
                 })?,
                 room: value_of("--room").map(str::to_owned),
+                relay,
                 players: players_of(value_of("--players"))?.max(2),
                 name: value_of("--name").map(str::to_owned),
                 frames: value_of("--frames")

@@ -15,6 +15,7 @@ use wish_core::{Diagnostic, Hash128, Result};
 use wish_ecs::World;
 use wish_lobby::{ClientSession, ClientSessionConfig, HostSession, LobbyConfig, RoleConfig};
 use wish_net::discovery::broadcast_addr;
+use wish_net::relay::{Relay, RelayClient, RelayConfig, RelayHost, RelayState, virtual_slot};
 use wish_net::{
     Announce, Config, DISCOVERY_PORT, DiscoveryQuery, DiscoveryResponder, Endpoint, Entropy,
     LinkConditions, PeerId, Recv, RoomCode, SimNetwork, SimTransport, Transport, UdpTransport,
@@ -35,6 +36,23 @@ pub(crate) enum Wire {
     Sim(SimTransport),
     /// A real UDP socket.
     Udp(UdpTransport),
+    /// A host's socket that also keeps its room registered at a relay and
+    /// takes the room's players through it (design note `1.1-net-tool.md`
+    /// §13).
+    RelayHost(Box<RelayHost<Wire>>),
+    /// A player's socket that reaches its host through a relay.
+    RelayClient(Box<RelayClient<Wire>>),
+}
+
+impl Wire {
+    /// The relay this socket goes through and where it stands there.
+    fn relay(&self) -> Option<(SocketAddr, RelayState)> {
+        match self {
+            Self::RelayHost(host) => Some((host.relay_addr(), host.relay_state())),
+            Self::RelayClient(client) => Some((client.relay_addr(), client.relay_state())),
+            Self::Sim(_) | Self::Udp(_) => None,
+        }
+    }
 }
 
 impl Transport for Wire {
@@ -42,6 +60,8 @@ impl Transport for Wire {
         match self {
             Self::Sim(transport) => transport.local_addr(),
             Self::Udp(transport) => transport.local_addr(),
+            Self::RelayHost(transport) => transport.local_addr(),
+            Self::RelayClient(transport) => transport.local_addr(),
         }
     }
 
@@ -49,6 +69,8 @@ impl Transport for Wire {
         match self {
             Self::Sim(transport) => transport.send(to, bytes),
             Self::Udp(transport) => transport.send(to, bytes),
+            Self::RelayHost(transport) => transport.send(to, bytes),
+            Self::RelayClient(transport) => transport.send(to, bytes),
         }
     }
 
@@ -56,8 +78,68 @@ impl Transport for Wire {
         match self {
             Self::Sim(transport) => transport.recv(buf),
             Self::Udp(transport) => transport.recv(buf),
+            Self::RelayHost(transport) => transport.recv(buf),
+            Self::RelayClient(transport) => transport.recv(buf),
         }
     }
+
+    fn tick(&mut self, now_ms: u64) {
+        match self {
+            Self::Sim(transport) => transport.tick(now_ms),
+            Self::Udp(transport) => transport.tick(now_ms),
+            Self::RelayHost(transport) => transport.tick(now_ms),
+            Self::RelayClient(transport) => transport.tick(now_ms),
+        }
+    }
+}
+
+/// What `relay` names for a relay the session runs itself on its simulated
+/// network.
+pub const SIMULATED_RELAY: &str = "simulated";
+
+/// A relay and where a socket stands at it, for `net status`.
+fn relay_json(addr: SocketAddr, state: RelayState) -> Value {
+    let mut out = json!({
+        "address": addr.to_string(),
+        "state": match state {
+            RelayState::Waiting => "waiting",
+            RelayState::Ready => "ready",
+            RelayState::Refused(_) => "refused",
+        },
+    });
+    if let RelayState::Refused(reason) = state {
+        out["reason"] = json!(reason.as_str());
+    }
+    out
+}
+
+/// Takes note of a relay's refusal once each time the socket's state there
+/// changes, as the relay's own diagnostic (a warning: the socket goes on
+/// asking, so the match starts once the relay lets it in).
+fn note_relay(wire: &Wire, last: &mut Option<RelayState>, notes: &mut Vec<Diagnostic>) {
+    let Some((_, state)) = wire.relay() else {
+        return;
+    };
+    if *last == Some(state) {
+        return;
+    }
+    *last = Some(state);
+    if let Some(refused) = state.diagnostic() {
+        notes.push(Diagnostic::warning(
+            refused.code.clone(),
+            format!("The relay refused: {}.", refused.message),
+            refused.hint.clone(),
+        ));
+    }
+}
+
+/// The relay a match's host takes players through.
+pub(crate) struct RelaySide {
+    /// The relay's address.
+    pub addr: SocketAddr,
+    /// The relay itself, when the session runs it on its simulated network
+    /// (`relay: "simulated"`).
+    pub node: Option<Box<Relay<SimTransport>>>,
 }
 
 /// The network a match runs over.
@@ -73,15 +155,27 @@ pub(crate) enum Network {
 }
 
 impl Network {
-    /// A new endpoint transport on this network (a free port).
-    fn transport(&self) -> Result<Wire> {
+    /// A new endpoint transport on this network (a free port) that talks to
+    /// `toward` (`None`: anywhere, as a broadcast). Over UDP a socket that
+    /// talks only to this computer is bound to the loopback address.
+    fn transport(&self, toward: Option<SocketAddr>) -> Result<Wire> {
         match self {
             Self::Sim { network, .. } => Ok(Wire::Sim(network.add_node())),
             Self::Udp => Ok(Wire::Udp(UdpTransport::bind(SocketAddr::new(
-                IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                bind_ip(toward),
                 0,
             ))?)),
         }
+    }
+}
+
+/// The address a UDP socket that talks to `toward` binds to: the loopback
+/// address for a place on this computer (nothing outside can reach it, and
+/// the system's firewall has nothing to ask), every address otherwise.
+fn bind_ip(toward: Option<SocketAddr>) -> IpAddr {
+    match toward {
+        Some(addr) if addr.ip().is_loopback() => IpAddr::V4(Ipv4Addr::LOCALHOST),
+        _ => IpAddr::V4(Ipv4Addr::UNSPECIFIED),
     }
 }
 
@@ -151,6 +245,8 @@ pub(crate) struct Machine {
     /// The pointer of every tick its prediction ran and the host has not
     /// confirmed, so that a tick played again sees the same pointer.
     pub pointers: std::collections::BTreeMap<u64, wish_input::Values>,
+    /// Where its relay stood when last noted (a joined relay only).
+    pub relay_noted: Option<RelayState>,
 }
 
 impl Machine {
@@ -193,6 +289,8 @@ pub(crate) struct HostSide {
     pub endpoint: Endpoint<Wire>,
     pub session: HostSession,
     pub responder: Option<DiscoveryResponder<Wire>>,
+    /// Where its relay registration stood when last noted.
+    pub relay_noted: Option<RelayState>,
 }
 
 /// A networked session's match.
@@ -207,8 +305,13 @@ pub(crate) struct NetMatch {
     pub game: String,
     /// The host, when this session hosts.
     pub host: Option<HostSide>,
-    /// This session's own machine, when it joined an outside host.
-    pub own: Option<Machine>,
+    /// The relay the host takes players through, when it has one.
+    pub relay: Option<RelaySide>,
+    /// This session's own machine, when it joined an outside host: it
+    /// predicts like a player machine of the process, and its prediction
+    /// world is the session's own world (the session's app; the predictor
+    /// holds it only while a frame runs, design note `1.1-net-tool.md` §13).
+    pub own: Option<Box<Player>>,
     /// The player machines in this process.
     pub players: Vec<Player>,
     /// Seats the match is for.
@@ -259,6 +362,9 @@ pub(crate) struct HostSetup {
     pub discoverable: bool,
     pub game: String,
     pub tick_rate: u32,
+    /// The relay to register the room at: an address over UDP, or
+    /// [`SIMULATED_RELAY`] over the simulator.
+    pub relay: Option<String>,
 }
 
 fn endpoint_config(room: &RoomCode) -> Config {
@@ -361,12 +467,27 @@ impl NetMatch {
             Some(text) => RoomCode::parse(text)?,
             None => RoomCode::generate(&mut secrets),
         };
+        let relay = match setup.relay.as_deref() {
+            None => None,
+            Some(text) => Some(relay_side(&network, text, setup.seed)?),
+        };
+        // A host whose relay runs on this computer is a trial on this
+        // computer: its socket stays on the loopback address too.
         let transport = match (&network, setup.port) {
             (Network::Sim { network, .. }, _) => Wire::Sim(network.add_node()),
             (Network::Udp, port) => Wire::Udp(UdpTransport::bind(SocketAddr::new(
-                IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                bind_ip(relay.as_ref().map(|r| r.addr)),
                 port.unwrap_or(0),
             ))?),
+        };
+        let transport = match &relay {
+            Some(relay) => Wire::RelayHost(Box::new(RelayHost::new(
+                transport,
+                relay.addr,
+                &room,
+                &mut entropy(&network, setup.seed, 6)?,
+            ))),
+            None => transport,
         };
         let endpoint = Endpoint::host(
             transport,
@@ -386,11 +507,12 @@ impl NetMatch {
                 Network::Sim { network, .. } => network
                     .bind(SocketAddr::new(endpoint.local_addr().ip(), DISCOVERY_PORT))
                     .map(Wire::Sim),
-                Network::Udp => UdpTransport::bind(SocketAddr::new(
-                    IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-                    DISCOVERY_PORT,
-                ))
-                .map(Wire::Udp),
+                // On the host socket's own address (loopback for a trial
+                // on this computer).
+                Network::Udp => {
+                    UdpTransport::bind(SocketAddr::new(endpoint.local_addr().ip(), DISCOVERY_PORT))
+                        .map(Wire::Udp)
+                }
             };
             match bound {
                 Ok(transport) => Some(DiscoveryResponder::new(
@@ -427,7 +549,9 @@ impl NetMatch {
                 endpoint,
                 session,
                 responder,
+                relay_noted: None,
             }),
+            relay,
             own: None,
             players: Vec::new(),
             expected: setup.expected,
@@ -478,13 +602,25 @@ impl NetMatch {
         );
         let link = match target {
             Target::At(addr, room) => Link::Connected(Box::new(Endpoint::connect(
-                self.network.transport()?,
+                self.network.transport(Some(addr))?,
                 addr,
                 endpoint_config(&room),
                 entropy(&self.network, self.seed, salt)?,
             )?)),
+            // Through a relay: the endpoint's host is the relay's address,
+            // and the wrapper attaches to the room there.
+            Target::Relay(relay, room) => Link::Connected(Box::new(Endpoint::connect(
+                Wire::RelayClient(Box::new(RelayClient::new(
+                    self.network.transport(Some(relay))?,
+                    relay,
+                    &room,
+                ))),
+                relay,
+                endpoint_config(&room),
+                entropy(&self.network, self.seed, salt)?,
+            )?)),
             Target::Discover(room) => {
-                let mut transport = self.network.transport()?;
+                let mut transport = self.network.transport(None)?;
                 if let Wire::Udp(udp) = &mut transport {
                     udp.enable_broadcast()?;
                 }
@@ -513,7 +649,28 @@ impl NetMatch {
             ticks: 0,
             person: false,
             pointers: std::collections::BTreeMap::new(),
+            relay_noted: None,
         })
+    }
+
+    /// The relay address `relay` names for a machine of this match: the
+    /// session's own simulated relay for [`SIMULATED_RELAY`], else an
+    /// address (over UDP only).
+    pub(crate) fn relay_target(&self, text: &str) -> Result<SocketAddr> {
+        if matches!(self.network, Network::Sim { .. }) && text == SIMULATED_RELAY {
+            return self
+                .relay
+                .as_ref()
+                .filter(|relay| relay.node.is_some())
+                .map(|relay| relay.addr)
+                .ok_or_else(|| {
+                    relay_invalid(
+                        "this session runs no simulated relay",
+                        "Host with relay: \"simulated\" to run one on the session's simulated network, then join through it.",
+                    )
+                });
+        }
+        self.network.relay_address(text)
     }
 
     /// One tick of the whole match: the network, the host (with `app`, or
@@ -522,7 +679,6 @@ impl NetMatch {
     pub(crate) fn tick(
         &mut self,
         app: &mut App,
-        map: &wish_input::InputMap,
         inputs: &[wish_input::Values],
         named: &[bool],
     ) -> Result<Vec<Diagnostic>> {
@@ -533,8 +689,18 @@ impl NetMatch {
         self.steps += 1;
         let now = self.now_ms();
         let rest = wish_input::Values::new();
+        // The session's own relay moves what the network brought it first.
+        if let Some(node) = self.relay.as_mut().and_then(|r| r.node.as_mut()) {
+            node.update(now);
+            while node.poll_event().is_some() {}
+        }
         if let Some(host) = self.host.as_mut() {
             host.endpoint.update(now);
+            note_relay(
+                host.endpoint.transport(),
+                &mut host.relay_noted,
+                &mut self.notes,
+            );
             let present = host.session.lobby().present().len();
             if let Some(responder) = host.responder.as_mut() {
                 responder.set_players(u16::try_from(present).unwrap_or(u16::MAX));
@@ -566,17 +732,15 @@ impl NetMatch {
             let given = if named.first() == Some(&true) {
                 inputs.first().unwrap_or(&rest).clone()
             } else {
-                own.held.clone()
+                own.machine.held.clone()
             };
-            tick_machine(
-                app,
-                own,
-                map,
-                &given,
-                (now, self.steps),
-                &self.network,
-                &mut failures,
-            )?;
+            // The session's world is this machine's prediction world: it is
+            // the predictor's while the frame runs, and comes back after it
+            // (also when the frame fails).
+            own.predictor.swap_app(app);
+            let ran = tick_player(own, &given, (now, self.steps), &self.network, &mut failures);
+            own.predictor.swap_app(app);
+            ran?;
         }
         // The session's own input drives the person's machine when the host
         // does not play.
@@ -604,10 +768,30 @@ impl NetMatch {
 
     /// The seat of the person's machine (`play_as: "player"`), once seated.
     pub(crate) fn person_seat(&self) -> Option<PlayerId> {
+        if let Some(own) = self.own.as_deref() {
+            return own.machine.session.seat();
+        }
         self.players
             .iter()
             .find(|p| p.machine.person)
             .and_then(|p| p.machine.session.seat())
+    }
+
+    /// This session's own machine (joined to an outside host), when it is
+    /// seated at `seat`.
+    fn own_at(&self, seat: PlayerId) -> Option<&Player> {
+        self.own
+            .as_deref()
+            .filter(|own| own.machine.session.seat() == Some(seat))
+    }
+
+    /// The player machine of this process seated at `seat`, the session's
+    /// own included; `true` for the session's own (whose world is the
+    /// session's).
+    fn local_at(&self, seat: PlayerId) -> Option<(&Player, bool)> {
+        self.own_at(seat)
+            .map(|own| (own, true))
+            .or_else(|| self.player_at(seat).map(|p| (p, false)))
     }
 
     /// The machine seated at `seat` in this process.
@@ -622,7 +806,7 @@ impl NetMatch {
         if seat == 0 && self.host.is_some() && self.host_plays {
             return Some(app.world());
         }
-        if self.own.as_ref().and_then(|m| m.session.seat()) == Some(seat) {
+        if self.own_at(seat).is_some() {
             return Some(app.world());
         }
         self.player_at(seat).map(Player::world)
@@ -642,7 +826,7 @@ impl NetMatch {
             None => self
                 .own
                 .as_ref()
-                .map(|m| m.session.lobby().seated())
+                .map(|own| own.machine.session.lobby().seated())
                 .unwrap_or_default(),
         }
     }
@@ -655,8 +839,8 @@ impl NetMatch {
             out.extend(host.session.take_diagnostics());
         }
         if let Some(own) = self.own.as_mut() {
-            out.append(&mut own.notes);
-            out.extend(own.session.take_diagnostics());
+            out.append(&mut own.machine.notes);
+            out.extend(own.machine.session.take_diagnostics());
         }
         for player in &mut self.players {
             out.append(&mut player.machine.notes);
@@ -693,6 +877,7 @@ impl NetMatch {
         let lobby = match (&self.host, &self.own) {
             (Some(host), _) => host.session.lobby().clone(),
             (None, Some(own)) => {
+                let own = &own.machine;
                 let mut lobby = own.session.lobby().clone();
                 if own.session.closed().is_some() || matches!(own.link, Link::Gone) {
                     lobby.phase = LobbyPhase::Closed;
@@ -731,11 +916,29 @@ impl NetMatch {
                     if let Some(rtt) = host.endpoint.rtt_ms(peer) {
                         item["rtt_ms"] = json!(rtt);
                     }
+                    // A player the relay carries is at a slot's virtual
+                    // address at the host.
+                    if let Some(addr) = host.endpoint.peer_addr(peer) {
+                        item["via"] = json!(if virtual_slot(addr).is_some() {
+                            "relay"
+                        } else {
+                            "direct"
+                        });
+                    }
                     item["machine"] = json!("remote");
                     item["late_frames"] = json!(host.session.replication().late_frames(player));
                 }
             }
-            if let Some(local) = self.player_at(player) {
+            if let Some((local, _)) = self.local_at(player) {
+                if item.get("via").is_none()
+                    && let Some(endpoint) = local.machine.endpoint()
+                {
+                    item["via"] = json!(if endpoint.transport().relay().is_some() {
+                        "relay"
+                    } else {
+                        "direct"
+                    });
+                }
                 item["machine"] = json!(match (local.machine.bot, local.machine.person) {
                     (true, _) => "bot",
                     (false, true) => "you",
@@ -761,8 +964,10 @@ impl NetMatch {
         }
         out.insert("seats".to_owned(), Value::Array(seats));
         let waiting: Vec<Value> = self
-            .players
-            .iter()
+            .own
+            .as_deref()
+            .into_iter()
+            .chain(&self.players)
             .filter(|p| p.machine.session.seat().is_none())
             .map(|p| {
                 json!({
@@ -778,6 +983,9 @@ impl NetMatch {
             .collect();
         if !waiting.is_empty() {
             out.insert("not_seated".to_owned(), Value::Array(waiting));
+        }
+        if let Some(relay) = self.relay_status() {
+            out.insert("relay".to_owned(), relay);
         }
         if let Some(host) = &self.host {
             let stats = host.session.stats();
@@ -813,6 +1021,34 @@ impl NetMatch {
         out
     }
 
+    /// The relay of the match as `net status` shows it: the host's
+    /// registration (and, for a relay the session runs itself, its rooms,
+    /// players and the datagrams it carried), or this session's own attach
+    /// when it joined through one. Counts only.
+    pub(crate) fn relay_status(&self) -> Option<Value> {
+        if let Some(host) = &self.host {
+            let (addr, state) = host.endpoint.transport().relay()?;
+            let mut out = relay_json(addr, state);
+            out["role"] = json!("host");
+            let node = self.relay.as_ref().and_then(|r| r.node.as_deref());
+            out["simulated"] = json!(node.is_some());
+            if let Some(node) = node {
+                let stats = node.stats();
+                out["rooms"] = json!(node.rooms());
+                out["clients"] = json!(node.clients());
+                out["forwarded"] = json!(stats.forwarded);
+                out["refused"] = json!(stats.refused);
+            }
+            return Some(out);
+        }
+        let own = self.own.as_deref()?;
+        let (addr, state) = own.machine.endpoint()?.transport().relay()?;
+        let mut out = relay_json(addr, state);
+        out["role"] = json!("player");
+        out["simulated"] = json!(false);
+        Some(out)
+    }
+
     fn network_json(&self) -> Value {
         match &self.network {
             Network::Sim {
@@ -846,10 +1082,15 @@ impl NetMatch {
             "entities": world.entities().count(),
             "world_hash": world.hash().to_string(),
         });
-        if let Some(player) = self.player_at(seat) {
+        if let Some((player, own)) = self.local_at(seat) {
             let replication = player.machine.session.replication();
             let stats = replication.stats();
-            item["tick"] = json!(player.predictor.app().tick());
+            // The session's own machine's prediction app is the session's.
+            item["tick"] = json!(if own {
+                app.tick()
+            } else {
+                player.predictor.app().tick()
+            });
             item["replicated_entities"] = json!(replication.shown().len());
             item["mirror_hash"] = json!(player.mirror.world().hash().to_string());
             item["states_received"] = json!(stats.states_received);
@@ -878,8 +1119,68 @@ impl NetMatch {
 pub(crate) enum Target {
     /// At an address, with a room code.
     At(SocketAddr, RoomCode),
+    /// Through the relay at an address, to the room of a room code.
+    Relay(SocketAddr, RoomCode),
     /// By a discovery query, with a room code or the one announced.
     Discover(Option<RoomCode>),
+}
+
+/// The relay a host registers its room at (`relay` of `net host`): the
+/// session's own relay on its simulated network, or an address over UDP.
+fn relay_side(network: &Network, text: &str, seed: u64) -> Result<RelaySide> {
+    match (network, text) {
+        (Network::Sim { network: sim, .. }, SIMULATED_RELAY) => {
+            let node = sim.add_node();
+            let addr = node.local_addr();
+            let relay = Relay::new(node, RelayConfig::default(), entropy(network, seed, 5)?)?;
+            Ok(RelaySide {
+                addr,
+                node: Some(Box::new(relay)),
+            })
+        }
+        _ => Ok(RelaySide {
+            addr: network.relay_address(text)?,
+            node: None,
+        }),
+    }
+}
+
+impl Network {
+    /// The address of a real relay named by `relay` (over UDP only).
+    fn relay_address(&self, text: &str) -> Result<SocketAddr> {
+        match (self, text) {
+            (Self::Sim { .. }, SIMULATED_RELAY) => Err(relay_invalid(
+                "this session runs no simulated relay",
+                "Host with relay: \"simulated\" to run one on the session's simulated network.",
+            )),
+            (Self::Sim { .. }, _) => Err(relay_invalid(
+                &format!(
+                    "'{text}' is a real address, and this match runs over the network simulator"
+                ),
+                "Over the simulator use relay: \"simulated\" (a relay the session runs itself), or host over UDP (port) to play through a real relay.",
+            )),
+            (Self::Udp, SIMULATED_RELAY) => Err(relay_invalid(
+                "a simulated relay exists only in a match over the network simulator",
+                "Give the relay's address and port, like \"203.0.113.7:47620\", or leave port out to play over the simulator.",
+            )),
+            (Self::Udp, _) => parse_address(text).map_err(|_| {
+                relay_invalid(
+                    &format!("'{text}' is not an address of a relay"),
+                    "Give the relay's address and port, like \"203.0.113.7:47620\" (wen relay listens on 47620 unless given --port).",
+                )
+            }),
+        }
+    }
+}
+
+/// A `relay` that cannot be used.
+fn relay_invalid(what: &str, hint: &str) -> Diagnostic {
+    Diagnostic::error(
+        "net_config_invalid",
+        format!("Cannot use this relay: {what}."),
+        hint,
+    )
+    .at_path("/relay")
 }
 
 fn tick_ms(rate: u32) -> u64 {
@@ -989,6 +1290,11 @@ fn tick_player(
         return Ok(());
     };
     endpoint.update(now);
+    note_relay(
+        endpoint.transport(),
+        &mut machine.relay_noted,
+        &mut machine.notes,
+    );
     machine
         .session
         .begin_tick(player.mirror.world_mut(), endpoint)?;
@@ -1059,7 +1365,7 @@ fn connect_machine(machine: &mut Machine, steps: u64, network: &Network) -> Resu
                     Network::Udp => Entropy::os()?,
                 };
                 machine.link = Link::Connected(Box::new(Endpoint::connect(
-                    network.transport()?,
+                    network.transport(Some(addr))?,
                     addr,
                     config,
                     entropy,
@@ -1087,47 +1393,6 @@ fn connect_machine(machine: &mut Machine, steps: u64, network: &Network) -> Resu
         }
     }
     Ok(matches!(machine.link, Link::Connected(_)))
-}
-
-/// One tick of this session's own machine when it plays in a match hosted
-/// elsewhere (`(now, steps)`: the endpoints' time and the match's step
-/// count): it mirrors the host and runs its systems on the mirror.
-fn tick_machine(
-    app: &mut App,
-    machine: &mut Machine,
-    map: &wish_input::InputMap,
-    given: &wish_input::Values,
-    (now, steps): (u64, u64),
-    network: &Network,
-    failures: &mut Vec<Diagnostic>,
-) -> Result<()> {
-    if !connect_machine(machine, steps, network)? {
-        return Ok(());
-    }
-    let Link::Connected(endpoint) = &mut machine.link else {
-        return Ok(());
-    };
-    endpoint.update(now);
-    let mark = machine.session.begin_tick(app.world_mut(), endpoint)?;
-    if machine.drive == Drive::Input {
-        wish_input::apply(app.world_mut(), map, given)?;
-    }
-    let own = app.tick();
-    failures.extend(app.step()?.failures);
-    machine.session.end_tick(app.world(), endpoint, mark, own)?;
-    if machine.session.seat().is_some() && machine.session.closed().is_none() {
-        if machine.auto_ready && !machine.ready_sent {
-            machine.session.set_ready(endpoint, true)?;
-            machine.ready_sent = true;
-        }
-        let actions = Client::local_actions(app.world());
-        machine
-            .session
-            .replication_mut()
-            .send_input(endpoint, actions)?;
-    }
-    endpoint.update(now);
-    Ok(())
 }
 
 impl crate::workspace::Workspace {
@@ -1197,9 +1462,18 @@ impl crate::workspace::Workspace {
             let session = self.session(id)?;
             (session.scene.clone(), session.seed)
         };
-        let (mut app, script, _) = crate::sessions::build_app(self, &scene, seed, true)?;
-        // The project's actions at rest, as on the host: the prediction
-        // writes its player's input against these ids.
+        self.net_machine_app(&scene, seed)
+    }
+
+    /// A player machine's world of `scene`: the scene less what the host
+    /// replicates, with the project's actions at rest, as on the host (the
+    /// prediction writes its player's input against these ids).
+    fn net_machine_app(
+        &mut self,
+        scene: &str,
+        seed: u64,
+    ) -> Result<(App, Option<wish_script::ScriptRuntime>)> {
+        let (mut app, script, _) = crate::sessions::build_app(self, scene, seed, true)?;
         let map = self.input_map()?;
         wish_input::apply(app.world_mut(), &map, &wish_input::Values::new())?;
         Ok((app, script))
@@ -1234,18 +1508,21 @@ impl crate::workspace::Workspace {
             Some(text) => RoomCode::parse(text)?,
             None => net.room.clone(),
         };
-        let target = match args.str("address") {
-            None => match net.host_addr() {
-                Some(addr) => Target::At(addr, room),
-                None => {
-                    return Err(join_failed(
-                        "this session does not host",
-                        "Join with an address, or host a match with net (action host).",
-                    ));
-                }
+        let target = match (args.str("relay"), args.str("address")) {
+            (Some(relay), _) => Target::Relay(net.relay_target(relay)?, room),
+            (None, address) => match address {
+                None => match net.host_addr() {
+                    Some(addr) => Target::At(addr, room),
+                    None => {
+                        return Err(join_failed(
+                            "this session does not host",
+                            "Join with an address, or host a match with net (action host).",
+                        ));
+                    }
+                },
+                Some("discover") => Target::Discover(args.str("room_code").map(|_| room)),
+                Some(text) => Target::At(parse_address(text)?, room),
             },
-            Some("discover") => Target::Discover(args.str("room_code").map(|_| room)),
-            Some(text) => Target::At(parse_address(text)?, room),
         };
         let color = u32::try_from(args.int("color").unwrap_or(0)).unwrap_or(0);
         let mut machine = net.machine(mirror.world(), (name, color, bot), drive, target)?;
@@ -1280,36 +1557,55 @@ impl crate::workspace::Workspace {
         Ok(name)
     }
 
-    /// This process joins a match hosted elsewhere over UDP: a new session
-    /// whose world is this machine's.
+    /// This process joins a match hosted elsewhere over UDP, at `address`
+    /// or through the relay `args` names: a new session whose world is this
+    /// machine's prediction (design note `1.1-net-tool.md` §13), so the
+    /// person's own player answers at once over the internet.
     pub(crate) fn join_outside(
         &mut self,
-        address: &str,
+        address: Option<&str>,
         args: &crate::param::Args,
     ) -> Result<String> {
         if self.sessions.open.len() >= crate::sessions::MAX_SESSIONS {
             return Err(too_many_sessions());
         }
         let room = args.str("room_code").map(RoomCode::parse).transpose()?;
-        let target = if address == "discover" {
-            Target::Discover(room.clone())
-        } else {
-            let addr = parse_address(address)?;
-            let Some(room) = room.clone() else {
-                return Err(Diagnostic::error(
+        let needs_room = |room: Option<RoomCode>, how: &str| {
+            room.ok_or_else(|| {
+                Diagnostic::error(
                     "net_room_code_invalid",
-                    "Joining a host by its address needs its room code.",
+                    format!("Joining a host {how} needs its room code."),
                     "Pass room_code: the code the host shows (or join with address \"discover\" to take the code a host on the local network announces).",
                 )
-                .at_path("/room_code"));
-            };
-            Target::At(addr, room)
+                .at_path("/room_code")
+            })
+        };
+        let target = match (args.str("relay"), address) {
+            (Some(relay), _) => {
+                let at = Network::Udp.relay_address(relay)?;
+                Target::Relay(at, needs_room(room.clone(), "through a relay")?)
+            }
+            (None, Some("discover")) => Target::Discover(room.clone()),
+            (None, Some(address)) => Target::At(
+                parse_address(address)?,
+                needs_room(room.clone(), "by its address")?,
+            ),
+            (None, None) => {
+                return Err(join_failed(
+                    "no address or relay was given",
+                    "Pass address (\"host:port\" or \"discover\"), or relay with room_code.",
+                ));
+            }
         };
         let scene = self.scene_path(args.str("scene"))?;
         self.open_document(&scene, false)?;
         let seed = u64::try_from(args.int("seed").unwrap_or(0)).unwrap_or(0);
-        let (app, script, assets) = crate::sessions::build_app(self, &scene, seed, true)?;
+        // The mirror (what the host sends) and the prediction (the session's
+        // own world, where the game runs), two worlds of the same build.
+        let (mirror, _) = self.net_machine_app(&scene, seed)?;
+        let (mut app, script, assets) = crate::sessions::build_app(self, &scene, seed, true)?;
         let input = self.input_map()?;
+        wish_input::apply(app.world_mut(), &input, &wish_input::Values::new())?;
         let game = self
             .config()
             .map_or_else(|| "wish".to_owned(), |c| c.name.clone());
@@ -1320,6 +1616,7 @@ impl crate::workspace::Workspace {
             room: room.unwrap_or_else(|| RoomCode::generate(&mut Entropy::seeded(seed))),
             game: discovery_game(&game),
             host: None,
+            relay: None,
             own: None,
             players: Vec::new(),
             expected: 0,
@@ -1336,13 +1633,23 @@ impl crate::workspace::Workspace {
         let name = args.str("name").unwrap_or("Player").to_owned();
         let color = u32::try_from(args.int("color").unwrap_or(0)).unwrap_or(0);
         let mut machine = net.machine(
-            app.world(),
+            mirror.world(),
             (&name, color, false),
             Drive::parse(args.str("drive")),
             target,
         )?;
         machine.auto_ready = args.value("ready").and_then(Value::as_bool) != Some(false);
-        net.own = Some(machine);
+        machine.person = true;
+        // The predictor holds a stand-in between frames: the prediction
+        // world is the session's (`NetMatch::tick` swaps it in).
+        let stand_in = App::new(wish_app::AppConfig::default());
+        net.own = Some(Box::new(Player {
+            mirror,
+            predictor: Predictor::new(stand_in, predict_config(net.tick_ms))?,
+            _script: None,
+            machine,
+            shown: None,
+        }));
         let id = self.sessions.new_id();
         self.sessions.open.insert(
             id.clone(),
@@ -1373,11 +1680,13 @@ impl crate::workspace::Workspace {
         let seats = net.seats();
         let machine = match seat {
             Some(seat) => net
-                .players
-                .iter_mut()
+                .own
+                .as_deref_mut()
+                .into_iter()
+                .chain(net.players.iter_mut())
                 .map(|p| &mut p.machine)
                 .find(|m| m.session.seat() == Some(seat)),
-            None => net.own.as_mut(),
+            None => net.own.as_deref_mut().map(|p| &mut p.machine),
         };
         let Some(machine) = machine else {
             return Err(crate::tools::net_unknown_player(
@@ -1403,10 +1712,10 @@ impl crate::workspace::Workspace {
         };
         if let Some(host) = net.host.as_mut() {
             host.session.close();
-        } else if let Some(own) = net.own.as_mut()
-            && let Link::Connected(endpoint) = &mut own.link
+        } else if let Some(own) = net.own.as_deref_mut()
+            && let Link::Connected(endpoint) = &mut own.machine.link
         {
-            own.session.leave(endpoint)?;
+            own.machine.session.leave(endpoint)?;
         }
         let mut ran = 0;
         let rest = vec![wish_input::Values::new(); MAX_PLAYERS];
@@ -1419,7 +1728,7 @@ impl crate::workspace::Workspace {
             if closed && ran > 0 {
                 break;
             }
-            net.tick(&mut session.app, &session.input, &rest, &named)?;
+            net.tick(&mut session.app, &rest, &named)?;
             ran += 1;
         }
         Ok(ran)
@@ -1465,13 +1774,13 @@ impl crate::workspace::Workspace {
         let Some(seat) = seat else {
             return self.session_world(id, None);
         };
-        let needed = self
+        let local = self
             .session(id)?
             .net
             .as_deref()
-            .and_then(|net| net.player_at(seat))
-            .map(|player| player.shown.is_none());
-        let Some(needed) = needed else {
+            .and_then(|net| net.local_at(seat))
+            .map(|(player, own)| (player.shown.is_none(), own));
+        let Some((needed, own)) = local else {
             return self.session_world(id, Some(seat));
         };
         // A world of the same build to draw from, made once.
@@ -1480,12 +1789,15 @@ impl crate::workspace::Workspace {
         } else {
             None
         };
-        let session = self.session_mut(id)?;
-        let Some(player) = session
-            .net
-            .as_deref_mut()
-            .and_then(|net| net.player_at_mut(seat))
-        else {
+        let crate::sessions::Session { app, net, .. } = self.session_mut(id)?;
+        let player = net.as_deref_mut().and_then(|net| {
+            if own {
+                net.own.as_deref_mut()
+            } else {
+                net.player_at_mut(seat)
+            }
+        });
+        let Some(player) = player else {
             return Err(crate::tools::net_not_networked(id).at_path("/player"));
         };
         if let Some(blank) = blank {
@@ -1496,8 +1808,14 @@ impl crate::workspace::Workspace {
             return Err(crate::tools::net_not_networked(id).at_path("/player"));
         };
         if *at != ticks {
+            // The session's own machine predicts in the session's world.
+            let source = if own {
+                app.world()
+            } else {
+                player.predictor.world()
+            };
             let world = shown.world_mut();
-            world.restore(&player.predictor.world().snapshot())?;
+            world.restore(&source.snapshot())?;
             for (net, drawn) in player.predictor.presented() {
                 if let Some(entity) = player.predictor.entity(*net)
                     && world.contains(entity)

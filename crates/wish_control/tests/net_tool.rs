@@ -753,3 +753,321 @@ fn the_person_plays_a_predicted_seat_and_corrections_stay_rare() {
     let second = run("predicted-b");
     assert_eq!(first, second, "the same calls give the same answers");
 }
+
+/// The seat whose name is `name` in a `net status` (or `net step`) answer.
+fn seat_named(status: &Value, name: &str) -> Value {
+    status["seats"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == name)
+        .cloned()
+        .unwrap_or_else(|| panic!("no seat '{name}': {status}"))
+}
+
+/// A host behind a home router takes players on its local network and
+/// through a relay on the same socket (design note `1.1-net-tool.md` §13):
+/// over the simulator with a relay node the session runs itself, a host,
+/// two direct bots and two players through the relay play one match; the
+/// status says which seat came how and how the relay stands; a relayed
+/// player's own avatar answers on its input tick while the host's has not
+/// moved, and ends where the host says; the same seed gives the same
+/// answers.
+#[test]
+fn a_host_takes_direct_and_relayed_players_in_one_match() {
+    let run = |name: &str| {
+        let (_dir, mut ws) = project_with(name, PREDICTED_GAME, PREDICTED_TYPES);
+        let mut answers = Vec::new();
+        let hosted = call(
+            &mut ws,
+            "net",
+            json!({ "action": "host", "players": 5, "bots": 2, "auto_start": true, "seed": 3,
+                    "relay": "simulated",
+                    "network": { "latency_ms": 40, "jitter_ms": 5, "loss": 0.02, "seed": 3 } }),
+        );
+        assert_eq!(hosted["relay"]["simulated"], true, "{hosted}");
+        let session = hosted["session"].as_str().unwrap().to_owned();
+        answers.push(hosted.to_string());
+        for far in ["Far 1", "Far 2"] {
+            let joined = call(
+                &mut ws,
+                "net",
+                json!({ "action": "join", "session": session, "name": far, "relay": "simulated" }),
+            );
+            answers.push(joined.to_string());
+        }
+        let started = call(
+            &mut ws,
+            "net",
+            json!({ "action": "step", "session": session, "until": "Lobby.phase == 'Running'", "max_frames": 1500 }),
+        );
+        assert_eq!(started["stopped_by"], "until", "{started}");
+        let settled = call(
+            &mut ws,
+            "net",
+            json!({ "action": "step", "session": session, "frames": 120 }),
+        );
+        answers.push(settled.to_string());
+        let status = call(
+            &mut ws,
+            "net",
+            json!({ "action": "status", "session": session }),
+        );
+        assert_eq!(status["seats"].as_array().unwrap().len(), 5, "{status}");
+        for bot in ["Bot 1", "Bot 2"] {
+            assert_eq!(seat_named(&status, bot)["via"], "direct", "{status}");
+        }
+        for far in ["Far 1", "Far 2"] {
+            let seat = seat_named(&status, far);
+            assert_eq!(seat["via"], "relay", "{status}");
+            assert_eq!(seat["predicted"], true, "{status}");
+        }
+        let relay = &status["relay"];
+        assert_eq!(relay["state"], "ready", "{status}");
+        assert_eq!(relay["role"], "host", "{status}");
+        assert_eq!(relay["rooms"], 1, "{status}");
+        assert_eq!(relay["clients"], 2, "{status}");
+        assert!(relay["forwarded"].as_u64().unwrap() > 100, "{status}");
+        answers.push(status.to_string());
+        // Far 1 walks: its own machine answers on the tick, the host later.
+        let seat = seat_named(&status, "Far 1")["player"].as_u64().unwrap() as u32;
+        let avatar = format!("a{seat}");
+        let start = x_of(&mut ws, &session, None, &avatar);
+        let walk = json!({ seat.to_string(): { "move": [1, 0] } });
+        call(
+            &mut ws,
+            "net",
+            json!({ "action": "step", "session": session, "frames": 1, "inputs": walk }),
+        );
+        let own = x_of(&mut ws, &session, Some(seat), &avatar);
+        assert!(
+            own > start + 0.03,
+            "the relayed player's avatar answers on the tick: {start} -> {own}"
+        );
+        assert_eq!(
+            x_of(&mut ws, &session, None, &avatar),
+            start,
+            "the host has not heard of it yet"
+        );
+        call(
+            &mut ws,
+            "net",
+            json!({ "action": "step", "session": session, "frames": 59, "inputs": walk }),
+        );
+        call(
+            &mut ws,
+            "net",
+            json!({ "action": "step", "session": session, "frames": 180 }),
+        );
+        let host_x = x_of(&mut ws, &session, None, &avatar);
+        let own_x = x_of(&mut ws, &session, Some(seat), &avatar);
+        assert!(
+            (host_x - start - 2.0).abs() < 1e-3,
+            "the host walked it 2 m: {host_x}"
+        );
+        assert_eq!(own_x, host_x, "the prediction ends where the host says");
+        let mine = call(
+            &mut ws,
+            "net",
+            json!({ "action": "status", "session": session, "player": seat }),
+        );
+        answers.push(mine.to_string());
+        answers
+    };
+    let first = run("relay-sim-a");
+    let second = run("relay-sim-b");
+    assert_eq!(first, second, "the same seed gives the same answers");
+}
+
+/// What `relay` cannot name is explained, with its location.
+#[test]
+fn a_relay_that_cannot_be_used_is_explained() {
+    let (_dir, mut ws) = project("relay-mistakes");
+    let agent = parse_actor("agent");
+    let real_over_sim = ws.call(
+        "net",
+        &json!({ "action": "host", "relay": "203.0.113.7:47620" }),
+        &agent,
+    );
+    assert_eq!(
+        real_over_sim["error"]["code"], "net_config_invalid",
+        "{real_over_sim}"
+    );
+    assert_eq!(
+        real_over_sim["error"]["location"]["path"], "/relay",
+        "{real_over_sim}"
+    );
+    let hosted = call(&mut ws, "net", json!({ "action": "host" }));
+    let session = hosted["session"].as_str().unwrap().to_owned();
+    let no_relay = ws.call(
+        "net",
+        &json!({ "action": "join", "session": session, "relay": "simulated" }),
+        &agent,
+    );
+    assert_eq!(
+        no_relay["error"]["code"], "net_config_invalid",
+        "{no_relay}"
+    );
+    call(
+        &mut ws,
+        "net",
+        json!({ "action": "stop", "session": session }),
+    );
+    let simulated_over_udp = ws.call(
+        "net",
+        &json!({ "action": "join", "relay": "simulated", "room_code": "ABC234" }),
+        &agent,
+    );
+    assert_eq!(
+        simulated_over_udp["error"]["code"], "net_config_invalid",
+        "{simulated_over_udp}"
+    );
+    let no_room = ws.call(
+        "net",
+        &json!({ "action": "join", "relay": "127.0.0.1:47620" }),
+        &agent,
+    );
+    assert_eq!(
+        no_room["error"]["code"], "net_room_code_invalid",
+        "{no_room}"
+    );
+}
+
+/// This process joins a host elsewhere through a real relay over localhost
+/// UDP, and its own world is a prediction (design note `1.1-net-tool.md`
+/// §13): its own avatar answers on the call that gives the input, before the
+/// host has stepped; after a walk both end where the host says.
+#[test]
+fn a_process_joined_through_a_relay_predicts_its_own_player() {
+    let (dir, mut host) = project_with("relay-udp", PREDICTED_GAME, PREDICTED_TYPES);
+    let mut far = open(&dir);
+    let socket = wish_net::UdpTransport::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let mut relay = wish_net::relay::Relay::new(
+        socket,
+        wish_net::relay::RelayConfig::default(),
+        wish_net::Entropy::os().unwrap(),
+    )
+    .unwrap();
+    let relay_addr = relay.local_addr().to_string();
+    let hosted = call(
+        &mut host,
+        "net",
+        json!({ "action": "host", "players": 2, "auto_start": true, "port": 0, "relay": relay_addr }),
+    );
+    let hs = hosted["session"].as_str().unwrap().to_owned();
+    let room = hosted["room_code"].as_str().unwrap().to_owned();
+    assert_eq!(hosted["relay"]["simulated"], false, "{hosted}");
+    let joined = call(
+        &mut far,
+        "net",
+        json!({ "action": "join", "relay": relay_addr, "room_code": room, "name": "Far" }),
+    );
+    let fs = joined["session"].as_str().unwrap().to_owned();
+    // The two machines and the relay take turns, as three computers would.
+    let mut clock = 0u64;
+    let mut turn = |host: &mut Workspace, far: &mut Workspace, input: Option<Value>| {
+        clock += 16;
+        relay.update(clock);
+        call(
+            host,
+            "net",
+            json!({ "action": "step", "session": hs, "frames": 1 }),
+        );
+        relay.update(clock);
+        let mut step = json!({ "action": "step", "session": fs, "frames": 1 });
+        if let Some(input) = input {
+            step["input"] = input;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        call(far, "net", step)
+    };
+    let mut seat = None;
+    for _ in 0..1500 {
+        let answer = turn(&mut host, &mut far, None);
+        let mine = answer["seats"]
+            .as_array()
+            .and_then(|seats| seats.iter().find(|s| s["machine"] == "you").cloned());
+        if answer["lobby"]["phase"] == "Running"
+            && let Some(mine) = mine
+        {
+            seat = mine["player"].as_u64();
+            break;
+        }
+    }
+    let seat = seat.expect("the process is seated through the relay and the match runs") as u32;
+    for _ in 0..120 {
+        turn(&mut host, &mut far, None);
+    }
+    let status = call(
+        &mut far,
+        "net",
+        json!({ "action": "status", "session": fs }),
+    );
+    assert_eq!(status["role"], "player", "{status}");
+    assert_eq!(status["relay"]["state"], "ready", "{status}");
+    let mine = seat_named(&status, "Far");
+    assert_eq!(mine["machine"], "you", "{status}");
+    assert_eq!(mine["via"], "relay", "{status}");
+    assert_eq!(mine["predicted"], true, "{status}");
+    let host_status = call(
+        &mut host,
+        "net",
+        json!({ "action": "status", "session": hs }),
+    );
+    assert_eq!(
+        seat_named(&host_status, "Far")["via"],
+        "relay",
+        "{host_status}"
+    );
+    assert_eq!(host_status["relay"]["state"], "ready", "{host_status}");
+    // The session's own world (no player named) is the prediction.
+    let avatar = format!("a{seat}");
+    let start = x_of(&mut far, &fs, None, &avatar);
+    assert_eq!(x_of(&mut host, &hs, None, &avatar), start);
+    let answer = turn(&mut host, &mut far, Some(json!({ "move": [1, 0] })));
+    let own = x_of(&mut far, &fs, None, &avatar);
+    assert!(
+        own > start + 0.03,
+        "its own avatar answers on the call: {start} -> {own}: {answer}"
+    );
+    assert_eq!(
+        x_of(&mut host, &hs, None, &avatar),
+        start,
+        "the host has not heard of it yet"
+    );
+    assert_eq!(
+        x_of(&mut far, &fs, Some(seat), &avatar),
+        own,
+        "player names the same world"
+    );
+    for _ in 0..59 {
+        turn(&mut host, &mut far, Some(json!({ "move": [1, 0] })));
+    }
+    for _ in 0..180 {
+        turn(&mut host, &mut far, None);
+    }
+    let host_x = x_of(&mut host, &hs, None, &avatar);
+    let own_x = x_of(&mut far, &fs, None, &avatar);
+    assert!(
+        (host_x - start - 2.0).abs() < 1e-3,
+        "the host walked it 2 m: {host_x}"
+    );
+    assert!(
+        (own_x - host_x).abs() < 1e-4,
+        "the prediction ends where the host says: {own_x} vs {host_x}"
+    );
+    let mine = call(
+        &mut far,
+        "net",
+        json!({ "action": "status", "session": fs, "player": seat }),
+    );
+    assert!(
+        mine["player"]["prediction"]["confirmations"]
+            .as_u64()
+            .unwrap()
+            > 100,
+        "{mine}"
+    );
+    call(&mut far, "net", json!({ "action": "stop", "session": fs }));
+    call(&mut host, "net", json!({ "action": "stop", "session": hs }));
+}

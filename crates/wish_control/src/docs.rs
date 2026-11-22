@@ -606,7 +606,7 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
     ),
     (
         "net_config_invalid",
-        "A setting of online play is out of its range (players, message size, queue size, timeouts, rate, or a discovery game id or match name longer than 64 bytes). The location names the setting and the hint gives its range.",
+        "A setting of online play is out of its range (players, message size, queue size, timeouts, rate, or a discovery game id or match name longer than 64 bytes), or the relay of net host or net join cannot be used (not an address, or a simulated relay in a match over UDP). The location names the setting and the hint gives its range.",
     ),
     (
         "net_connect_timed_out",

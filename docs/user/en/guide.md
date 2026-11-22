@@ -276,7 +276,16 @@ cheap Linux server is plenty). There is no account, no fee and no service of any
    every room and player that comes or goes.
 3. Open that UDP port in the server's firewall, for example `sudo ufw allow 47620/udp`.
 4. The host plays through the relay at the server's address; the players join with the same address
-   and the room code.
+   and the room code:
+   - On the command line: `wen net host --relay <server>:47620` prints the room code;
+     `wen net join --relay <server>:47620 --room <code>` joins. Players on the host's own network
+     can still join it directly.
+   - In the editor: *Game → Network panel*, type the relay's address into *Relay* (it is kept on
+     this computer, not in the project), then *Host online*; the panel shows the room code. A
+     player types the same relay and the room code and presses *Join*. Without a relay, *Join*
+     finds a host on the local network.
+   - A joined player's own character is predicted, so it answers the keys at once even over the
+     internet. The network panel's *Path* column says which players came through the relay.
 
 The relay carries packets that are sealed between each player and the host and cannot open them. It
 never receives the room code itself, only a hash of it, writes nothing to disk and logs no

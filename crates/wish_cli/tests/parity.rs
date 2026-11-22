@@ -1030,15 +1030,21 @@ fn two_process_calls() -> Vec<(&'static str, Vec<(&'static str, Value)>)> {
                 ("sim_stop", json!({ "session": "s1" })),
             ],
         ),
-        // Online play: a match over a lossy simulated network, a player's
-        // machine, the match saved as a replay and played back.
+        // Online play: a match over a lossy simulated network with a bot on
+        // the host's network and a player through the session's relay, a
+        // player's machine, the match saved as a replay and played back.
         (
             "net",
             vec![
                 (
                     "net",
-                    json!({ "action": "host", "players": 2, "bots": 1, "auto_start": true, "seed": 2,
+                    json!({ "action": "host", "players": 3, "bots": 1, "auto_start": true, "seed": 2,
+                            "relay": "simulated",
                             "network": { "latency_ms": 30, "jitter_ms": 5, "loss": 0.05, "seed": 4 } }),
+                ),
+                (
+                    "net",
+                    json!({ "action": "join", "session": "s7", "name": "Far", "relay": "simulated" }),
                 ),
                 (
                     "net",
