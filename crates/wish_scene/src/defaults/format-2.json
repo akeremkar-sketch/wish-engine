@@ -131,6 +131,13 @@
     "ParticleState": {
       "alive": 0
     },
+    "PixelCamera": {
+      "bars": [0.0, 0.0, 0.0, 1.0],
+      "letterbox": true,
+      "pixels_per_unit": 16.0,
+      "resolution": [320, 180],
+      "snap": true
+    },
     "PointLight": {
       "color": [1.0, 1.0, 1.0, 1.0],
       "intensity_lm": 800.0,
@@ -167,6 +174,11 @@
     "SceneId": {
       "id": ""
     },
+    "SortingLayer": {
+      "layer": 0,
+      "name": "",
+      "y_sort": false
+    },
     "SpotLight": {
       "color": [1.0, 1.0, 1.0, 1.0],
       "inner_angle_deg": 25.0,
@@ -181,6 +193,7 @@
       "flip_y": false,
       "image": "",
       "layer": 0,
+      "order": 0,
       "pixels_per_unit": 100.0,
       "rect": [0.0, 0.0, 0.0, 0.0],
       "size": [0.0, 0.0],
@@ -200,6 +213,7 @@
       "color": [1.0, 1.0, 1.0, 1.0],
       "layer": 0,
       "map": "",
+      "order": 0,
       "smooth": false,
       "y_sort": false
     },
@@ -4888,10 +4902,12 @@
     },
     "Pointer": {
       "held": false,
+      "in_world": false,
       "position": [0.0, 0.0],
       "present": false,
       "pressed": false,
-      "released": false
+      "released": false,
+      "world": [0.0, 0.0]
     },
     "RenderSettings": {
       "antialiasing": "Fxaa",

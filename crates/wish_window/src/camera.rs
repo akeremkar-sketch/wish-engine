@@ -150,11 +150,19 @@ impl FlyCamera {
         distance
     }
 
-    /// `camera` seen from this eye (same lens, new placement).
+    /// `camera` seen from this eye (same lens, new placement). The eye is
+    /// free: a pixel camera's whole-number fit and bars are the game's, not
+    /// the eye's (an orthographic eye keeps the height the camera shows).
     pub fn apply(&self, camera: &CameraView) -> CameraView {
+        let ortho_height = match &camera.pixel {
+            Some(pixel) => Some(pixel.size()[1] as f32 / pixel.unit()),
+            None => camera.ortho_height,
+        };
         CameraView {
             view: look_matrix(self.position, self.forward()),
             position: self.position,
+            ortho_height,
+            pixel: None,
             ..*camera
         }
     }
@@ -174,6 +182,7 @@ mod tests {
             near: 0.1,
             far: 100.0,
             ortho_height: None,
+            pixel: None,
         }
     }
 

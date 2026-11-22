@@ -84,7 +84,7 @@ pub(crate) const CAPTURE_FRAME: Tool = Tool {
 pub(crate) const DESCRIBE_VIEW: Tool = Tool {
     name: "describe_view",
     title: "What the camera sees",
-    description: "Says what a camera sees without a picture. For each visible entity: its pixel count, how much of it is not hidden by other things (visible_percent), its box on screen [left, top, right, bottom] and its distance in meters; and the entities that are drawn but not visible (hidden behind something, or outside the picture); the sprites (their box in the picture and layer; a sprite that shows a sprite sheet also says its clip, frame (its place in the clip) and sheet_frame) and particle emitters (the box their particles cover, how many are alive); and the in-game interface (interface: each box that shows something, its box in the picture, its text, whether it is a button and if the pointer is over it); and stats, what drawing the lit picture of this view takes (draw_calls, triangles, shadow_casters, shadow_cascades, point_lights, spot_lights: counts, the same on every machine; effects: which of sky_light, sun_disc, fog, bloom, color_grading and fxaa it uses). A see-through entity is marked blended: true, and what shows through it counts as visible too; stats.blended_surfaces counts them. Use it to check that what you built is on screen and not blocked, what the interface says, and what makes a scene heavy. Tilemaps are listed under tilemaps: file, layer, box in the picture, the cells on screen [x0, y0, x1, y1] and how many tiles show; with point: [x, y] (a pixel of the picture), also the cell under it and each layer's tile there.",
+    description: "Says what a camera sees without a picture. For each visible entity: its pixel count, how much of it is not hidden by other things (visible_percent), its box on screen [left, top, right, bottom] and its distance in meters; and the entities that are drawn but not visible (hidden behind something, or outside the picture); the sprites (their box in the picture and layer; a sprite that shows a sprite sheet also says its clip, frame (its place in the clip) and sheet_frame) and particle emitters (the box their particles cover, how many are alive); and the in-game interface (interface: each box that shows something, its box in the picture, its text, whether it is a button and if the pointer is over it); and stats, what drawing the lit picture of this view takes (draw_calls, triangles, shadow_casters, shadow_cascades, point_lights, spot_lights: counts, the same on every machine; effects: which of sky_light, sun_disc, fog, bloom, color_grading and fxaa it uses). A see-through entity is marked blended: true, and what shows through it counts as visible too; stats.blended_surfaces counts them. Use it to check that what you built is on screen and not blocked, what the interface says, and what makes a scene heavy. Tilemaps are listed under tilemaps: file, layer, box in the picture, the cells on screen [x0, y0, x1, y1] and how many tiles show; with point: [x, y] (a pixel of the picture), also the cell under it and each layer's tile there, and under_point: the point's place in the world's XY plane (world: [x, y], meters) and the sprites under it, the one drawn in front first (by their drawn rectangle where their picture is not clear). A sprite on a layer named by a SortingLayer says sorting_layer, and one with an order within its layer says order. Under a PixelCamera with letterbox, the bars show nothing.",
     params: &[
         SCENE,
         SESSION,
@@ -110,7 +110,7 @@ pub(crate) const DESCRIBE_VIEW: Tool = Tool {
         Param::optional(
             "point",
             Kind::Array,
-            "A pixel [x, y] of the picture (from its top left): each tilemap says which cell and which tile of each layer is under it.",
+            "A pixel [x, y] of the picture (from its top left): under_point says where it is in the world's XY plane and which sprites are under it, and each tilemap says which cell and which tile of each layer is under it.",
         ),
         SHADERS,
     ],
@@ -346,6 +346,7 @@ fn stage(scene: &mut RenderScene) {
             near: 0.1,
             far: 200.0,
             ortho_height: None,
+            pixel: None,
         });
     }
     if scene.lights.is_empty() {
@@ -587,6 +588,13 @@ fn describe_view(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
         }
         None => Vec::new(),
     };
+    let sprites_under = match point {
+        Some(point) => {
+            open.renderer
+                .sprites_under(&prepared.scene, camera, (width, height), point)?
+        }
+        None => Vec::new(),
+    };
     open.renderer.trim(KEPT_AFTER_A_TOOL_CALL);
     let adapter = adapter_json(open);
     let name = |entity: Entity| {
@@ -674,6 +682,20 @@ fn describe_view(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
         }
         if let Some(layer) = element.layer {
             entry["layer"] = json!(layer);
+            // Named layers and orders within a layer say so; other sprites
+            // are listed as they were.
+            if let Some(named) = prepared.scene.layer_name(layer) {
+                entry["sorting_layer"] = json!(named);
+            }
+            if let Some(view) = prepared
+                .scene
+                .sprites
+                .iter()
+                .find(|view| view.entity == element.entity)
+                && view.sprite.order != 0
+            {
+                entry["order"] = json!(view.sprite.order);
+            }
             // A sprite that shows a sheet: which clip and which frame.
             if let Some((clip, frame, sheet_frame)) = element.animation {
                 entry["clip"] = json!(clip);
@@ -725,6 +747,33 @@ fn describe_view(workspace: &mut Workspace, args: &Args, _: &Actor) -> Result<Ma
         .collect();
     if !maps.is_empty() {
         out.insert("tilemaps".to_owned(), json!(maps));
+    }
+    // What is under the point in 2D: where it is in the world's XY plane,
+    // and the sprites there, the one drawn in front first.
+    if let Some([x, y]) = point {
+        let chosen = match camera {
+            Some(entity) => prepared
+                .scene
+                .cameras
+                .iter()
+                .find(|view| view.entity == entity),
+            None => prepared.scene.cameras.first(),
+        };
+        let world = chosen.and_then(|view| {
+            let view_proj = view.projection_for(width, height) * view.view;
+            wish_render::screen_to_plane(view_proj, (width, height), x, y)
+        });
+        let mut found = json!({
+            "sprites": sprites_under
+                .iter()
+                .take(limit)
+                .map(|under| name(under.entity))
+                .collect::<Vec<_>>(),
+        });
+        if let Some(hit) = world {
+            found["world"] = json!([round(hit.x), round(hit.y)]);
+        }
+        out.insert("under_point".to_owned(), found);
     }
     // 2D lights and visions (design note 1.1-lights-2d §7): where each is
     // and how much of its circle the walls leave it.
@@ -891,5 +940,85 @@ impl Workspace {
             ids,
             names: prepared.names,
         })
+    }
+}
+
+/// The flat things of a picture (sprites and tilemaps), for the editor's
+/// view: what is under a pixel and where each is on the screen.
+#[derive(Clone, Debug, Default)]
+pub struct FlatPicture {
+    /// The sprites under the pixel asked about, the one drawn in front
+    /// first (by their drawn rectangle where their picture is not clear).
+    pub sprites_under: Vec<String>,
+    /// The tilemaps with a tile under the pixel asked about.
+    pub tilemaps_under: Vec<String>,
+    /// Each sprite's and tilemap's box on the screen (left, top, right,
+    /// bottom, in pixels), by name, when it is on the screen.
+    pub boxes: BTreeMap<String, [i32; 4]>,
+}
+
+impl Workspace {
+    /// The sprites and tilemaps of the scene or session from the same camera
+    /// [`Workspace::render_picture`] would use: what is under `point` (a
+    /// pixel, if asked) and every one's box on the screen. Sprites and
+    /// tilemaps are not in the identity buffer ([`Workspace::render_ids`]):
+    /// a click picks them through this.
+    pub fn render_flat(
+        &mut self,
+        source: PictureSource<'_>,
+        camera: Option<&dyn Fn(&wish_render::CameraView) -> wish_render::CameraView>,
+        (width, height): (u32, u32),
+        point: Option<[f32; 2]>,
+    ) -> Result<FlatPicture> {
+        let mut prepared = match source {
+            PictureSource::Scene(scene) => prepare_with(self, None, scene, None)?,
+            PictureSource::Preview(scene, ops) => prepare_with(self, None, scene, Some(ops))?,
+            PictureSource::Session(id) => prepare_with(self, Some(id), None, None)?,
+            PictureSource::Checkpoint(scene, name) => prepare_checkpoint(self, name, scene)?,
+        };
+        if let (Some(camera), Some(first)) = (camera, prepared.scene.cameras.first_mut()) {
+            *first = camera(first);
+        }
+        let (open, _) = drawing_with(self, None, &prepared.scene, prepared.kept.as_deref())?;
+        let name = |entity: Entity| {
+            prepared
+                .names
+                .get(&entity)
+                .cloned()
+                .unwrap_or_else(|| format!("#{entity}"))
+        };
+        let mut flat = FlatPicture::default();
+        for element in open
+            .renderer
+            .overlay_elements(&prepared.scene, None, width, height)?
+        {
+            if let (Some(found), Some(_)) = (element.bounding_box, element.layer) {
+                flat.boxes.insert(name(element.entity), found);
+            }
+        }
+        for element in open
+            .renderer
+            .tilemap_elements(&prepared.scene, None, width, height)?
+        {
+            if let Some(found) = element.bounding_box {
+                flat.boxes.insert(name(element.entity), found);
+            }
+        }
+        if let Some(point) = point {
+            flat.sprites_under = open
+                .renderer
+                .sprites_under(&prepared.scene, None, (width, height), point)?
+                .iter()
+                .map(|under| name(under.entity))
+                .collect();
+            flat.tilemaps_under = open
+                .renderer
+                .tiles_under(&prepared.scene, None, (width, height), point)?
+                .iter()
+                .filter(|under| under.layers.iter().any(|(_, tile)| *tile >= 0))
+                .map(|under| name(under.entity))
+                .collect();
+        }
+        Ok(flat)
     }
 }

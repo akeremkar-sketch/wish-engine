@@ -487,14 +487,20 @@ impl Workspace {
         let session = self.session(id)?;
         let mut values = session.input.evaluate(keys);
         if let Some(at) = pointer {
-            let settings = session
-                .app
-                .world()
-                .resource::<wish_ui::UiSettings>()
-                .copied()
-                .unwrap_or_default();
-            let position = settings.from_picture(at.width, at.height, at.x, at.y);
+            // The interface fits the game's picture (under a letterboxing
+            // pixel camera, not its bars); the picture's size goes along, so
+            // the pointer's place in the world is the one the person sees.
+            let size = (
+                at.width.round().max(1.0) as u32,
+                at.height.round().max(1.0) as u32,
+            );
+            let position =
+                wish_input::picture_to_interface(session.app.world(), size, [at.x, at.y]);
             values.insert(wish_input::POINTER.to_owned(), position);
+            values.insert(
+                wish_input::SCREEN.to_owned(),
+                [size.0 as f32, size.1 as f32],
+            );
             if keys.contains("MouseLeft") {
                 values.insert(wish_input::CLICK.to_owned(), [1.0, 0.0]);
             }

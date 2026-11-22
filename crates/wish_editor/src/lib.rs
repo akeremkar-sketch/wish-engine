@@ -24,6 +24,7 @@ mod style;
 mod themes;
 mod tile_palette;
 mod vector;
+pub mod view2d;
 pub mod welcome;
 mod workspaces;
 

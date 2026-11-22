@@ -36,12 +36,13 @@ pub mod ui;
 pub use capture::{MAX_CAPTURE_SIZE, draw_probe};
 pub use components::{
     AlphaMode, Ambient, AmbientSource, Antialiasing, Bloom, Camera, ColorGrading, DirectionalLight,
-    Exposure, Fog, Material, MaterialFile, Model, Primitive, RenderSettings, Shape, Sky,
+    Exposure, Fog, Material, MaterialFile, Model, PixelCamera, Primitive, RenderSettings, Shape,
+    Sky,
 };
 pub use extract::{
     CameraView, ColliderView, Draw, EmitterView, LightView, LocalLightView, Look, MaterialData,
-    Mesh, RenderScene, SkyData, SpriteAnimation, SpriteView, SurfaceData, TEXTURE_SLOTS,
-    TilemapView, UiBoxView, UiTextView, extract, slot_is_colour,
+    Mesh, RenderScene, SkyData, SortingLayerView, SpriteAnimation, SpriteView, SurfaceData,
+    TEXTURE_SLOTS, TilemapView, UiBoxView, UiTextView, extract, slot_is_colour,
 };
 pub use gpu::{AdapterSummary, Created, Gpu, GpuOptions};
 pub use image::{ImageDiff, RgbaImage, Tolerance};
@@ -52,6 +53,8 @@ pub use renderer::{
 };
 pub use shader::{CheckedShader, ComposedShader, ShaderLibrary, SourceLine, check_wgsl};
 pub use sprites::{
-    OverlayElement, SpriteSheet, TileGrid, TileGridLayer, TileUnder, TilemapElement,
+    OverlayElement, PICK_ALPHA, SpriteSheet, SpriteUnder, TileGrid, TileGridLayer, TileUnder,
+    TilemapElement,
 };
 pub use ui::{UiElement, UiPicture, ui_elements};
+pub use wish_types::render::{PixelFit, camera_projection, screen_to_plane};

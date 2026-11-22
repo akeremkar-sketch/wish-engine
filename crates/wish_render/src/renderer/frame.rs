@@ -304,7 +304,7 @@ impl Renderer {
         posed: &'a Posed,
     ) -> FramePlan<'a> {
         let aspect = width as f32 / height as f32;
-        let view_proj = view.projection(aspect) * view.view;
+        let view_proj = view.projection_for(width, height) * view.view;
         let exposure = exposure_multiplier(scene.ev100);
 
         let mut frame = Bytes::default();
@@ -340,8 +340,14 @@ impl Renderer {
             (&self.ui_pictures, &self.sprite_sheets, &self.tile_grids),
             &mut warnings,
         );
-        let interface = (!scene.ui.is_empty())
-            .then(|| crate::ui::build(scene, width, height, &self.ui_pictures));
+        let interface = (!scene.ui.is_empty()).then(|| {
+            crate::ui::build(
+                scene,
+                (width, height),
+                view.game_screen(width, height),
+                &self.ui_pictures,
+            )
+        });
         if let Some(batch) = &interface {
             warnings.extend(batch.warnings.iter().cloned());
         }
@@ -378,7 +384,7 @@ impl Renderer {
         let clusters = cluster::build(
             &scene.local_lights,
             &view.view,
-            &view.projection(aspect),
+            &view.projection_for(width, height),
             (width, height),
             (view.near, view.far),
         );
@@ -408,7 +414,7 @@ impl Renderer {
             clusters.log_scale,
             cluster::TILE_PX as f32,
         ]);
-        let orthographic = view.ortho_height.is_some();
+        let orthographic = view.ortho_height.is_some() || view.pixel.is_some();
         let look = Look::of(scene, exposure, orthographic);
         look.write_frame(&mut frame, orthographic);
         shadow::write_cascades(shadow.as_ref(), &mut frame);

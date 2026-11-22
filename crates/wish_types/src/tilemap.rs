@@ -40,6 +40,10 @@ pub struct Tilemap {
     /// games: a sprite lower on the map (its anchor at a smaller y) is drawn
     /// over one higher up, and every one of them over the map.
     pub y_sort: bool,
+    /// The order within its layer: of two tilemaps (or a tilemap and a
+    /// sprite) on the same layer, the higher order is drawn over the lower.
+    #[schema(range = -32768..=32767)]
+    pub order: i32,
 }
 
 impl Tilemap {

@@ -62,8 +62,8 @@ pub use render::{base64, base64_decode};
 pub use script::PointerAt;
 pub use tool::{Tool, catalog};
 pub use tools::{
-    BRIEF_FIELDS, CardField, DESIGN_FILE, IdPicture, Picture, PictureSource, card_fields,
-    design_summary, engines_act, engines_act_in, read_design,
+    BRIEF_FIELDS, CardField, DESIGN_FILE, FlatPicture, IdPicture, Picture, PictureSource,
+    card_fields, design_summary, engines_act, engines_act_in, read_design,
 };
 /// The scene and prefab file format this build writes (`wish_scene::FORMAT`),
 /// for clients that write scene files themselves.

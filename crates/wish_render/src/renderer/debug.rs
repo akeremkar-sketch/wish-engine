@@ -561,6 +561,8 @@ impl Renderer {
                 }
                 (raw, !lines.is_empty())
             };
+            let mut image = image;
+            super::paint_bars(&mut image, camera_view);
             // A debug view lights nothing, but what the scene's lights
             // say is said in every view (an agent looking at its lights
             // through the `lights` view must still hear about a second sun).
@@ -782,13 +784,23 @@ impl Renderer {
                 ..Overlay::default()
             },
         )?;
-        Ok(raw
+        let mut ids: Vec<u32> = raw
             .pixels
             .as_chunks::<4>()
             .0
             .iter()
             .map(|bytes| u32::from_le_bytes(*bytes))
-            .collect())
+            .collect();
+        // A letterboxing pixel camera's bars show nothing.
+        if let Some([left, top, right, bottom]) = camera.game_screen(size.0, size.1) {
+            for (index, id) in ids.iter_mut().enumerate() {
+                let (x, y) = (index as u32 % size.0, index as u32 / size.0);
+                if x < left || x >= right || y < top || y >= bottom {
+                    *id = 0;
+                }
+            }
+        }
+        Ok(ids)
     }
 
     /// Runs the pass of a debug view and returns the raw bytes it wrote. Its
@@ -819,8 +831,7 @@ impl Renderer {
             ("debug picture", COLOUR_FORMAT)
         };
         let target = pool.picture(gpu, name, (width, height), format)?;
-        let aspect = width as f32 / height as f32;
-        let view_proj = camera.projection(aspect) * camera.view;
+        let view_proj = camera.projection_for(width, height) * camera.view;
 
         let mut uniform = Bytes::default();
         uniform.mat4(&view_proj);

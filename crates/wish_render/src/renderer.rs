@@ -730,6 +730,27 @@ impl Renderer {
         ))
     }
 
+    /// The sprites of `scene` under the pixel `point` (x right, y down from
+    /// the top left) of a `width` × `height` picture from `camera` (or the
+    /// first camera), the one drawn in front first: by their drawn rectangle
+    /// and their picture's alpha.
+    pub fn sprites_under(
+        &self,
+        scene: &RenderScene,
+        camera: Option<Entity>,
+        (width, height): (u32, u32),
+        point: [f32; 2],
+    ) -> Result<Vec<crate::sprites::SpriteUnder>> {
+        let view = choose_camera(scene, camera)?;
+        Ok(crate::sprites::sprites_under(
+            scene,
+            view,
+            (width, height),
+            point,
+            (&self.ui_pictures, &self.sprite_sheets),
+        ))
+    }
+
     /// The sprite sheet kept under `path`.
     pub fn sprite_sheet(&self, path: &str) -> Option<&crate::sprites::SpriteSheet> {
         self.sprite_sheets.get(path)
@@ -955,13 +976,45 @@ impl Renderer {
             // Done before the GPU lock is let go: see `Gpu::finish`.
             gpu.finish(encoder)
         })??;
+        let mut image = passes::readback(gpu, &picture)?;
+        paint_bars(&mut image, view);
         Ok(Frame {
-            image: passes::readback(gpu, &picture)?,
+            image,
             camera: view.entity,
             drawn: plan.draws.items.len(),
             stats: plan.stats,
             warnings: plan.warnings,
         })
+    }
+}
+
+/// Paints the bars of a letterboxing pixel camera (`PixelCamera.bars`)
+/// over everything outside the game's picture.
+pub(crate) fn paint_bars(image: &mut RgbaImage, view: &CameraView) {
+    let Some([left, top, right, bottom]) = view.game_screen(image.width, image.height) else {
+        return;
+    };
+    let colour = view.pixel.map_or([0.0; 4], |pixel| pixel.bars.to_array());
+    let encode = |linear: f32| {
+        let v = if linear.is_finite() {
+            linear.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let srgb = if v <= 0.003_130_8 {
+            v * 12.92
+        } else {
+            1.055 * v.powf(1.0 / 2.4) - 0.055
+        };
+        (srgb * 255.0).round() as u8
+    };
+    let bar = [encode(colour[0]), encode(colour[1]), encode(colour[2]), 255];
+    let width = image.width;
+    for (index, pixel) in image.pixels.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+        let (x, y) = (index as u32 % width, index as u32 / width);
+        if x < left || x >= right || y < top || y >= bottom {
+            *pixel = bar;
+        }
     }
 }
 

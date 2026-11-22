@@ -2068,8 +2068,17 @@ sprite sheet (`*.sheet.json`: a PNG cut into frames by a `grid` or `frames` rect
 `frames`, `fps`, `loop`; `asset_create` makes one) and a `SpriteAnimator { sheet, clip, playing, speed, time, frame }`
 beside the `Sprite`: the engine moves it every tick and writes the frame shown; game code switches clips with
 `animator.play(text(\"walk\"))`, and `describe_view` says each sprite's clip and frame. Sprites are not lit (unless 2D lighting is on, below); higher
-`layer` is drawn over lower. For 2D physics set `PhysicsSettings.profile` to
+`layer` is drawn over lower, then a higher `order` (on `Sprite` and `Tilemap`) within a layer. A `SortingLayer { name,
+layer, y_sort }` on an entity of its own names a layer (`describe_view` says `sorting_layer`) and with `y_sort` sorts
+its sprites by height, lower in front (top-down games). For 2D physics set `PhysicsSettings.profile` to
 `SideView2D` or `TopDown2D` (see Physics): no per-body locks are needed.
+
+Pixel art: a `PixelCamera { resolution, pixels_per_unit, letterbox, bars, snap }` beside the `Camera` draws a game
+made for `resolution` pixels (320 x 180 by default, 16 a meter) scaled up by a whole number, with bars around it
+(`letterbox`) or more of the world; with `snap` the camera, sprites and tilemaps stand on the game's pixels, so
+nothing shimmers. The interface fits inside the game's picture. `Pointer.world` is the point of the XY plane under
+the pointer through the first camera (`Pointer.in_world` says whether there is one); `describe_view` with `point`
+answers `under_point: { world, sprites }` (front first, clear pixels of a sprite's picture do not count).
 
 Rooms and walls are a tilemap: `asset_create` makes a tileset (`*.tileset.json`: a PNG and a `grid`; `tiles`
 {\"8\": {solid: true}}) and a tilemap (`*.tilemap.json`: the tileset and `layers`); a `Tilemap { map, cell_size }`
