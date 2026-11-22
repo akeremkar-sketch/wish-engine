@@ -1126,6 +1126,7 @@ impl<T: Transport> Endpoint<T> {
     /// smaller value than the last one counts as the last one).
     pub fn update(&mut self, now_ms: u64) {
         self.now_ms = self.now_ms.max(now_ms);
+        self.transport.tick(self.now_ms);
         self.receive();
         self.drive_client();
         self.expire();

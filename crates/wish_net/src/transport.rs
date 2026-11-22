@@ -40,6 +40,12 @@ pub trait Transport {
 
     /// Reads the next waiting datagram into `buf`, without waiting.
     fn recv(&mut self, buf: &mut [u8]) -> Recv;
+
+    /// Tells the transport the time, in the caller's milliseconds;
+    /// [`Endpoint::update`](crate::Endpoint::update) calls it first. Plain
+    /// transports ignore it; the relay's transports resend their
+    /// registration or attach by it.
+    fn tick(&mut self, _now_ms: u64) {}
 }
 
 /// A real, non-blocking UDP socket.

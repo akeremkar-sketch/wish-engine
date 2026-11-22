@@ -11,6 +11,8 @@
 //!   [`SimNetwork`], whose latency, jitter, loss, duplication and reordering
 //!   come from a seed and which is stepped by ticks).
 //! - [`discovery`]: finding the matches on the local network by broadcast.
+//! - [`relay`]: playing over the internet through a relay the user runs
+//!   (`wen relay`): the server and the transports that go through it.
 //! - [`wire`] and [`crypto`]: the packet layout and the cryptography, as pure
 //!   functions (the relay reads headers with the same code).
 //!
@@ -22,6 +24,7 @@
 pub mod crypto;
 pub mod discovery;
 pub mod endpoint;
+pub mod relay;
 pub mod room;
 pub mod sim;
 pub mod transport;
@@ -30,6 +33,7 @@ pub mod wire;
 pub use crypto::Entropy;
 pub use discovery::{Announce, DISCOVERY_PORT, DiscoveryQuery, DiscoveryResponder};
 pub use endpoint::{Channel, Config, Endpoint, EndpointStats, Event, PeerId, Reason};
+pub use relay::{Relay, RelayClient, RelayConfig, RelayEvent, RelayHost, RelayState};
 pub use room::RoomCode;
 pub use sim::{Captured, LinkConditions, SimNetwork, SimStats, SimTransport};
 pub use transport::{Recv, Transport, UdpTransport};
