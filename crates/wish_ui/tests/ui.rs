@@ -194,6 +194,7 @@ fn point(world: &mut World, at: [f32; 2], held: bool) {
             held,
             pressed: held && !before.held,
             released: !held && before.held,
+            ..before
         })
         .unwrap();
 }
