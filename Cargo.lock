@@ -4732,6 +4732,7 @@ dependencies = [
  "wish_examples",
  "wish_import",
  "wish_input",
+ "wish_lobby",
  "wish_particles",
  "wish_physics",
  "wish_render",
@@ -4826,6 +4827,19 @@ dependencies = [
  "serde_json",
  "wish_core",
  "wish_ecs",
+ "wish_types",
+]
+
+[[package]]
+name = "wish_lobby"
+version = "0.9.0"
+dependencies = [
+ "wish_app",
+ "wish_core",
+ "wish_ecs",
+ "wish_net",
+ "wish_replicate",
+ "wish_schema",
  "wish_types",
 ]
 

@@ -545,6 +545,153 @@
       "start": 0.0,
       "tint": [1.0, 1.0, 1.0, 1.0]
     },
+    "Lobby": {
+      "closed": "None",
+      "outcome": 0,
+      "phase": "Offline",
+      "room": "",
+      "round": 0,
+      "seats": [
+        {
+          "color": 0,
+          "connected": false,
+          "left": false,
+          "name": "",
+          "ready": false,
+          "taken": false
+        },
+        {
+          "color": 0,
+          "connected": false,
+          "left": false,
+          "name": "",
+          "ready": false,
+          "taken": false
+        },
+        {
+          "color": 0,
+          "connected": false,
+          "left": false,
+          "name": "",
+          "ready": false,
+          "taken": false
+        },
+        {
+          "color": 0,
+          "connected": false,
+          "left": false,
+          "name": "",
+          "ready": false,
+          "taken": false
+        },
+        {
+          "color": 0,
+          "connected": false,
+          "left": false,
+          "name": "",
+          "ready": false,
+          "taken": false
+        },
+        {
+          "color": 0,
+          "connected": false,
+          "left": false,
+          "name": "",
+          "ready": false,
+          "taken": false
+        },
+        {
+          "color": 0,
+          "connected": false,
+          "left": false,
+          "name": "",
+          "ready": false,
+          "taken": false
+        },
+        {
+          "color": 0,
+          "connected": false,
+          "left": false,
+          "name": "",
+          "ready": false,
+          "taken": false
+        },
+        {
+          "color": 0,
+          "connected": false,
+          "left": false,
+          "name": "",
+          "ready": false,
+          "taken": false
+        },
+        {
+          "color": 0,
+          "connected": false,
+          "left": false,
+          "name": "",
+          "ready": false,
+          "taken": false
+        },
+        {
+          "color": 0,
+          "connected": false,
+          "left": false,
+          "name": "",
+          "ready": false,
+          "taken": false
+        },
+        {
+          "color": 0,
+          "connected": false,
+          "left": false,
+          "name": "",
+          "ready": false,
+          "taken": false
+        },
+        {
+          "color": 0,
+          "connected": false,
+          "left": false,
+          "name": "",
+          "ready": false,
+          "taken": false
+        },
+        {
+          "color": 0,
+          "connected": false,
+          "left": false,
+          "name": "",
+          "ready": false,
+          "taken": false
+        },
+        {
+          "color": 0,
+          "connected": false,
+          "left": false,
+          "name": "",
+          "ready": false,
+          "taken": false
+        },
+        {
+          "color": 0,
+          "connected": false,
+          "left": false,
+          "name": "",
+          "ready": false,
+          "taken": false
+        }
+      ]
+    },
+    "LocalPlayer": {
+      "host": false,
+      "joined": false,
+      "player": 0,
+      "role": 0,
+      "role_name": ""
+    },
+    "MatchRoles": {
+      "roles": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    },
     "NetGroups": {
       "players": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     },

@@ -6,7 +6,8 @@ use wish_core::Result;
 use wish_ecs::World;
 
 /// Registers the engine's components and resources (`SceneId`, `Transform`,
-/// `GlobalTransform`, the rendering types and the online play types).
+/// `GlobalTransform`, the rendering types and the online play types,
+/// replication's and the lobby's).
 pub fn register_engine_types(world: &mut World) -> Result<()> {
     wish_scene::instantiate::register(world)?;
     wish_transform::register(world)?;
@@ -17,7 +18,8 @@ pub fn register_engine_types(world: &mut World) -> Result<()> {
     wish_ui::register(world)?;
     wish_particles::register(world)?;
     wish_render::components::register(world)?;
-    wish_replicate::register(world)
+    wish_replicate::register(world)?;
+    wish_lobby::register(world)
 }
 
 /// Registers the engine's types, the example's (if any) and the game

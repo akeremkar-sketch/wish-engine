@@ -287,6 +287,145 @@ impl<T: Event> SystemParam for EventWriter<T> {
     }
 }
 
+/// Where the envelope (`net: Net`) of a network message type starts, by
+/// its schema; a type without one fails the module with an explanation.
+fn envelope_offset<T: Event>() -> usize {
+    let schema = T::schema();
+    if let wish_schema::TypeKind::Struct(fields) = &schema.kind
+        && let Some(field) = fields
+            .iter()
+            .find(|f| f.name == "net" && f.ty == <wish_types::Net as wish_schema::Plain>::schema())
+    {
+        return field.offset as usize;
+    }
+    crate::abi::fail(&format!(
+        "{} is not a network message: give it a field `net: Net` (NetWriter and NetReader carry only such events)",
+        T::NAME
+    ))
+}
+
+/// Sends network messages of type `T` (an event with a field `net: Net`).
+/// The engine carries them at the end of the tick and delivers them at the
+/// next tick boundary as events of the same type, with `net.from` set to
+/// the sender and `net.delivered` set.
+///
+/// ```ignore
+/// #[event]
+/// pub struct Vote { pub net: Net, pub choice: PlayerId }
+///
+/// #[system]
+/// fn vote(mut out: NetWriter<Vote>, actions: Actions) {
+///     if actions.pressed("vote") {
+///         out.to_host(Vote { choice: 3, ..Default::default() });
+///     }
+/// }
+/// ```
+///
+/// A player's machine sends only to the host; the host's game code passes
+/// a message on to one player, a group or everyone. On the host, a message
+/// to the host (from the host's own player) or the host's share of one to
+/// everyone is delivered to the host's own world. Alone (no online session)
+/// nothing is carried.
+pub struct NetWriter<T: Event> {
+    _type: PhantomData<T>,
+}
+
+impl<T: Event> NetWriter<T> {
+    fn send(&mut self, message: T, net: wish_types::Net) {
+        let mut bytes = encoded(&message);
+        let at = envelope_offset::<T>();
+        if let Some(slot) = bytes.get_mut(at..at + size_of::<wish_types::Net>()) {
+            wish_schema::Plain::encode(&net, slot);
+        }
+        push_command(&Command::Send {
+            event: T::NAME.to_owned(),
+            bytes,
+        });
+    }
+
+    /// Sends `message` to the host (the only target a player's machine may
+    /// send to).
+    pub fn to_host(&mut self, message: T) {
+        self.send(message, wish_types::Net::to_host());
+    }
+
+    /// Sends `message` to one player (from the host).
+    pub fn to_player(&mut self, player: wish_types::PlayerId, message: T) {
+        self.send(message, wish_types::Net::to_player(player));
+    }
+
+    /// Sends `message` to every player, the host's own included (from the
+    /// host).
+    pub fn to_everyone(&mut self, message: T) {
+        self.send(message, wish_types::Net::to_everyone());
+    }
+
+    /// Sends `message` to the players whose `NetGroups` bits share a bit
+    /// with `groups` (from the host).
+    pub fn to_group(&mut self, groups: u32, message: T) {
+        self.send(message, wish_types::Net::to_group(groups));
+    }
+}
+
+impl<T: Event> SystemParam for NetWriter<T> {
+    fn describe(types: &mut TypeTable) -> Value {
+        envelope_offset::<T>();
+        json!({ "send": { "type": types.event::<T>() } })
+    }
+    fn fetch(_: Section) -> Self {
+        Self { _type: PhantomData }
+    }
+}
+
+/// Network messages of type `T` delivered since this system last ran: only
+/// those the engine delivered (`net.delivered`), never this machine's own
+/// outgoing copies. `message.net.from` is the sender (on a player's machine
+/// always the host, 0).
+pub struct NetReader<T: Event> {
+    events: Vec<T>,
+}
+
+impl<T: Event> NetReader<T> {
+    /// The delivered messages, in the order they were delivered.
+    pub fn read(&self) -> impl Iterator<Item = &T> {
+        self.events.iter()
+    }
+
+    /// How many there are.
+    pub fn len(&self) -> usize {
+        self.events.len()
+    }
+
+    /// Whether there are none.
+    pub fn is_empty(&self) -> bool {
+        self.events.is_empty()
+    }
+}
+
+impl<T: Event> SystemParam for NetReader<T> {
+    fn describe(types: &mut TypeTable) -> Value {
+        envelope_offset::<T>();
+        json!({ "events": { "type": types.event::<T>() } })
+    }
+    fn fetch(section: Section) -> Self {
+        let bytes = section.bytes();
+        let size = size_of::<T>();
+        let at = envelope_offset::<T>();
+        let net_size = size_of::<wish_types::Net>();
+        let events = (0..section_count(bytes))
+            .filter_map(|row| {
+                let start = 8 + row * size;
+                let delivered = bytes
+                    .get(start + at..start + at + net_size)
+                    .and_then(<wish_types::Net as wish_schema::Plain>::decode)
+                    .is_some_and(|net| net.delivered);
+                delivered.then(|| decode(bytes.get(start..).unwrap_or(&[]), T::NAME))
+            })
+            .collect();
+        Self { events }
+    }
+}
+
 /// The player's input this tick, as actions (`input.json` names them).
 ///
 /// ```ignore

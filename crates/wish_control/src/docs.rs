@@ -465,6 +465,42 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "A running game that is recording a replay refuses live edits (they are not input, so the replay would not play the same). Save the recording first.",
     ),
     (
+        "lobby_full",
+        "Every seat of the online lobby is taken (16 at most, the host's included), so the host refused the player. Wait for a player to leave.",
+    ),
+    (
+        "lobby_host_left",
+        "The online session ended: the host closed it, or the connection to the host was lost. Join another match; a player who lost the connection comes back into its seat within the grace period.",
+    ),
+    (
+        "lobby_join_timeout",
+        "A peer connected to the host but did not send its join in time, so the host disconnected it. A client joins as soon as it connects: one that does not is broken, of another version, or hostile.",
+    ),
+    (
+        "lobby_match_running",
+        "A new player asked to join while a match was running, so the host refused it. Join when the host returns to the lobby; a player who dropped comes back with its rejoin token.",
+    ),
+    (
+        "lobby_not_host",
+        "Game code on a player's machine asked the lobby to start, end or reopen the match; only the host does that. Let the host's game code send that LobbyRequest.",
+    ),
+    (
+        "lobby_not_ready",
+        "The match cannot start yet: fewer players than min_players are here, or someone is not ready (the hint names them). Wait, or lower min_players.",
+    ),
+    (
+        "lobby_refused",
+        "The host refused this player: the lobby was full, a match was running, the rejoin came too late, or the versions differ. The message says which; join when the lobby is open.",
+    ),
+    (
+        "lobby_rejoin_expired",
+        "A player who dropped did not come back within rejoin_grace_ticks, so its seat is left (Seat.left) and its rejoin token no longer works. It can join the next match from the lobby.",
+    ),
+    (
+        "lobby_wrong_phase",
+        "A lobby request does not fit where the lobby is: names, colours and ready change in the open lobby, a match starts from it, ends while running, and the lobby reopens after the match ended.",
+    ),
+    (
         "lock_file_invalid",
         "wish.lock, the exact packages the project uses, is not valid. Write it again from what is installed: packages with action lock.",
     ),
@@ -597,8 +633,20 @@ pub const DIAGNOSTICS: &[(&str, &str)] = &[
         "The other side of an online connection sent a public key that gives no shared secret (a point of low order). Nothing was sent to it: the other program is broken or hostile.",
     ),
     (
+        "net_message_flood",
+        "A player sent more network messages than messages_per_second allows (a burst of message_burst), so the extra ones were dropped. Send state that changes every tick through replication, not messages.",
+    ),
+    (
         "net_message_invalid",
         "A client sent a replication message that does not parse or breaks a limit (larger than 2 KiB, more than 8 input frames or 32 actions in a frame). It was dropped and nothing was applied: the other program is broken, of another version, or hostile.",
+    ),
+    (
+        "net_message_oversized",
+        "A network message is larger than message_bytes (1024 by default), so it was dropped (or not sent). Keep messages small: an id, a choice, a short text.",
+    ),
+    (
+        "net_message_target_refused",
+        "Game code on a player's machine sent a network message to someone other than the host; players send only to the host. Send it with to_host and let the host's game code pass it on.",
     ),
     (
         "net_message_too_large",

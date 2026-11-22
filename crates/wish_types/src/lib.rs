@@ -15,6 +15,7 @@
 pub mod anim;
 pub mod audio;
 pub mod input;
+pub mod lobby;
 pub mod net;
 pub mod particles;
 pub mod physics;
@@ -33,6 +34,10 @@ pub use audio::{
 pub use input::{
     ActionSlot, ActionState, MAX_ACTIONS, MAX_PLAYERS, PlayerActionSlots, PlayerActionState,
     PlayerId, Players, action_id,
+};
+pub use lobby::{
+    Lobby, LobbyAction, LobbyClosed, LobbyPhase, LobbyRequest, LocalPlayer, MatchRoles, Net, NetTo,
+    Seat,
 };
 pub use net::{NetGroups, NetOwner, NetViewer, NetVisibility, Replicated};
 pub use particles::{ParticleEmitter, ParticleState};

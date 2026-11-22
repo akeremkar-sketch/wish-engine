@@ -60,8 +60,8 @@ pub mod physics;
 mod query;
 
 pub use param::{
-    Actions, Commands, EntityCommands, EventReader, EventWriter, NewEntity, PlayerActions, Res,
-    ResMut, SystemParam,
+    Actions, Commands, EntityCommands, EventReader, EventWriter, NetReader, NetWriter, NewEntity,
+    PlayerActions, Res, ResMut, SystemParam,
 };
 pub use query::{ColumnAccess, Query, QueryData, QueryFilter, With, Without};
 pub use wish_core::{AssetRef, Color, Entity, Text, math};
@@ -81,6 +81,10 @@ pub use wish_types::{
     UiSettings, UiText, UiTextAlign, UiUnit, world_position,
 };
 pub use wish_types::{AmbientSource, Antialiasing, Bloom, ColorGrading, Fog};
+pub use wish_types::{
+    Lobby, LobbyAction, LobbyClosed, LobbyPhase, LobbyRequest, LocalPlayer, MatchRoles, Net, NetTo,
+    Seat,
+};
 pub use wish_types::{MAX_PLAYERS, PlayerActionSlots, PlayerActionState, PlayerId, Players};
 pub use wish_types::{NetGroups, NetOwner, NetViewer, NetVisibility, Replicated};
 
@@ -108,6 +112,10 @@ pub mod prelude {
     pub use crate::{
         ButtonClicked, Pointer, UiAlign, UiButton, UiDirection, UiImage, UiInteraction, UiJustify,
         UiLayout, UiLength, UiNode, UiPosition, UiSettings, UiText, UiTextAlign, UiUnit,
+    };
+    pub use crate::{
+        Lobby, LobbyAction, LobbyClosed, LobbyPhase, LobbyRequest, LocalPlayer, MatchRoles, Net,
+        NetReader, NetTo, NetWriter, Seat,
     };
     pub use crate::{NetGroups, NetOwner, NetViewer, NetVisibility, Replicated};
     pub use crate::{ParticleEmitter, ParticleState, Projection, Sprite, SpriteAnimator, Tilemap};

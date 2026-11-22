@@ -22,6 +22,7 @@ wish_input.workspace = true
 wish_particles.workspace = true
 wish_physics.workspace = true
 wish_import.workspace = true
+wish_lobby.workspace = true
 wish_render.workspace = true
 wish_replicate.workspace = true
 wish_scene.workspace = true

@@ -331,7 +331,9 @@ pub fn put_leaf(out: &mut Vec<u8>, value: &Value, layout: &Layout, index: usize)
     }
 }
 
-fn read_leaf(reader: &mut Reader<'_>, layout: &Layout, index: usize) -> Option<LeafData> {
+/// Reads one leaf of `layout` (the counterpart of [`put_leaf`]); `None` when
+/// it is malformed or does not fit.
+pub fn read_leaf(reader: &mut Reader<'_>, layout: &Layout, index: usize) -> Option<LeafData> {
     let leaf = layout.leaves.get(index)?;
     Some(match leaf.kind {
         LeafKind::Plain => LeafData::Plain(reader.take(leaf.len)?.to_vec()),
