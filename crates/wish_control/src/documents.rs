@@ -73,10 +73,43 @@ fn atomic_write(root: &Path, path: &str, text: &str) -> Result<()> {
     }
     let temporary = target.with_extension("json.wish-tmp");
     std::fs::write(&temporary, text).map_err(|error| unwritable(path, &error))?;
-    std::fs::rename(&temporary, &target).map_err(|error| {
+    replace_file(&temporary, &target).map_err(|error| {
         let _ = std::fs::remove_file(&temporary);
         unwritable(path, &error)
     })
+}
+
+/// Moves `from` over `to` (a rename that replaces the target), trying again
+/// for a moment when the system refuses it for a while: on Windows a file
+/// that another program has open (a virus scanner looking at what was just
+/// written, an indexer, a text editor reading it) cannot be replaced, and the
+/// rename fails with "access denied" or a sharing violation until that
+/// program lets go. Without this, a person's edit was refused now and then
+/// on a busy machine (the cockpit tests lost an edit twice under a loaded
+/// gate, 21 and 22 November 2026).
+pub(crate) fn replace_file(from: &Path, to: &Path) -> std::io::Result<()> {
+    // About a second in all: 1, 2, 4 ... 64 ms, then 100 ms steps.
+    const WAITS_MS: [u64; 12] = [1, 2, 4, 8, 16, 32, 64, 100, 100, 100, 100, 100];
+    let mut waits = WAITS_MS.iter();
+    loop {
+        match std::fs::rename(from, to) {
+            Ok(()) => return Ok(()),
+            Err(error) if passing(&error) => match waits.next() {
+                Some(ms) => std::thread::sleep(std::time::Duration::from_millis(*ms)),
+                None => return Err(error),
+            },
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// Whether a failed rename may work when tried again: the target (or the
+/// source) is held open by another program for a while.
+fn passing(error: &std::io::Error) -> bool {
+    // ERROR_ACCESS_DENIED (5), ERROR_SHARING_VIOLATION (32),
+    // ERROR_LOCK_VIOLATION (33) on Windows.
+    error.kind() == std::io::ErrorKind::PermissionDenied
+        || (cfg!(windows) && matches!(error.raw_os_error(), Some(5 | 32 | 33)))
 }
 
 fn unwritable(path: &str, error: &std::io::Error) -> Diagnostic {
@@ -1018,6 +1051,38 @@ pub(crate) fn other_case(root: &Path, relative: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A file another program holds open without sharing cannot be replaced
+    /// on Windows; the write waits for it instead of refusing the edit.
+    #[cfg(windows)]
+    #[test]
+    fn a_file_held_open_for_a_moment_is_still_replaced() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = std::env::temp_dir().join(format!("wish-replace-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (from, to) = (dir.join("new.json"), dir.join("doc.json"));
+        std::fs::write(&to, "old").unwrap();
+        std::fs::write(&from, "new").unwrap();
+        // No sharing at all, as a scanner might hold it.
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&to)
+            .unwrap();
+        assert!(
+            std::fs::rename(&from, &to).is_err(),
+            "held open, it is refused"
+        );
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            drop(held);
+        });
+        replace_file(&from, &to).unwrap();
+        release.join().unwrap();
+        assert_eq!(std::fs::read_to_string(&to).unwrap(), "new");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn scene_paths_stay_inside_the_project() {
