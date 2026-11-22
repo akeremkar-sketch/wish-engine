@@ -1,0 +1,37 @@
+{
+  "format": 1,
+  "grid": {
+    "columns": 8,
+    "frame": [16, 16],
+    "rows": 1
+  },
+  "image": "assets/tiles/station.png",
+  "tiles": {
+    "0": {
+      "name": "snow"
+    },
+    "1": {
+      "name": "metal floor"
+    },
+    "2": {
+      "name": "hall planks"
+    },
+    "3": {
+      "name": "deck grating"
+    },
+    "4": {
+      "name": "wall",
+      "solid": true
+    },
+    "5": {
+      "name": "wall with stripe",
+      "solid": true
+    },
+    "6": {
+      "name": "hazard floor"
+    },
+    "7": {
+      "name": "rug"
+    }
+  }
+}

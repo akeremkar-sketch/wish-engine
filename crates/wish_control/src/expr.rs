@@ -43,7 +43,9 @@ enum Node {
     Id,
     /// A component and the steps into it.
     Path(String, Vec<Step>),
-    Has(String),
+    /// `has(X)`; `true` when X is a resource (the world has its value,
+    /// whatever entity is asked about).
+    Has(String, bool),
     /// How many entities of the world have the component.
     Count(String),
     /// Items picked out of a computed list.
@@ -502,8 +504,16 @@ impl Parser<'_> {
             };
             self.check_component(&component, column)?;
             self.expect(")")?;
+            let resource = self
+                .registry
+                .resources()
+                .any(|(_, info)| info.name() == component)
+                && !self
+                    .registry
+                    .components()
+                    .any(|(_, info)| info.name() == component);
             return Ok(if name == "has" {
-                Node::Has(component)
+                Node::Has(component, resource)
             } else {
                 Node::Count(component)
             });
@@ -719,7 +729,9 @@ impl Expr {
     pub fn negates_has(&self) -> bool {
         fn walk(node: &Node, negated: bool) -> bool {
             match node {
-                Node::Has(_) => negated,
+                // A resource is the world's: `!has(MatchRoles)` says the
+                // world has none, which is not ambiguous (friction F17).
+                Node::Has(_, resource) => negated && !resource,
                 Node::Not(inner) => walk(inner, !negated),
                 Node::Select(inner, _) | Node::Neg(inner) => walk(inner, negated),
                 Node::List(items) | Node::Call(_, items) => {
@@ -781,7 +793,7 @@ fn collect_paths(node: &Node, subject: &dyn Subject, found: &mut Vec<(String, Va
             collect_paths(left, subject, found);
             collect_paths(right, subject, found);
         }
-        Node::Literal(_) | Node::Id | Node::Has(_) | Node::Count(_) => {}
+        Node::Literal(_) | Node::Id | Node::Has(..) | Node::Count(_) => {}
     }
 }
 
@@ -790,7 +802,7 @@ fn eval(node: &Node, subject: &dyn Subject) -> Val {
         Node::Literal(value) => value.clone(),
         Node::List(items) => Val::List(items.iter().map(|item| eval(item, subject)).collect()),
         Node::Id => Val::Str(subject.id().to_owned()),
-        Node::Has(component) => Val::Bool(subject.component(component).is_some()),
+        Node::Has(component, _) => Val::Bool(subject.component(component).is_some()),
         Node::Count(component) => subject
             .count(component)
             .map_or(Val::Null, |n| Val::Num(n as f64)),
@@ -1039,6 +1051,19 @@ mod tests {
                 "Camera": { "fov_y_deg": 60.0, "near": 0.1, "far": 1000.0 }
             }),
         }
+    }
+
+    /// Friction F17: "the world has no MatchRoles" is a fair thing to
+    /// expect on a player's machine; `!has(Coin)` stays ambiguous.
+    #[test]
+    fn a_resource_that_is_absent_can_be_expected() {
+        let world = registry();
+        let negated = |text: &str| Expr::compile(text, world.registry()).unwrap().negates_has();
+        assert!(!negated("!has(MatchRoles)"));
+        assert!(!negated("LocalPlayer.role == 0 && !has(MatchRoles)"));
+        assert!(negated("!has(Model)"));
+        let p = player();
+        assert_eq!(eval_on("!has(MatchRoles)", &p), Val::Bool(true));
     }
 
     #[test]

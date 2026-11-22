@@ -1,0 +1,23 @@
+{
+  "clips": {
+    "frozen": {
+      "fps": 1,
+      "frames": [8]
+    },
+    "idle": {
+      "fps": 2,
+      "frames": [0, 1]
+    },
+    "walk": {
+      "fps": 8,
+      "frames": [4, 5, 6, 7]
+    }
+  },
+  "format": 1,
+  "grid": {
+    "columns": 4,
+    "frame": [16, 24],
+    "rows": 3
+  },
+  "image": "assets/sprites/keeper.png"
+}

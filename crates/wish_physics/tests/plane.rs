@@ -146,6 +146,76 @@ fn room(app: &mut App, z: f32) {
     block(app, Vec3::new(-5.5, 0.0, z), Vec3::new(1.0, 8.0, 1.0));
 }
 
+/// Friction F19: a session prepares physics before its first tick; a
+/// character that game code places during that tick (a player's spawn
+/// point) goes there, as it would on any later tick.
+#[test]
+fn a_character_placed_on_the_first_tick_goes_there() {
+    let mut app = app(PhysicsProfile::TopDown2D);
+    let who = character(
+        &mut app,
+        Vec3::new(-50.0, -50.0, 0.0),
+        ColliderShape::Sphere,
+        Vec3::ZERO,
+    );
+    wish_physics::prepare(app.world_mut()).unwrap();
+    app.add_system(
+        System::new("spawn", |world, context| {
+            if context.time.tick == 0 {
+                let heroes: Vec<Entity> = world
+                    .entities()
+                    .filter(|e| world.has::<CharacterController>(*e))
+                    .collect();
+                for hero in heroes {
+                    world.insert(hero, Transform::from_translation(Vec3::new(3.0, 2.0, 0.0)))?;
+                }
+            }
+            Ok(())
+        })
+        .before(wish_physics::SYSTEM),
+    )
+    .unwrap();
+    run(&mut app, 3);
+    assert_eq!(at(&app, who), Vec3::new(3.0, 2.0, 0.0));
+    walk(&mut app, who, Vec3::new(0.0, 6.0, 0.0));
+    run(&mut app, 10);
+    assert!(at(&app, who).y > 2.9, "{:?}", at(&app, who));
+}
+
+/// Friction F20: characters on a layer whose mask leaves that layer out
+/// walk through each other (players in a crowded room), and walls still
+/// stop them.
+#[test]
+fn characters_meet_only_what_their_mask_lets_them() {
+    let mut app = app(PhysicsProfile::TopDown2D);
+    room(&mut app, 0.0);
+    let walker = character(
+        &mut app,
+        Vec3::new(-2.0, 0.0, 0.0),
+        ColliderShape::Sphere,
+        Vec3::new(3.0, 0.0, 0.0),
+    );
+    let standing = character(
+        &mut app,
+        Vec3::new(0.0, 0.0, 0.0),
+        ColliderShape::Sphere,
+        Vec3::ZERO,
+    );
+    for who in [walker, standing] {
+        let mut collider = *app.world().get::<Collider>(who).unwrap();
+        collider.layer = 2;
+        collider.mask = 1;
+        app.world_mut().insert(who, collider).unwrap();
+    }
+    run(&mut app, 200);
+    let x = at(&app, walker).x;
+    assert!(
+        x > 4.6 && x < 4.71,
+        "through the other player, to the wall: {x}"
+    );
+    assert_eq!(at(&app, standing), Vec3::ZERO);
+}
+
 #[test]
 fn walls_stop_a_top_down_character_and_it_slides_along_them() {
     let mut app = app(PhysicsProfile::TopDown2D);

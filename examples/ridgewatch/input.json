@@ -1,0 +1,67 @@
+{
+  "format": 1,
+  "actions": {
+    "bell": {
+      "kind": "button",
+      "keys": [
+        "R"
+      ]
+    },
+    "move": {
+      "kind": "axis2",
+      "up": [
+        "W",
+        "Up"
+      ],
+      "down": [
+        "S",
+        "Down"
+      ],
+      "left": [
+        "A",
+        "Left"
+      ],
+      "right": [
+        "D",
+        "Right"
+      ]
+    },
+    "sabotage": {
+      "kind": "button",
+      "keys": [
+        "Q"
+      ]
+    },
+    "say_1": {
+      "kind": "button",
+      "keys": [
+        "1"
+      ]
+    },
+    "say_2": {
+      "kind": "button",
+      "keys": [
+        "2"
+      ]
+    },
+    "say_3": {
+      "kind": "button",
+      "keys": [
+        "3"
+      ]
+    },
+    "say_4": {
+      "kind": "button",
+      "keys": [
+        "4"
+      ]
+    },
+    "use": {
+      "kind": "button",
+      "keys": [
+        "E",
+        "Space"
+      ]
+    }
+  }
+}

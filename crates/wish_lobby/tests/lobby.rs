@@ -240,3 +240,49 @@ fn game_code_drives_the_lobby_with_requests() {
             .is_some_and(|l| l.phase == LobbyPhase::Running)
     });
 }
+
+/// Friction F16: a game with ten characters takes at most ten players; one
+/// more is refused as when every seat is taken.
+#[test]
+fn a_match_takes_at_most_max_players() {
+    let config = wish_lobby::LobbyConfig {
+        max_players: 3,
+        ..lobby_config(1)
+    };
+    let mut party = Party::new(SEED, LinkConditions::default(), config);
+    party.join("Ada", 1);
+    party.join("Bo", 2);
+    let third = party.join("Cy", 3);
+    party.run_until(300, |p| p.players[third].session.closed().is_some());
+    assert_eq!(
+        party.players[third].session.closed(),
+        Some(wish_types::LobbyClosed::Refused)
+    );
+    assert_eq!(party.host.lobby().seated(), vec![0, 1, 2]);
+    let bad = wish_lobby::LobbyConfig {
+        max_players: 0,
+        ..lobby_config(1)
+    };
+    assert_eq!(bad.validate().unwrap_err().code, "net_config_invalid");
+}
+
+/// Friction F13: a player's machine is in an online session from its first
+/// tick, before the host's lobby arrives: its game code must never take it
+/// for a game alone (`Offline`).
+#[test]
+fn a_joining_machine_never_says_offline() {
+    let mut party = Party::new(SEED, LinkConditions::default(), lobby_config(1));
+    let ada = party.join("Ada", 1);
+    party.step();
+    let first = party.players[ada].world().resource::<Lobby>().copied();
+    assert_eq!(first.map(|l| l.phase), Some(LobbyPhase::Open));
+    party.run_until(300, |p| p.players[ada].session.seat().is_some());
+    for _ in 0..60 {
+        party.step();
+        let phase = party.players[ada]
+            .world()
+            .resource::<Lobby>()
+            .map(|l| l.phase);
+        assert_eq!(phase, Some(LobbyPhase::Open));
+    }
+}

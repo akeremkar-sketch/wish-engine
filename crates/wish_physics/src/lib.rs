@@ -744,7 +744,14 @@ fn sync_entity(world: &World, state: &mut PhysicsState, entity: Entity) -> Resul
     let kind = body_desc.map_or(BodyKind::Fixed, |d| d.kind);
     let moved_by_others = match &link.written {
         Some((transform, _)) => world.get::<Transform>(entity) != Some(transform),
-        None => false,
+        // Physics has not written this body back yet (it was made when the
+        // session was prepared): a place game code wrote on the first tick
+        // is the body's new place (friction F19: a character placed on tick
+        // 0 snapped back to where the scene had it).
+        None => {
+            let current = body.position();
+            wv(current.translation) != translation || wq(current.rotation) != rotation
+        }
     };
     match kind {
         BodyKind::Dynamic => {
@@ -842,9 +849,13 @@ fn standing_on(
         // follows it only at the next step.
         let at = *body.position() * collider.position_wrt_parent().copied().unwrap_or_default();
         let feet = -collider.shape().compute_local_aabb().mins.y;
+        // A character meets only what its layer and mask let it meet, as
+        // any collider does (friction F20: two characters on a layer that
+        // does not collide with itself still blocked each other).
         let filter = rp::QueryFilter::default()
             .exclude_rigid_body(link.body)
-            .exclude_sensors();
+            .exclude_sensors()
+            .groups(groups(&link.collider_desc));
         let queries = state.broad.as_query_pipeline(
             state.narrow.query_dispatcher(),
             &state.bodies,
@@ -968,9 +979,13 @@ fn move_each_character(
                 .then(|| CharacterLength::Absolute(controller.snap_to_ground.min(2.0))),
             ..KinematicCharacterController::default()
         };
+        // A character meets only what its layer and mask let it meet, as
+        // any collider does (friction F20: two characters on a layer that
+        // does not collide with itself still blocked each other).
         let filter = rp::QueryFilter::default()
             .exclude_rigid_body(link.body)
-            .exclude_sensors();
+            .exclude_sensors()
+            .groups(groups(&link.collider_desc));
         let queries = state.broad.as_query_pipeline(
             state.narrow.query_dispatcher(),
             &state.bodies,
@@ -1004,6 +1019,7 @@ fn move_each_character(
                     rp::QueryFilter::default()
                         .exclude_rigid_body(link.body)
                         .exclude_sensors()
+                        .groups(groups(&link.collider_desc))
                         .predicate(&not_platform),
                 );
                 let options = rapier3d::parry::query::ShapeCastOptions {

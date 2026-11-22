@@ -32,6 +32,11 @@ impl Role {
 #[derive(Debug, Default)]
 pub struct TypeTable {
     types: Vec<(Role, String, Value)>,
+    /// The Rust types already listed, by role: a type that every system
+    /// takes (`Res<Lobby>`, `PlayerActions`) is described once, not once
+    /// per parameter (friction F12: a twelve-system game ran out of fuel
+    /// building its schemas again and again).
+    seen: Vec<(Role, std::any::TypeId, String)>,
 }
 
 impl TypeTable {
@@ -41,6 +46,10 @@ impl TypeTable {
     }
 
     fn add<T: Plain>(&mut self, role: Role) -> String {
+        let id = std::any::TypeId::of::<T>();
+        if let Some((_, _, name)) = self.seen.iter().find(|(r, t, _)| *r == role && *t == id) {
+            return name.clone();
+        }
         let schema = T::schema();
         let wire = to_wire(&schema);
         // The same type seen again is listed once; a different type with the
@@ -54,6 +63,7 @@ impl TypeTable {
         {
             self.types.push((role, schema.name.clone(), wire));
         }
+        self.seen.push((role, id, schema.name.clone()));
         schema.name
     }
 
