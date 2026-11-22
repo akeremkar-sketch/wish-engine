@@ -494,8 +494,14 @@ impl Workspace {
                 at.width.round().max(1.0) as u32,
                 at.height.round().max(1.0) as u32,
             );
-            let position =
-                wish_input::picture_to_interface(session.app.world(), size, [at.x, at.y]);
+            // In a match the person plays as a player, the picture is that
+            // machine's.
+            let shown = session
+                .net
+                .as_deref()
+                .and_then(|net| net.world_of(&session.app, net.person_seat()?))
+                .unwrap_or(session.app.world());
+            let position = wish_input::picture_to_interface(shown, size, [at.x, at.y]);
             values.insert(wish_input::POINTER.to_owned(), position);
             values.insert(
                 wish_input::SCREEN.to_owned(),
@@ -512,11 +518,26 @@ impl Workspace {
 
     /// The sounds playing in session `id` now, for a speaker (`wen play`).
     pub fn play_voices(&self, id: &str) -> Result<Vec<wish_audio::Voice>> {
-        Ok(wish_audio::voices(self.session(id)?.app.world()))
+        let seat = self.play_seat(id);
+        Ok(wish_audio::voices(self.session_world(id, seat)?))
     }
 
-    /// What session `id` looks like now, for drawing.
-    pub fn play_scene(&self, id: &str) -> Result<wish_render::RenderScene> {
-        wish_render::extract(self.session(id)?.app.world())
+    /// What session `id` looks like now, for drawing: in an online match
+    /// the person plays as a player (`net host` `play_as: "player"`), what
+    /// that machine shows (its own player predicted, the others
+    /// interpolated).
+    pub fn play_scene(&mut self, id: &str) -> Result<wish_render::RenderScene> {
+        match self.play_seat(id) {
+            Some(seat) => wish_render::extract(self.session_picture_world(id, Some(seat))?),
+            None => wish_render::extract(self.session(id)?.app.world()),
+        }
+    }
+
+    /// The seat the person at this computer plays in session `id`'s online
+    /// match when it plays as a player (`net host` `play_as: "player"`),
+    /// once the host seated it; `None` otherwise (the host's player, or not
+    /// a match).
+    pub fn play_seat(&self, id: &str) -> Option<u32> {
+        self.session(id).ok()?.net.as_deref()?.person_seat()
     }
 }

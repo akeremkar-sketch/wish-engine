@@ -17,7 +17,7 @@ use std::sync::Arc;
 use wish_app::{App, AppSnapshot};
 use wish_core::math::Vec3;
 use wish_core::{Diagnostic, Entity, Hash128, Result};
-use wish_ecs::{ComponentId, World};
+use wish_ecs::{ChangeTick, ComponentId, World};
 use wish_net::{Endpoint, PeerId, Transport};
 use wish_schema::Plain;
 use wish_types::{NetOwner, PlayerId, Transform};
@@ -242,6 +242,50 @@ pub struct Shown {
     pub offset: Vec3,
 }
 
+/// What a caller does around every tick the prediction simulates, the
+/// first time and again after a correction (design note
+/// `1.1-net-tool.md` §12): a lobby session delivers the host's messages
+/// into the tick before it runs and sends the game's messages after it, at
+/// most once per tick however often the tick is played.
+pub trait TickHook {
+    /// Before tick `tick` runs in `world` (the prediction world). `again`
+    /// says the tick was simulated before (a correction plays it again);
+    /// `entity` gives the prediction world's entity of a network id
+    /// ([`Entity::NULL`] when it has none).
+    fn before(
+        &mut self,
+        world: &mut World,
+        tick: u64,
+        again: bool,
+        entity: &dyn Fn(u32) -> Entity,
+    ) -> Result<()> {
+        let _ = (world, tick, again, entity);
+        Ok(())
+    }
+
+    /// After tick `tick` ran: `mark` is the world's change tick from before
+    /// [`before`](Self::before) (what the tick sent is since it);
+    /// `network_id` gives the network id of a prediction-world entity (0
+    /// when it has none).
+    fn after(
+        &mut self,
+        world: &World,
+        tick: u64,
+        again: bool,
+        mark: ChangeTick,
+        network_id: &dyn Fn(Entity) -> u32,
+    ) -> Result<()> {
+        let _ = (world, tick, again, mark, network_id);
+        Ok(())
+    }
+}
+
+/// A [`TickHook`] that does nothing.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoHook;
+
+impl TickHook for NoHook {}
+
 /// One replicated type in the prediction world.
 #[derive(Debug, Clone)]
 struct PredictType {
@@ -279,6 +323,9 @@ pub struct Predictor {
     tick: Option<u64>,
     /// The newest confirmed tick.
     confirmed: Option<u64>,
+    /// The newest tick simulated at all (a tick at or before it is played
+    /// again by a correction).
+    simulated: Option<u64>,
     /// The local player's actions per predicted tick not confirmed yet.
     inputs: BTreeMap<u64, Actions>,
     /// The actions of the newest predicted tick.
@@ -331,6 +378,7 @@ impl Predictor {
             members: BTreeSet::new(),
             tick: None,
             confirmed: None,
+            simulated: None,
             inputs: BTreeMap::new(),
             last_actions: Actions::new(),
             sent_from: None,
@@ -438,6 +486,19 @@ impl Predictor {
         now_ms: u64,
         actions: &Actions,
     ) -> Result<FrameReport> {
+        self.frame_with(client, endpoint, now_ms, actions, &mut NoHook)
+    }
+
+    /// [`frame`](Self::frame), with `hook` called around every tick it
+    /// simulates (new ticks and the ticks a correction plays again).
+    pub fn frame_with<T: Transport>(
+        &mut self,
+        client: &mut Client,
+        endpoint: &mut Endpoint<T>,
+        now_ms: u64,
+        actions: &Actions,
+        hook: &mut dyn TickHook,
+    ) -> Result<FrameReport> {
         let now_us = now_ms.saturating_mul(1000);
         let mut report = FrameReport::default();
         self.sync.observe(now_us, client.newest_seen());
@@ -446,7 +507,7 @@ impl Predictor {
         }
         if let Some(confirmed) = client.take_confirmed() {
             self.ensure_types(client)?;
-            self.reconcile(confirmed, &mut report)?;
+            self.reconcile(confirmed, &mut report, hook)?;
         }
         if let Some(predicted) = self.tick {
             let rtt = endpoint.rtt_ms(PeerId::HOST).map(|ms| ms * 1000);
@@ -478,7 +539,7 @@ impl Predictor {
                 let in_time = tick >= in_time_from;
                 let used = if in_time { actions } else { &held };
                 self.inputs.insert(tick, used.clone());
-                self.simulate(tick, used, &mut report)?;
+                self.simulate(tick, used, &mut report, hook)?;
                 self.stats.predicted_ticks += 1;
                 if in_time {
                     client.queue_frame(tick, used.clone());
@@ -543,7 +604,12 @@ impl Predictor {
         Ok(())
     }
 
-    fn reconcile(&mut self, confirmed: Confirmed, report: &mut FrameReport) -> Result<()> {
+    fn reconcile(
+        &mut self,
+        confirmed: Confirmed,
+        report: &mut FrameReport,
+        hook: &mut dyn TickHook,
+    ) -> Result<()> {
         let tick = confirmed.tick;
         if self.confirmed.is_some_and(|c| tick <= c) {
             return Ok(());
@@ -622,7 +688,7 @@ impl Predictor {
         let replay = predicted - tick;
         for next in tick + 1..=predicted {
             let actions = self.inputs.get(&next).cloned().unwrap_or_default();
-            self.simulate(next, &actions, report)?;
+            self.simulate(next, &actions, report, hook)?;
         }
         self.stats.replayed_ticks += replay;
         self.stats.longest_replay = self.stats.longest_replay.max(replay);
@@ -799,7 +865,13 @@ impl Predictor {
 
     /// Predicts tick `tick` with `actions` and keeps what it needs to go
     /// back to it.
-    fn simulate(&mut self, tick: u64, actions: &Actions, report: &mut FrameReport) -> Result<()> {
+    fn simulate(
+        &mut self,
+        tick: u64,
+        actions: &Actions,
+        report: &mut FrameReport,
+        hook: &mut dyn TickHook,
+    ) -> Result<()> {
         let Some(me) = self.player else {
             return Ok(());
         };
@@ -809,13 +881,24 @@ impl Predictor {
         if self.app.tick() != tick {
             self.app.set_tick(tick);
         }
+        let again = self.simulated.is_some_and(|s| tick <= s);
+        let mark = self.app.world().change_tick();
+        let ids = &self.ids;
+        hook.before(self.app.world_mut(), tick, again, &|net| {
+            ids.get(&net).copied().unwrap_or(Entity::NULL)
+        })?;
         let step = self.app.step()?;
         report.failures.extend(step.failures);
+        self.simulated = Some(self.simulated.map_or(tick, |s| s.max(tick)));
         // The prediction world's own spawns and despawns do not touch the
         // mapping, except entities that are gone.
         let world = self.app.world();
         self.ids.retain(|_, e| world.contains(*e));
         self.nets.retain(|e, _| world.contains(*e));
+        let nets = &self.nets;
+        hook.after(self.app.world(), tick, again, mark, &|entity| {
+            nets.get(&entity).copied().unwrap_or(0)
+        })?;
         self.tick = Some(tick);
         self.update_members();
         let views = self.read_members()?;

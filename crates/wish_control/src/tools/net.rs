@@ -87,6 +87,12 @@ pub(crate) const NET: Tool = Tool {
         )
         .or("true"),
         Param::optional(
+            "play_as",
+            Kind::Choice(&["host", "player"]),
+            "host: who the session's own input (input, sim_step input) plays: the host's player, or (player) a predicting player machine named name that joins first, over the network like any player, with a headless host.",
+        )
+        .or("\"host\""),
+        Param::optional(
             "auto_start",
             Kind::Boolean,
             "host: start the first match as soon as players seats are taken and ready.",
@@ -251,12 +257,18 @@ fn host(workspace: &mut Workspace, args: &Args) -> Result<Map<String, Value>> {
     let (conditions, network_seed) = conditions(args.value("network"))?;
     let port = args.int("port").map(|p| u16::try_from(p).unwrap_or(0));
     let expected = usize::try_from(args.int("players").unwrap_or(2)).unwrap_or(2);
-    let host_plays = args.value("host_plays").and_then(Value::as_bool) != Some(false);
+    let as_player = args.str("play_as") == Some("player");
+    let host_plays = !as_player && args.value("host_plays").and_then(Value::as_bool) != Some(false);
     let setup = crate::netplay::HostSetup {
         seed: u64::try_from(args.int("seed").unwrap_or(0)).unwrap_or(0),
         expected,
         host_plays,
-        host_name: args.str("name").unwrap_or("Host").to_owned(),
+        host_name: if as_player {
+            "Host"
+        } else {
+            args.str("name").unwrap_or("Host")
+        }
+        .to_owned(),
         auto_start: args.flag("auto_start"),
         room: args.str("room_code").map(str::to_owned),
         port,
@@ -272,6 +284,20 @@ fn host(workspace: &mut Workspace, args: &Args) -> Result<Map<String, Value>> {
         tick_rate: 60,
     };
     let id = workspace.start_net_session(&scene, &setup)?;
+    if as_player {
+        // The person's machine joins first; the held input is the bots'.
+        let own = args.without("input");
+        let name = args.str("name").unwrap_or("You").to_owned();
+        workspace.net_add_machine(&id, (&name, false), crate::netplay::Drive::Input, &own)?;
+        if let Some(machine) = workspace
+            .session_mut(&id)?
+            .net
+            .as_deref_mut()
+            .and_then(|net| net.players.last_mut())
+        {
+            machine.machine.person = true;
+        }
+    }
     let bots = usize::try_from(args.int("bots").unwrap_or(0)).unwrap_or(0);
     let drive = crate::netplay::Drive::parse(args.str("drive"));
     let mut added = Vec::new();
@@ -292,6 +318,9 @@ fn host(workspace: &mut Workspace, args: &Args) -> Result<Map<String, Value>> {
         out.insert("room_code".to_owned(), json!(net.room.as_str()));
         out.insert("seats_expected".to_owned(), json!(expected));
         out.insert("host_plays".to_owned(), json!(host_plays));
+        if as_player {
+            out.insert("you".to_owned(), json!(args.str("name").unwrap_or("You")));
+        }
         out.insert(
             "network".to_owned(),
             net.status(&session.app, 60)

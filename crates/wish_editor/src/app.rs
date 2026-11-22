@@ -1812,8 +1812,8 @@ impl EditorApp {
         self.editor.as_ref().map_or(&[], |editor| editor.widgets())
     }
 
-    /// The seat whose machine the game view shows while playing online
-    /// (`None`: the host's).
+    /// The seat the person chose for the game view while playing online
+    /// (`None`: their own machine, or the host's once they chose *Host*).
     pub fn watched_player(&self) -> Option<u32> {
         self.network.watching
     }
@@ -3275,6 +3275,7 @@ impl EditorApp {
         }
         if let Some(watching) = asked.watch {
             self.network.watching = watching;
+            self.network.host_view = watching.is_none();
             self.game_drawn = None;
             self.picture_stale = true;
         }
@@ -3288,10 +3289,13 @@ impl EditorApp {
         }
         let online = self.players > 1;
         let started = if online {
+            // The person plays a seat as an online player (predicted, over a
+            // simulated internet); bots take the others.
             self.call(
                 "net",
                 &json!({ "action": "host", "scene": self.scene.clone(), "players": self.players,
-                         "bots": self.players - 1, "auto_start": true }),
+                         "bots": self.players - 1, "auto_start": true, "play_as": "player",
+                         "network": wish_control::play_network() }),
             )
         } else {
             self.call("sim_start", &json!({ "scene": self.scene.clone() }))
@@ -3329,6 +3333,7 @@ impl EditorApp {
             }
             self.network.open = true;
             self.network.watching = None;
+            self.network.host_view = false;
             self.refresh_network();
         } else if self.record {
             let recorded = self.call(
@@ -3370,6 +3375,7 @@ impl EditorApp {
                 self.call("net", &json!({ "action": "stop", "session": play.session }));
                 self.network.status = None;
                 self.network.watching = None;
+                self.network.host_view = false;
             } else {
                 self.call("sim_stop", &json!({ "session": play.session }));
             }
@@ -5092,11 +5098,15 @@ impl EditorApp {
         }
         let (width, height) = (area.width() as u32, area.height() as u32);
         let preview = self.drag.as_ref().and_then(|active| active.ops.clone());
-        let watching = self
-            .play
-            .as_ref()
-            .filter(|play| play.net)
-            .and(self.network.watching);
+        // Online, the game view shows the person's own machine (its player
+        // predicted) until they choose another seat or the host.
+        let watching = self.play.as_ref().filter(|play| play.net).and_then(|play| {
+            self.network.watching.or_else(|| {
+                (!self.network.host_view)
+                    .then(|| self.workspace.play_seat(&play.session))
+                    .flatten()
+            })
+        });
         let key = (
             self.revision,
             self.play.as_ref().map(|play| play.tick),

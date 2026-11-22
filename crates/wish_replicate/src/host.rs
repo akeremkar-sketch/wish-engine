@@ -171,6 +171,9 @@ struct Link {
     /// The frame in force and its tick.
     held: Actions,
     applied_input: Option<u64>,
+    /// Frames of this player that arrived after the host had simulated
+    /// their tick.
+    late: u64,
 }
 
 /// What the host knows a client has of one entity.
@@ -355,6 +358,12 @@ impl Host {
     /// The newest input frame of `player` applied, if any.
     pub fn applied_input(&self, player: PlayerId) -> Option<u64> {
         self.link_of(player).and_then(|l| l.applied_input)
+    }
+
+    /// How many of `player`'s input frames arrived after the host had
+    /// simulated their tick (its share of [`HostStats::late_frames`]).
+    pub fn late_frames(&self, player: PlayerId) -> u64 {
+        self.link_of(player).map_or(0, |l| l.late)
     }
 
     /// How early `player`'s input arrives: the newest frame the host holds
@@ -609,6 +618,7 @@ impl Host {
             }
         }
         self.stats.late_frames += behind;
+        link.late += behind;
         while link.frames.len() > history.max(window as usize) {
             link.frames.pop_first();
         }

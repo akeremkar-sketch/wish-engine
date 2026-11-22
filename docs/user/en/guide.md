@@ -249,12 +249,14 @@ the change enters the history as *file*, and a broken file is reported, never ov
 - **A window of its own:** `wen play` plays the game in its own window. Saving the game code
   switches to the new code without stopping.
 - **Online play (a preview in 1.1):**
-  - *Game → Players* and a number from 2: *Play* then hosts an online match in the editor. You
-    are the host (player 0); bots take the other seats over a simulated network, and the match
-    starts once every seat is ready.
+  - *Game → Players* and a number from 2: *Play* then hosts an online match in the editor over a
+    simulated internet (50 ms each way). You play a seat as an online player does: your own
+    player is predicted, so it answers your keys at once, and the others are drawn smoothly a
+    little behind. Bots take the other seats, and the match starts once every seat is ready.
   - *Game → Network panel* shows the lobby and every seat: ready, connected, round trip and the
     bytes it receives. *Show in the game view* switches the game view to what a player's machine
-    was sent (*Host*, *Player 1*, ...): a hidden-role game shows each player only what it may see.
+    shows (*Host*, *You (player 1)*, *Player 2*, ...): a hidden-role game shows each player only
+    what it may see.
   - `wen play --players 4` does the same in a window of its own. `wen net host --port 47600`
     hosts a match on the local network for people and prints its room code; on another computer
     `wen net join <address>:47600 --room <code>` (or `wen net join discover`) joins it.

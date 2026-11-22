@@ -264,8 +264,10 @@ fn world_position(world: &World, position: [f32; 2], screen: Option<[f32; 2]>) -
         .then_some(point)
 }
 
-/// Writes the `Pointer` resource from [`POINTER`] and [`CLICK`].
-fn apply_pointer(world: &mut World, values: &Values) -> Result<()> {
+/// Writes the `Pointer` resource from [`POINTER`] and [`CLICK`] only (a
+/// predicting player's machine writes its pointer into the prediction world
+/// this way: its actions go through the prediction, not `ActionState`).
+pub fn apply_pointer(world: &mut World, values: &Values) -> Result<()> {
     let before = world.resource::<Pointer>().copied();
     let given = values.get(POINTER).copied();
     if before.is_none() && given.is_none() && !values.contains_key(CLICK) {

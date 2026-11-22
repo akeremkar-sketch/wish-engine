@@ -285,8 +285,10 @@ fn prepare_with(
     };
     let (mut scene, by_name, notes, source) = match &session {
         Some(id) => {
-            let world = workspace.session_world(id, player)?;
             let tick = workspace.session_world_tick(id, player)?;
+            // A player's machine is drawn as it shows itself: its own
+            // player predicted, the others interpolated.
+            let world = workspace.session_picture_world(id, player)?;
             let mut source = json!({ "session": id, "tick": tick });
             if let Some(player) = player {
                 source["player"] = json!(player);
@@ -983,9 +985,14 @@ impl Workspace {
         point: Option<[f32; 2]>,
     ) -> Result<FlatPicture> {
         let mut prepared = match source {
-            PictureSource::Scene(scene) => prepare_with(self, None, scene, None)?,
-            PictureSource::Preview(scene, ops) => prepare_with(self, None, scene, Some(ops))?,
-            PictureSource::Session(id) => prepare_with(self, Some(id), None, None)?,
+            PictureSource::Scene(scene) => prepare_with(self, (None, None), scene, None)?,
+            PictureSource::Preview(scene, ops) => {
+                prepare_with(self, (None, None), scene, Some(ops))?
+            }
+            PictureSource::Session(id) => prepare_with(self, (Some(id), None), None, None)?,
+            PictureSource::Player(id, seat) => {
+                prepare_with(self, (Some(id), Some(seat)), None, None)?
+            }
             PictureSource::Checkpoint(scene, name) => prepare_checkpoint(self, name, scene)?,
         };
         if let (Some(camera), Some(first)) = (camera, prepared.scene.cameras.first_mut()) {

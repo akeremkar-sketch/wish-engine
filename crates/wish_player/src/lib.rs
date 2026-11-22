@@ -215,9 +215,14 @@ impl Game {
         }
         let answer = if self.players > 1 {
             args["action"] = json!("host");
+            // The person plays one seat as a predicting player over a
+            // simulated internet (a headless host in this process, bots in
+            // the other seats), so the game feels as it will online.
             args["players"] = json!(self.players);
             args["bots"] = json!(self.players - 1);
             args["auto_start"] = json!(true);
+            args["play_as"] = json!("player");
+            args["network"] = wish_control::play_network();
             self.run_tool("net", &args)
         } else {
             self.run_tool("sim_start", &args)

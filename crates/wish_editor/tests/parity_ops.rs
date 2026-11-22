@@ -1935,13 +1935,31 @@ fn an_online_match_is_played_with_two_players_by_hand() {
         .network_status()
         .cloned()
         .expect("the network panel reads the match");
-    assert_eq!(status["seats"].as_array().unwrap().len(), 2, "{status}");
+    let seats = status["seats"].as_array().unwrap();
+    assert_eq!(seats.len(), 2, "{status}");
     assert_eq!(status["lobby"]["phase"], "Running", "{status}");
-    assert_eq!(status["seats"][1]["machine"], "bot", "{status}");
-    // The switcher shows the bot's machine in the game view, then the host's.
-    let bot = named(&app, "Player 1");
-    click(&mut app, bot);
-    assert_eq!(app.watched_player(), Some(1));
+    // The person plays a seat as an online player, predicted; the bot the
+    // other.
+    let seat_of = |machine: &str| {
+        seats
+            .iter()
+            .find(|s| s["machine"] == machine)
+            .and_then(|s| s["player"].as_u64())
+            .unwrap_or_else(|| panic!("no {machine} seat: {status}"))
+    };
+    let (you, bot) = (seat_of("you"), seat_of("bot"));
+    assert!(
+        seats.iter().all(|s| s["predicted"] == true),
+        "every player machine predicts: {status}"
+    );
+    // The switcher shows the bot's machine in the game view, the person's
+    // own, then the host's.
+    let other = named(&app, &format!("Player {bot}"));
+    click(&mut app, other);
+    assert_eq!(app.watched_player(), Some(bot as u32));
+    let own = named(&app, &format!("You (player {you})"));
+    click(&mut app, own);
+    assert_eq!(app.watched_player(), Some(you as u32));
     let host = named(&app, "Host");
     click(&mut app, host);
     assert_eq!(app.watched_player(), None);

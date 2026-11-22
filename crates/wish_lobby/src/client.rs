@@ -6,8 +6,9 @@ use std::collections::{BTreeMap, VecDeque};
 use wish_core::{Diagnostic, Entity, Result};
 use wish_ecs::{ChangeTick, World};
 use wish_net::{Channel, Endpoint, Event, PeerId, Transport};
+use wish_replicate::input::Actions;
 use wish_replicate::wire::Reader;
-use wish_replicate::{Client, ClientConfig, Value};
+use wish_replicate::{Client, ClientConfig, FrameReport, Predictor, TickHook, Value};
 use wish_types::{LobbyAction, LobbyClosed, LobbyPhase, LobbyRequest, NetTo, PlayerId};
 
 use crate::host::{MAX_DELIVERED, MAX_DIAGNOSTICS, SessionStats};
@@ -63,6 +64,21 @@ struct Pending {
     value: Value,
 }
 
+/// What a predicting session keeps for the prediction world (design note
+/// `1.1-net-tool.md` §12): the host's messages wait for the next tick the
+/// prediction runs for the first time, and are delivered into it again
+/// when a correction plays it again; the lobby is written into it when it
+/// changed and on every tick played again.
+#[derive(Debug, Default)]
+struct Predicted {
+    inbox: VecDeque<Pending>,
+    delivered: BTreeMap<u64, Vec<Pending>>,
+    lobby_dirty: bool,
+    local_dirty: bool,
+    /// The newest predicted tick whose lobby requests were sent.
+    requests_through: Option<u64>,
+}
+
 /// A player's online session.
 #[derive(Debug)]
 pub struct ClientSession {
@@ -81,6 +97,9 @@ pub struct ClientSession {
     local_dirty: bool,
     inbox: VecDeque<Pending>,
     sent: BTreeMap<u64, BTreeMap<usize, usize>>,
+    /// The game runs in a prediction world (`predict`), not in the mirror.
+    predicting: bool,
+    predicted: Predicted,
     closed: Option<LobbyClosed>,
     closing_heard: bool,
     diagnostics: VecDeque<Diagnostic>,
@@ -106,6 +125,8 @@ impl ClientSession {
             local_dirty: false,
             inbox: VecDeque::new(),
             sent: BTreeMap::new(),
+            predicting: false,
+            predicted: Predicted::default(),
             closed: None,
             closing_heard: false,
             diagnostics: VecDeque::new(),
@@ -188,6 +209,7 @@ impl ClientSession {
         self.closing_heard = false;
         self.inbox.clear();
         self.sent.clear();
+        self.predicted = Predicted::default();
         self.remote_types.clear();
         self.host_index.clear();
     }
@@ -256,46 +278,78 @@ impl ClientSession {
         }
         let mark = world.change_tick();
         if self.lobby_dirty {
-            let mut lobby = self.lobby.clone();
-            if let Some(closed) = self.closed {
-                lobby.phase = LobbyPhase::Closed;
-                lobby.closed = closed;
-            }
-            lobby.write(world)?;
+            self.lobby_now().write(world)?;
             self.lobby_dirty = false;
+            self.predicted.lobby_dirty = true;
         }
         if self.local_dirty {
             self.local.write(world)?;
             self.local_dirty = false;
+            self.predicted.local_dirty = true;
         }
-        let mut delivered = 0;
-        while delivered < MAX_DELIVERED {
-            let Some(pending) = self.inbox.pop_front() else {
-                break;
-            };
-            delivered += 1;
-            let Some(ty) = self.types.get(pending.ty) else {
-                continue;
-            };
-            let replication = &self.replication;
-            let mut value = MessageValue::from_wire(pending.value, &|net| {
-                replication.entity(net).unwrap_or(Entity::NULL)
-            });
-            let net = ty.envelope(&value.bytes);
-            ty.set_envelope(&mut value.bytes, &message::delivered(&net, 0));
-            let outcome = value
-                .write(world, ty)
-                .and_then(|bytes| world.send_bytes(ty.id, &bytes));
-            match outcome {
-                Ok(()) => self.stats.messages_delivered += 1,
-                Err(problem) => {
-                    self.stats.dropped_invalid += 1;
-                    self.note(problem);
+        if self.predicting {
+            // The game runs in the prediction world: the messages wait for
+            // the next tick it predicts (`predict`).
+            self.predicted.inbox.extend(self.inbox.drain(..));
+        } else {
+            let mut delivered = 0;
+            while delivered < MAX_DELIVERED {
+                let Some(pending) = self.inbox.pop_front() else {
+                    break;
+                };
+                delivered += 1;
+                let replication = std::mem::replace(
+                    &mut self.replication,
+                    Client::new(self.config.replication.clone()),
+                );
+                let done = self.deliver(world, pending, &|net| {
+                    replication.entity(net).unwrap_or(Entity::NULL)
+                });
+                self.replication = replication;
+                if done {
+                    self.stats.messages_delivered += 1;
                 }
             }
         }
         world.advance_change_tick();
         Ok(mark)
+    }
+
+    /// The lobby as this machine shows it (closed once the session closed).
+    fn lobby_now(&self) -> LobbyState {
+        let mut lobby = self.lobby.clone();
+        if let Some(closed) = self.closed {
+            lobby.phase = LobbyPhase::Closed;
+            lobby.closed = closed;
+        }
+        lobby
+    }
+
+    /// Delivers one message of the host into `world` as an event (`entity`
+    /// resolves the network ids it names); `true` when it was delivered.
+    fn deliver(
+        &mut self,
+        world: &mut World,
+        pending: Pending,
+        entity: &dyn Fn(u32) -> Entity,
+    ) -> bool {
+        let Some(ty) = self.types.get(pending.ty) else {
+            return false;
+        };
+        let mut value = MessageValue::from_wire(pending.value, entity);
+        let net = ty.envelope(&value.bytes);
+        ty.set_envelope(&mut value.bytes, &message::delivered(&net, 0));
+        let outcome = value
+            .write(world, ty)
+            .and_then(|bytes| world.send_bytes(ty.id, &bytes));
+        match outcome {
+            Ok(()) => true,
+            Err(problem) => {
+                self.stats.dropped_invalid += 1;
+                self.note(problem);
+                false
+            }
+        }
     }
 
     fn event<T: Transport>(&mut self, endpoint: &mut Endpoint<T>, event: Event) {
@@ -489,6 +543,22 @@ impl ClientSession {
         mark: ChangeTick,
         tick: u64,
     ) -> Result<()> {
+        let ups = self.requests(world, mark)?;
+        self.send_ups(endpoint, ups)?;
+        let replication = std::mem::replace(
+            &mut self.replication,
+            Client::new(self.config.replication.clone()),
+        );
+        let outgoing = self.outgoing(world, mark, tick, &|entity| {
+            replication.network_id(entity).unwrap_or(0)
+        });
+        self.replication = replication;
+        self.send_messages(endpoint, outgoing?)
+    }
+
+    /// The lobby requests game code sent since `mark`, as what goes up.
+    fn requests(&mut self, world: &World, mark: ChangeTick) -> Result<Vec<Up>> {
+        let mut ups = Vec::new();
         for request in world.events_since::<LobbyRequest>(mark)? {
             let up = match request.action {
                 LobbyAction::Ready => Up::Ready(true),
@@ -512,10 +582,7 @@ impl ClientSession {
                         color: u8::try_from(request.value).unwrap_or(u8::MAX),
                     }
                 }
-                LobbyAction::Leave => {
-                    self.leave(endpoint)?;
-                    continue;
-                }
+                LobbyAction::Leave => Up::Leave,
                 LobbyAction::Start | LobbyAction::End | LobbyAction::Reopen => {
                     self.note(Diagnostic::warning(
                         "lobby_not_host",
@@ -525,8 +592,47 @@ impl ClientSession {
                     continue;
                 }
             };
-            self.up(endpoint, &up)?;
+            ups.push(up);
         }
+        Ok(ups)
+    }
+
+    /// Sends lobby requests (a leave closes this side too).
+    fn send_ups<T: Transport>(&mut self, endpoint: &mut Endpoint<T>, ups: Vec<Up>) -> Result<()> {
+        for up in ups {
+            if matches!(up, Up::Leave) {
+                self.leave(endpoint)?;
+            } else {
+                self.up(endpoint, &up)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Sends encoded game messages to the host.
+    fn send_messages<T: Transport>(
+        &mut self,
+        endpoint: &mut Endpoint<T>,
+        messages: Vec<Vec<u8>>,
+    ) -> Result<()> {
+        for bytes in messages {
+            endpoint.send(PeerId::HOST, Channel::Reliable, &bytes)?;
+            self.stats.messages_sent += 1;
+        }
+        Ok(())
+    }
+
+    /// The game's messages of tick `tick` sent since `mark`, encoded (to
+    /// the host only; `network_id` names the entities they refer to), less
+    /// those an earlier run of the same tick sent already.
+    fn outgoing(
+        &mut self,
+        world: &World,
+        mark: ChangeTick,
+        tick: u64,
+        network_id: &dyn Fn(Entity) -> u32,
+    ) -> Result<Vec<Vec<u8>>> {
+        let mut out = Vec::new();
         let seated = self.seat.is_some() && self.closed.is_none();
         let types = self.types.clone();
         for (index, ty) in types.iter().enumerate() {
@@ -564,8 +670,7 @@ impl ClientSession {
                     continue;
                 }
                 let value = MessageValue::read(world, ty, &raw);
-                let replication = &self.replication;
-                let wire_value = value.to_wire(&|e| replication.network_id(e).unwrap_or(0));
+                let wire_value = value.to_wire(network_id);
                 let mut bytes = wire::encode_up(&Up::Message {
                     ty: host_index,
                     at: 0,
@@ -580,8 +685,7 @@ impl ClientSession {
                     ));
                     continue;
                 }
-                endpoint.send(PeerId::HOST, Channel::Reliable, &bytes)?;
-                self.stats.messages_sent += 1;
+                out.push(bytes);
             }
             if ordinal > already {
                 self.sent.entry(tick).or_default().insert(index, ordinal);
@@ -589,6 +693,115 @@ impl ClientSession {
         }
         let keep = tick.saturating_sub(SENT_MEMORY);
         self.sent.retain(|t, _| *t >= keep);
-        Ok(())
+        Ok(out)
+    }
+
+    /// One frame of a predicting player (design note `1.1-net-tool.md`
+    /// §12), after [`begin_tick`](Self::begin_tick) on the mirror world:
+    /// `predictor` reconciles, predicts and sends this player's `actions`
+    /// stamped with their ticks. Around every tick it runs, the host's
+    /// messages and the lobby go into the prediction world and the game's
+    /// messages and lobby requests come out of it, at most once per tick
+    /// however often a correction plays it. `extra` is called around every
+    /// tick too: after this session's part before a tick, and after it
+    /// once the tick ran.
+    pub fn predict<T: Transport>(
+        &mut self,
+        predictor: &mut Predictor,
+        endpoint: &mut Endpoint<T>,
+        now_ms: u64,
+        actions: &Actions,
+        extra: &mut dyn TickHook,
+    ) -> Result<FrameReport> {
+        self.predicting = true;
+        let mut client = std::mem::replace(
+            &mut self.replication,
+            Client::new(self.config.replication.clone()),
+        );
+        let mut hook = SessionHook {
+            session: self,
+            extra,
+            ups: Vec::new(),
+            messages: Vec::new(),
+        };
+        let report = predictor.frame_with(&mut client, endpoint, now_ms, actions, &mut hook);
+        let SessionHook { ups, messages, .. } = hook;
+        self.replication = client;
+        if let Some(confirmed) = predictor.confirmed_tick() {
+            self.predicted.delivered.retain(|tick, _| *tick > confirmed);
+        }
+        let report = report?;
+        self.send_ups(endpoint, ups)?;
+        self.send_messages(endpoint, messages)?;
+        Ok(report)
+    }
+}
+
+/// A predicting session's part of every predicted tick.
+struct SessionHook<'a> {
+    session: &'a mut ClientSession,
+    extra: &'a mut dyn TickHook,
+    ups: Vec<Up>,
+    messages: Vec<Vec<u8>>,
+}
+
+impl TickHook for SessionHook<'_> {
+    fn before(
+        &mut self,
+        world: &mut World,
+        tick: u64,
+        again: bool,
+        entity: &dyn Fn(u32) -> Entity,
+    ) -> Result<()> {
+        let session = &mut *self.session;
+        // A tick played again starts from a snapshot that may be older than
+        // the lobby's news: it gets the lobby as known now.
+        if session.predicted.lobby_dirty || again {
+            session.lobby_now().write(world)?;
+            session.predicted.lobby_dirty = false;
+        }
+        if session.predicted.local_dirty || again {
+            session.local.write(world)?;
+            session.predicted.local_dirty = false;
+        }
+        let batch: Vec<Pending> = if again {
+            session
+                .predicted
+                .delivered
+                .get(&tick)
+                .cloned()
+                .unwrap_or_default()
+        } else {
+            let take = session.predicted.inbox.len().min(MAX_DELIVERED);
+            let batch: Vec<Pending> = session.predicted.inbox.drain(..take).collect();
+            if !batch.is_empty() {
+                session.predicted.delivered.insert(tick, batch.clone());
+            }
+            batch
+        };
+        for pending in batch {
+            if session.deliver(world, pending, entity) && !again {
+                session.stats.messages_delivered += 1;
+            }
+        }
+        self.extra.before(world, tick, again, entity)
+    }
+
+    fn after(
+        &mut self,
+        world: &World,
+        tick: u64,
+        again: bool,
+        mark: ChangeTick,
+        network_id: &dyn Fn(Entity) -> u32,
+    ) -> Result<()> {
+        let session = &mut *self.session;
+        if session.predicted.requests_through.is_none_or(|t| tick > t) {
+            self.ups.extend(session.requests(world, mark)?);
+            session.predicted.requests_through = Some(tick);
+        }
+        self.messages
+            .extend(session.outgoing(world, mark, tick, network_id)?);
+        self.extra.after(world, tick, again, mark, network_id)
     }
 }

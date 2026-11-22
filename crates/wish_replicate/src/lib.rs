@@ -39,7 +39,7 @@ pub use client::{Client, ClientConfig, ClientStats, Confirmed};
 pub use host::{Host, HostStats, ReplicationConfig};
 pub use interpolate::Source;
 pub use layout::{Layout, Leaf, LeafKind};
-pub use predict::{FrameReport, PredictConfig, PredictStats, Predictor, Shown};
+pub use predict::{FrameReport, NoHook, PredictConfig, PredictStats, Predictor, Shown, TickHook};
 pub use sync::SyncState;
 pub use value::{EntityView, Value, View};
 
