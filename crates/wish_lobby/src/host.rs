@@ -842,7 +842,7 @@ impl HostSession {
             Refusal::Full => (
                 "lobby_full",
                 "every seat is taken",
-                "Wait for a player to leave; a match has at most 16 players.",
+                "Wait for a player to leave; a match has at most the game's max_players (16 at most).",
             ),
             Refusal::Running => (
                 "lobby_match_running",
@@ -912,8 +912,11 @@ impl HostSession {
             self.refuse(endpoint, peer, Refusal::Running);
             return;
         }
-        let Some(seat) =
-            (1..MAX_PLAYERS as PlayerId).find(|p| self.lobby.seat(*p).is_some_and(|s| !s.taken))
+        let taken = self.lobby.seats.iter().filter(|s| s.taken).count();
+        let room = taken < self.config.max_players as usize;
+        let Some(seat) = (1..MAX_PLAYERS as PlayerId)
+            .find(|p| self.lobby.seat(*p).is_some_and(|s| !s.taken))
+            .filter(|_| room)
         else {
             self.refuse(endpoint, peer, Refusal::Full);
             return;

@@ -447,6 +447,8 @@ pub struct NetSettings {
     pub budget_bytes: Option<usize>,
     /// Players seated before the host may start.
     pub min_players: Option<u32>,
+    /// The most players a match takes.
+    pub max_players: Option<u32>,
     /// Colours of the game's palette.
     pub colors: Option<u32>,
     /// Ticks a player who dropped keeps its seat.
@@ -457,7 +459,18 @@ pub struct NetSettings {
     pub messages_per_second: Option<u32>,
     /// The roles: a name and how many players get it (the first is
     /// everyone else's).
-    pub roles: Vec<(String, u32)>,
+    pub roles: Vec<NetRole>,
+}
+
+/// One role of `net.lobby.roles`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NetRole {
+    /// Its name.
+    pub name: String,
+    /// How many players get it (the first role: everyone else).
+    pub count: u32,
+    /// One more player gets it from each of these numbers of players.
+    pub more_from: Vec<u32>,
 }
 
 impl Default for NetSettings {
@@ -466,6 +479,7 @@ impl Default for NetSettings {
             replicate: vec!["Transform".to_owned(), "NetOwner".to_owned()],
             budget_bytes: None,
             min_players: None,
+            max_players: None,
             colors: None,
             rejoin_grace_ticks: None,
             message_bytes: None,
@@ -481,6 +495,7 @@ pub type NetProblem = (String, String, String);
 const NET_KEYS: &[&str] = &["budget_bytes", "lobby", "replicate"];
 const LOBBY_KEYS: &[&str] = &[
     "colors",
+    "max_players",
     "message_bytes",
     "messages_per_second",
     "min_players",
@@ -591,6 +606,22 @@ impl NetSettings {
             "Ask for 1 to 16 players before the host may start.",
         )?
         .and_then(|n| u32::try_from(n).ok());
+        settings.max_players = lobby_number(
+            lobby,
+            "max_players",
+            (1, 16),
+            "Seat 1 to 16 players at most (a game with ten characters takes ten).",
+        )?
+        .and_then(|n| u32::try_from(n).ok());
+        if let (Some(min), Some(max)) = (settings.min_players, settings.max_players)
+            && max < min
+        {
+            return bad(
+                "/lobby/max_players",
+                &format!("'max_players' is {max}, below 'min_players' ({min})."),
+                "A match must be able to seat the players it needs to start.",
+            );
+        }
         settings.colors = lobby_number(
             lobby,
             "colors",
@@ -619,7 +650,7 @@ impl NetSettings {
         )?
         .and_then(|n| u32::try_from(n).ok());
         if let Some(roles) = lobby.get("roles") {
-            let hint = "List the roles like [{ \"name\": \"crew\" }, { \"name\": \"saboteur\", \"count\": 2 }]: the first is everyone else's, each later one goes to count players (at most 16 roles).";
+            let hint = "List the roles like [{ \"name\": \"crew\" }, { \"name\": \"saboteur\", \"count\": 1, \"more_from\": [7] }]: the first is everyone else's, each later one goes to count players, and to one more from each number of players in more_from (at most 16 roles).";
             let Some(items) = roles.as_array().filter(|items| items.len() <= 16) else {
                 return bad("/lobby/roles", "'roles' must be a list.", hint);
             };
@@ -632,12 +663,25 @@ impl NetSettings {
                     None => Some(0),
                     Some(v) => whole(v, 0, 16).and_then(|n| u32::try_from(n).ok()),
                 };
-                let extra = item
-                    .as_object()
-                    .and_then(|o| o.keys().find(|k| *k != "name" && *k != "count"));
-                match (name, count, extra) {
-                    (Some(name), Some(count), None) => {
-                        settings.roles.push((name.to_owned(), count))
+                let more_from = match item.get("more_from") {
+                    None => Some(Vec::new()),
+                    Some(v) => v.as_array().filter(|a| a.len() <= 16).and_then(|a| {
+                        a.iter()
+                            .map(|n| whole(n, 1, 16).and_then(|n| u32::try_from(n).ok()))
+                            .collect::<Option<Vec<u32>>>()
+                    }),
+                };
+                let extra = item.as_object().and_then(|o| {
+                    o.keys()
+                        .find(|k| !matches!(k.as_str(), "name" | "count" | "more_from"))
+                });
+                match (name, count, more_from, extra) {
+                    (Some(name), Some(count), Some(more_from), None) => {
+                        settings.roles.push(NetRole {
+                            name: name.to_owned(),
+                            count,
+                            more_from,
+                        });
                     }
                     _ => {
                         return bad(
@@ -721,5 +765,30 @@ mod tests {
         assert_eq!(problem.hint, "Did you mean 'bounce'?");
         assert_eq!(problem.location.line, Some(1));
         assert_eq!(parse_project("{").unwrap_err().code, "json_syntax");
+    }
+
+    /// Frictions F14 and F16: a party game seats at most its characters
+    /// and deals a second saboteur to a large match.
+    #[test]
+    fn net_lobby_reads_max_players_and_roles_that_grow() {
+        let settings = NetSettings::from_value(&serde_json::json!({
+            "lobby": { "min_players": 4, "max_players": 10,
+                       "roles": [{ "name": "keeper" }, { "name": "static", "count": 1, "more_from": [7] }] }
+        }))
+        .unwrap();
+        assert_eq!(settings.max_players, Some(10));
+        assert_eq!(settings.roles[1].more_from, vec![7]);
+        for (bad, at) in [
+            (
+                serde_json::json!({ "lobby": { "min_players": 6, "max_players": 4 } }),
+                "/lobby/max_players",
+            ),
+            (
+                serde_json::json!({ "lobby": { "roles": [{ "name": "a" }, { "name": "b", "more_from": [40] }] } }),
+                "/lobby/roles/1",
+            ),
+        ] {
+            assert_eq!(NetSettings::from_value(&bad).unwrap_err().0, at);
+        }
     }
 }

@@ -32,6 +32,11 @@ impl Role {
 #[derive(Debug, Default)]
 pub struct TypeTable {
     types: Vec<(Role, String, Value)>,
+    /// The Rust types already listed, by role: a type that every system
+    /// takes (`Res<Lobby>`, `PlayerActions`) is described once, not once
+    /// per parameter (friction F12: a twelve-system game ran out of fuel
+    /// building its schemas again and again).
+    seen: Vec<(Role, std::any::TypeId, String)>,
 }
 
 impl TypeTable {
@@ -41,6 +46,10 @@ impl TypeTable {
     }
 
     fn add<T: Plain>(&mut self, role: Role) -> String {
+        let id = std::any::TypeId::of::<T>();
+        if let Some((_, _, name)) = self.seen.iter().find(|(r, t, _)| *r == role && *t == id) {
+            return name.clone();
+        }
         let schema = T::schema();
         let wire = to_wire(&schema);
         // The same type seen again is listed once; a different type with the
@@ -54,6 +63,7 @@ impl TypeTable {
         {
             self.types.push((role, schema.name.clone(), wire));
         }
+        self.seen.push((role, id, schema.name.clone()));
         schema.name
     }
 
@@ -97,4 +107,30 @@ pub fn manifest_json(types: &TypeTable, systems: Vec<Value>) -> String {
         "systems": systems,
     })
     .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    /// Friction F12: a type every system asks for is described once; the
+    /// table then answers its name without building its schema again (a
+    /// twelve-system game ran out of fuel describing `Lobby` and
+    /// `PlayerActionState` once per parameter).
+    #[test]
+    fn a_type_is_described_once_whatever_asks_for_it() {
+        let mut table = TypeTable::new();
+        for _ in 0..50 {
+            assert_eq!(table.resource::<wish_types::Lobby>(), "Lobby");
+            table.resource::<wish_types::PlayerActionState>();
+        }
+        assert_eq!(table.types.len(), 2);
+        assert_eq!(table.seen.len(), 2);
+        // The same type in another role is listed again (the engine then
+        // refuses the clash).
+        table.component::<wish_types::Sprite>();
+        assert_eq!(table.types.len(), 3);
+    }
 }

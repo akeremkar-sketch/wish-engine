@@ -14,7 +14,7 @@ use crate::workspace::Workspace;
 pub(crate) const PROJECT_SETTINGS: Tool = Tool {
     name: "project_settings",
     title: "Project settings",
-    description: "The project's settings: its name and default scene (wish.json) and its input map (input.json: which keys drive which actions, as the game code reads them with actions.pressed / axis2). action get (the default) returns them; action set changes what is given and writes the files canonically (name, scene, and/or input as the whole input map). The input map is checked first, with a hint for every mistake (unknown key names, bad action names). Running sessions keep their input map; new ones use the new one.",
+    description: "The project's settings: its name, default scene and online play (wish.json `net`: the replicated components and the lobby) and its input map (input.json: which keys drive which actions, as the game code reads them with actions.pressed / axis2). action get (the default) returns them; action set changes what is given and writes the files canonically (name, scene, net as the whole net section, and/or input as the whole input map). The input map is checked first, with a hint for every mistake (unknown key names, bad action names). Running sessions keep their input map; new ones use the new one.",
     params: &[
         Param::optional(
             "action",
@@ -27,6 +27,11 @@ pub(crate) const PROJECT_SETTINGS: Tool = Tool {
             "scene",
             Kind::String,
             "The default scene, such as \"scenes/main.scene.json\" (it must exist).",
+        ),
+        Param::optional(
+            "net",
+            Kind::Object,
+            "The whole online play section of wish.json, like { \"replicate\": [\"Transform\", \"NetOwner\", \"Avatar\"], \"lobby\": { \"min_players\": 4, \"max_players\": 10, \"roles\": [{ \"name\": \"crew\" }, { \"name\": \"saboteur\", \"count\": 1, \"more_from\": [7] }] } }. Checked first; new matches use it.",
         ),
         Param::optional(
             "input",
@@ -114,7 +119,19 @@ fn project_settings(
             }
             None => None,
         };
-        let config_change = args.str("name").is_some() || scene.is_some();
+        let net = match args.value("net") {
+            Some(net) => {
+                crate::project::NetSettings::from_value(net).map_err(
+                    |(pointer, message, hint)| {
+                        Diagnostic::error("invalid_parameter", message, hint)
+                            .at_path(format!("/net{pointer}"))
+                    },
+                )?;
+                Some(net.clone())
+            }
+            None => None,
+        };
+        let config_change = args.str("name").is_some() || scene.is_some() || net.is_some();
         if config_change && workspace.config().is_none() {
             if let Some(problem) = workspace.config_problem() {
                 return Err(problem.clone());
@@ -145,7 +162,7 @@ fn project_settings(
         if config_change {
             if !dry_run
                 && let Err(problem) =
-                    workspace.write_config(args.str("name").map(str::trim), scene.as_deref())
+                    workspace.write_config(args.str("name").map(str::trim), scene.as_deref(), net)
             {
                 if input_text.is_some() {
                     let root = workspace.root().to_path_buf();
@@ -170,6 +187,9 @@ fn project_settings(
             if scene.is_some() {
                 changed.push("scene");
             }
+            if args.value("net").is_some() {
+                changed.push("net");
+            }
         }
         if dry_run {
             let mut out = Map::new();
@@ -186,6 +206,10 @@ fn project_settings(
             "name": config.map(|c| c.name.clone()),
             "scene": config.map(|c| c.scene.clone()),
         }),
+    );
+    out.insert(
+        "net".to_owned(),
+        config.and_then(|c| c.net.clone()).unwrap_or(Value::Null),
     );
     // A broken input.json does not hide the rest: its problem is a note.
     match input_json(workspace) {

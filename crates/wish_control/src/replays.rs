@@ -388,7 +388,7 @@ fn write_atomic(root: &Path, relative: &str, text: &str) -> Result<()> {
         .at_file(relative)
     };
     std::fs::write(&temporary, text).map_err(unwritable)?;
-    std::fs::rename(&temporary, &target).map_err(|error| {
+    crate::documents::replace_file(&temporary, &target).map_err(|error| {
         let _ = std::fs::remove_file(&temporary);
         unwritable(error)
     })

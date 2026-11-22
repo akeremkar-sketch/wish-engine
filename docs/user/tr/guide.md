@@ -264,6 +264,23 @@ asla yazılmaz.
     `"net": { "players": 6, "bots": 5, "auto_start": true, "network": { "latency_ms": 100, "loss": 0.05 } }`
     maçı kötü bir ağda botlarla oynar; bir `expect` adımındaki `"player": 3` oyuncu 3'ün
     makinesinde olanı denetler. Bir maçın tekrar kaydı ev sahibinin günlüğünü tutar ve aynen oynar.
+- **Çevrim içi bir parti oyunu yapın:** *Ridgewatch* şablonundan başlayın: 4 ile 10 oyuncu için
+  gizli rollü bir oyun (bekçiler fırtınaya gömülmüş bir gözlemevini onarır; gizli bir "parazit"
+  onları dondurur; çan, sohbetli ve oylamalı bir toplantı çağırır).
+  1. Karşılama ekranında *2B*'yi, sonra *Ridgewatch*'u ("2B çevrim içi parti") seçin; ya da
+     `wen new partim --kind 2d --template ridgewatch` çalıştırın.
+  2. *Oyun → Kodu derle*, sonra *Oyun → Oyuncular* 6 ve *Oynat*: ev sahibi sizsiniz, beş bot
+     katılır, maç başlar. WASD ile yürüyün, bir makinede E'yi basılı tutup onarın, çanın yanında
+     R toplantı çağırır; toplantıda Yukarı/Aşağı bir bekçi seçer, E oy verir, 1-4 bir şey söyler.
+  3. *Testleri çalıştır*: üç maç kötü bir ağda botlarla oynanır (onarımlar, bir oylama,
+     parazitlerin herkesi dondurması) ve her biri tekrar kaydı olarak denetlenir.
+  4. Kendinize göre değiştirin: harita `assets/maps/station.tilemap.json` (2B görünümde boyayın),
+     oyunun sayıları `Rules` kaynağı, roller ve koltuklar `wish.json`'un `net` bölümü
+     (`max_players`, büyük maçlarda ikinci bir sabotajcı için bir rolün `more_from`'u), kod
+     `scripts/src/lib.rs`. "A lobby with a room code", "A meeting with a vote" ve "Vision cut by
+     walls" tarifleri (`wish://docs/recipes`) her parçayı anlatır.
+  5. İnsanlarla oynayın: bir bilgisayarda `wen net host --port 47600`, aynı ağdaki diğerlerinde
+     `wen net join discover`.
 - **Kendi penceresinde:** `wen play` oyunu kendi penceresinde oynatır. Oyun kodunu kaydetmek oyunu
   durdurmadan yeni koda geçirir.
 

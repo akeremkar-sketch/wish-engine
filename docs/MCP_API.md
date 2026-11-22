@@ -108,7 +108,7 @@ That is a scene with the look `plain` (or a scene file of format 1). A scene tha
 
 | Tool | Purpose | Notable parameters |
 |---|---|---|
-| `project_settings` | The project's name, default scene, input map (M8a) | `action`, `name`, `scene`, `input`, `dry_run` |
+| `project_settings` | The project's name, default scene, online play (`wish.json` `net`, release 1.1), input map (M8a) | `action`, `name`, `scene`, `net`, `input`, `dry_run` |
 | `activity_get` | Activity feed: who changed what, for per-card undo (M8b) | `since`, `actor`, `limit` |
 | `checkpoint` | Save / list / restore / delete a checkpoint (M8b) | `action`, `name`, `note`, `dry_run` |
 | `permissions` | How much agents may change on their own; only the person changes it (M8b) | `action`, `mode`, `dry_run` |

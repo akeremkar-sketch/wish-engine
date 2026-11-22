@@ -1,0 +1,33 @@
+{
+  "engine": "0.9.0",
+  "format": 1,
+  "kind": "2d",
+  "name": "Ridgewatch",
+  "net": {
+    "lobby": {
+      "colors": 10,
+      "max_players": 10,
+      "min_players": 4,
+      "roles": [
+        { "name": "keeper" },
+        { "count": 1, "more_from": [7], "name": "static" }
+      ]
+    },
+    "replicate": [
+      "Transform",
+      "NetOwner",
+      "Sprite",
+      "SpriteAnimator",
+      "Collider",
+      "Occluder",
+      "Avatar",
+      "Ghost",
+      "Private",
+      "Console",
+      "Door",
+      "Station"
+    ]
+  },
+  "scene": "scenes/main.scene.json",
+  "types": {}
+}

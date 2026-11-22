@@ -484,6 +484,20 @@ fn mistakes_on_networked_sessions_are_explained() {
     assert_eq!(nobody["error"]["code"], "net_player_unknown", "{nobody}");
     let not_ready = ws.call("net", &json!({ "action": "start", "session": net }), &agent);
     assert_eq!(not_ready["error"]["code"], "lobby_not_ready", "{not_ready}");
+    // Friction F21: sim_step and scenario tests call input by seat
+    // `players`; net step calls it `inputs`, and the hint says so.
+    let by_seat = ws.call(
+        "net",
+        &json!({ "action": "step", "session": net, "frames": 1, "players": { "1": { "move": [1, 0] } } }),
+        &agent,
+    );
+    assert!(
+        by_seat["error"]["hint"]
+            .as_str()
+            .unwrap()
+            .contains("use inputs"),
+        "{by_seat}"
+    );
     let bad_network = ws.call(
         "net",
         &json!({ "action": "host", "network": { "lag": 5 } }),
@@ -1070,4 +1084,39 @@ fn a_process_joined_through_a_relay_predicts_its_own_player() {
     );
     call(&mut far, "net", json!({ "action": "stop", "session": fs }));
     call(&mut host, "net", json!({ "action": "stop", "session": hs }));
+}
+
+/// Friction F22: the online section of wish.json is set through the
+/// control plane (project_settings), checked first, like the rest of it.
+#[test]
+fn project_settings_sets_the_online_section() {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("net-settings");
+    let _ = std::fs::remove_dir_all(&dir);
+    create_project(&dir, "Net settings", "wen").unwrap();
+    let mut ws = open(&dir);
+    let agent = parse_actor("agent");
+    let net = json!({ "replicate": ["Transform", "NetOwner"],
+                      "lobby": { "min_players": 4, "max_players": 10,
+                                 "roles": [{ "name": "keeper" }, { "name": "static", "count": 1, "more_from": [7] }] } });
+    let set = call(
+        &mut ws,
+        "project_settings",
+        json!({ "action": "set", "net": net }),
+    );
+    assert_eq!(set["changed"], json!(["net"]), "{set}");
+    assert_eq!(set["net"], net);
+    let written: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("wish.json")).unwrap()).unwrap();
+    assert_eq!(written["net"], net);
+    let wrong = ws.call(
+        "project_settings",
+        &json!({ "action": "set", "net": { "lobby": { "min_players": 6, "max_players": 4 } } }),
+        &agent,
+    );
+    assert_eq!(
+        wrong["error"]["location"]["path"], "/net/lobby/max_players",
+        "{wrong}"
+    );
+    let checked = ws.call("check", &json!({}), &agent);
+    assert_eq!(checked["passed"], true, "{checked}");
 }

@@ -1,0 +1,1872 @@
+{
+  "entities": {
+    "antenna": {
+      "components": {
+        "Console": {
+          "task": "Antenna"
+        },
+        "Replicated": {},
+        "Sprite": {
+          "anchor": [0.5, 0.1],
+          "color": [1, 0.75, 0.7, 1],
+          "layer": 10,
+          "pixels_per_unit": 16,
+          "smooth": false
+        },
+        "SpriteAnimator": {
+          "frame": 3,
+          "sheet": "assets/sprites/props.sheet.json"
+        },
+        "Transform": {
+          "translation": [36.5, 26.0, 0]
+        }
+      }
+    },
+    "bell": {
+      "components": {
+        "Bell": {},
+        "Sprite": {
+          "anchor": [0.5, 0.2],
+          "layer": 10,
+          "pixels_per_unit": 16,
+          "smooth": false
+        },
+        "SpriteAnimator": {
+          "frame": 0,
+          "sheet": "assets/sprites/props.sheet.json"
+        },
+        "Transform": {
+          "translation": [22, 16, 0]
+        }
+      }
+    },
+    "boiler": {
+      "components": {
+        "Console": {
+          "task": "Boiler"
+        },
+        "Replicated": {},
+        "Sprite": {
+          "anchor": [0.5, 0.1],
+          "color": [1, 0.75, 0.7, 1],
+          "layer": 10,
+          "pixels_per_unit": 16,
+          "smooth": false
+        },
+        "SpriteAnimator": {
+          "frame": 5,
+          "sheet": "assets/sprites/props.sheet.json"
+        },
+        "Transform": {
+          "translation": [5.5, 4.6, 0]
+        }
+      }
+    },
+    "camera": {
+      "components": {
+        "AudioListener": {},
+        "Camera": {
+          "ortho_height": 10,
+          "projection": "Orthographic"
+        },
+        "Follow": {},
+        "PixelCamera": {
+          "pixels_per_unit": 16,
+          "resolution": [384, 216],
+          "snap": true
+        },
+        "Transform": {
+          "translation": [22, 16.5, 10]
+        }
+      }
+    },
+    "chat_0": {
+      "components": {
+        "Label": {
+          "slot": 40
+        },
+        "UiNode": {},
+        "UiText": {
+          "color": [0.8, 0.9, 1, 1],
+          "size": 18,
+          "text": ""
+        }
+      },
+      "order": 20,
+      "parent": "meeting_panel"
+    },
+    "chat_1": {
+      "components": {
+        "Label": {
+          "slot": 41
+        },
+        "UiNode": {},
+        "UiText": {
+          "color": [0.8, 0.9, 1, 1],
+          "size": 18,
+          "text": ""
+        }
+      },
+      "order": 21,
+      "parent": "meeting_panel"
+    },
+    "chat_2": {
+      "components": {
+        "Label": {
+          "slot": 42
+        },
+        "UiNode": {},
+        "UiText": {
+          "color": [0.8, 0.9, 1, 1],
+          "size": 18,
+          "text": ""
+        }
+      },
+      "order": 22,
+      "parent": "meeting_panel"
+    },
+    "chat_3": {
+      "components": {
+        "Label": {
+          "slot": 43
+        },
+        "UiNode": {},
+        "UiText": {
+          "color": [0.8, 0.9, 1, 1],
+          "size": 18,
+          "text": ""
+        }
+      },
+      "order": 23,
+      "parent": "meeting_panel"
+    },
+    "chat_4": {
+      "components": {
+        "Label": {
+          "slot": 44
+        },
+        "UiNode": {},
+        "UiText": {
+          "color": [0.8, 0.9, 1, 1],
+          "size": 18,
+          "text": ""
+        }
+      },
+      "order": 24,
+      "parent": "meeting_panel"
+    },
+    "chat_5": {
+      "components": {
+        "Label": {
+          "slot": 45
+        },
+        "UiNode": {},
+        "UiText": {
+          "color": [0.8, 0.9, 1, 1],
+          "size": 18,
+          "text": ""
+        }
+      },
+      "order": 25,
+      "parent": "meeting_panel"
+    },
+    "door_east": {
+      "components": {
+        "Collider": {
+          "shape": "Box",
+          "size": [1, 2, 1]
+        },
+        "Door": {},
+        "Occluder": {},
+        "Replicated": {},
+        "Sprite": {
+          "layer": 10,
+          "pixels_per_unit": 16,
+          "size": [16, 32],
+          "slice": [4, 4, 4, 4],
+          "smooth": false
+        },
+        "SpriteAnimator": {
+          "frame": 7,
+          "sheet": "assets/sprites/props.sheet.json"
+        },
+        "Transform": {
+          "translation": [30.5, 16, 0]
+        }
+      }
+    },
+    "door_north": {
+      "components": {
+        "Collider": {
+          "shape": "Box",
+          "size": [2, 1, 1]
+        },
+        "Door": {},
+        "Occluder": {},
+        "Replicated": {},
+        "Sprite": {
+          "layer": 10,
+          "pixels_per_unit": 16,
+          "size": [32, 16],
+          "slice": [4, 4, 4, 4],
+          "smooth": false
+        },
+        "SpriteAnimator": {
+          "frame": 7,
+          "sheet": "assets/sprites/props.sheet.json"
+        },
+        "Transform": {
+          "translation": [22, 21.5, 0]
+        }
+      }
+    },
+    "door_south": {
+      "components": {
+        "Collider": {
+          "shape": "Box",
+          "size": [2, 1, 1]
+        },
+        "Door": {},
+        "Occluder": {},
+        "Replicated": {},
+        "Sprite": {
+          "layer": 10,
+          "pixels_per_unit": 16,
+          "size": [32, 16],
+          "slice": [4, 4, 4, 4],
+          "smooth": false
+        },
+        "SpriteAnimator": {
+          "frame": 7,
+          "sheet": "assets/sprites/props.sheet.json"
+        },
+        "Transform": {
+          "translation": [22, 10.5, 0]
+        }
+      }
+    },
+    "door_west": {
+      "components": {
+        "Collider": {
+          "shape": "Box",
+          "size": [1, 2, 1]
+        },
+        "Door": {},
+        "Occluder": {},
+        "Replicated": {},
+        "Sprite": {
+          "layer": 10,
+          "pixels_per_unit": 16,
+          "size": [16, 32],
+          "slice": [4, 4, 4, 4],
+          "smooth": false
+        },
+        "SpriteAnimator": {
+          "frame": 7,
+          "sheet": "assets/sprites/props.sheet.json"
+        },
+        "Transform": {
+          "translation": [13.5, 16, 0]
+        }
+      }
+    },
+    "eye": {
+      "components": {
+        "Eye": {},
+        "Transform": {
+          "translation": [22, 16, 0]
+        },
+        "Vision2D": {
+          "enabled": false,
+          "radius": 6.5,
+          "softness": 1.2
+        }
+      }
+    },
+    "fuse_box": {
+      "components": {
+        "Console": {
+          "task": "Fuse"
+        },
+        "Replicated": {},
+        "Sprite": {
+          "anchor": [0.5, 0.1],
+          "color": [1, 1, 1, 1],
+          "layer": 10,
+          "pixels_per_unit": 16,
+          "smooth": false
+        },
+        "SpriteAnimator": {
+          "frame": 6,
+          "sheet": "assets/sprites/props.sheet.json"
+        },
+        "Transform": {
+          "translation": [11.5, 19.6, 0]
+        }
+      }
+    },
+    "generator": {
+      "components": {
+        "Console": {
+          "task": "Generator"
+        },
+        "Replicated": {},
+        "Sprite": {
+          "anchor": [0.5, 0.1],
+          "color": [1, 0.75, 0.7, 1],
+          "layer": 10,
+          "pixels_per_unit": 16,
+          "smooth": false
+        },
+        "SpriteAnimator": {
+          "frame": 1,
+          "sheet": "assets/sprites/props.sheet.json"
+        },
+        "Transform": {
+          "translation": [5.5, 17.6, 0]
+        }
+      }
+    },
+    "ghost_0": {
+      "components": {
+        "Ghost": {
+          "player": 0
+        },
+        "NetOwner": {
+          "player": 0
+        },
+        "Replicated": {
+          "groups": 1,
+          "visibility": "Group"
+        },
+        "Sprite": {
+          "anchor": [0.5, 0.3],
+          "layer": 20,
+          "pixels_per_unit": 16,
+          "smooth": false
+        },
+        "SpriteAnimator": {
+          "frame": 8,
+          "sheet": "assets/sprites/props.sheet.json"
+        },
+        "Transform": {
+          "translation": [-50, -50, 0]
+        }
+      }
+    },
+    "ghost_1": {
+      "components": {
+        "Ghost": {
+          "player": 1
+        },
+        "NetOwner": {
+          "player": 1
+        },
+        "Replicated": {
+          "groups": 1,
+          "visibility": "Group"
+        },
+        "Sprite": {
+          "anchor": [0.5, 0.3],
+          "layer": 20,
+          "pixels_per_unit": 16,
+          "smooth": false
+        },
+        "SpriteAnimator": {
+          "frame": 8,
+          "sheet": "assets/sprites/props.sheet.json"
+        },
+        "Transform": {
+          "translation": [-50, -50, 0]
+        }
+      }
+    },
+    "ghost_2": {
+      "components": {
+        "Ghost": {
+          "player": 2
+        },
+        "NetOwner": {
+          "player": 2
+        },
+        "Replicated": {
+          "groups": 1,
+          "visibility": "Group"
+        },
+        "Sprite": {
+          "anchor": [0.5, 0.3],
+          "layer": 20,
+          "pixels_per_unit": 16,
+          "smooth": false
+        },
+        "SpriteAnimator": {
+          "frame": 8,
+          "sheet": "assets/sprites/props.sheet.json"
+        },
+        "Transform": {
+          "translation": [-50, -50, 0]
+        }
+      }
+    },
+    "ghost_3": {
+      "components": {
+        "Ghost": {
+          "player": 3
+        },
+        "NetOwner": {
+          "player": 3
+        },
+        "Replicated": {
+          "groups": 1,
+          "visibility": "Group"
+        },
+        "Sprite": {
+          "anchor": [0.5, 0.3],
+          "layer": 20,
+          "pixels_per_unit": 16,
+          "smooth": false
+        },
+        "SpriteAnimator": {
+          "frame": 8,
+          "sheet": "assets/sprites/props.sheet.json"
+        },
+        "Transform": {
+          "translation": [-50, -50, 0]
+        }
+      }
+    },
+    "ghost_4": {
+      "components": {
+        "Ghost": {
+          "player": 4
+        },
+        "NetOwner": {
+          "player": 4
+        },
+        "Replicated": {
+          "groups": 1,
+          "visibility": "Group"
+        },
+        "Sprite": {
+          "anchor": [0.5, 0.3],
+          "layer": 20,
+          "pixels_per_unit": 16,
+          "smooth": false
+        },
+        "SpriteAnimator": {
+          "frame": 8,
+          "sheet": "assets/sprites/props.sheet.json"
+        },
+        "Transform": {
+          "translation": [-50, -50, 0]
+        }
+      }
+    },
+    "ghost_5": {
+      "components": {
+        "Ghost": {
+          "player": 5
+        },
+        "NetOwner": {
+          "player": 5
+        },
+        "Replicated": {
+          "groups": 1,
+          "visibility": "Group"
+        },
+        "Sprite": {
+          "anchor": [0.5, 0.3],
+          "layer": 20,
+          "pixels_per_unit": 16,
+          "smooth": false
+        },
+        "SpriteAnimator": {
+          "frame": 8,
+          "sheet": "assets/sprites/props.sheet.json"
+        },
+        "Transform": {
+          "translation": [-50, -50, 0]
+        }
+      }
+    },
+    "ghost_6": {
+      "components": {
+        "Ghost": {
+          "player": 6
+        },
+        "NetOwner": {
+          "player": 6
+        },
+        "Replicated": {
+          "groups": 1,
+          "visibility": "Group"
+        },
+        "Sprite": {
+          "anchor": [0.5, 0.3],
+          "layer": 20,
+          "pixels_per_unit": 16,
+          "smooth": false
+        },
+        "SpriteAnimator": {
+          "frame": 8,
+          "sheet": "assets/sprites/props.sheet.json"
+        },
+        "Transform": {
+          "translation": [-50, -50, 0]
+        }
+      }
+    },
+    "ghost_7": {
+      "components": {
+        "Ghost": {
+          "player": 7
+        },
+        "NetOwner": {
+          "player": 7
+        },
+        "Replicated": {
+          "groups": 1,
+          "visibility": "Group"
+        },
+        "Sprite": {
+          "anchor": [0.5, 0.3],
+          "layer": 20,
+          "pixels_per_unit": 16,
+          "smooth": false
+        },
+        "SpriteAnimator": {
+          "frame": 8,
+          "sheet": "assets/sprites/props.sheet.json"
+        },
+        "Transform": {
+          "translation": [-50, -50, 0]
+        }
+      }
+    },
+    "ghost_8": {
+      "components": {
+        "Ghost": {
+          "player": 8
+        },
+        "NetOwner": {
+          "player": 8
+        },
+        "Replicated": {
+          "groups": 1,
+          "visibility": "Group"
+        },
+        "Sprite": {
+          "anchor": [0.5, 0.3],
+          "layer": 20,
+          "pixels_per_unit": 16,
+          "smooth": false
+        },
+        "SpriteAnimator": {
+          "frame": 8,
+          "sheet": "assets/sprites/props.sheet.json"
+        },
+        "Transform": {
+          "translation": [-50, -50, 0]
+        }
+      }
+    },
+    "ghost_9": {
+      "components": {
+        "Ghost": {
+          "player": 9
+        },
+        "NetOwner": {
+          "player": 9
+        },
+        "Replicated": {
+          "groups": 1,
+          "visibility": "Group"
+        },
+        "Sprite": {
+          "anchor": [0.5, 0.3],
+          "layer": 20,
+          "pixels_per_unit": 16,
+          "smooth": false
+        },
+        "SpriteAnimator": {
+          "frame": 8,
+          "sheet": "assets/sprites/props.sheet.json"
+        },
+        "Transform": {
+          "translation": [-50, -50, 0]
+        }
+      }
+    },
+    "hud_panel": {
+      "components": {
+        "Panel": {
+          "screen": 3
+        },
+        "UiNode": {
+          "background": [0.03, 0.04, 0.07, 0.6],
+          "gap": 4,
+          "offset": [16, 16],
+          "padding": [10, 14, 10, 14],
+          "position": "Absolute"
+        }
+      }
+    },
+    "hud_repairs": {
+      "components": {
+        "Label": {
+          "slot": 61
+        },
+        "UiNode": {},
+        "UiText": {
+          "size": 20,
+          "text": ""
+        }
+      },
+      "order": 1,
+      "parent": "hud_panel"
+    },
+    "hud_role": {
+      "components": {
+        "Label": {
+          "slot": 60
+        },
+        "UiNode": {},
+        "UiText": {
+          "color": [1, 0.85, 0.5, 1],
+          "size": 20,
+          "text": ""
+        }
+      },
+      "parent": "hud_panel"
+    },
+    "keeper_0": {
+      "components": {
+        "Avatar": {
+          "player": 0
+        },
+        "CharacterController": {},
+        "CharacterMotion": {},
+        "CharacterState": {},
+        "Collider": {
+          "layer": 2,
+          "mask": 1,
+          "shape": "Sphere",
+          "size": [0.6, 0.6, 0.6]
+        },
+        "NetOwner": {
+          "player": 0
+        },
+        "Replicated": {
+          "priority": 4,
+          "visibility": "Players"
+        },
+        "RigidBody": {
+          "kind": "Kinematic"
+        },
+        "Sprite": {
+          "anchor": [0.5, 0.08],
+          "layer": 10,
+          "pixels_per_unit": 16,
+          "smooth": false
+        },
+        "SpriteAnimator": {
+          "clip": "idle",
+          "sheet": "assets/sprites/keeper.sheet.json"
+        },
+        "Transform": {
+          "translation": [-50, -50, 0]
+        }
+      }
+    },
+    "keeper_1": {
+      "components": {
+        "Avatar": {
+          "player": 1
+        },
+        "CharacterController": {},
+        "CharacterMotion": {},
+        "CharacterState": {},
+        "Collider": {
+          "layer": 2,
+          "mask": 1,
+          "shape": "Sphere",
+          "size": [0.6, 0.6, 0.6]
+        },
+        "NetOwner": {
+          "player": 1
+        },
+        "Replicated": {
+          "priority": 4,
+          "visibility": "Players"
+        },
+        "RigidBody": {
+          "kind": "Kinematic"
+        },
+        "Sprite": {
+          "anchor": [0.5, 0.08],
+          "layer": 10,
+          "pixels_per_unit": 16,
+          "smooth": false
+        },
+        "SpriteAnimator": {
+          "clip": "idle",
+          "sheet": "assets/sprites/keeper.sheet.json"
+        },
+        "Transform": {
+          "translation": [-50, -50, 0]
+        }
+      }
+    },
+    "keeper_2": {
+      "components": {
+        "Avatar": {
+          "player": 2
+        },
+        "CharacterController": {},
+        "CharacterMotion": {},
+        "CharacterState": {},
+        "Collider": {
+          "layer": 2,
+          "mask": 1,
+          "shape": "Sphere",
+          "size": [0.6, 0.6, 0.6]
+        },
+        "NetOwner": {
+          "player": 2
+        },
+        "Replicated": {
+          "priority": 4,
+          "visibility": "Players"
+        },
+        "RigidBody": {
+          "kind": "Kinematic"
+        },
+        "Sprite": {
+          "anchor": [0.5, 0.08],
+          "layer": 10,
+          "pixels_per_unit": 16,
+          "smooth": false
+        },
+        "SpriteAnimator": {
+          "clip": "idle",
+          "sheet": "assets/sprites/keeper.sheet.json"
+        },
+        "Transform": {
+          "translation": [-50, -50, 0]
+        }
+      }
+    },
+    "keeper_3": {
+      "components": {
+        "Avatar": {
+          "player": 3
+        },
+        "CharacterController": {},
+        "CharacterMotion": {},
+        "CharacterState": {},
+        "Collider": {
+          "layer": 2,
+          "mask": 1,
+          "shape": "Sphere",
+          "size": [0.6, 0.6, 0.6]
+        },
+        "NetOwner": {
+          "player": 3
+        },
+        "Replicated": {
+          "priority": 4,
+          "visibility": "Players"
+        },
+        "RigidBody": {
+          "kind": "Kinematic"
+        },
+        "Sprite": {
+          "anchor": [0.5, 0.08],
+          "layer": 10,
+          "pixels_per_unit": 16,
+          "smooth": false
+        },
+        "SpriteAnimator": {
+          "clip": "idle",
+          "sheet": "assets/sprites/keeper.sheet.json"
+        },
+        "Transform": {
+          "translation": [-50, -50, 0]
+        }
+      }
+    },
+    "keeper_4": {
+      "components": {
+        "Avatar": {
+          "player": 4
+        },
+        "CharacterController": {},
+        "CharacterMotion": {},
+        "CharacterState": {},
+        "Collider": {
+          "layer": 2,
+          "mask": 1,
+          "shape": "Sphere",
+          "size": [0.6, 0.6, 0.6]
+        },
+        "NetOwner": {
+          "player": 4
+        },
+        "Replicated": {
+          "priority": 4,
+          "visibility": "Players"
+        },
+        "RigidBody": {
+          "kind": "Kinematic"
+        },
+        "Sprite": {
+          "anchor": [0.5, 0.08],
+          "layer": 10,
+          "pixels_per_unit": 16,
+          "smooth": false
+        },
+        "SpriteAnimator": {
+          "clip": "idle",
+          "sheet": "assets/sprites/keeper.sheet.json"
+        },
+        "Transform": {
+          "translation": [-50, -50, 0]
+        }
+      }
+    },
+    "keeper_5": {
+      "components": {
+        "Avatar": {
+          "player": 5
+        },
+        "CharacterController": {},
+        "CharacterMotion": {},
+        "CharacterState": {},
+        "Collider": {
+          "layer": 2,
+          "mask": 1,
+          "shape": "Sphere",
+          "size": [0.6, 0.6, 0.6]
+        },
+        "NetOwner": {
+          "player": 5
+        },
+        "Replicated": {
+          "priority": 4,
+          "visibility": "Players"
+        },
+        "RigidBody": {
+          "kind": "Kinematic"
+        },
+        "Sprite": {
+          "anchor": [0.5, 0.08],
+          "layer": 10,
+          "pixels_per_unit": 16,
+          "smooth": false
+        },
+        "SpriteAnimator": {
+          "clip": "idle",
+          "sheet": "assets/sprites/keeper.sheet.json"
+        },
+        "Transform": {
+          "translation": [-50, -50, 0]
+        }
+      }
+    },
+    "keeper_6": {
+      "components": {
+        "Avatar": {
+          "player": 6
+        },
+        "CharacterController": {},
+        "CharacterMotion": {},
+        "CharacterState": {},
+        "Collider": {
+          "layer": 2,
+          "mask": 1,
+          "shape": "Sphere",
+          "size": [0.6, 0.6, 0.6]
+        },
+        "NetOwner": {
+          "player": 6
+        },
+        "Replicated": {
+          "priority": 4,
+          "visibility": "Players"
+        },
+        "RigidBody": {
+          "kind": "Kinematic"
+        },
+        "Sprite": {
+          "anchor": [0.5, 0.08],
+          "layer": 10,
+          "pixels_per_unit": 16,
+          "smooth": false
+        },
+        "SpriteAnimator": {
+          "clip": "idle",
+          "sheet": "assets/sprites/keeper.sheet.json"
+        },
+        "Transform": {
+          "translation": [-50, -50, 0]
+        }
+      }
+    },
+    "keeper_7": {
+      "components": {
+        "Avatar": {
+          "player": 7
+        },
+        "CharacterController": {},
+        "CharacterMotion": {},
+        "CharacterState": {},
+        "Collider": {
+          "layer": 2,
+          "mask": 1,
+          "shape": "Sphere",
+          "size": [0.6, 0.6, 0.6]
+        },
+        "NetOwner": {
+          "player": 7
+        },
+        "Replicated": {
+          "priority": 4,
+          "visibility": "Players"
+        },
+        "RigidBody": {
+          "kind": "Kinematic"
+        },
+        "Sprite": {
+          "anchor": [0.5, 0.08],
+          "layer": 10,
+          "pixels_per_unit": 16,
+          "smooth": false
+        },
+        "SpriteAnimator": {
+          "clip": "idle",
+          "sheet": "assets/sprites/keeper.sheet.json"
+        },
+        "Transform": {
+          "translation": [-50, -50, 0]
+        }
+      }
+    },
+    "keeper_8": {
+      "components": {
+        "Avatar": {
+          "player": 8
+        },
+        "CharacterController": {},
+        "CharacterMotion": {},
+        "CharacterState": {},
+        "Collider": {
+          "layer": 2,
+          "mask": 1,
+          "shape": "Sphere",
+          "size": [0.6, 0.6, 0.6]
+        },
+        "NetOwner": {
+          "player": 8
+        },
+        "Replicated": {
+          "priority": 4,
+          "visibility": "Players"
+        },
+        "RigidBody": {
+          "kind": "Kinematic"
+        },
+        "Sprite": {
+          "anchor": [0.5, 0.08],
+          "layer": 10,
+          "pixels_per_unit": 16,
+          "smooth": false
+        },
+        "SpriteAnimator": {
+          "clip": "idle",
+          "sheet": "assets/sprites/keeper.sheet.json"
+        },
+        "Transform": {
+          "translation": [-50, -50, 0]
+        }
+      }
+    },
+    "keeper_9": {
+      "components": {
+        "Avatar": {
+          "player": 9
+        },
+        "CharacterController": {},
+        "CharacterMotion": {},
+        "CharacterState": {},
+        "Collider": {
+          "layer": 2,
+          "mask": 1,
+          "shape": "Sphere",
+          "size": [0.6, 0.6, 0.6]
+        },
+        "NetOwner": {
+          "player": 9
+        },
+        "Replicated": {
+          "priority": 4,
+          "visibility": "Players"
+        },
+        "RigidBody": {
+          "kind": "Kinematic"
+        },
+        "Sprite": {
+          "anchor": [0.5, 0.08],
+          "layer": 10,
+          "pixels_per_unit": 16,
+          "smooth": false
+        },
+        "SpriteAnimator": {
+          "clip": "idle",
+          "sheet": "assets/sprites/keeper.sheet.json"
+        },
+        "Transform": {
+          "translation": [-50, -50, 0]
+        }
+      }
+    },
+    "lamp_antenna_deck": {
+      "components": {
+        "Lamp": {
+          "bright": 0.9
+        },
+        "Light2D": {
+          "color": [0.75, 0.85, 1, 1],
+          "intensity": 0.9,
+          "radius": 9
+        },
+        "Transform": {
+          "translation": [36.5, 25, 0]
+        }
+      }
+    },
+    "lamp_boiler": {
+      "components": {
+        "Lamp": {
+          "bright": 0.9
+        },
+        "Light2D": {
+          "color": [0.75, 0.85, 1, 1],
+          "intensity": 0.9,
+          "radius": 9
+        },
+        "Transform": {
+          "translation": [7.5, 6, 0]
+        }
+      }
+    },
+    "lamp_bunks": {
+      "components": {
+        "Lamp": {
+          "bright": 0.9
+        },
+        "Light2D": {
+          "color": [0.75, 0.85, 1, 1],
+          "intensity": 0.9,
+          "radius": 9
+        },
+        "Transform": {
+          "translation": [7.5, 25, 0]
+        }
+      }
+    },
+    "lamp_dome": {
+      "components": {
+        "Lamp": {
+          "bright": 0.9
+        },
+        "Light2D": {
+          "color": [0.75, 0.85, 1, 1],
+          "intensity": 0.9,
+          "radius": 9
+        },
+        "Transform": {
+          "translation": [22, 25, 0]
+        }
+      }
+    },
+    "lamp_generator": {
+      "components": {
+        "Lamp": {
+          "bright": 0.9
+        },
+        "Light2D": {
+          "color": [0.75, 0.85, 1, 1],
+          "intensity": 0.9,
+          "radius": 9
+        },
+        "Transform": {
+          "translation": [7.5, 16, 0]
+        }
+      }
+    },
+    "lamp_hall": {
+      "components": {
+        "Lamp": {
+          "bright": 0.9
+        },
+        "Light2D": {
+          "color": [1, 0.85, 0.6, 1],
+          "intensity": 0.9,
+          "radius": 9
+        },
+        "Transform": {
+          "translation": [22, 16, 0]
+        }
+      }
+    },
+    "lamp_radio": {
+      "components": {
+        "Lamp": {
+          "bright": 0.9
+        },
+        "Light2D": {
+          "color": [0.75, 0.85, 1, 1],
+          "intensity": 0.9,
+          "radius": 9
+        },
+        "Transform": {
+          "translation": [36.5, 16, 0]
+        }
+      }
+    },
+    "lamp_storage": {
+      "components": {
+        "Lamp": {
+          "bright": 0.9
+        },
+        "Light2D": {
+          "color": [0.75, 0.85, 1, 1],
+          "intensity": 0.9,
+          "radius": 9
+        },
+        "Transform": {
+          "translation": [22, 6, 0]
+        }
+      }
+    },
+    "lamp_workshop": {
+      "components": {
+        "Lamp": {
+          "bright": 0.9
+        },
+        "Light2D": {
+          "color": [0.75, 0.85, 1, 1],
+          "intensity": 0.9,
+          "radius": 9
+        },
+        "Transform": {
+          "translation": [36.5, 6, 0]
+        }
+      }
+    },
+    "layer_actors": {
+      "components": {
+        "SortingLayer": {
+          "layer": 10,
+          "name": "actors",
+          "y_sort": true
+        }
+      }
+    },
+    "layer_ghosts": {
+      "components": {
+        "SortingLayer": {
+          "layer": 20,
+          "name": "ghosts",
+          "y_sort": false
+        }
+      }
+    },
+    "layer_map": {
+      "components": {
+        "SortingLayer": {
+          "layer": 0,
+          "name": "map",
+          "y_sort": false
+        }
+      }
+    },
+    "lobby_help": {
+      "components": {
+        "Label": {
+          "slot": 1
+        },
+        "UiNode": {},
+        "UiText": {
+          "size": 22,
+          "text": ""
+        }
+      },
+      "order": 2,
+      "parent": "lobby_panel"
+    },
+    "lobby_panel": {
+      "components": {
+        "Panel": {
+          "screen": 0
+        },
+        "UiNode": {
+          "background": [0.03, 0.04, 0.07, 0.85],
+          "gap": 6,
+          "offset": [380, 90],
+          "padding": [24, 28, 24, 28],
+          "position": "Absolute",
+          "width": {
+            "unit": "Px",
+            "value": 520
+          }
+        }
+      }
+    },
+    "lobby_room": {
+      "components": {
+        "Label": {
+          "slot": 0
+        },
+        "UiNode": {},
+        "UiText": {
+          "color": [0.7, 0.9, 1, 1],
+          "size": 30,
+          "text": ""
+        }
+      },
+      "order": 1,
+      "parent": "lobby_panel"
+    },
+    "lobby_seat_0": {
+      "components": {
+        "Label": {
+          "slot": 2
+        },
+        "UiNode": {},
+        "UiText": {
+          "size": 22,
+          "text": ""
+        }
+      },
+      "order": 3,
+      "parent": "lobby_panel"
+    },
+    "lobby_seat_1": {
+      "components": {
+        "Label": {
+          "slot": 3
+        },
+        "UiNode": {},
+        "UiText": {
+          "size": 22,
+          "text": ""
+        }
+      },
+      "order": 4,
+      "parent": "lobby_panel"
+    },
+    "lobby_seat_2": {
+      "components": {
+        "Label": {
+          "slot": 4
+        },
+        "UiNode": {},
+        "UiText": {
+          "size": 22,
+          "text": ""
+        }
+      },
+      "order": 5,
+      "parent": "lobby_panel"
+    },
+    "lobby_seat_3": {
+      "components": {
+        "Label": {
+          "slot": 5
+        },
+        "UiNode": {},
+        "UiText": {
+          "size": 22,
+          "text": ""
+        }
+      },
+      "order": 6,
+      "parent": "lobby_panel"
+    },
+    "lobby_seat_4": {
+      "components": {
+        "Label": {
+          "slot": 6
+        },
+        "UiNode": {},
+        "UiText": {
+          "size": 22,
+          "text": ""
+        }
+      },
+      "order": 7,
+      "parent": "lobby_panel"
+    },
+    "lobby_seat_5": {
+      "components": {
+        "Label": {
+          "slot": 7
+        },
+        "UiNode": {},
+        "UiText": {
+          "size": 22,
+          "text": ""
+        }
+      },
+      "order": 8,
+      "parent": "lobby_panel"
+    },
+    "lobby_seat_6": {
+      "components": {
+        "Label": {
+          "slot": 8
+        },
+        "UiNode": {},
+        "UiText": {
+          "size": 22,
+          "text": ""
+        }
+      },
+      "order": 9,
+      "parent": "lobby_panel"
+    },
+    "lobby_seat_7": {
+      "components": {
+        "Label": {
+          "slot": 9
+        },
+        "UiNode": {},
+        "UiText": {
+          "size": 22,
+          "text": ""
+        }
+      },
+      "order": 10,
+      "parent": "lobby_panel"
+    },
+    "lobby_seat_8": {
+      "components": {
+        "Label": {
+          "slot": 10
+        },
+        "UiNode": {},
+        "UiText": {
+          "size": 22,
+          "text": ""
+        }
+      },
+      "order": 11,
+      "parent": "lobby_panel"
+    },
+    "lobby_seat_9": {
+      "components": {
+        "Label": {
+          "slot": 11
+        },
+        "UiNode": {},
+        "UiText": {
+          "size": 22,
+          "text": ""
+        }
+      },
+      "order": 12,
+      "parent": "lobby_panel"
+    },
+    "lobby_title": {
+      "components": {
+        "UiNode": {},
+        "UiText": {
+          "color": [1, 0.8, 0.35, 1],
+          "size": 48,
+          "text": "RIDGEWATCH"
+        }
+      },
+      "parent": "lobby_panel"
+    },
+    "meeting_help": {
+      "components": {
+        "UiNode": {},
+        "UiText": {
+          "color": [0.7, 0.75, 0.8, 1],
+          "size": 18,
+          "text": "Up/Down choose, E votes. 1-4: say something about the one you chose."
+        }
+      },
+      "order": 1,
+      "parent": "meeting_panel"
+    },
+    "meeting_panel": {
+      "components": {
+        "Panel": {
+          "screen": 1
+        },
+        "UiNode": {
+          "background": [0.03, 0.04, 0.07, 0.85],
+          "gap": 4,
+          "offset": [300, 60],
+          "padding": [20, 24, 20, 24],
+          "position": "Absolute",
+          "width": {
+            "unit": "Px",
+            "value": 680
+          }
+        }
+      }
+    },
+    "meeting_row_0": {
+      "components": {
+        "Label": {
+          "slot": 21
+        },
+        "UiNode": {},
+        "UiText": {
+          "size": 22,
+          "text": ""
+        }
+      },
+      "order": 2,
+      "parent": "meeting_panel"
+    },
+    "meeting_row_1": {
+      "components": {
+        "Label": {
+          "slot": 22
+        },
+        "UiNode": {},
+        "UiText": {
+          "size": 22,
+          "text": ""
+        }
+      },
+      "order": 3,
+      "parent": "meeting_panel"
+    },
+    "meeting_row_10": {
+      "components": {
+        "Label": {
+          "slot": 31
+        },
+        "UiNode": {},
+        "UiText": {
+          "size": 22,
+          "text": ""
+        }
+      },
+      "order": 12,
+      "parent": "meeting_panel"
+    },
+    "meeting_row_2": {
+      "components": {
+        "Label": {
+          "slot": 23
+        },
+        "UiNode": {},
+        "UiText": {
+          "size": 22,
+          "text": ""
+        }
+      },
+      "order": 4,
+      "parent": "meeting_panel"
+    },
+    "meeting_row_3": {
+      "components": {
+        "Label": {
+          "slot": 24
+        },
+        "UiNode": {},
+        "UiText": {
+          "size": 22,
+          "text": ""
+        }
+      },
+      "order": 5,
+      "parent": "meeting_panel"
+    },
+    "meeting_row_4": {
+      "components": {
+        "Label": {
+          "slot": 25
+        },
+        "UiNode": {},
+        "UiText": {
+          "size": 22,
+          "text": ""
+        }
+      },
+      "order": 6,
+      "parent": "meeting_panel"
+    },
+    "meeting_row_5": {
+      "components": {
+        "Label": {
+          "slot": 26
+        },
+        "UiNode": {},
+        "UiText": {
+          "size": 22,
+          "text": ""
+        }
+      },
+      "order": 7,
+      "parent": "meeting_panel"
+    },
+    "meeting_row_6": {
+      "components": {
+        "Label": {
+          "slot": 27
+        },
+        "UiNode": {},
+        "UiText": {
+          "size": 22,
+          "text": ""
+        }
+      },
+      "order": 8,
+      "parent": "meeting_panel"
+    },
+    "meeting_row_7": {
+      "components": {
+        "Label": {
+          "slot": 28
+        },
+        "UiNode": {},
+        "UiText": {
+          "size": 22,
+          "text": ""
+        }
+      },
+      "order": 9,
+      "parent": "meeting_panel"
+    },
+    "meeting_row_8": {
+      "components": {
+        "Label": {
+          "slot": 29
+        },
+        "UiNode": {},
+        "UiText": {
+          "size": 22,
+          "text": ""
+        }
+      },
+      "order": 10,
+      "parent": "meeting_panel"
+    },
+    "meeting_row_9": {
+      "components": {
+        "Label": {
+          "slot": 30
+        },
+        "UiNode": {},
+        "UiText": {
+          "size": 22,
+          "text": ""
+        }
+      },
+      "order": 11,
+      "parent": "meeting_panel"
+    },
+    "meeting_title": {
+      "components": {
+        "Label": {
+          "slot": 20
+        },
+        "UiNode": {},
+        "UiText": {
+          "color": [1, 0.8, 0.35, 1],
+          "size": 28,
+          "text": ""
+        }
+      },
+      "parent": "meeting_panel"
+    },
+    "private_0": {
+      "components": {
+        "NetOwner": {
+          "player": 0
+        },
+        "Private": {
+          "player": 0
+        },
+        "Replicated": {
+          "visibility": "Owner"
+        }
+      }
+    },
+    "private_1": {
+      "components": {
+        "NetOwner": {
+          "player": 1
+        },
+        "Private": {
+          "player": 1
+        },
+        "Replicated": {
+          "visibility": "Owner"
+        }
+      }
+    },
+    "private_2": {
+      "components": {
+        "NetOwner": {
+          "player": 2
+        },
+        "Private": {
+          "player": 2
+        },
+        "Replicated": {
+          "visibility": "Owner"
+        }
+      }
+    },
+    "private_3": {
+      "components": {
+        "NetOwner": {
+          "player": 3
+        },
+        "Private": {
+          "player": 3
+        },
+        "Replicated": {
+          "visibility": "Owner"
+        }
+      }
+    },
+    "private_4": {
+      "components": {
+        "NetOwner": {
+          "player": 4
+        },
+        "Private": {
+          "player": 4
+        },
+        "Replicated": {
+          "visibility": "Owner"
+        }
+      }
+    },
+    "private_5": {
+      "components": {
+        "NetOwner": {
+          "player": 5
+        },
+        "Private": {
+          "player": 5
+        },
+        "Replicated": {
+          "visibility": "Owner"
+        }
+      }
+    },
+    "private_6": {
+      "components": {
+        "NetOwner": {
+          "player": 6
+        },
+        "Private": {
+          "player": 6
+        },
+        "Replicated": {
+          "visibility": "Owner"
+        }
+      }
+    },
+    "private_7": {
+      "components": {
+        "NetOwner": {
+          "player": 7
+        },
+        "Private": {
+          "player": 7
+        },
+        "Replicated": {
+          "visibility": "Owner"
+        }
+      }
+    },
+    "private_8": {
+      "components": {
+        "NetOwner": {
+          "player": 8
+        },
+        "Private": {
+          "player": 8
+        },
+        "Replicated": {
+          "visibility": "Owner"
+        }
+      }
+    },
+    "private_9": {
+      "components": {
+        "NetOwner": {
+          "player": 9
+        },
+        "Private": {
+          "player": 9
+        },
+        "Replicated": {
+          "visibility": "Owner"
+        }
+      }
+    },
+    "radio": {
+      "components": {
+        "Console": {
+          "task": "Radio"
+        },
+        "Replicated": {},
+        "Sprite": {
+          "anchor": [0.5, 0.1],
+          "color": [1, 0.75, 0.7, 1],
+          "layer": 10,
+          "pixels_per_unit": 16,
+          "smooth": false
+        },
+        "SpriteAnimator": {
+          "frame": 2,
+          "sheet": "assets/sprites/props.sheet.json"
+        },
+        "Transform": {
+          "translation": [36.5, 19.6, 0]
+        }
+      }
+    },
+    "result_line": {
+      "components": {
+        "Label": {
+          "slot": 51
+        },
+        "UiNode": {},
+        "UiText": {
+          "align": "Center",
+          "size": 24,
+          "text": ""
+        }
+      },
+      "order": 1,
+      "parent": "result_panel"
+    },
+    "result_panel": {
+      "components": {
+        "Panel": {
+          "screen": 2
+        },
+        "UiNode": {
+          "align": "Center",
+          "background": [0.03, 0.04, 0.07, 0.85],
+          "gap": 8,
+          "offset": [240, 280],
+          "padding": [24, 24, 24, 24],
+          "position": "Absolute",
+          "width": {
+            "unit": "Px",
+            "value": 800
+          }
+        }
+      }
+    },
+    "result_title": {
+      "components": {
+        "Label": {
+          "slot": 50
+        },
+        "UiNode": {},
+        "UiText": {
+          "align": "Center",
+          "color": [1, 0.85, 0.4, 1],
+          "size": 36,
+          "text": ""
+        }
+      },
+      "parent": "result_panel"
+    },
+    "station": {
+      "components": {
+        "Replicated": {},
+        "Station": {}
+      }
+    },
+    "station_map": {
+      "components": {
+        "Tilemap": {
+          "layer": 0,
+          "map": "assets/maps/station.tilemap.json"
+        },
+        "Transform": {}
+      }
+    },
+    "telescope": {
+      "components": {
+        "Console": {
+          "task": "Telescope"
+        },
+        "Replicated": {},
+        "Sprite": {
+          "anchor": [0.5, 0.1],
+          "color": [1, 0.75, 0.7, 1],
+          "layer": 10,
+          "pixels_per_unit": 16,
+          "smooth": false
+        },
+        "SpriteAnimator": {
+          "frame": 4,
+          "sheet": "assets/sprites/props.sheet.json"
+        },
+        "Transform": {
+          "translation": [22.0, 26.0, 0]
+        }
+      }
+    }
+  },
+  "format": 2,
+  "resources": {
+    "Ambient": {
+      "sky_strength": 1.0,
+      "source": "Color"
+    },
+    "Bloom": {
+      "spread": 0.5,
+      "strength": 0.0,
+      "threshold": 0.0
+    },
+    "ColorGrading": {
+      "contrast": 1.0,
+      "saturation": 1.0,
+      "temperature": 0.0,
+      "tint": 0.0,
+      "vignette": 0.0
+    },
+    "Fog": {
+      "base_height": 0.0,
+      "density": 0.0,
+      "height_falloff": 0.0,
+      "max_opacity": 1.0,
+      "start": 0.0,
+      "tint": [1.0, 1.0, 1.0, 1.0]
+    },
+    "Lighting2D": {
+      "ambient": [0.45, 0.5, 0.6, 1],
+      "enabled": true
+    },
+    "PhysicsSettings": {
+      "profile": "TopDown2D"
+    },
+    "RenderSettings": {
+      "antialiasing": "Off",
+      "shadow_cascades": 1,
+      "shadow_distance": 100.0
+    },
+    "Rules": {},
+    "Sky": {
+      "sun_size_deg": 0.0
+    }
+  }
+}

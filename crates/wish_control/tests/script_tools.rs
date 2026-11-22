@@ -651,7 +651,7 @@ fn scenario_tests_play_the_game_and_say_what_failed() {
         &dir,
         "never",
         r#"{ "format": 1, "scene": "scenes/main.scene.json", "steps": [
-            { "until": "Transform.translation.x > 100", "max_frames": 10 }
+            { "until": "Walker.speed > 0 && Transform.translation.x > 100", "max_frames": 10 }
         ] }"#,
     );
     write_test(
@@ -700,6 +700,14 @@ fn scenario_tests_play_the_game_and_say_what_failed() {
     assert_eq!(
         result("never")["failure"]["kind"],
         "until_not_reached",
+        "{}",
+        result("never")
+    );
+    // Friction F18: the entities the condition is about come first (the
+    // hero has a Walker and a Transform; the camera only a Transform).
+    assert_eq!(
+        result("never")["failure"]["values"]["entities"][0]["entity"],
+        "hero",
         "{}",
         result("never")
     );
@@ -1032,6 +1040,71 @@ fn the_bricks_example_is_won_by_its_tests_and_replays() {
     let replayed = ws.call(
         "replay",
         &json!({ "action": "run", "name": "bricks" }),
+        &agent,
+    );
+    assert_eq!(replayed["passed"], true, "{replayed}");
+}
+
+/// The yardstick game of release 1.1, `examples/ridgewatch` (package 15):
+/// a hidden-role party game built with the engine's own tools. Its tests
+/// play three online matches with bots over 100 ms latency, jitter and 5 %
+/// loss (the keepers win by repairs, the static is voted out, the statics
+/// win by freezing), each verified as its replay, plus a practice round;
+/// and a match hosted with the `net` tool is saved as a replay that plays
+/// back bit for bit.
+#[test]
+fn the_ridgewatch_party_game_is_played_by_bots_and_replays() {
+    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/ridgewatch");
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("example-ridgewatch");
+    let _ = std::fs::remove_dir_all(&dir);
+    copy_dir(&source, &dir);
+    let mut ws = open(&dir);
+    let agent = parse_actor("agent");
+    let built = ws.call("script_build", &json!({}), &agent);
+    assert_eq!(built["passed"], true, "{built}");
+    assert_eq!(built["warnings"], 0, "no warnings: {built}");
+    let checked = ws.call("check", &json!({}), &agent);
+    assert_eq!(checked["diagnostics"], json!([]), "{checked}");
+    let tests = ws.call("test_run", &json!({}), &agent);
+    assert_eq!(tests["passed"], true, "{tests}");
+    assert_eq!(tests["tests"], 4);
+    let verified = tests["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["replay_verified"] == true)
+        .count();
+    assert_eq!(verified, 3, "every online match is its replay: {tests}");
+
+    let hosted = ws.call(
+        "net",
+        &json!({ "action": "host", "players": 6, "bots": 5, "auto_start": true, "seed": 4,
+                 "network": { "latency_ms": 100, "jitter_ms": 20, "loss": 0.05, "seed": 9 } }),
+        &agent,
+    );
+    assert_eq!(hosted["ok"], true, "{hosted}");
+    let id = hosted["session"].as_str().unwrap().to_owned();
+    let running = ws.call(
+        "net",
+        &json!({ "action": "step", "session": id, "until": "Lobby.phase == 'Running'", "max_frames": 900 }),
+        &agent,
+    );
+    assert_eq!(running["stopped_by"], "until", "{running}");
+    ws.call(
+        "net",
+        &json!({ "action": "step", "session": id, "frames": 120,
+                 "input": { "move": [0, 1] }, "inputs": { "2": { "move": [1, 0] } } }),
+        &agent,
+    );
+    let saved = ws.call(
+        "replay",
+        &json!({ "action": "save", "session": id, "name": "ridgewatch" }),
+        &agent,
+    );
+    assert_eq!(saved["format"], 3, "{saved}");
+    let replayed = ws.call(
+        "replay",
+        &json!({ "action": "run", "name": "ridgewatch" }),
         &agent,
     );
     assert_eq!(replayed["passed"], true, "{replayed}");

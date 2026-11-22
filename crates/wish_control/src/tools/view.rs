@@ -995,6 +995,11 @@ impl Workspace {
             }
             PictureSource::Checkpoint(scene, name) => prepare_checkpoint(self, name, scene)?,
         };
+        // Nothing flat (every 3D scene): no renderer to open. The editor asks
+        // on every redraw with a selection.
+        if prepared.scene.sprites.is_empty() && prepared.scene.tilemaps.is_empty() {
+            return Ok(FlatPicture::default());
+        }
         if let (Some(camera), Some(first)) = (camera, prepared.scene.cameras.first_mut()) {
             *first = camera(first);
         }

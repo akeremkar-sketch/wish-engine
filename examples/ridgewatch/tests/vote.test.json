@@ -1,0 +1,46 @@
+{
+  "format": 1,
+  "scene": "scenes/main.scene.json",
+  "seed": 4,
+  "net": {
+    "players": 6, "bots": 5, "auto_start": true,
+    "network": { "latency_ms": 100, "jitter_ms": 20, "loss": 0.05, "seed": 9 }
+  },
+  "steps": [
+    { "until": "Lobby.phase == 'Running' && Station.phase == 'Playing'", "max_frames": 900 },
+    { "expect": "MatchRoles.roles[3] == 1", "message": "seed 4 deals the static to seat 3" },
+
+    { "input": { "move": [0, -1] }, "frames": 15 },
+    { "input": { "bell": true }, "until": "Station.phase == 'Meeting'", "max_frames": 700 },
+    { "expect": "Station.caller == 0 && Station.found == 0", "message": "the host rang the bell" },
+    { "frames": 30 },
+    { "expect": "Station.phase == 'Meeting'", "player": 4, "message": "every machine hears of the meeting" },
+    { "expect": "matches(UiText.text, '*rang the bell*')", "entity": "meeting_title", "player": 4, "message": "and shows it" },
+
+    { "input": { "move": [0, -1] }, "players": { "1": { "move": [0, -1] }, "2": { "move": [0, -1] }, "3": { "move": [0, -1] }, "4": { "move": [0, -1] }, "5": { "move": [0, -1] } }, "frames": 3 },
+    { "frames": 3 },
+    { "input": { "move": [0, -1] }, "players": { "1": { "move": [0, -1] }, "2": { "move": [0, -1] }, "3": { "move": [0, -1] }, "4": { "move": [0, -1] }, "5": { "move": [0, -1] } }, "frames": 3 },
+    { "frames": 3 },
+    { "input": { "move": [0, -1] }, "players": { "1": { "move": [0, -1] }, "2": { "move": [0, -1] }, "4": { "move": [0, -1] }, "5": { "move": [0, -1] } }, "frames": 3 },
+    { "frames": 3 },
+    { "input": { "move": [0, -1] }, "players": { "1": { "move": [0, -1] }, "2": { "move": [0, -1] }, "4": { "move": [0, -1] }, "5": { "move": [0, -1] } }, "frames": 3 },
+    { "frames": 3 },
+    { "expect": "Local.choice == 3", "player": 2, "message": "from skip, four pushes down: keeper 2's cursor is on seat 3" },
+    { "expect": "Local.choice == 1", "player": 3, "message": "two pushes: the static's cursor is on seat 1" },
+    { "expect": "matches(UiText.text, '> *')", "entity": "meeting_row_3", "player": 2, "message": "the meeting list shows the cursor on the fourth row" },
+
+    { "players": { "2": { "say_2": true } }, "frames": 2 },
+    { "frames": 40 },
+    { "expect": "matches(Local.chat[5], '*: I suspect *')", "player": 4, "message": "keeper 2's words reach keeper 4 through the host" },
+
+    { "input": { "use": true }, "players": { "1": { "use": true }, "2": { "use": true }, "3": { "use": true }, "4": { "use": true }, "5": { "use": true } }, "frames": 2 },
+    { "until": "Station.phase == 'Result'", "max_frames": 300 },
+    { "expect": "Station.ejected == 4 && Station.ejected_static == true", "message": "five votes send the static into the storm" },
+    { "frames": 40 },
+    { "expect": "matches(Local.result, '*sent into the storm (5 votes).')", "player": 1, "message": "every machine hears the result" },
+    { "until": "Station.phase == 'Over'", "max_frames": 400 },
+    { "expect": "Station.winner == 'Keepers' && Station.how == 2", "message": "with the static gone the keepers win" },
+    { "frames": 30 },
+    { "expect": "Lobby.phase == 'Ended' && Lobby.outcome == 2", "player": 5 }
+  ]
+}

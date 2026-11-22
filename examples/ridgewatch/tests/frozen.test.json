@@ -1,0 +1,34 @@
+{
+  "format": 1,
+  "scene": "scenes/main.scene.json",
+  "seed": 4,
+  "net": {
+    "players": 8, "bots": 7, "auto_start": true,
+    "network": { "latency_ms": 100, "jitter_ms": 20, "loss": 0.05, "seed": 9 }
+  },
+  "steps": [
+    { "until": "Lobby.phase == 'Running' && Station.phase == 'Playing'", "max_frames": 900 },
+    { "expect": "MatchRoles.roles[0] == 1 && MatchRoles.roles[5] == 1", "message": "eight players get two statics (more_from 7): seats 0 and 5" },
+    { "frames": 30 },
+    { "expect": "LocalPlayer.role == 1", "player": 5 },
+    { "expect": "LocalPlayer.role == 0 && (!has(MatchRoles) || MatchRoles.roles[5] == 0)", "player": 6, "message": "a keeper's machine never holds a static's role" },
+
+    { "input": { "move": [1, 0] }, "players": { "5": { "move": [1, 0] } }, "frames": 6 },
+    { "input": { "use": true }, "players": { "5": { "use": true } }, "until": "Avatar.player == 4 && Avatar.frozen == true", "max_frames": 900 },
+    { "expect": "Avatar.player == 1 && Avatar.frozen == true", "message": "the host's static froze keeper 1 at the same moment" },
+    { "input": { "sabotage": true }, "frames": 2 },
+    { "expect": "Station.blackout > 0", "message": "the static drowned the lights" },
+    { "frames": 30 },
+    { "expect": "Vision2D.radius == 2.5", "entity": "eye", "player": 3, "message": "a keeper sees little in the dark" },
+    { "expect": "Vision2D.radius == 6.5", "entity": "eye", "player": 5, "message": "the static sees as before" },
+    { "expect": "count(Ghost) == 2", "player": 1, "message": "a frozen keeper is a ghost and sees the other ghost" },
+    { "expect": "count(Ghost) == 1 && Ghost.player == 3 && Ghost.active == false", "player": 3, "message": "the living see no ghosts (only their own, resting)" },
+
+    { "input": { "move": [0.7071, -0.7071] }, "players": { "5": { "move": [-1, 0] } }, "frames": 40 },
+    { "input": { "use": true }, "players": { "5": { "use": true } }, "until": "Station.phase == 'Over'", "max_frames": 1200 },
+    { "expect": "Station.winner == 'Static' && Station.how == 3", "message": "two statics stand against two keepers: the static wins" },
+    { "frames": 30 },
+    { "expect": "Lobby.phase == 'Ended' && Lobby.outcome == 3", "player": 7 },
+    { "expect": "UiText.text == \"The static froze Ridgewatch.\"", "entity": "result_title", "player": 7 }
+  ]
+}

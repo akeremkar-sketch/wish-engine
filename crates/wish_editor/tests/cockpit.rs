@@ -119,11 +119,14 @@ fn an_agent_works_from_the_cockpit_and_everything_is_kept() {
         "{}",
         app.status()
     );
-    // While it works, the person edits something else.
-    app.call(
+    // While it works, the person edits something else. Its answer is kept
+    // and checked: a write Windows refuses for a moment is now tried again
+    // (`documents::replace_file`), and a refusal would show here.
+    let lamp = app.call(
         "edit_apply",
         &json!({ "ops": [{ "op": "spawn", "id": "lamp", "components": { "Transform": {} } }] }),
     );
+    assert_eq!(lamp["ok"], true, "the person's lamp: {lamp}");
     for _ in 0..200 {
         if !app.agent_running() {
             break;
@@ -131,6 +134,11 @@ fn an_agent_works_from_the_cockpit_and_everything_is_kept() {
         play(&mut app, json!([{ "seconds": 0.05 }, { "idle": 1 }]));
     }
     assert!(!app.agent_running(), "{:?}", app.transcript());
+    // The hierarchy is the editor's as last read: the person's own call
+    // above does not read it again, and when the agent was already done the
+    // loop drew no frame. Let the scene poll come round (0.4 s) first; a
+    // gate under load lost the lamp this way (22 November 2026).
+    play(&mut app, json!([{ "seconds": 0.5 }, { "idle": 1 }]));
     let transcript = app.transcript();
     assert_eq!(
         transcript[0], "You: put a crate on the ground",
@@ -162,6 +170,7 @@ fn an_agent_works_from_the_cockpit_and_everything_is_kept() {
     assert!(
         names.contains("crate") && names.contains("lamp"),
         "{names:?}
+lamp: {lamp}
 history: {history}
 activity: {activity}"
     );
@@ -304,6 +313,11 @@ fn an_outside_agent_and_the_cockpit_agent_work_together() {
         play(&mut app, json!([{ "seconds": 0.05 }, { "idle": 1 }]));
     }
     assert!(outside_run.is_over() && !app.agent_running());
+    // The hierarchy as last read: when both agents were done before the
+    // rename, the loop drew no frame and the rows did not have it yet (the
+    // accepted rename that went "missing", 21 November 2026). Let the scene
+    // poll come round first.
+    play(&mut app, json!([{ "seconds": 0.5 }, { "idle": 1 }]));
     let history = app
         .call("edit_history", &json!({ "limit": 50 }))
         .to_string();
